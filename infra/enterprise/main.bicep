@@ -525,8 +525,13 @@ resource foundryPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' 
       }
     ]
   }
+  // modelDeployment, not just the account: a Cognitive Services account accepts
+  // only ONE operation at a time, and the account PUT returns while the account
+  // is still 'Accepted'. Attaching a private endpoint to an account in that
+  // state fails with AccountProvisioningStateInvalid.
   dependsOn: [
     vnet
+    modelDeployment
   ]
 }
 
@@ -770,20 +775,10 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
   ]
 }
 
-resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
-  parent: foundryAccount
-  name: foundryProjectName
-  location: foundryLocation
-  tags: tags
-  identity: {
-    type: 'SystemAssigned'
-  }
-  properties: {
-    displayName: 'AzBrief agents'
-    description: 'Hosted multi-agent workspace for AzBrief Azure Update analysis'
-  }
-}
-
+// Everything below hangs off the Foundry account, which serialises operations
+// on its own: two children deployed in parallel make the second one fail with
+// RequestConflict. ARM parallelises by default, so the chain is explicit —
+// model deployment, then the private endpoint and its DNS, then the project.
 resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
   parent: foundryAccount
   name: modelDeploymentName
@@ -801,6 +796,26 @@ resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-
   }
 }
 
+resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
+  parent: foundryAccount
+  name: foundryProjectName
+  location: foundryLocation
+  tags: tags
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    displayName: 'AzBrief agents'
+    description: 'Hosted multi-agent workspace for AzBrief Azure Update analysis'
+  }
+  // A conditional resource that is not deployed drops out of dependsOn, so this
+  // stays correct when networkIsolationMode is not vnetInjection.
+  dependsOn: [
+    modelDeployment
+    foundryPrivateDnsZoneGroup
+  ]
+}
+
 // A network-injected account needs an explicit Agents capability host on the
 // project. The account-level host is auto-created by the resource provider.
 resource foundryProjectCapabilityHost 'Microsoft.CognitiveServices/accounts/projects/capabilityHosts@2025-04-01-preview' = if (vnetMode) {
@@ -811,9 +826,6 @@ resource foundryProjectCapabilityHost 'Microsoft.CognitiveServices/accounts/proj
     #disable-next-line BCP037
     capabilityHostKind: 'Agents'
   }
-  dependsOn: [
-    foundryPrivateDnsZoneGroup
-  ]
 }
 
 // ============================================================================
@@ -1184,6 +1196,11 @@ resource foundryUserAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
     principalId: managedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
+  // Last in the account's serialised chain — a role assignment against an
+  // account still mid-provision is rejected like any other operation.
+  dependsOn: [
+    foundryProject
+  ]
 }
 
 resource openAIUserAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -1197,6 +1214,9 @@ resource openAIUserAssignment 'Microsoft.Authorization/roleAssignments@2022-04-0
     principalId: managedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }
+  dependsOn: [
+    foundryUserAssignment
+  ]
 }
 
 // Resource-group Reader so the app can inspect its own deployment. Tenant- or

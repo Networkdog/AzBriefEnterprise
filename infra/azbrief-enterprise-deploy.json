@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "1071239599040087001"
+      "templateHash": "227231035594019630"
     },
     "description": "AzBrief Enterprise — Container Apps Job (scheduler) + Microsoft Foundry hosted multi-agent + Container App (orchestrator/Admin Page) + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
@@ -553,6 +553,7 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), parameters('modelDeploymentName'))]",
         "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
       ]
     },
@@ -586,8 +587,8 @@
       "dependsOn": [
         "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', variables('foundryAccountName')))]",
         "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[2])]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[1])]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[0])]"
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[0])]",
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[1])]"
       ]
     },
     {
@@ -810,23 +811,6 @@
       ]
     },
     {
-      "type": "Microsoft.CognitiveServices/accounts/projects",
-      "apiVersion": "2025-06-01",
-      "name": "[format('{0}/{1}', variables('foundryAccountName'), variables('foundryProjectName'))]",
-      "location": "[parameters('foundryLocation')]",
-      "tags": "[parameters('tags')]",
-      "identity": {
-        "type": "SystemAssigned"
-      },
-      "properties": {
-        "displayName": "AzBrief agents",
-        "description": "Hosted multi-agent workspace for AzBrief Azure Update analysis"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]"
-      ]
-    },
-    {
       "type": "Microsoft.CognitiveServices/accounts/deployments",
       "apiVersion": "2025-06-01",
       "name": "[format('{0}/{1}', variables('foundryAccountName'), parameters('modelDeploymentName'))]",
@@ -847,6 +831,25 @@
       ]
     },
     {
+      "type": "Microsoft.CognitiveServices/accounts/projects",
+      "apiVersion": "2025-06-01",
+      "name": "[format('{0}/{1}', variables('foundryAccountName'), variables('foundryProjectName'))]",
+      "location": "[parameters('foundryLocation')]",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "SystemAssigned"
+      },
+      "properties": {
+        "displayName": "AzBrief agents",
+        "description": "Hosted multi-agent workspace for AzBrief Azure Update analysis"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', format('pe-{0}', variables('foundryAccountName')), 'default')]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), parameters('modelDeploymentName'))]"
+      ]
+    },
+    {
       "condition": "[variables('vnetMode')]",
       "type": "Microsoft.CognitiveServices/accounts/projects/capabilityHosts",
       "apiVersion": "2025-04-01-preview",
@@ -855,7 +858,6 @@
         "capabilityHostKind": "Agents"
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', format('pe-{0}', variables('foundryAccountName')), 'default')]",
         "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]"
       ]
     },
@@ -1379,6 +1381,7 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
       ]
     },
@@ -1394,6 +1397,7 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').foundryUser))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
       ]
     },
