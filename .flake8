@@ -1,0 +1,37 @@
+[flake8]
+max-line-length = 100
+
+# E203/W503  black disagrees with pycodestyle here; black wins.
+# E501       black owns line length. What it cannot split is prompt text and
+#            HTML template literals, where a hard wrap changes the output.
+# W291/W293  same reason: the remaining hits are inside multi-line prompt
+#            strings, where trailing spaces are part of the rendered text.
+# F541       an f-prefix with no placeholder is harmless and often left behind
+#            while iterating on a message.
+# F841/F824  assigned-but-unused locals and redundant `global` reads; noise here,
+#            not defects. The real ones stay ON: F811 (a definition shadowing an
+#            earlier one) and F821 (undefined name) both caught live bugs.
+extend-ignore = E203, W503, E501, W291, W293, F541, F841, F824, E741
+
+exclude =
+    .git,
+    .venv,
+    __pycache__,
+    build,
+    dist,
+    *.egg-info
+
+per-file-ignores =
+    # Re-exports: importing for the public surface is the whole point.
+    __init__.py:F401
+    # Names kept importable from their historical module for callers and tests.
+    src/agent/analyzer.py:F401
+    src/agent/tools.py:F401
+    src/email/service.py:F401
+    src/logging_config.py:F401
+    # sys.path is extended before the src imports so the script runs standalone.
+    scripts/*:E402,F401
+    src/main.py:E402,F401
+    src/middleware.py:E402
+    # Fixtures and star-style imports that pytest resolves at collection time.
+    tests/*:E402,F401,F841

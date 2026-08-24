@@ -1,0 +1,1218 @@
+{
+  "schemas": {
+    "microsoft.operationalinsights/workspaces": {
+      "paths": [
+        "properties.createdDate",
+        "properties.customerId",
+        "properties.features",
+        "properties.features.enableLogAccessUsingOnlyResourcePermissions",
+        "properties.features.legacy",
+        "properties.features.searchVersion",
+        "properties.modifiedDate",
+        "properties.provisioningState",
+        "properties.publicNetworkAccessForIngestion",
+        "properties.publicNetworkAccessForQuery",
+        "properties.retentionInDays",
+        "properties.sku",
+        "properties.sku.lastSkuUpdate",
+        "properties.sku.name",
+        "properties.workspaceCapping",
+        "properties.workspaceCapping.dailyQuotaGb",
+        "properties.workspaceCapping.dataIngestionStatus",
+        "properties.workspaceCapping.quotaNextResetTime"
+      ],
+      "updated": "2026-03-17"
+    },
+    "microsoft.storage/storageaccounts": {
+      "paths": [
+        "properties.accessTier",
+        "properties.allowBlobPublicAccess",
+        "properties.allowCrossTenantDelegationSas",
+        "properties.allowCrossTenantReplication",
+        "properties.allowSharedKeyAccess",
+        "properties.creationTime",
+        "properties.encryption",
+        "properties.encryption.keySource",
+        "properties.encryption.services",
+        "properties.isHnsEnabled",
+        "properties.isLocalUserEnabled",
+        "properties.keyCreationTime",
+        "properties.keyCreationTime.key1",
+        "properties.keyCreationTime.key2",
+        "properties.minimumTlsVersion",
+        "properties.networkAcls",
+        "properties.networkAcls.bypass",
+        "properties.networkAcls.defaultAction",
+        "properties.networkAcls.ipRules",
+        "properties.networkAcls.ipv6Rules",
+        "properties.networkAcls.resourceAccessRules",
+        "properties.networkAcls.virtualNetworkRules",
+        "properties.primaryEndpoints",
+        "properties.primaryEndpoints.blob",
+        "properties.primaryEndpoints.dfs",
+        "properties.primaryEndpoints.file",
+        "properties.primaryEndpoints.queue",
+        "properties.primaryEndpoints.table",
+        "properties.primaryEndpoints.web",
+        "properties.primaryLocation",
+        "properties.privateEndpointConnections",
+        "properties.provisioningState",
+        "properties.publicNetworkAccess",
+        "properties.statusOfPrimary",
+        "properties.supportsHttpsTrafficOnly",
+        "sku.name",
+        "sku.tier"
+      ],
+      "updated": "2026-03-17"
+    },
+    "microsoft.storagemover/storagemovers": {
+      "paths": [
+        "properties.provisioningState"
+      ],
+      "updated": "2026-03-17"
+    },
+    "microsoft.automation/automationaccounts/runbooks": {
+      "paths": [
+        "properties.creationTime",
+        "properties.description",
+        "properties.jobCount",
+        "properties.lastModifiedBy",
+        "properties.lastModifiedTime",
+        "properties.logActivityTrace",
+        "properties.logProgress",
+        "properties.logVerbose",
+        "properties.outputTypes",
+        "properties.parameters",
+        "properties.provisioningState",
+        "properties.runbookType",
+        "properties.runtimeEnvironment",
+        "properties.serviceManagementTags",
+        "properties.state"
+      ],
+      "updated": "2026-03-15"
+    },
+    "microsoft.compute/disks": {
+      "paths": [
+        "properties.LastOwnershipUpdateTime",
+        "properties.creationData",
+        "properties.creationData.createOption",
+        "properties.creationData.imageReference",
+        "properties.diskIOPSReadWrite",
+        "properties.diskMBpsReadWrite",
+        "properties.diskSizeBytes",
+        "properties.diskSizeGB",
+        "properties.diskState",
+        "properties.encryption",
+        "properties.encryption.type",
+        "properties.hyperVGeneration",
+        "properties.networkAccessPolicy",
+        "properties.osType",
+        "properties.provisioningState",
+        "properties.publicNetworkAccess",
+        "properties.securityProfile",
+        "properties.securityProfile.securityType",
+        "properties.supportedCapabilities",
+        "properties.supportedCapabilities.acceleratedNetwork",
+        "properties.supportedCapabilities.architecture",
+        "properties.supportedCapabilities.diskControllerTypes",
+        "properties.supportsHibernation",
+        "properties.timeCreated",
+        "properties.uniqueId",
+        "sku.name",
+        "sku.tier"
+      ],
+      "updated": "2026-03-17"
+    },
+    "microsoft.compute/virtualmachines": {
+      "paths": [
+        "properties.additionalCapabilities",
+        "properties.additionalCapabilities.hibernationEnabled",
+        "properties.diagnosticsProfile",
+        "properties.diagnosticsProfile.bootDiagnostics",
+        "properties.extended",
+        "properties.extended.instanceView",
+        "properties.hardwareProfile",
+        "properties.hardwareProfile.vmSize",
+        "properties.networkProfile",
+        "properties.networkProfile.networkInterfaces",
+        "properties.osProfile",
+        "properties.osProfile.adminUsername",
+        "properties.osProfile.allowExtensionOperations",
+        "properties.osProfile.computerName",
+        "properties.osProfile.linuxConfiguration",
+        "properties.osProfile.requireGuestProvisionSignal",
+        "properties.osProfile.secrets",
+        "properties.provisioningState",
+        "properties.securityProfile",
+        "properties.securityProfile.securityType",
+        "properties.securityProfile.uefiSettings",
+        "properties.storageProfile",
+        "properties.storageProfile.dataDisks",
+        "properties.storageProfile.diskControllerType",
+        "properties.storageProfile.imageReference",
+        "properties.storageProfile.osDisk",
+        "properties.timeCreated",
+        "properties.vmId"
+      ],
+      "updated": "2026-03-16"
+    },
+    "microsoft.containerservice/managedclusters": {
+      "paths": [
+        "properties.aadProfile",
+        "properties.aadProfile.adminGroupObjectIDs",
+        "properties.aadProfile.adminUsers",
+        "properties.aadProfile.enableAzureRBAC",
+        "properties.aadProfile.managed",
+        "properties.aadProfile.tenantID",
+        "properties.addonProfiles",
+        "properties.addonProfiles.azureKeyvaultSecretsProvider",
+        "properties.addonProfiles.azurepolicy",
+        "properties.addonProfiles.omsAgent",
+        "properties.agentPoolProfiles",
+        "properties.apiServerAccessProfile",
+        "properties.apiServerAccessProfile.enablePrivateCluster",
+        "properties.autoScalerProfile",
+        "properties.autoScalerProfile.balance-similar-node-groups",
+        "properties.autoScalerProfile.daemonset-eviction-for-empty-nodes",
+        "properties.autoScalerProfile.daemonset-eviction-for-occupied-nodes",
+        "properties.autoScalerProfile.expander",
+        "properties.autoScalerProfile.ignore-daemonsets-utilization",
+        "properties.autoScalerProfile.max-empty-bulk-delete",
+        "properties.autoScalerProfile.max-graceful-termination-sec",
+        "properties.autoScalerProfile.max-node-provision-time",
+        "properties.autoScalerProfile.max-total-unready-percentage",
+        "properties.autoScalerProfile.new-pod-scale-up-delay",
+        "properties.autoScalerProfile.ok-total-unready-count",
+        "properties.autoScalerProfile.scale-down-delay-after-add",
+        "properties.autoScalerProfile.scale-down-delay-after-delete",
+        "properties.autoScalerProfile.scale-down-delay-after-failure",
+        "properties.autoScalerProfile.scale-down-unneeded-time",
+        "properties.autoScalerProfile.scale-down-unready-time",
+        "properties.autoScalerProfile.scale-down-utilization-threshold",
+        "properties.autoScalerProfile.scan-interval",
+        "properties.autoScalerProfile.skip-nodes-with-local-storage",
+        "properties.autoScalerProfile.skip-nodes-with-system-pods",
+        "properties.autoUpgradeProfile",
+        "properties.autoUpgradeProfile.nodeOSUpgradeChannel",
+        "properties.autoUpgradeProfile.upgradeChannel",
+        "properties.azureMonitorProfile",
+        "properties.azureMonitorProfile.metrics",
+        "properties.azurePortalFQDN",
+        "properties.bootstrapProfile",
+        "properties.bootstrapProfile.artifactSource",
+        "properties.currentKubernetesVersion",
+        "properties.disableLocalAccounts",
+        "properties.dnsPrefix",
+        "properties.enableRBAC",
+        "properties.fqdn",
+        "properties.identityProfile",
+        "properties.identityProfile.kubeletidentity",
+        "properties.kubernetesVersion",
+        "properties.maxAgentPools",
+        "properties.metricsProfile",
+        "properties.metricsProfile.costAnalysis",
+        "properties.networkProfile",
+        "properties.networkProfile.dnsServiceIP",
+        "properties.networkProfile.ipFamilies",
+        "properties.networkProfile.loadBalancerProfile",
+        "properties.networkProfile.loadBalancerSku",
+        "properties.networkProfile.networkDataplane",
+        "properties.networkProfile.networkPlugin",
+        "properties.networkProfile.networkPluginMode",
+        "properties.networkProfile.networkPolicy",
+        "properties.networkProfile.outboundType",
+        "properties.networkProfile.podCidr",
+        "properties.networkProfile.podCidrs",
+        "properties.networkProfile.serviceCidr",
+        "properties.networkProfile.serviceCidrs",
+        "properties.nodeProvisioningProfile",
+        "properties.nodeProvisioningProfile.defaultNodePools",
+        "properties.nodeProvisioningProfile.mode",
+        "properties.nodeResourceGroup",
+        "properties.oidcIssuerProfile",
+        "properties.oidcIssuerProfile.enabled",
+        "properties.oidcIssuerProfile.issuerURL",
+        "properties.powerState",
+        "properties.powerState.code",
+        "properties.provisioningState",
+        "properties.resourceUID",
+        "properties.securityProfile",
+        "properties.securityProfile.imageCleaner",
+        "properties.securityProfile.workloadIdentity",
+        "properties.servicePrincipalProfile",
+        "properties.servicePrincipalProfile.clientId",
+        "properties.storageProfile",
+        "properties.storageProfile.diskCSIDriver",
+        "properties.storageProfile.fileCSIDriver",
+        "properties.storageProfile.snapshotController",
+        "properties.supportPlan",
+        "properties.windowsProfile",
+        "properties.windowsProfile.adminUsername",
+        "properties.windowsProfile.enableCSIProxy",
+        "properties.workloadAutoScalerProfile",
+        "sku.name",
+        "sku.tier"
+      ],
+      "updated": "2026-04-26"
+    },
+    "microsoft.compute/snapshots": {
+      "paths": [
+        "properties.creationData",
+        "properties.creationData.createOption",
+        "properties.creationData.sourceResourceId",
+        "properties.creationData.sourceUniqueId",
+        "properties.dataAccessAuthMode",
+        "properties.diskSizeBytes",
+        "properties.diskSizeGB",
+        "properties.diskState",
+        "properties.encryption",
+        "properties.encryption.type",
+        "properties.hyperVGeneration",
+        "properties.incremental",
+        "properties.incrementalSnapshotFamilyId",
+        "properties.networkAccessPolicy",
+        "properties.osType",
+        "properties.provisioningState",
+        "properties.publicNetworkAccess",
+        "properties.securityProfile",
+        "properties.securityProfile.securityType",
+        "properties.snapshotAccessState",
+        "properties.supportedCapabilities",
+        "properties.supportedCapabilities.acceleratedNetwork",
+        "properties.supportedCapabilities.architecture",
+        "properties.supportedCapabilities.diskControllerTypes",
+        "properties.supportsHibernation",
+        "properties.timeCreated",
+        "properties.uniqueId",
+        "sku.name",
+        "sku.tier"
+      ],
+      "updated": "2026-03-17"
+    },
+    "microsoft.network/routetables": {
+      "paths": [
+        "properties.disableBgpRoutePropagation",
+        "properties.disablePeeringRoute",
+        "properties.provisioningState",
+        "properties.resourceGuid",
+        "properties.routes"
+      ],
+      "updated": "2026-03-17"
+    },
+    "microsoft.insights/datacollectionrules": {
+      "paths": [
+        "properties.dataCollectionEndpointId",
+        "properties.dataFlows",
+        "properties.dataSources",
+        "properties.dataSources.extensions",
+        "properties.dataSources.iisLogs",
+        "properties.dataSources.performanceCounters",
+        "properties.dataSources.prometheusForwarder",
+        "properties.dataSources.syslog",
+        "properties.dataSources.windowsEventLogs",
+        "properties.description",
+        "properties.destinations",
+        "properties.destinations.logAnalytics",
+        "properties.destinations.monitoringAccounts",
+        "properties.directDataSources",
+        "properties.directDataSources.otelMetrics",
+        "properties.immutableId",
+        "properties.metadata",
+        "properties.metadata.provisionedBy",
+        "properties.provisioningState",
+        "properties.streamDeclarations"
+      ],
+      "updated": "2026-03-19"
+    },
+    "microsoft.network/virtualnetworks": {
+      "paths": [
+        "properties.addressSpace",
+        "properties.addressSpace.addressPrefixes",
+        "properties.dhcpOptions",
+        "properties.dhcpOptions.dnsServers",
+        "properties.enableDdosProtection",
+        "properties.encryption",
+        "properties.encryption.enabled",
+        "properties.encryption.enforcement",
+        "properties.flowLogConfiguration",
+        "properties.flowLogConfiguration.enabledFlowLogCategories",
+        "properties.flowLogConfiguration.flowLogGuid",
+        "properties.flowLogConfiguration.forceFlowLogConfig",
+        "properties.flowLogs",
+        "properties.privateEndpointVNetPolicies",
+        "properties.provisioningState",
+        "properties.resourceGuid",
+        "properties.subnets",
+        "properties.virtualNetworkPeerings"
+      ],
+      "updated": "2026-03-19"
+    },
+    "microsoft.machinelearningservices/workspaces": {
+      "paths": [
+        "properties.EnableSoftwareBillOfMaterials",
+        "properties.agentsEndpointUri",
+        "properties.allowRoleAssignmentOnRG",
+        "properties.applicationInsights",
+        "properties.creationTime",
+        "properties.description",
+        "properties.discoveryUrl",
+        "properties.enableDataIsolation",
+        "properties.enableServiceSideCMKEncryption",
+        "properties.friendlyName",
+        "properties.hbiWorkspace",
+        "properties.hubResourceId",
+        "properties.imageBuildCompute",
+        "properties.ipAllowlist",
+        "properties.keyVault",
+        "properties.linkedModelInventoryArmId",
+        "properties.managedNetwork",
+        "properties.managedNetwork.enableFirewallLog",
+        "properties.managedNetwork.enableNetworkMonitor",
+        "properties.managedNetwork.firewallSku",
+        "properties.managedNetwork.isolationMode",
+        "properties.managedNetwork.networkId",
+        "properties.mlFlowTrackingUri",
+        "properties.networkAcls",
+        "properties.networkAcls.bypass",
+        "properties.networkAcls.defaultAction",
+        "properties.networkAcls.ipRules",
+        "properties.networkAcls.resourceAccessRules",
+        "properties.notebookInfo",
+        "properties.notebookInfo.fqdn",
+        "properties.notebookInfo.isPrivateLinkEnabled",
+        "properties.notebookInfo.notebookPreparationError",
+        "properties.notebookInfo.resourceId",
+        "properties.privateLinkCount",
+        "properties.provisionNetworkNow",
+        "properties.provisioningState",
+        "properties.publicNetworkAccess",
+        "properties.sdkTelemetryAppInsightsKey",
+        "properties.serverlessComputeSettings",
+        "properties.softDeleteEnabled",
+        "properties.storageAccount",
+        "properties.storageHnsEnabled",
+        "properties.systemDatastoresAuthMode",
+        "properties.tenantId",
+        "properties.v1LegacyMode",
+        "properties.workspaceId",
+        "sku.name",
+        "sku.tier"
+      ],
+      "updated": "2026-03-17"
+    },
+    "microsoft.network/networkwatchers": {
+      "paths": [
+        "properties.provisioningState",
+        "properties.runningOperationIds"
+      ],
+      "updated": "2026-03-17"
+    },
+    "microsoft.alertsmanagement/prometheusrulegroups": {
+      "paths": [
+        "properties.clusterName",
+        "properties.description",
+        "properties.enabled",
+        "properties.interval",
+        "properties.rules",
+        "properties.scopes"
+      ],
+      "updated": "2026-03-17"
+    },
+    "microsoft.network/applicationgatewaywebapplicationfirewallpolicies": {
+      "paths": [
+        "properties.applicationGateways",
+        "properties.customRules",
+        "properties.managedRules",
+        "properties.managedRules.exclusions",
+        "properties.managedRules.managedRuleSets",
+        "properties.policySettings",
+        "properties.policySettings.fileUploadEnforcement",
+        "properties.policySettings.fileUploadLimitInMb",
+        "properties.policySettings.maxRequestBodySizeInKb",
+        "properties.policySettings.mode",
+        "properties.policySettings.requestBodyCheck",
+        "properties.policySettings.requestBodyEnforcement",
+        "properties.policySettings.requestBodyInspectLimitInKB",
+        "properties.policySettings.state",
+        "properties.provisioningState"
+      ],
+      "updated": "2026-03-18"
+    },
+    "microsoft.cognitiveservices/accounts/projects": {
+      "paths": [
+        "properties.agentIdentity",
+        "properties.agentIdentity.agentIdentityBlueprintId",
+        "properties.agentIdentity.agentIdentityBlueprintObjectId",
+        "properties.agentIdentity.agentIdentityId",
+        "properties.description",
+        "properties.displayName",
+        "properties.endpoints",
+        "properties.endpoints.AI Foundry API",
+        "properties.internalId",
+        "properties.isDefault",
+        "properties.provisioningState"
+      ],
+      "updated": "2026-04-26"
+    },
+    "microsoft.documentdb/databaseaccounts": {
+      "paths": [
+        "properties.EnabledApiTypes",
+        "properties.analyticalStorageConfiguration",
+        "properties.analyticalStorageConfiguration.schemaType",
+        "properties.backupPolicy",
+        "properties.backupPolicy.periodicModeProperties",
+        "properties.backupPolicy.type",
+        "properties.capabilities",
+        "properties.configurationOverrides",
+        "properties.configurationOverrides.EnablePerRegionPerPartitionAutoscaleOptIn",
+        "properties.consistencyPolicy",
+        "properties.consistencyPolicy.defaultConsistencyLevel",
+        "properties.consistencyPolicy.maxIntervalInSeconds",
+        "properties.consistencyPolicy.maxStalenessPrefix",
+        "properties.cors",
+        "properties.databaseAccountOfferType",
+        "properties.defaultIdentity",
+        "properties.defaultPriorityLevel",
+        "properties.disableKeyBasedMetadataWriteAccess",
+        "properties.disableLocalAuth",
+        "properties.documentEndpoint",
+        "properties.enableAnalyticalStorage",
+        "properties.enableAutomaticFailover",
+        "properties.enableBurstCapacity",
+        "properties.enableFreeTier",
+        "properties.enableMultipleWriteLocations",
+        "properties.enablePartitionKeyMonitor",
+        "properties.enablePartitionMerge",
+        "properties.enablePerPartitionAutomaticFailover",
+        "properties.enablePerRegionPerPartitionAutoscale",
+        "properties.enablePriorityBasedExecution",
+        "properties.enforceHierarchicalPartitionKeyIdLastLevel",
+        "properties.failoverPolicies",
+        "properties.instanceId",
+        "properties.ipRules",
+        "properties.isVirtualNetworkFilterEnabled",
+        "properties.keysMetadata",
+        "properties.keysMetadata.primaryMasterKey",
+        "properties.keysMetadata.primaryReadonlyMasterKey",
+        "properties.keysMetadata.secondaryMasterKey",
+        "properties.keysMetadata.secondaryReadonlyMasterKey",
+        "properties.locations",
+        "properties.minimalTlsVersion",
+        "properties.networkAclBypass",
+        "properties.networkAclBypassResourceIds",
+        "properties.provisioningState",
+        "properties.publicNetworkAccess",
+        "properties.readLocations",
+        "properties.sqlEndpoint",
+        "properties.virtualNetworkRules",
+        "properties.writeLocations"
+      ],
+      "updated": "2026-07-18"
+    },
+    "microsoft.cognitiveservices/accounts": {
+      "paths": [
+        "properties.a365LoggingEnabled",
+        "properties.a365Status",
+        "properties.allowProjectManagement",
+        "properties.apiProperties",
+        "properties.apiProperties.qnaAzureSearchEndpointKey",
+        "properties.associatedProjects",
+        "properties.callRateLimit",
+        "properties.callRateLimit.rules",
+        "properties.capabilities",
+        "properties.customSubDomainName",
+        "properties.dateCreated",
+        "properties.defaultProject",
+        "properties.disableLocalAuth",
+        "properties.endpoint",
+        "properties.endpoints",
+        "properties.endpoints.AI Foundry API",
+        "properties.endpoints.Azure AI Model Inference API",
+        "properties.endpoints.Azure MAI Model Inference API",
+        "properties.endpoints.Azure MAI Model Inference API v1.0",
+        "properties.endpoints.Azure OpenAI Legacy API - Latest moniker",
+        "properties.endpoints.Cohere AI API",
+        "properties.endpoints.Computer Vision",
+        "properties.endpoints.Container",
+        "properties.endpoints.Content Safety",
+        "properties.endpoints.Content Understanding",
+        "properties.endpoints.Conversational Language Understanding Authoring",
+        "properties.endpoints.ConversationalLURuntime",
+        "properties.endpoints.Custom Question Answering",
+        "properties.endpoints.Custom Question Answering Authoring",
+        "properties.endpoints.Custom Text Authoring",
+        "properties.endpoints.CustomTranslator",
+        "properties.endpoints.DocumentTranslation",
+        "properties.endpoints.FormRecognizer",
+        "properties.endpoints.LUIS",
+        "properties.endpoints.Language",
+        "properties.endpoints.Language Remote MCP Server",
+        "properties.endpoints.MAAP Managed Deployments API",
+        "properties.endpoints.Mistral AI API",
+        "properties.endpoints.OpenAI Dall-E API",
+        "properties.endpoints.OpenAI Language Model Instance API",
+        "properties.endpoints.OpenAI Model Scaleset API",
+        "properties.endpoints.OpenAI Moderations API",
+        "properties.endpoints.OpenAI Realtime API",
+        "properties.endpoints.OpenAI Realtime Translation WebSocket API",
+        "properties.endpoints.OpenAI Response API on Websocket",
+        "properties.endpoints.OpenAI Sora API",
+        "properties.endpoints.OpenAI Whisper API",
+        "properties.endpoints.ProjectA APIs",
+        "properties.endpoints.QnAMaker",
+        "properties.endpoints.QuestionAnswering",
+        "properties.endpoints.Speech Services Audio Content Creation",
+        "properties.endpoints.Speech Services Batch Avatar",
+        "properties.endpoints.Speech Services Batch Text to Speech",
+        "properties.endpoints.Speech Services Custom Avatar",
+        "properties.endpoints.Speech Services Custom Voice",
+        "properties.endpoints.Speech Services Custom Voice Trial",
+        "properties.endpoints.Speech Services Podcast",
+        "properties.endpoints.Speech Services Speaker Identification",
+        "properties.endpoints.Speech Services Speaker Verification",
+        "properties.endpoints.Speech Services Speech to Text",
+        "properties.endpoints.Speech Services Speech to Text (Standard)",
+        "properties.endpoints.Speech Services Speech to Text 2024-05-15-preview",
+        "properties.endpoints.Speech Services Speech to Text 2024-11-15",
+        "properties.endpoints.Speech Services Speech to Text 2025-10-15",
+        "properties.endpoints.Speech Services Speech to Text v3.2",
+        "properties.endpoints.Speech Services Speech to Text v3.2_internal.1",
+        "properties.endpoints.Speech Services TTS Player",
+        "properties.endpoints.Speech Services Text to Speech (Neural)",
+        "properties.endpoints.Text Analytics",
+        "properties.endpoints.TextTranslation",
+        "properties.endpoints.TextTranslation-Global",
+        "properties.endpoints.Token",
+        "properties.endpoints.Token Service API",
+        "properties.endpoints.Turing",
+        "properties.endpoints.Video Translation",
+        "properties.endpoints.Voice Agent Realtime API",
+        "properties.endpoints.Voice Live Capabilities API",
+        "properties.endpoints.Voice Live Media Gateway Calls API",
+        "properties.endpoints.Voice Live Realtime API",
+        "properties.internalId",
+        "properties.isMigrated",
+        "properties.networkAcls",
+        "properties.networkAcls.defaultAction",
+        "properties.networkAcls.ipRules",
+        "properties.networkAcls.virtualNetworkRules",
+        "properties.privateEndpointConnections",
+        "properties.provisioningState",
+        "properties.publicNetworkAccess",
+        "sku.name"
+      ],
+      "updated": "2026-07-18"
+    },
+    "microsoft.network/firewallpolicies": {
+      "paths": [
+        "properties.childPolicies",
+        "properties.firewalls",
+        "properties.intrusionDetection",
+        "properties.intrusionDetection.mode",
+        "properties.provisioningState",
+        "properties.ruleCollectionGroups",
+        "properties.size",
+        "properties.sku",
+        "properties.sku.tier",
+        "properties.threatIntelMode",
+        "properties.threatIntelWhitelist",
+        "properties.threatIntelWhitelist.fqdns",
+        "properties.threatIntelWhitelist.ipAddresses"
+      ],
+      "updated": "2026-07-18"
+    },
+    "microsoft.automation/automationaccounts": {
+      "paths": [
+        "properties.RegistrationUrl",
+        "properties.RuntimeConfiguration",
+        "properties.RuntimeConfiguration.powershell",
+        "properties.RuntimeConfiguration.powershell7",
+        "properties.RuntimeConfiguration.powershell72",
+        "properties.automationHybridServiceUrl",
+        "properties.creationTime",
+        "properties.disableLocalAuth",
+        "properties.encryption",
+        "properties.encryption.identity",
+        "properties.encryption.keySource",
+        "properties.lastModifiedBy",
+        "properties.lastModifiedTime",
+        "properties.privateEndpointConnections",
+        "properties.publicNetworkAccess",
+        "properties.sku",
+        "properties.sku.capacity",
+        "properties.sku.family",
+        "properties.sku.name",
+        "properties.state"
+      ],
+      "updated": "2026-08-03"
+    }
+  },
+  "queries": {
+    "microsoft.authorization/roleassignments": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.authorization/roleassignments'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      }
+    ],
+    "microsoft.operationalinsights/workspaces": [
+      {
+        "purpose": "Get microsoft.operationalinsights/workspaces resource details",
+        "query": "Resources\n        | where type contains 'microsoft.operationalinsights/workspaces' or name contains 'microsoft.operationalinsights/workspaces'\n        | project id, name, type, location, resourceGroup, subscriptionId, tags, sku, properties\n        | order by type asc",
+        "recorded": "2026-03-15"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.operationalinsights/workspaces'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      }
+    ],
+    "azure storage mover": [
+      {
+        "purpose": "Get Azure Storage Mover resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend primaryLocation = properties.primaryLocation\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, networkAcls\n        | order by name asc",
+        "recorded": "2026-03-15"
+      },
+      {
+        "purpose": "Get Azure Storage Mover resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend allowSharedKeyAccess = properties.allowSharedKeyAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend primaryLocation = properties.primaryLocation\n        | extend secondaryLocation = properties.secondaryLocation\n        | extend largeFileSharesState = properties.largeFileSharesState\n        | extend infrastructureEncryption = properties.encryption.requireInfrastructureEncryption\n        | extend keySource = properties.encryption.keySource\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, allowSharedKeyAccess,\n                  networkAcls, privateEndpoints, secondaryLocation,\n                  largeFileSharesState, infrastructureEncryption, keySource\n        | order by name asc",
+        "recorded": "2026-03-17"
+      },
+      {
+        "purpose": "Get Azure Storage Mover resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend allowSharedKeyAccess = properties.allowSharedKeyAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend primaryLocation = properties.primaryLocation\n        | extend secondaryLocation = properties.secondaryLocation\n        | extend largeFileSharesState = properties.largeFileSharesState\n        | extend infrastructureEncryption = properties.encryption.requireInfrastructureEncryption\n        | extend keySource = properties.encryption.keySource\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, allowSharedKeyAccess,\n                  networkAcls, publicNetworkAccess, privateEndpoints, secondaryLocation,\n                  largeFileSharesState, infrastructureEncryption, keySource\n        | order by name asc",
+        "recorded": "2026-08-09"
+      }
+    ],
+    "microsoft.network/privatednszones": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/privatednszones'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      }
+    ],
+    "microsoft.network/networkinterfaces": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/networkinterfaces'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      }
+    ],
+    "microsoft.storage/storageaccounts": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.storage/storageaccounts'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources | where type =~ 'microsoft.storage/storageaccounts' | extend skuName=tostring(sku.name) | project name, type, resourceGroup, subscriptionId, location, properties",
+        "recorded": "2026-03-17"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.storage/storageaccounts'\n| project name, type, resourceGroup, subscriptionId, location, properties",
+        "recorded": "2026-03-20"
+      }
+    ],
+    "microsoft.compute/virtualmachines": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.compute/virtualmachines'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.compute/virtualmachines'\n| extend vmSize = tostring(properties.hardwareProfile.vmSize)\n| extend series = case(\n    vmSize startswith 'Standard_A', 'Av2/Amv2 candidate',\n    vmSize startswith 'Standard_B', 'B-series candidate',\n    vmSize startswith 'Standard_D', 'D-series candidate',\n    vmSize startswith 'Standard_E', 'E-series candidate',\n    vmSize startswith 'Standard_F', 'F-series candidate',\n    vmSize startswith 'Standard_G', 'G-series candidate',\n    vmSize startswith 'Standard_L', 'L-series candidate',\n    'Other')\n| extend retirementScope = case(\n    vmSize matches regex '^Standard_A.*v2', '1-year RI retirement',\n    vmSize matches regex '^Standard_A.*mv2', '1-year RI retirement',\n    vmSize matches regex '^Standard_B.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_D.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Ds.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Dv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Dsv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Dv3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Dsv3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Ev3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Esv3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_F.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Fs.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Fsv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_G.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Ls.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Lsv2.*', '1-year RI retirement',\n    'Not listed in update')\n| project name, resourceGroup, subscriptionId, location, vmSize, series, retirementScope, id\n| order by retirementScope asc, vmSize asc, name asc\n| limit 200",
+        "recorded": "2026-08-01"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.compute/virtualmachines'\n| extend vmSize = tostring(properties.hardwareProfile.vmSize)\n| extend retirementScope = case(\n    vmSize startswith 'Standard_A' and vmSize contains 'v2', '1-year RI retirement',\n    vmSize startswith 'Standard_A' and vmSize contains 'mv2', '1-year RI retirement',\n    vmSize startswith 'Standard_B' and not(vmSize startswith 'Standard_Bs') and not(vmSize startswith 'Standard_Ba'), '1-year RI retirement',\n    vmSize startswith 'Standard_D' and not(vmSize contains 'v4') and not(vmSize contains 'v5') and not(vmSize contains 'v6') and not(vmSize contains 'v7') and not(vmSize contains 'v8') and not(vmSize contains 'v9'), '1-year RI retirement candidate',\n    vmSize startswith 'Standard_Dv2', '1-year RI retirement',\n    vmSize startswith 'Standard_Dsv2', '1-year RI retirement',\n    vmSize startswith 'Standard_Dv3', '1-year and 3-year RI retirement',\n    vmSize startswith 'Standard_Dsv3', '1-year and 3-year RI retirement',\n    vmSize startswith 'Standard_Ev3', '1-year and 3-year RI retirement',\n    vmSize startswith 'Standard_Esv3', '1-year and 3-year RI retirement',\n    vmSize startswith 'Standard_F' and not(vmSize startswith 'Standard_Fx'), '1-year RI retirement candidate',\n    vmSize startswith 'Standard_Fs', '1-year RI retirement',\n    vmSize startswith 'Standard_Fsv2', '1-year RI retirement',\n    vmSize startswith 'Standard_G', '1-year RI retirement',\n    vmSize startswith 'Standard_Ls' and not(vmSize startswith 'Standard_Lsv3') and not(vmSize startswith 'Standard_Lsv4'), '1-year RI retirement candidate',\n    vmSize startswith 'Standard_Lsv2', '1-year RI retirement',\n    'Not listed in update')\n| where retirementScope != 'Not listed in update'\n| project name, resourceGroup, subscriptionId, location, vmSize, retirementScope, id\n| order by location asc, vmSize asc, name asc\n| limit 200",
+        "recorded": "2026-08-01"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.compute/virtualmachines'\n| extend vmSize = tostring(properties.hardwareProfile.vmSize)\n| extend retirementScope = case(\n    vmSize matches regex '^Standard_A.*v2', '1-year RI retirement',\n    vmSize matches regex '^Standard_A.*mv2', '1-year RI retirement',\n    vmSize matches regex '^Standard_B.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Dv3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Dsv3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Ev3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Esv3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Dsv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Dv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Ds.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_D.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Fsv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Fs.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_F.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Gs.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_G.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Lsv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Ls.*', '1-year RI retirement',\n    'Not listed in update')\n| where retirementScope != 'Not listed in update'\n| project name, resourceGroup, subscriptionId, location, vmSize, retirementScope, id\n| order by location asc, vmSize asc, name asc\n| limit 200",
+        "recorded": "2026-08-01"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources\n| where type =~ 'microsoft.compute/virtualmachines'\n| extend vmSize = tostring(properties.hardwareProfile.vmSize)\n| extend securityType = tostring(properties.securityProfile.securityType)\n| where vmSize contains_cs '_cc_v5'\n| project name, resourceGroup, subscriptionId, location, vmSize, securityType, id\n| order by location asc, vmSize asc, name asc\n| limit 200",
+        "recorded": "2026-08-06"
+      }
+    ],
+    "microsoft.network/privateendpoints": [
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| extend privateLinkServiceConnections = properties.privateLinkServiceConnections\n| mv-expand conn = privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| where targetId contains 'Microsoft.Storage/storageAccounts'\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
+        "recorded": "2026-08-01"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| mv-expand conn = properties.privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
+        "recorded": "2026-08-01"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| mv-expand conn = properties.privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| where isnotempty(targetId)\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
+        "recorded": "2026-08-02"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| extend privateLinkServiceConnections = properties.privateLinkServiceConnections\n| mv-expand conn = privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
+        "recorded": "2026-08-06"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| extend privateLinkServiceConnections = properties.privateLinkServiceConnections\n| mv-expand conn = privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| where isnotempty(targetId)\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
+        "recorded": "2026-08-09"
+      }
+    ],
+    "microsoft.insights/diagnosticsettings": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.insights/diagnosticsettings'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      }
+    ],
+    "microsoft.keyvault/vaults": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.keyvault/vaults'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      }
+    ],
+    "microsoft.authorization/roledefinitions": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.authorization/roledefinitions'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      }
+    ],
+    "microsoft.managedidentity/userassignedidentities": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.managedidentity/userassignedidentities'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      }
+    ],
+    "microsoft.insights/actiongroups": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.insights/actiongroups'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-15"
+      }
+    ],
+    "log analytics": [
+      {
+        "purpose": "Get Log Analytics resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.OperationalInsights/workspaces'\n        | extend skuName = properties.sku.name\n        | extend retentionInDays = properties.retentionInDays\n        | extend dailyQuotaGb = properties.workspaceCapping.dailyQuotaGb\n        | project name, resourceGroup, subscriptionId, location, skuName, retentionInDays, dailyQuotaGb",
+        "recorded": "2026-03-15"
+      }
+    ],
+    "microsoft.network/privatednszones/virtualnetworklinks": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/privatednszones/virtualnetworklinks'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-16"
+      }
+    ],
+    "microsoft.network/virtualnetworks/subnets": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/virtualnetworks/subnets'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-16"
+      }
+    ],
+    "microsoft.authorization/policydefinitions": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.authorization/policydefinitions'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-16"
+      }
+    ],
+    "microsoft.resources/subscriptions/providers": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.resources/subscriptions/providers'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-16"
+      }
+    ],
+    "microsoft.insights/datacollectionendpoints": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.insights/datacollectionendpoints'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-16"
+      }
+    ],
+    "azure monitor logs": [
+      {
+        "purpose": "Get Azure Monitor Logs resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.OperationalInsights/workspaces'\n        | extend skuName = properties.sku.name\n        | extend retentionInDays = properties.retentionInDays\n        | extend dailyQuotaGb = properties.workspaceCapping.dailyQuotaGb\n        | project name, resourceGroup, subscriptionId, location, skuName, retentionInDays, dailyQuotaGb",
+        "recorded": "2026-03-16"
+      }
+    ],
+    "azure disk storage": [
+      {
+        "purpose": "Get Azure Disk Storage resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend primaryLocation = properties.primaryLocation\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, networkAcls\n        | order by name asc",
+        "recorded": "2026-03-16"
+      },
+      {
+        "purpose": "Get Azure Disk Storage resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend allowSharedKeyAccess = properties.allowSharedKeyAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend primaryLocation = properties.primaryLocation\n        | extend secondaryLocation = properties.secondaryLocation\n        | extend largeFileSharesState = properties.largeFileSharesState\n        | extend infrastructureEncryption = properties.encryption.requireInfrastructureEncryption\n        | extend keySource = properties.encryption.keySource\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, allowSharedKeyAccess,\n                  networkAcls, privateEndpoints, secondaryLocation,\n                  largeFileSharesState, infrastructureEncryption, keySource\n        | order by name asc",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "virtual machines": [
+      {
+        "purpose": "Get Virtual Machines resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Compute/virtualMachines'\n        | extend vmSize = properties.hardwareProfile.vmSize\n        | extend osType = properties.storageProfile.osDisk.osType\n        | extend osPublisher = properties.storageProfile.imageReference.publisher\n        | extend osOffer = properties.storageProfile.imageReference.offer\n        | extend osSku = properties.storageProfile.imageReference.sku\n        | extend provisioningState = properties.provisioningState\n        | extend licenseType = properties.licenseType\n        | project name, resourceGroup, subscriptionId, location, vmSize, osType, \n                  osPublisher, osOffer, osSku, provisioningState, licenseType, tags\n        | order by name asc",
+        "recorded": "2026-03-16"
+      },
+      {
+        "purpose": "Get Virtual Machines resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Compute/virtualMachines'\n        | extend vmSize = properties.hardwareProfile.vmSize\n        | extend osType = properties.storageProfile.osDisk.osType\n        | extend osPublisher = properties.storageProfile.imageReference.publisher\n        | extend osOffer = properties.storageProfile.imageReference.offer\n        | extend osSku = properties.storageProfile.imageReference.sku\n        | extend osVersion = properties.storageProfile.imageReference.version\n        | extend provisioningState = properties.provisioningState\n        | extend licenseType = properties.licenseType\n        | extend securityType = properties.securityProfile.securityType\n        | extend secureBootEnabled = properties.securityProfile.uefiSettings.secureBootEnabled\n        | extend vTpmEnabled = properties.securityProfile.uefiSettings.vTpmEnabled\n        | extend encryptionAtHost = properties.securityProfile.encryptionAtHost\n        | extend osDiskType = properties.storageProfile.osDisk.managedDisk.storageAccountType\n        | extend osDiskSizeGB = properties.storageProfile.osDisk.diskSizeGB\n        | extend dataDisksCount = array_length(properties.storageProfile.dataDisks)\n        | extend nicCount = array_length(properties.networkProfile.networkInterfaces)\n        | extend availabilityZone = zones[0]\n        | project name, resourceGroup, subscriptionId, location, vmSize, osType, \n                  osPublisher, osOffer, osSku, osVersion, provisioningState, licenseType,\n                  securityType, secureBootEnabled, vTpmEnabled, encryptionAtHost,\n                  osDiskType, osDiskSizeGB, dataDisksCount, nicCount, availabilityZone, tags\n        | order by name asc",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "microsoft.containerservice/managedclusters": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.containerservice/managedclusters'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-16"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.containerservice/managedclusters'\n| mv-expand agentPool = properties.agentPoolProfiles\n| project name, type, resourceGroup, subscriptionId, location, properties| limit 1000",
+        "recorded": "2026-03-17"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.containerservice/managedclusters'\n| extend kubernetesVersion = tostring(properties.kubernetesVersion)\n| extend privateCluster = tostring(properties.apiServerAccessProfile.enablePrivateCluster)\n| extend azureRBAC = tostring(properties.aadProfile.enableAzureRBAC)\n| extend networkPlugin = tostring(properties.networkProfile.networkPlugin)\n| extend networkPolicy = tostring(properties.networkProfile.networkPolicy)\n| extend networkDataplane = tostring(properties.networkProfile.networkDataplane)\n| project name, resourceGroup, subscriptionId, location, kubernetesVersion, privateCluster, azureRBAC, networkPlugin, networkPolicy, networkDataplane\n| limit 200",
+        "recorded": "2026-08-01"
+      }
+    ],
+    "microsoft.network/virtualnetworks": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/virtualnetworks'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-16"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/virtualnetworks'\n| project name, type, resourceGroup, subscriptionId, location, properties",
+        "recorded": "2026-04-18"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/virtualnetworks'\n| extend addressPrefixes = tostring(properties.addressSpace.addressPrefixes)\n| extend dnsServers = tostring(properties.dhcpOptions.dnsServers)\n| project name, resourceGroup, subscriptionId, location, addressPrefixes, dnsServers, id\n| limit 200",
+        "recorded": "2026-08-03"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/virtualnetworks'\n| mv-expand subnet = properties.subnets\n| extend subnetName = tostring(subnet.name)\n| extend subnetPrefixes = tostring(subnet.properties.addressPrefixes)\n| extend subnetPrefix = tostring(subnet.properties.addressPrefix)\n| extend privateEndpointNetworkPolicies = tostring(subnet.properties.privateEndpointNetworkPolicies)\n| project vnetName = name, resourceGroup, subscriptionId, location, subnetName, subnetPrefixes, subnetPrefix, privateEndpointNetworkPolicies\n| order by location asc, vnetName asc, subnetName asc\n| limit 500",
+        "recorded": "2026-08-09"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/virtualnetworks'\n| extend addressPrefixes = tostring(properties.addressSpace.addressPrefixes)\n| extend privateEndpointVNetPolicies = tostring(properties.privateEndpointVNetPolicies)\n| project name, resourceGroup, subscriptionId, location, addressPrefixes, privateEndpointVNetPolicies, id\n| order by location asc, name asc\n| limit 200",
+        "recorded": "2026-08-09"
+      }
+    ],
+    "microsoft.compute/disks": [
+      {
+        "purpose": "Get microsoft.compute/disks resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Compute/virtualMachines'\n        | extend vmSize = properties.hardwareProfile.vmSize\n        | extend osType = properties.storageProfile.osDisk.osType\n        | extend osPublisher = properties.storageProfile.imageReference.publisher\n        | extend osOffer = properties.storageProfile.imageReference.offer\n        | extend osSku = properties.storageProfile.imageReference.sku\n        | extend provisioningState = properties.provisioningState\n        | extend licenseType = properties.licenseType\n        | project name, resourceGroup, subscriptionId, location, vmSize, osType, \n                  osPublisher, osOffer, osSku, provisioningState, licenseType, tags\n        | order by name asc",
+        "recorded": "2026-03-16"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.compute/disks'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-16"
+      }
+    ],
+    "microsoft.compute/virtualmachines/extensions": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.compute/virtualmachines/extensions'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-16"
+      }
+    ],
+    "aks": [
+      {
+        "purpose": "Get AKS resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.ContainerService/managedClusters'\n        | extend kubernetesVersion = properties.kubernetesVersion\n        | extend currentKubernetesVersion = properties.currentKubernetesVersion\n        | extend powerState = properties.powerState.code\n        | extend provisioningState = properties.provisioningState\n        | extend nodeResourceGroup = properties.nodeResourceGroup\n        | extend networkPlugin = properties.networkProfile.networkPlugin\n        | extend networkPolicy = properties.networkProfile.networkPolicy\n        | extend networkDataplane = properties.networkProfile.networkDataplane\n        | extend loadBalancerSku = properties.networkProfile.loadBalancerSku\n        | extend serviceCidr = properties.networkProfile.serviceCidr\n        | extend dnsServiceIP = properties.networkProfile.dnsServiceIP\n        | extend outboundType = properties.networkProfile.outboundType\n        | extend agentPoolCount = array_length(properties.agentPoolProfiles)\n        | extend enableRBAC = properties.enableRBAC\n        | extend aadEnabled = isnotnull(properties.aadProfile)\n        | extend localAccountDisabled = properties.disableLocalAccounts\n        | extend autoUpgradeChannel = properties.autoUpgradeProfile.upgradeChannel\n        | extend nodeOsUpgradeChannel = properties.autoUpgradeProfile.nodeOSUpgradeChannel\n        | extend addonHttpRouting = properties.addonProfiles.httpApplicationRouting.enabled\n        | extend addonMonitoring = properties.addonProfiles.omsagent.enabled\n        | extend addonPolicy = properties.addonProfiles.azurepolicy.enabled\n        | extend addonKeyVaultCSI = properties.addonProfiles.azureKeyvaultSecretsProvider.enabled\n        | extend addonAppRouting = properties.addonProfiles.ingressApplicationGateway.enabled\n        | extend addonDefender = properties.securityProfile.defender.securityMonitoring.enabled\n        | extend addonWorkloadIdentity = properties.securityProfile.workloadIdentity.enabled\n        | extend addonImageCleaner = properties.securityProfile.imageCleaner.enabled\n        | extend privateFqdn = properties.privateFQDN\n        | extend apiServerAccessProfile = properties.apiServerAccessProfile.authorizedIPRanges\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, kubernetesVersion,\n                  currentKubernetesVersion, powerState, provisioningState,\n                  networkPlugin, networkPolicy, networkDataplane, loadBalancerSku,\n                  outboundType, agentPoolCount,\n                  enableRBAC, aadEnabled, localAccountDisabled,\n                  autoUpgradeChannel, nodeOsUpgradeChannel,\n                  addonHttpRouting, addonMonitoring, addonPolicy,\n                  addonKeyVaultCSI, addonAppRouting, addonDefender,\n                  addonWorkloadIdentity, addonImageCleaner,\n                  privateFqdn, skuTier",
+        "recorded": "2026-03-16"
+      }
+    ],
+    "storage": [
+      {
+        "purpose": "Get Storage resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend allowSharedKeyAccess = properties.allowSharedKeyAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend primaryLocation = properties.primaryLocation\n        | extend secondaryLocation = properties.secondaryLocation\n        | extend largeFileSharesState = properties.largeFileSharesState\n        | extend infrastructureEncryption = properties.encryption.requireInfrastructureEncryption\n        | extend keySource = properties.encryption.keySource\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, allowSharedKeyAccess,\n                  networkAcls, privateEndpoints, secondaryLocation,\n                  largeFileSharesState, infrastructureEncryption, keySource\n        | order by name asc",
+        "recorded": "2026-03-17"
+      },
+      {
+        "purpose": "Get Storage resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend allowSharedKeyAccess = properties.allowSharedKeyAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend primaryLocation = properties.primaryLocation\n        | extend secondaryLocation = properties.secondaryLocation\n        | extend largeFileSharesState = properties.largeFileSharesState\n        | extend infrastructureEncryption = properties.encryption.requireInfrastructureEncryption\n        | extend keySource = properties.encryption.keySource\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, allowSharedKeyAccess,\n                  networkAcls, publicNetworkAccess, privateEndpoints, secondaryLocation,\n                  largeFileSharesState, infrastructureEncryption, keySource\n        | order by name asc",
+        "recorded": "2026-07-24"
+      }
+    ],
+    "azure kubernetes service (aks)": [
+      {
+        "purpose": "Get Azure Kubernetes Service (AKS) resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.ContainerService/managedClusters'\n        | extend kubernetesVersion = properties.kubernetesVersion\n        | extend currentKubernetesVersion = properties.currentKubernetesVersion\n        | extend powerState = properties.powerState.code\n        | extend provisioningState = properties.provisioningState\n        | extend nodeResourceGroup = properties.nodeResourceGroup\n        | extend networkPlugin = properties.networkProfile.networkPlugin\n        | extend networkPolicy = properties.networkProfile.networkPolicy\n        | extend networkDataplane = properties.networkProfile.networkDataplane\n        | extend loadBalancerSku = properties.networkProfile.loadBalancerSku\n        | extend serviceCidr = properties.networkProfile.serviceCidr\n        | extend dnsServiceIP = properties.networkProfile.dnsServiceIP\n        | extend outboundType = properties.networkProfile.outboundType\n        | extend agentPoolCount = array_length(properties.agentPoolProfiles)\n        | extend enableRBAC = properties.enableRBAC\n        | extend aadEnabled = isnotnull(properties.aadProfile)\n        | extend localAccountDisabled = properties.disableLocalAccounts\n        | extend autoUpgradeChannel = properties.autoUpgradeProfile.upgradeChannel\n        | extend nodeOsUpgradeChannel = properties.autoUpgradeProfile.nodeOSUpgradeChannel\n        | extend addonHttpRouting = properties.addonProfiles.httpApplicationRouting.enabled\n        | extend addonMonitoring = properties.addonProfiles.omsagent.enabled\n        | extend addonPolicy = properties.addonProfiles.azurepolicy.enabled\n        | extend addonKeyVaultCSI = properties.addonProfiles.azureKeyvaultSecretsProvider.enabled\n        | extend addonAppRouting = properties.addonProfiles.ingressApplicationGateway.enabled\n        | extend addonDefender = properties.securityProfile.defender.securityMonitoring.enabled\n        | extend addonWorkloadIdentity = properties.securityProfile.workloadIdentity.enabled\n        | extend addonImageCleaner = properties.securityProfile.imageCleaner.enabled\n        | extend privateFqdn = properties.privateFQDN\n        | extend apiServerAccessProfile = properties.apiServerAccessProfile.authorizedIPRanges\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, kubernetesVersion,\n                  currentKubernetesVersion, powerState, provisioningState,\n                  networkPlugin, networkPolicy, networkDataplane, loadBalancerSku,\n                  outboundType, agentPoolCount,\n                  enableRBAC, aadEnabled, localAccountDisabled,\n                  autoUpgradeChannel, nodeOsUpgradeChannel,\n                  addonHttpRouting, addonMonitoring, addonPolicy,\n                  addonKeyVaultCSI, addonAppRouting, addonDefender,\n                  addonWorkloadIdentity, addonImageCleaner,\n                  privateFqdn, skuTier",
+        "recorded": "2026-03-17"
+      },
+      {
+        "purpose": "Get Azure Kubernetes Service (AKS) resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.ContainerService/managedClusters'\n        | extend kubernetesVersion = properties.kubernetesVersion\n        | extend currentKubernetesVersion = properties.currentKubernetesVersion\n        | extend powerState = properties.powerState.code\n        | extend provisioningState = properties.provisioningState\n        | extend nodeResourceGroup = properties.nodeResourceGroup\n        | extend networkPlugin = properties.networkProfile.networkPlugin\n        | extend networkPolicy = properties.networkProfile.networkPolicy\n        | extend networkDataplane = properties.networkProfile.networkDataplane\n        | extend advancedNetworkingObservability = properties.networkProfile.advancedNetworking.observability.enabled\n        | extend advancedNetworkingSecurity = properties.networkProfile.advancedNetworking.security.enabled\n        | extend loadBalancerSku = properties.networkProfile.loadBalancerSku\n        | extend serviceCidr = properties.networkProfile.serviceCidr\n        | extend dnsServiceIP = properties.networkProfile.dnsServiceIP\n        | extend outboundType = properties.networkProfile.outboundType\n        | extend agentPoolCount = array_length(properties.agentPoolProfiles)\n        | extend enableRBAC = properties.enableRBAC\n        | extend aadEnabled = isnotnull(properties.aadProfile)\n        | extend localAccountDisabled = properties.disableLocalAccounts\n        | extend autoUpgradeChannel = properties.autoUpgradeProfile.upgradeChannel\n        | extend nodeOsUpgradeChannel = properties.autoUpgradeProfile.nodeOSUpgradeChannel\n        | extend addonHttpRouting = properties.addonProfiles.httpApplicationRouting.enabled\n        | extend addonMonitoring = properties.addonProfiles.omsagent.enabled\n        | extend addonPolicy = properties.addonProfiles.azurepolicy.enabled\n        | extend addonKeyVaultCSI = properties.addonProfiles.azureKeyvaultSecretsProvider.enabled\n        | extend addonAppRouting = properties.addonProfiles.ingressApplicationGateway.enabled\n        | extend addonDefender = properties.securityProfile.defender.securityMonitoring.enabled\n        | extend addonWorkloadIdentity = properties.securityProfile.workloadIdentity.enabled\n        | extend addonImageCleaner = properties.securityProfile.imageCleaner.enabled\n        | extend privateFqdn = properties.privateFQDN\n        | extend apiServerAccessProfile = properties.apiServerAccessProfile.authorizedIPRanges\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, kubernetesVersion,\n                  currentKubernetesVersion, powerState, provisioningState,\n                  networkPlugin, networkPolicy, networkDataplane, loadBalancerSku,\n                  advancedNetworkingObservability, advancedNetworkingSecurity,\n                  outboundType, agentPoolCount,\n                  enableRBAC, aadEnabled, localAccountDisabled,\n                  autoUpgradeChannel, nodeOsUpgradeChannel,\n                  addonHttpRouting, addonMonitoring, addonPolicy,\n                  addonKeyVaultCSI, addonAppRouting, addonDefender,\n                  addonWorkloadIdentity, addonImageCleaner,\n                  privateFqdn, skuTier",
+        "recorded": "2026-07-24"
+      }
+    ],
+    "azure kubernetes service": [
+      {
+        "purpose": "Get Azure Kubernetes Service resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.ContainerService/managedClusters'\n        | extend kubernetesVersion = properties.kubernetesVersion\n        | extend currentKubernetesVersion = properties.currentKubernetesVersion\n        | extend powerState = properties.powerState.code\n        | extend provisioningState = properties.provisioningState\n        | extend nodeResourceGroup = properties.nodeResourceGroup\n        | extend networkPlugin = properties.networkProfile.networkPlugin\n        | extend networkPolicy = properties.networkProfile.networkPolicy\n        | extend networkDataplane = properties.networkProfile.networkDataplane\n        | extend loadBalancerSku = properties.networkProfile.loadBalancerSku\n        | extend serviceCidr = properties.networkProfile.serviceCidr\n        | extend dnsServiceIP = properties.networkProfile.dnsServiceIP\n        | extend outboundType = properties.networkProfile.outboundType\n        | extend agentPoolCount = array_length(properties.agentPoolProfiles)\n        | extend enableRBAC = properties.enableRBAC\n        | extend aadEnabled = isnotnull(properties.aadProfile)\n        | extend localAccountDisabled = properties.disableLocalAccounts\n        | extend autoUpgradeChannel = properties.autoUpgradeProfile.upgradeChannel\n        | extend nodeOsUpgradeChannel = properties.autoUpgradeProfile.nodeOSUpgradeChannel\n        | extend addonHttpRouting = properties.addonProfiles.httpApplicationRouting.enabled\n        | extend addonMonitoring = properties.addonProfiles.omsagent.enabled\n        | extend addonPolicy = properties.addonProfiles.azurepolicy.enabled\n        | extend addonKeyVaultCSI = properties.addonProfiles.azureKeyvaultSecretsProvider.enabled\n        | extend addonAppRouting = properties.addonProfiles.ingressApplicationGateway.enabled\n        | extend addonDefender = properties.securityProfile.defender.securityMonitoring.enabled\n        | extend addonWorkloadIdentity = properties.securityProfile.workloadIdentity.enabled\n        | extend addonImageCleaner = properties.securityProfile.imageCleaner.enabled\n        | extend privateFqdn = properties.privateFQDN\n        | extend apiServerAccessProfile = properties.apiServerAccessProfile.authorizedIPRanges\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, kubernetesVersion,\n                  currentKubernetesVersion, powerState, provisioningState,\n                  networkPlugin, networkPolicy, networkDataplane, loadBalancerSku,\n                  outboundType, agentPoolCount,\n                  enableRBAC, aadEnabled, localAccountDisabled,\n                  autoUpgradeChannel, nodeOsUpgradeChannel,\n                  addonHttpRouting, addonMonitoring, addonPolicy,\n                  addonKeyVaultCSI, addonAppRouting, addonDefender,\n                  addonWorkloadIdentity, addonImageCleaner,\n                  privateFqdn, skuTier",
+        "recorded": "2026-03-17"
+      },
+      {
+        "purpose": "Get Azure Kubernetes Service resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.ContainerService/managedClusters'\n        | extend kubernetesVersion = properties.kubernetesVersion\n        | extend currentKubernetesVersion = properties.currentKubernetesVersion\n        | extend powerState = properties.powerState.code\n        | extend provisioningState = properties.provisioningState\n        | extend nodeResourceGroup = properties.nodeResourceGroup\n        | extend networkPlugin = properties.networkProfile.networkPlugin\n        | extend networkPolicy = properties.networkProfile.networkPolicy\n        | extend networkDataplane = properties.networkProfile.networkDataplane\n        | extend advancedNetworkingObservability = properties.networkProfile.advancedNetworking.observability.enabled\n        | extend advancedNetworkingSecurity = properties.networkProfile.advancedNetworking.security.enabled\n        | extend loadBalancerSku = properties.networkProfile.loadBalancerSku\n        | extend serviceCidr = properties.networkProfile.serviceCidr\n        | extend dnsServiceIP = properties.networkProfile.dnsServiceIP\n        | extend outboundType = properties.networkProfile.outboundType\n        | extend agentPoolCount = array_length(properties.agentPoolProfiles)\n        | extend enableRBAC = properties.enableRBAC\n        | extend aadEnabled = isnotnull(properties.aadProfile)\n        | extend localAccountDisabled = properties.disableLocalAccounts\n        | extend autoUpgradeChannel = properties.autoUpgradeProfile.upgradeChannel\n        | extend nodeOsUpgradeChannel = properties.autoUpgradeProfile.nodeOSUpgradeChannel\n        | extend addonHttpRouting = properties.addonProfiles.httpApplicationRouting.enabled\n        | extend addonMonitoring = properties.addonProfiles.omsagent.enabled\n        | extend addonPolicy = properties.addonProfiles.azurepolicy.enabled\n        | extend addonKeyVaultCSI = properties.addonProfiles.azureKeyvaultSecretsProvider.enabled\n        | extend addonAppRouting = properties.addonProfiles.ingressApplicationGateway.enabled\n        | extend addonDefender = properties.securityProfile.defender.securityMonitoring.enabled\n        | extend addonWorkloadIdentity = properties.securityProfile.workloadIdentity.enabled\n        | extend addonImageCleaner = properties.securityProfile.imageCleaner.enabled\n        | extend privateFqdn = properties.privateFQDN\n        | extend apiServerAccessProfile = properties.apiServerAccessProfile.authorizedIPRanges\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, kubernetesVersion,\n                  currentKubernetesVersion, powerState, provisioningState,\n                  networkPlugin, networkPolicy, networkDataplane, loadBalancerSku,\n                  advancedNetworkingObservability, advancedNetworkingSecurity,\n                  outboundType, agentPoolCount,\n                  enableRBAC, aadEnabled, localAccountDisabled,\n                  autoUpgradeChannel, nodeOsUpgradeChannel,\n                  addonHttpRouting, addonMonitoring, addonPolicy,\n                  addonKeyVaultCSI, addonAppRouting, addonDefender,\n                  addonWorkloadIdentity, addonImageCleaner,\n                  privateFqdn, skuTier",
+        "recorded": "2026-07-24"
+      }
+    ],
+    "virtual networks": [
+      {
+        "purpose": "Get Virtual Networks resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Network/virtualNetworks'\n        | extend addressPrefixes = properties.addressSpace.addressPrefixes\n        | extend subnetCount = array_length(properties.subnets)\n        | extend enableDdosProtection = properties.enableDdosProtection\n        | project name, resourceGroup, subscriptionId, location, addressPrefixes, subnetCount, \n                  enableDdosProtection, provisioningState = properties.provisioningState",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "virtual network": [
+      {
+        "purpose": "Get virtual network resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Network/virtualNetworks'\n        | extend addressPrefixes = properties.addressSpace.addressPrefixes\n        | extend subnetCount = array_length(properties.subnets)\n        | extend enableDdosProtection = properties.enableDdosProtection\n        | project name, resourceGroup, subscriptionId, location, addressPrefixes, subnetCount, \n                  enableDdosProtection, provisioningState = properties.provisioningState",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "azure monitor": [
+      {
+        "purpose": "Get Azure Monitor resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.OperationalInsights/workspaces'\n        | extend skuName = properties.sku.name\n        | extend retentionInDays = properties.retentionInDays\n        | extend dailyQuotaGb = properties.workspaceCapping.dailyQuotaGb\n        | project name, resourceGroup, subscriptionId, location, skuName, retentionInDays, dailyQuotaGb",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "container apps": [
+      {
+        "purpose": "Get Container Apps resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.App/containerApps'\n        | extend managedEnv = tostring(split(properties.managedEnvironmentId, '/')[-1])\n        | extend runningStatus = properties.runningStatus\n        | extend provisioningState = properties.provisioningState\n        | extend ingressEnabled = properties.configuration.ingress.external\n        | extend ingressTargetPort = properties.configuration.ingress.targetPort\n        | extend ingressTransport = properties.configuration.ingress.transport\n        | extend minReplicas = properties.template.scale.minReplicas\n        | extend maxReplicas = properties.template.scale.maxReplicas\n        | extend scaleRuleCount = array_length(properties.template.scale.rules)\n        | extend daprEnabled = properties.configuration.dapr.enabled\n        | extend containerCount = array_length(properties.template.containers)\n        | extend revisionMode = properties.configuration.activeRevisionsMode\n        | project name, resourceGroup, subscriptionId, location, managedEnv, runningStatus,\n                  provisioningState, ingressEnabled, ingressTargetPort, ingressTransport,\n                  minReplicas, maxReplicas, scaleRuleCount, daprEnabled,\n                  containerCount, revisionMode",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "azure container registry": [
+      {
+        "purpose": "Get Azure Container Registry resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.ContainerRegistry/registries'\n        | extend skuName = sku.name\n        | extend adminEnabled = properties.adminUserEnabled\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend zoneRedundancy = properties.zoneRedundancy\n        | project name, resourceGroup, subscriptionId, location, skuName, adminEnabled, \n                  publicNetworkAccess, zoneRedundancy",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "vnet": [
+      {
+        "purpose": "Get VNet resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Network/virtualNetworks'\n        | extend addressPrefixes = properties.addressSpace.addressPrefixes\n        | extend subnetCount = array_length(properties.subnets)\n        | extend enableDdosProtection = properties.enableDdosProtection\n        | project name, resourceGroup, subscriptionId, location, addressPrefixes, subnetCount, \n                  enableDdosProtection, provisioningState = properties.provisioningState",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "<resource_type_from_task_3>": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ '<resource_type_from_task_3>'\n| project name, type, resourceGroup, subscriptionId, location, properties| limit 100",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "cognitive services": [
+      {
+        "purpose": "Get Cognitive Services resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.CognitiveServices/accounts'\n        | extend skuName = tostring(sku.name)\n        | extend skuTier = tostring(sku.tier)\n        | extend publicNetworkAccess = tostring(properties.publicNetworkAccess)\n        | extend customSubDomainName = tostring(properties.customSubDomainName)\n        | project name, resourceGroup, subscriptionId, location, kind, skuName, skuTier,\n                  publicNetworkAccess, customSubDomainName",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "cosmos db": [
+      {
+        "purpose": "Get Cosmos DB resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.DocumentDB/databaseAccounts'\n        | extend apiKind = kind\n        | extend consistencyLevel = properties.consistencyPolicy.defaultConsistencyLevel\n        | extend enableMultipleWriteLocations = properties.enableMultipleWriteLocations\n        | extend enableAutomaticFailover = properties.enableAutomaticFailover\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | project name, resourceGroup, subscriptionId, location, apiKind, consistencyLevel, \n                  enableMultipleWriteLocations, enableAutomaticFailover, publicNetworkAccess",
+        "recorded": "2026-03-17"
+      },
+      {
+        "purpose": "Get Cosmos DB resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.DocumentDB/databaseAccounts'\n        | extend apiKind = kind\n        | extend consistencyLevel = properties.consistencyPolicy.defaultConsistencyLevel\n        | extend enableMultipleWriteLocations = properties.enableMultipleWriteLocations\n        | extend enableAutomaticFailover = properties.enableAutomaticFailover\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend backupPolicyType = properties.backupPolicy.type\n        | extend enableAnalyticalStorage = properties.enableAnalyticalStorage\n        | extend disableLocalAuth = properties.disableLocalAuth\n        | project name, resourceGroup, subscriptionId, location, apiKind, consistencyLevel, \n                  enableMultipleWriteLocations, enableAutomaticFailover, publicNetworkAccess,\n                  backupPolicyType, enableAnalyticalStorage, disableLocalAuth",
+        "recorded": "2026-08-01"
+      }
+    ],
+    "microsoft.containerservice/managedclusters/agentpools": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.containerservice/managedclusters/agentpools'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-17"
+      }
+    ],
+    "microsoft.network/applicationgatewaywebapplicationfirewallpolicies": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/applicationgatewaywebapplicationfirewallpolicies'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-03-18"
+      }
+    ],
+    "disks": [
+      {
+        "purpose": "Get Disks resource details",
+        "query": "Resources\n        | where type contains 'Disks' or name contains 'Disks'\n        | project id, name, type, location, resourceGroup, subscriptionId, tags, sku, properties\n        | order by type asc",
+        "recorded": "2026-03-19"
+      }
+    ],
+    "microsoft.network/routetables": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/routetables'\n| project name, type, resourceGroup, subscriptionId, location, properties",
+        "recorded": "2026-04-18"
+      }
+    ],
+    "microsoft.resourcehealth/events": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.resourcehealth/events'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-04-26"
+      }
+    ],
+    "azure cosmos db": [
+      {
+        "purpose": "Get Azure Cosmos DB resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.DocumentDB/databaseAccounts'\n        | extend apiKind = kind\n        | extend consistencyLevel = properties.consistencyPolicy.defaultConsistencyLevel\n        | extend enableMultipleWriteLocations = properties.enableMultipleWriteLocations\n        | extend enableAutomaticFailover = properties.enableAutomaticFailover\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | project name, resourceGroup, subscriptionId, location, apiKind, consistencyLevel, \n                  enableMultipleWriteLocations, enableAutomaticFailover, publicNetworkAccess",
+        "recorded": "2026-04-26"
+      },
+      {
+        "purpose": "Get Azure Cosmos DB resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.DocumentDB/databaseAccounts'\n        | extend apiKind = kind\n        | extend consistencyLevel = properties.consistencyPolicy.defaultConsistencyLevel\n        | extend enableMultipleWriteLocations = properties.enableMultipleWriteLocations\n        | extend enableAutomaticFailover = properties.enableAutomaticFailover\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend backupPolicyType = properties.backupPolicy.type\n        | extend enableAnalyticalStorage = properties.enableAnalyticalStorage\n        | extend disableLocalAuth = properties.disableLocalAuth\n        | project name, resourceGroup, subscriptionId, location, apiKind, consistencyLevel, \n                  enableMultipleWriteLocations, enableAutomaticFailover, publicNetworkAccess,\n                  backupPolicyType, enableAnalyticalStorage, disableLocalAuth",
+        "recorded": "2026-08-01"
+      }
+    ],
+    "automation": [
+      {
+        "purpose": "Get Automation resource details",
+        "query": "Resources\n        | where type contains 'Automation' or name contains 'Automation'\n        | project id, name, type, location, resourceGroup, subscriptionId, tags, sku, properties\n        | order by type asc",
+        "recorded": "2026-07-14"
+      }
+    ],
+    "microsoft.automation/automationaccounts/runbooks": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.automation/automationaccounts/runbooks'\n| project name, type, resourceGroup, subscriptionId, location, sku, properties\n| limit 100",
+        "recorded": "2026-07-14"
+      }
+    ],
+    "public ip": [
+      {
+        "purpose": "Get Public IP resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Network/publicIPAddresses'\n        | extend ipAddress = properties.ipAddress\n        | extend allocationMethod = properties.publicIPAllocationMethod\n        | extend ipVersion = properties.publicIPAddressVersion\n        | extend skuName = sku.name\n        | project name, resourceGroup, subscriptionId, location, ipAddress, allocationMethod, \n                  ipVersion, skuName",
+        "recorded": "2026-07-24"
+      }
+    ],
+    "microsoft.documentdb/databaseaccounts": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n        | where type =~ 'Microsoft.DocumentDB/databaseAccounts'\n        | extend apiKind = kind\n        | extend consistencyLevel = properties.consistencyPolicy.defaultConsistencyLevel\n        | extend enableMultipleWriteLocations = properties.enableMultipleWriteLocations\n        | extend enableAutomaticFailover = properties.enableAutomaticFailover\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend backupPolicyType = properties.backupPolicy.type\n        | extend enableAnalyticalStorage = properties.enableAnalyticalStorage\n        | extend disableLocalAuth = properties.disableLocalAuth\n        | project name, resourceGroup, subscriptionId, location, apiKind, consistencyLevel, \n                  enableMultipleWriteLocations, enableAutomaticFailover, publicNetworkAccess,\n                  backupPolicyType, enableAnalyticalStorage, disableLocalAuth",
+        "recorded": "2026-08-01"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.documentdb/databaseaccounts'\n| extend apiTypes = tostring(properties.EnabledApiTypes)\n| extend backupType = tostring(properties.backupPolicy.type)\n| extend analyticalStorage = tostring(properties.enableAnalyticalStorage)\n| extend disableLocalAuth = tostring(properties.disableLocalAuth)\n| extend multiWrite = tostring(properties.enableMultipleWriteLocations)\n| extend autoFailover = tostring(properties.enableAutomaticFailover)\n| project name, resourceGroup, subscriptionId, location, apiTypes, backupType, analyticalStorage, disableLocalAuth, multiWrite, autoFailover, id\n| order by location asc, name asc",
+        "recorded": "2026-08-01"
+      }
+    ],
+    "microsoft.cognitiveservices/accounts": [
+      {
+        "purpose": "Get microsoft.cognitiveservices/accounts resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.CognitiveServices/accounts'\n        | extend skuName = tostring(sku.name)\n        | extend skuTier = tostring(sku.tier)\n        | extend publicNetworkAccess = tostring(properties.publicNetworkAccess)\n        | extend customSubDomainName = tostring(properties.customSubDomainName)\n        | project name, resourceGroup, subscriptionId, location, kind, skuName, skuTier,\n                  publicNetworkAccess, customSubDomainName",
+        "recorded": "2026-08-01"
+      }
+    ],
+    "azure ai services": [
+      {
+        "purpose": "Get Azure AI Services resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.CognitiveServices/accounts'\n        | extend skuName = tostring(sku.name)\n        | extend skuTier = tostring(sku.tier)\n        | extend publicNetworkAccess = tostring(properties.publicNetworkAccess)\n        | extend customSubDomainName = tostring(properties.customSubDomainName)\n        | project name, resourceGroup, subscriptionId, location, kind, skuName, skuTier,\n                  publicNetworkAccess, customSubDomainName",
+        "recorded": "2026-08-01"
+      }
+    ],
+    "microsoft cognitive services": [
+      {
+        "purpose": "Get Microsoft Cognitive Services resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.CognitiveServices/accounts'\n        | extend skuName = tostring(sku.name)\n        | extend skuTier = tostring(sku.tier)\n        | extend publicNetworkAccess = tostring(properties.publicNetworkAccess)\n        | extend customSubDomainName = tostring(properties.customSubDomainName)\n        | project name, resourceGroup, subscriptionId, location, kind, skuName, skuTier,\n                  publicNetworkAccess, customSubDomainName",
+        "recorded": "2026-08-01"
+      }
+    ],
+    "virtualnetworks": [
+      {
+        "purpose": "Get virtualnetworks resource details",
+        "query": "Resources\n        | where type contains 'virtualnetworks' or name contains 'virtualnetworks'\n        | project id, name, type, location, resourceGroup, subscriptionId, tags, sku, properties\n        | order by type asc",
+        "recorded": "2026-08-03"
+      }
+    ],
+    "key vault": [
+      {
+        "purpose": "Get Key Vault resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.KeyVault/vaults'\n        | extend skuName = properties.sku.name\n        | extend enableSoftDelete = properties.enableSoftDelete\n        | extend softDeleteRetentionInDays = properties.softDeleteRetentionInDays\n        | extend enablePurgeProtection = properties.enablePurgeProtection\n        | extend enableRbacAuthorization = properties.enableRbacAuthorization\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend networkDefaultAction = properties.networkAcls.defaultAction\n        | project name, resourceGroup, subscriptionId, location, skuName, enableSoftDelete,\n                  softDeleteRetentionInDays, enablePurgeProtection, enableRbacAuthorization,\n                  publicNetworkAccess, privateEndpoints, networkDefaultAction",
+        "recorded": "2026-08-03"
+      }
+    ],
+    "storageaccounts": [
+      {
+        "purpose": "Get storageaccounts resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend allowSharedKeyAccess = properties.allowSharedKeyAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend primaryLocation = properties.primaryLocation\n        | extend secondaryLocation = properties.secondaryLocation\n        | extend largeFileSharesState = properties.largeFileSharesState\n        | extend infrastructureEncryption = properties.encryption.requireInfrastructureEncryption\n        | extend keySource = properties.encryption.keySource\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, allowSharedKeyAccess,\n                  networkAcls, publicNetworkAccess, privateEndpoints, secondaryLocation,\n                  largeFileSharesState, infrastructureEncryption, keySource\n        | order by name asc",
+        "recorded": "2026-08-06"
+      }
+    ],
+    "microsoft.network/virtualnetworkgateways": [
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources\n| where type =~ 'microsoft.network/virtualnetworkgateways'\n| extend gatewayType = tostring(properties.gatewayType)\n| extend vpnType = tostring(properties.vpnType)\n| extend activeActive = tostring(properties.activeActive)\n| extend enableBgp = tostring(properties.enableBgp)\n| extend skuName = tostring(sku.name)\n| summarize count() by gatewayType, vpnType, activeActive, enableBgp, skuName\n| order by count_ desc\n| limit 200",
+        "recorded": "2026-08-09"
+      }
+    ],
+    "storage mover": [
+      {
+        "purpose": "Get Storage Mover resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend allowSharedKeyAccess = properties.allowSharedKeyAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend primaryLocation = properties.primaryLocation\n        | extend secondaryLocation = properties.secondaryLocation\n        | extend largeFileSharesState = properties.largeFileSharesState\n        | extend infrastructureEncryption = properties.encryption.requireInfrastructureEncryption\n        | extend keySource = properties.encryption.keySource\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, allowSharedKeyAccess,\n                  networkAcls, publicNetworkAccess, privateEndpoints, secondaryLocation,\n                  largeFileSharesState, infrastructureEncryption, keySource\n        | order by name asc",
+        "recorded": "2026-08-09"
+      }
+    ]
+  },
+  "failed_queries": [
+    {
+      "query": "bad query",
+      "error": "InvalidQuery: persistent error",
+      "recorded": "2026-03-19 22:43"
+    },
+    {
+      "query": "Resources\n| where type =~ 'microsoft.containerservice/managedclusters'\n| mv-expand agentPool = properties.agentPoolProfiles\n| extend poolName = tostring(agentPool.name)\n| extend osType = tostring(agentPool.osType)\n| extend osSKU = tostring(agentPool.osSKU)\n| extend vmSize = tostring(agentPool.vmSize)\n| extend count = tostring(agentPool.count)\n| extend enableAutoScaling = tostring(agentPool.enableAutoScaling)\n| extend minCount = tostring(agentPool.minCount)\n| extend maxCount = tostring(agentPool.maxCount)\n| extend mode = tostring(agentPool.mode)\n| project clusterName=name, resourceGroup, subscriptionId, location, poolName, mode, osType, osSKU, vmSize, count, enableAutoScaling, minCount, maxCount, id\n| limit 1000",
+      "error": "(BadRequest) Please provide below info when asking for support: timestamp = 2026-08-03T04:25:23.9771666Z, correlationId = a70a76b7-6fbe-4deb-9a95-89c1ef84ce51.\nCode: BadRequest\nMessage: Please provide below info when asking for support: timestamp = 2026-08-03T04:25:23.9771666Z, correlationId = a70a7",
+      "recorded": "2026-08-03 13:25"
+    },
+    {
+      "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'azurefirewalls' | project name, resourceGroup, subscriptionId, targetId",
+      "error": "None",
+      "recorded": "2026-08-06 19:05"
+    },
+    {
+      "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'privateendpoints' | project name, resourceGroup, subscriptionId, targetId",
+      "error": "('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))",
+      "recorded": "2026-08-09 09:48"
+    },
+    {
+      "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'virtualnetworks' | project name, resourceGroup, subscriptionId, targetId",
+      "error": "('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))",
+      "recorded": "2026-08-09 09:49"
+    }
+  ]
+}

@@ -1,0 +1,93 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Example parameters for infra/azbrief-enterprise-deploy.json. Copy, fill in, and deploy with: az deployment group create -g <rg> --template-file infra/azbrief-enterprise-deploy.json --parameters @infra/azbrief-enterprise.parameters.example.json"
+  },
+  "parameters": {
+    "baseName": {
+      "value": "azbrief"
+    },
+    "location": {
+      "value": "koreacentral"
+    },
+    "foundryLocation": {
+      "value": "koreacentral"
+    },
+    "modelDeploymentName": {
+      "value": "gpt-4o"
+    },
+    "modelName": {
+      "value": "gpt-4o"
+    },
+    "modelCapacity": {
+      "value": 30
+    },
+    "emailDataLocation": {
+      "value": "Korea"
+    },
+    "emailRecipientAddress": {
+      "value": "admin@your-company.com"
+    },
+    "subscribers": {
+      "value": "[{\"email\":\"admin@your-company.com\",\"name\":\"Admin\",\"role\":\"Cloud Architect\",\"language\":\"ko\"}]"
+    },
+    "containerImage": {
+      "value": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+    },
+    "minReplicas": {
+      "value": 1
+    },
+    "maxReplicas": {
+      "value": 3
+    },
+    "allowedIpRanges": {
+      "value": []
+    },
+    "scheduleCronExpression": {
+      "value": "0 2 * * *"
+    },
+    "jobReplicaTimeoutSeconds": {
+      "value": 43200
+    },
+    "networkIsolationMode": {
+      "value": "vnetInjection"
+    },
+    "existingVnetResourceId": {
+      "value": ""
+    },
+    "vnetAddressPrefix": {
+      "value": "10.60.0.0/16"
+    },
+    "agentSubnetPrefix": {
+      "value": "10.60.0.0/24"
+    },
+    "containerAppSubnetPrefix": {
+      "value": "10.60.1.0/24"
+    },
+    "privateEndpointSubnetPrefix": {
+      "value": "10.60.2.0/27"
+    },
+    "internalIngressOnly": {
+      "value": false
+    },
+    "perimeterAccessMode": {
+      "value": "Learning"
+    },
+    "perimeterInboundIpRanges": {
+      "value": []
+    },
+    "adminEntraClientId": {
+      "value": ""
+    },
+    "adminEntraClientSecret": {
+      "value": ""
+    },
+    "adminAllowedPrincipals": {
+      "value": ""
+    },
+    "enableKeyVaultPurgeProtection": {
+      "value": false
+    }
+  }
+}

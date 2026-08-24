@@ -1,0 +1,83 @@
+# CI pipeline: lint, type check, test, import check
+name: CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - "infra/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "scripts/**"
+      - "requirements.txt"
+      - "pyproject.toml"
+      - "infra/**"
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install black isort flake8 mypy pytest pytest-asyncio pytest-cov
+
+      - name: Black formatting check
+        run: black --check --diff src/ tests/ scripts/
+
+      - name: isort import order check
+        run: isort --check-only --diff src/ tests/ scripts/
+
+      - name: Flake8 lint
+        run: flake8 src/ tests/ scripts/
+
+      - name: mypy type check
+        run: mypy src/ --ignore-missing-imports --no-error-summary || true
+
+      - name: Import check (must pass)
+        run: python -c "import src"
+
+      - name: Run tests with coverage
+        env:
+          AZURE_TENANT_ID: "00000000-0000-0000-0000-000000000000"
+          AZBRIEF_VERBOSE: "false"
+        run: pytest tests/ -v --tb=short -x --cov=src --cov-report=term-missing --cov-fail-under=40
+
+  bicep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # The Deploy button points at the compiled JSON, so a Bicep edit that was
+      # never compiled would ship the previous topology to every new deployment.
+      - name: Compiled ARM template matches the Bicep source
+        run: |
+          az bicep install
+          az bicep build --file infra/enterprise/main.bicep --outfile /tmp/compiled.json
+          if ! diff -q /tmp/compiled.json infra/azbrief-enterprise-deploy.json >/dev/null; then
+            echo "::error::infra/azbrief-enterprise-deploy.json is stale. Run:"
+            echo "  az bicep build --file infra/enterprise/main.bicep \\"
+            echo "    --outfile infra/azbrief-enterprise-deploy.json"
+            diff /tmp/compiled.json infra/azbrief-enterprise-deploy.json | head -40
+            exit 1
+          fi

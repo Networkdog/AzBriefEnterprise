@@ -1,0 +1,173 @@
+name: Deploy to Container App
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: false
+        type: choice
+        options:
+          - dev
+          - prod
+        default: dev
+      image_tag:
+        description: 'Docker image tag (default: git SHA)'
+        required: false
+        type: string
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'requirements.txt'
+      - 'Dockerfile'
+      - '.github/workflows/deploy-container-app.yml'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  IMAGE_NAME: azbrief
+
+jobs:
+  check-secrets:
+    runs-on: ubuntu-latest
+    outputs:
+      has_secrets: ${{ steps.check.outputs.has_secrets }}
+    steps:
+      - name: Check Container App secrets
+        id: check
+        run: |
+          if [ -n "$ACR_NAME" ] && [ -n "$CONTAINER_APP_NAME" ]; then
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+            echo "Container App secrets detected — workflow will proceed."
+          else
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping — ACR_NAME or CONTAINER_APP_NAME secret not configured."
+          fi
+        env:
+          ACR_NAME: ${{ secrets.ACR_NAME }}
+          CONTAINER_APP_NAME: ${{ secrets.CONTAINER_APP_NAME }}
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: check-secrets
+    if: needs.check-secrets.outputs.has_secrets == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+      full_image: ${{ steps.meta.outputs.full_image }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to ACR
+        run: |
+          az acr login --name "${{ secrets.ACR_NAME }}"
+
+      - name: Determine image tag
+        id: meta
+        run: |
+          TAG="${{ inputs.image_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG="${GITHUB_SHA::8}"
+          fi
+          FULL_IMAGE="${{ secrets.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${TAG}"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "full_image=${FULL_IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "Image: ${FULL_IMAGE}"
+
+      - name: Build and push Docker image
+        run: |
+          docker build \
+            --tag "${{ steps.meta.outputs.full_image }}" \
+            --tag "${{ secrets.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest" \
+            --label "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            .
+          docker push "${{ steps.meta.outputs.full_image }}"
+          docker push "${{ secrets.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest"
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [check-secrets, build-and-push]
+    if: needs.check-secrets.outputs.has_secrets == 'true'
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      ENVIRONMENT: ${{ inputs.environment || 'dev' }}
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Roll out the image
+        run: |
+          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
+          CONTAINER_APP_NAME="${{ secrets.CONTAINER_APP_NAME }}"
+          SCHEDULER_JOB_NAME="${{ secrets.SCHEDULER_JOB_NAME }}"
+          FULL_IMAGE="${{ needs.build-and-push.outputs.full_image }}"
+
+          # The ARM template owns creation, identity, networking and every secret
+          # reference. CI only moves the image forward, so a redeploy can never
+          # silently drop a setting the template configured.
+          az containerapp update \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$FULL_IMAGE"
+
+          # The scheduler job runs the SAME image with a different entry point.
+          # Skipping it here would leave the nightly digest on the old build.
+          if [ -z "$SCHEDULER_JOB_NAME" ]; then
+            SCHEDULER_JOB_NAME="caj-${CONTAINER_APP_NAME#ca-}"
+            echo "::notice::SCHEDULER_JOB_NAME not set — inferring $SCHEDULER_JOB_NAME"
+          fi
+          if az containerapp job show --name "$SCHEDULER_JOB_NAME" \
+               --resource-group "$RESOURCE_GROUP" --output none 2>/dev/null; then
+            az containerapp job update \
+              --name "$SCHEDULER_JOB_NAME" \
+              --resource-group "$RESOURCE_GROUP" \
+              --image "$FULL_IMAGE"
+          else
+            echo "::warning::Scheduler job $SCHEDULER_JOB_NAME not found — \
+              the nightly digest still runs the previous image."
+          fi
+
+      - name: Verify deployment
+        run: |
+          RESOURCE_GROUP="${{ secrets.AZURE_RESOURCE_GROUP }}"
+          CONTAINER_APP_NAME="${{ secrets.CONTAINER_APP_NAME }}"
+
+          FQDN=$(az containerapp show \
+            --name "$CONTAINER_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query "properties.configuration.ingress.fqdn" \
+            --output tsv)
+
+          echo "Container App URL: https://${FQDN}"
+
+          # Wait for deployment to stabilize
+          sleep 15
+
+          # Health check
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "https://${FQDN}/health" || echo "000")
+          if [ "$STATUS" = "200" ]; then
+            echo "Health check passed (HTTP $STATUS)"
+          else
+            echo "::warning::Health check returned HTTP $STATUS — deployment may still be starting"
+          fi
