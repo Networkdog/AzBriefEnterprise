@@ -28,6 +28,10 @@ import argparse
 import sys
 from pathlib import Path
 
+# Agent instructions contain characters the Windows console code page cannot encode.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent.foundry_backend import STAGE_PROMPTS  # noqa: E402
