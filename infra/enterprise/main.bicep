@@ -295,6 +295,7 @@ var roleIds = {
   reader: 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
   acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
   storageBlobDataContributor: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+  monitoringMetricsPublisher: '3913510d-42f4-4e42-8a64-420c390055eb'
 }
 
 var hasRegistry = !empty(containerRegistryServer)
@@ -1230,6 +1231,22 @@ resource resourceGroupReaderAssignment 'Microsoft.Authorization/roleAssignments@
   name: guid(resourceGroup().id, managedIdentity.id, roleIds.reader)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleIds.reader)
+    principalId: managedIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+// The component is created with local auth disabled, so the connection string
+// alone cannot publish. Without this the exporter retries 'Unauthorized'
+// indefinitely and floods the container log.
+resource monitoringMetricsPublisherAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: appInsights
+  name: guid(appInsights.id, managedIdentity.id, roleIds.monitoringMetricsPublisher)
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      roleIds.monitoringMetricsPublisher
+    )
     principalId: managedIdentity.properties.principalId
     principalType: 'ServicePrincipal'
   }

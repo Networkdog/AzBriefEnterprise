@@ -78,10 +78,18 @@ def setup_telemetry(settings: Any) -> bool:
     try:
         from azure.monitor.opentelemetry import configure_azure_monitor
 
+        from src.config import get_azure_credential
+
+        # The workspace-based component may have local auth disabled (Entra
+        # only), which a connection string alone cannot satisfy — the exporter
+        # then retries forever on 'Unauthorized' and floods stdout. Passing the
+        # managed identity covers both configurations: it is used when local
+        # auth is off and ignored when the instrumentation key is accepted.
         # Only export traces from AzBrief; disable auto-log capture so structlog
         # remains the single logging pipeline (avoids duplicate log ingestion).
         configure_azure_monitor(
             connection_string=conn,
+            credential=get_azure_credential(),
             logger_name=_TRACER_NAME,
             disable_offline_storage=True,
         )
