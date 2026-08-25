@@ -252,6 +252,22 @@ Constraints that are easy to get wrong:
 project degrades to Azure OpenAI instead of failing the run. Never make a code path assume
 the Foundry pipeline actually ran.
 
+**The Foundry backend supplies hosted *agents*, not a chat model.** The project endpoint does
+not serve chat completions — verified live: an inference client pointed at it returns 401
+(`audience is incorrect`), pointing at `<account>/models` returns 401 as well, and the SDK's
+`project_endpoint=` form raises `No default connection found for ConnectionType.AZURE_OPEN_AI`
+because an agent-only project has no Azure OpenAI connection. `_create_llm()` therefore always
+builds an `AzureChatOpenAI` against `AZURE_OPENAI_ENDPOINT` (the same Foundry account, via its
+`.openai.azure.com` endpoint, Entra-authenticated). Do not reintroduce a Foundry chat-model
+branch there.
+
+Agents are invoked through the **Agents data plane** (`AIProjectClient(...).agents` →
+`create_thread_and_process_run`), not through `langchain-azure-ai`: `AgentServiceFactory` only
+exposes `create_declarative_chat_*`, which *creates* agents rather than referencing the ones
+already published in the project, and has no `get_agent_node`. The roster is listed once per
+project endpoint and cached (`_AGENT_ROSTER_CACHE`), so a four-stage pipeline does not pay
+four listings per update.
+
 ---
 
 ## Coding Conventions

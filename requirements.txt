@@ -26,10 +26,13 @@ beautifulsoup4>=4.12.0,<5.0
 # Utilities
 structlog>=24.1.0,<26.0
 
-# Microsoft Foundry backend (default) — hosted multi-agent pipeline.
-# The code degrades to Azure OpenAI when the project endpoint is unreachable,
-# but the SDK ships with the image so the default path works out of the box.
-langchain-azure-ai>=0.1.0,<1.0
+# Microsoft Foundry backend (default) — hosted multi-agent pipeline, invoked
+# through the Agents data plane. The code degrades to Azure OpenAI when the
+# project endpoint is unreachable, but the SDK ships with the image so the
+# default path works out of the box. Both are still beta, so the lower bound is
+# the version this was verified against.
+azure-ai-projects>=1.1.0b4,<2.0
+azure-ai-agents>=1.2.0b6,<2.0
 
 # OpenTelemetry export to Application Insights (OTEL_ENABLED=true)
 azure-monitor-opentelemetry>=1.6.0,<2.0

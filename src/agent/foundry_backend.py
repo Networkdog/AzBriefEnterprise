@@ -5,25 +5,29 @@ Service**. It is entirely opt-in and degrades gracefully so the default
 Azure OpenAI path is never affected:
 
 * Nothing here is imported at package-import time by the core loop.
-* Every ``langchain-azure-ai`` / Foundry SDK import is deferred into a function.
+* Every Foundry SDK import is deferred into a function.
 * Each public function returns a safe fallback (``None`` / unchanged state) when
   the SDK is missing, the endpoint is unset, or a live call fails.
 
 Enable it with ``llm_backend='foundry'`` plus ``foundry_project_endpoint``.
-The **enrichment agent** is a pre-configured Foundry Agent Service agent
-(referenced by ``foundry_enrichment_agent_name``) whose *server-side* tools —
-Web/Bing search, Azure MCP, Microsoft Learn MCP, and memory — gather richer
-context before analysis. AzBrief references it by name and inserts it as a
-LangGraph node ahead of planning; the Plan-Execute-Evaluate loop, KQL
-determinism, and G-Eval quality pipeline are unchanged.
+The agents are pre-published in the Foundry project (see
+``scripts/provision_foundry_agents.py``) and referenced here **by name**, so
+their tools, model and guardrails stay governed in the portal. AzBrief runs
+them through the Agents data plane and inserts the merged result as a LangGraph
+node ahead of planning; the Plan-Execute-Evaluate loop, KQL determinism, and
+G-Eval quality pipeline are unchanged.
 
-Requires the optional ``foundry`` extra::
+Scope note: only the *agents* run on Foundry. The chat model does not — the
+project endpoint does not serve chat completions (see the comment above
+``_run_hosted_agent_sync``), so the analyzer keeps its Azure OpenAI path
+against the same Foundry account.
 
-    pip install azbrief[foundry]   # installs langchain-azure-ai
+Requires ``azure-ai-projects`` and ``azure-ai-agents``.
 """
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Awaitable, Callable, Optional
 
 from structlog import get_logger
@@ -109,87 +113,115 @@ STAGE_PROMPTS: dict[str, str] = {
 
 
 def foundry_available() -> bool:
-    """Return True if the optional 'foundry' extra (langchain-azure-ai) is importable."""
+    """Return True if the Foundry Agents data-plane SDKs are importable."""
     try:
-        import langchain_azure_ai  # noqa: F401
+        import azure.ai.agents  # noqa: F401
+        import azure.ai.projects  # noqa: F401
 
         return True
     except Exception:
         return False
 
 
-def create_foundry_chat_model(
-    settings: Settings,
-    *,
-    temperature: Optional[float] = None,
-    request_timeout: int = 120,
-) -> Optional[Any]:
-    """Create a Foundry-backed LangChain chat model, or None on any failure.
+# ---------------------------------------------------------------------------
+# Hosted agent invocation
+# ---------------------------------------------------------------------------
+# The Foundry *project* endpoint does not serve chat completions. Authenticating
+# an inference client against it returns 401 ("audience is incorrect"), and the
+# SDK's ``project_endpoint=`` form additionally requires a default Azure OpenAI
+# *connection* that an agent-only project does not have. The chat model
+# therefore always goes through the analyzer's Azure OpenAI path — the same
+# Foundry account, via its ``.openai.azure.com`` endpoint — and this module owns
+# only what is genuinely Foundry-specific: the hosted agents.
 
-    Uses ``AzureAIChatCompletionsModel`` from ``langchain-azure-ai`` against the
-    Foundry project inference endpoint, authenticating with Managed Identity /
-    ``DefaultAzureCredential``. Returns ``None`` — signalling the caller to fall
-    back to Azure OpenAI — when the SDK is missing, the endpoint is unset, or
-    construction fails.
+_AGENT_ROSTER_CACHE: dict[str, dict[str, str]] = {}
+_AGENT_ROSTER_LOCK = threading.Lock()
+
+
+def _enum_name(value: Any) -> str:
+    """Normalize an SDK enum (or its ``str`` form) to a bare lowercase name."""
+    text = getattr(value, "value", None) or str(value)
+    return text.rsplit(".", 1)[-1].strip().lower()
+
+
+def _agent_roster(agents_client: Any, project_endpoint: str) -> dict[str, str]:
+    """Return a cached ``{agent_name: agent_id}`` map for the project.
+
+    The roster is listed once per project endpoint and reused, so a four-stage
+    pipeline does not pay four listing round-trips per update.
+    """
+    with _AGENT_ROSTER_LOCK:
+        cached = _AGENT_ROSTER_CACHE.get(project_endpoint)
+    if cached:
+        return cached
+    roster = {a.name: a.id for a in agents_client.list_agents() if getattr(a, "name", None)}
+    with _AGENT_ROSTER_LOCK:
+        _AGENT_ROSTER_CACHE[project_endpoint] = roster
+    return roster
+
+
+def _latest_agent_text(agents_client: Any, thread_id: str) -> str:
+    """Return the newest assistant message text in a thread, or ''.
+
+    The listing is newest-first, so the first assistant message carrying text is
+    the run's answer.
+    """
+    for message in agents_client.messages.list(thread_id=thread_id):
+        if _enum_name(getattr(message, "role", "")) not in ("agent", "assistant"):
+            continue
+        parts = [
+            part.text.value
+            for part in (getattr(message, "content", None) or [])
+            if getattr(getattr(part, "text", None), "value", None)
+        ]
+        if parts:
+            return "\n".join(parts).strip()
+    return ""
+
+
+def _run_hosted_agent_sync(project_endpoint: str, agent_name: str, prompt: str) -> str:
+    """Run one hosted agent to completion and return its text (blocking).
 
     Args:
-        settings: Application settings.
-        temperature: Optional sampling temperature (omitted for reasoning models).
-        request_timeout: Per-request timeout in seconds.
+        project_endpoint: Foundry project endpoint.
+        agent_name: Name of an agent already published in the project.
+        prompt: Fully rendered prompt to send as the user message.
 
     Returns:
-        A LangChain ``BaseChatModel`` instance, or ``None``.
+        The agent's response text, or '' when the agent is absent or the run did
+        not complete.
     """
-    if not settings.foundry_project_endpoint:
-        return None
-    try:
-        from langchain_azure_ai.chat_models import AzureAIChatCompletionsModel
+    from azure.ai.agents.models import AgentThreadCreationOptions, ThreadMessageOptions
+    from azure.ai.projects import AIProjectClient
 
-        from src.config import get_azure_credential
+    from src.config import get_azure_credential
 
-        model = settings.foundry_model_deployment or settings.azure_openai_deployment_name
-        kwargs: dict[str, Any] = {
-            "endpoint": settings.foundry_project_endpoint,
-            "credential": get_azure_credential(),
-            "model": model,
-            "client_kwargs": {"timeout": request_timeout},
-        }
-        if settings.foundry_api_version:
-            kwargs["api_version"] = settings.foundry_api_version
-        if temperature is not None:
-            kwargs["temperature"] = temperature
-        chat = AzureAIChatCompletionsModel(**kwargs)
-        logger.info(
-            "foundry_chat_model_created",
-            model=model,
-            endpoint=settings.foundry_project_endpoint,
+    agents_client = AIProjectClient(
+        endpoint=project_endpoint,
+        credential=get_azure_credential(),
+    ).agents
+
+    agent_id = _agent_roster(agents_client, project_endpoint).get(agent_name)
+    if not agent_id:
+        logger.warning("foundry_agent_not_found", agent=agent_name)
+        return ""
+
+    run = agents_client.create_thread_and_process_run(
+        agent_id=agent_id,
+        thread=AgentThreadCreationOptions(
+            messages=[ThreadMessageOptions(role="user", content=prompt)]
+        ),
+    )
+    status = _enum_name(getattr(run, "status", ""))
+    if status != "completed":
+        logger.warning(
+            "foundry_agent_run_incomplete",
+            agent=agent_name,
+            status=status,
+            error=str(getattr(run, "last_error", "") or ""),
         )
-        return chat
-    except Exception as exc:  # pragma: no cover - requires live SDK
-        logger.warning("foundry_chat_model_unavailable", error=str(exc))
-        return None
-
-
-def _extract_text(result: Any) -> str:
-    """Best-effort extraction of assistant text from a LangGraph node result."""
-    try:
-        if isinstance(result, dict):
-            messages = result.get("messages")
-            if messages:
-                last = messages[-1]
-                content = getattr(last, "content", None)
-                if content is None and isinstance(last, dict):
-                    content = last.get("content")
-                if isinstance(content, str):
-                    return content.strip()
-                if isinstance(content, list):
-                    parts = [p.get("text", "") if isinstance(p, dict) else str(p) for p in content]
-                    return "\n".join(parts).strip()
-        if isinstance(result, str):
-            return result.strip()
-    except Exception:
-        pass
-    return ""
+        return ""
+    return _latest_agent_text(agents_client, run.thread_id)
 
 
 def build_enrichment_node(
@@ -225,49 +257,23 @@ def build_enrichment_node(
 
     agent_name = settings.foundry_enrichment_agent_name
     project_endpoint = settings.foundry_project_endpoint
+    timeout_s = settings.foundry_agent_timeout_s
 
     async def enrich_node(state: dict) -> dict:
-        import asyncio
-
         update_context = state.get("update_context", "")
-        try:
-            from langchain_azure_ai.agents import AgentServiceFactory
-            from langchain_core.messages import HumanMessage
-
-            from src.config import get_azure_credential
-
-            factory = AgentServiceFactory(
-                project_endpoint=project_endpoint,
-                credential=get_azure_credential(),
-            )
-            node = factory.get_agent_node(name=agent_name, version="latest")
-
-            prompt = ENRICHMENT_PROMPT.format(update_context=update_context)
-            payload = {"messages": [HumanMessage(content=prompt)]}
-
-            # get_agent_node().invoke may be sync-only; run off the event loop.
-            ainvoke = getattr(node, "ainvoke", None)
-            if callable(ainvoke):
-                result = await ainvoke(payload)
-            else:
-                result = await asyncio.to_thread(node.invoke, payload)
-
-            enriched = _extract_text(result)
-            if enriched:
-                merged = f"{update_context}\n\n{ENRICHMENT_HEADER}\n{enriched}"
-                logger.info(
-                    "foundry_enrichment_done",
-                    agent=agent_name,
-                    added_chars=len(enriched),
-                )
-                return {"update_context": merged}
-            logger.info("foundry_enrichment_empty", agent=agent_name)
-        except Exception as exc:  # pragma: no cover - requires live SDK
-            logger.warning(
-                "foundry_enrichment_failed",
+        prompt = ENRICHMENT_PROMPT.format(update_context=update_context)
+        enriched = await _invoke_hosted_agent(
+            project_endpoint, agent_name, "latest", prompt, timeout_s
+        )
+        if enriched:
+            merged = f"{update_context}\n\n{ENRICHMENT_HEADER}\n{enriched}"
+            logger.info(
+                "foundry_enrichment_done",
                 agent=agent_name,
-                error=str(exc),
+                added_chars=len(enriched),
             )
+            return {"update_context": merged}
+        logger.info("foundry_enrichment_empty", agent=agent_name)
         # Graceful degrade: leave state unchanged, analysis continues.
         return {}
 
@@ -291,7 +297,8 @@ async def _invoke_hosted_agent(
     Args:
         project_endpoint: Foundry project endpoint.
         agent_name: Name of the agent already published in the project.
-        version: Agent version selector (usually 'latest').
+        version: Accepted for call-site compatibility and ignored — the Agents
+            data plane addresses an agent by id, with no version selector.
         prompt: Fully rendered prompt to send.
         timeout_s: Per-agent wall-clock timeout.
 
@@ -301,26 +308,10 @@ async def _invoke_hosted_agent(
     import asyncio
 
     try:
-        from langchain_azure_ai.agents import AgentServiceFactory
-        from langchain_core.messages import HumanMessage
-
-        from src.config import get_azure_credential
-
-        factory = AgentServiceFactory(
-            project_endpoint=project_endpoint,
-            credential=get_azure_credential(),
+        return await asyncio.wait_for(
+            asyncio.to_thread(_run_hosted_agent_sync, project_endpoint, agent_name, prompt),
+            timeout=timeout_s,
         )
-        node = factory.get_agent_node(name=agent_name, version=version)
-        payload = {"messages": [HumanMessage(content=prompt)]}
-
-        ainvoke = getattr(node, "ainvoke", None)
-        if callable(ainvoke):
-            result = await asyncio.wait_for(ainvoke(payload), timeout=timeout_s)
-        else:
-            result = await asyncio.wait_for(
-                asyncio.to_thread(node.invoke, payload), timeout=timeout_s
-            )
-        return _extract_text(result)
     except Exception as exc:  # pragma: no cover - requires live SDK
         logger.warning("foundry_agent_failed", agent=agent_name, error=str(exc))
         return ""

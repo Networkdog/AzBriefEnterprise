@@ -419,24 +419,11 @@ class AzureUpdateAnalyzer:
         profile = self.settings.llm_profile(role)
         deployment = profile["deployment"]
 
-        # Foundry backend (opt-in): try a Foundry-hosted chat model first, and
-        # fall through to Azure OpenAI / OpenAI on any failure (graceful degrade).
-        if self.settings.use_foundry:
-            from src.agent.foundry_backend import create_foundry_chat_model
-
-            foundry_deployment = (
-                self.settings.foundry_model_deployment or self.settings.azure_openai_deployment_name
-            )
-            foundry_temperature = (
-                None if self._is_reasoning_model(foundry_deployment) else temperature
-            )
-            foundry_llm = create_foundry_chat_model(self.settings, temperature=foundry_temperature)
-            if foundry_llm is not None:
-                return foundry_llm
-            logger.warning(
-                "foundry_llm_fallback_to_openai", role=role, reasoning_effort=reasoning_effort
-            )
-
+        # The Foundry backend supplies hosted *agents*, not a chat model: its
+        # project endpoint does not serve chat completions (401, and the SDK's
+        # project form needs an Azure OpenAI connection an agent-only project
+        # lacks). The model therefore always comes from Azure OpenAI below —
+        # against the same Foundry account when AZURE_OPENAI_ENDPOINT points at it.
         is_reasoning = self._is_reasoning_model(deployment)
 
         if self.settings.use_azure_openai:
@@ -598,6 +585,10 @@ class AzureUpdateAnalyzer:
         max_planning_iters = 3
         planning_llm_calls = 0
         planning_tool_calls = []
+        # Bound before the loop: every exit path below (circuit breaker `break`,
+        # transient-error `continue` exhausting the budget) would otherwise leave
+        # this unassigned and raise UnboundLocalError where the plan is parsed.
+        response = None
         for _iter in range(max_planning_iters):
             logger.debug(
                 "llm_prompt",
@@ -703,6 +694,15 @@ class AzureUpdateAnalyzer:
                     )
 
         # Parse AnalysisPlan from the final LLM response
+        if response is None:
+            # No call ever succeeded: the breaker was already open, or every
+            # iteration hit a transient error. There is nothing to parse, so fail
+            # loudly here instead of letting an UnboundLocalError surface.
+            raise RuntimeError(
+                "Planning produced no LLM response after "
+                f"{max_planning_iters} iteration(s) "
+                f"(circuit_breaker_open={self._llm_circuit_breaker.is_open})"
+            )
         raw = response.content if hasattr(response, "content") else str(response)
         plan = self._parse_plan_json(raw, plan_revision_count)
 

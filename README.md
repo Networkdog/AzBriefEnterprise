@@ -578,7 +578,7 @@ AzBriefEnterprise/
 │   ├── admin/                  # Admin console (auth, page, router)
 │   ├── agent/                  # LangGraph agent, tools, prompts
 │   │   ├── analyzer.py         # Plan-Execute-Evaluate state machine
-│   │   ├── foundry_backend.py  # Foundry chat model + hosted multi-agent pipeline
+│   │   ├── foundry_backend.py  # Foundry hosted multi-agent pipeline (agents only)
 │   │   ├── tools.py            # Tool definitions (LangChain BaseTool)
 │   │   ├── context_store.py    # Addressable store for oversized tool results
 │   │   ├── action_verification.py  # Three-layer action-item safety gate
@@ -605,7 +605,7 @@ AzBriefEnterprise/
 | Area | Technology |
 |------|-----------|
 | Language | Python 3.10+ |
-| AI framework | `langchain-core`, `langchain-openai`, `langgraph`, `langchain-azure-ai` |
+| AI framework | `langchain-core`, `langchain-openai`, `langgraph`, `azure-ai-projects`, `azure-ai-agents` |
 | Models | Microsoft Foundry hosted agents — fallback: Azure OpenAI / OpenAI |
 | Web framework | FastAPI + Uvicorn |
 | Settings | pydantic-settings |

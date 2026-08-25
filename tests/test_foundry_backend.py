@@ -96,14 +96,6 @@ class TestFoundryAvailable:
         assert isinstance(foundry_backend.foundry_available(), bool)
 
 
-class TestCreateFoundryChatModel:
-    """create_foundry_chat_model() graceful-degrade contract."""
-
-    def test_none_without_endpoint(self):
-        s = Settings(azure_tenant_id="test", llm_backend="foundry")
-        assert foundry_backend.create_foundry_chat_model(s) is None
-
-
 class TestBuildEnrichmentNode:
     """build_enrichment_node() must return None unless fully configured."""
 
@@ -156,21 +148,97 @@ class TestBuildEnrichmentNode:
         assert result == {}
 
 
-class TestExtractText:
-    """_extract_text() handles the shapes a LangGraph node may return."""
+class _FakeText:
+    def __init__(self, value: str) -> None:
+        self.value = value
 
-    def test_string_passthrough(self):
-        assert foundry_backend._extract_text("hello") == "hello"
 
-    def test_dict_with_message_object(self):
-        class _Msg:
-            content = "enriched context"
+class _FakePart:
+    def __init__(self, value: str) -> None:
+        self.text = _FakeText(value)
 
-        assert foundry_backend._extract_text({"messages": [_Msg()]}) == "enriched context"
 
-    def test_dict_with_list_content(self):
-        msg = {"content": [{"text": "a"}, {"text": "b"}]}
-        assert foundry_backend._extract_text({"messages": [msg]}) == "a\nb"
+class _FakeMessage:
+    def __init__(self, role: str, *values: str) -> None:
+        self.role = role
+        self.content = [_FakePart(v) for v in values]
 
-    def test_unknown_shape_returns_empty(self):
-        assert foundry_backend._extract_text(12345) == ""
+
+class _FakeMessages:
+    def __init__(self, messages: list) -> None:
+        self._messages = messages
+
+    def list(self, thread_id: str):
+        return list(self._messages)
+
+
+class _FakeAgent:
+    def __init__(self, name: str, agent_id: str) -> None:
+        self.name = name
+        self.id = agent_id
+
+
+class _FakeAgentsClient:
+    def __init__(self, agents: list, messages: list) -> None:
+        self._agents = agents
+        self.messages = _FakeMessages(messages)
+        self.list_calls = 0
+
+    def list_agents(self):
+        self.list_calls += 1
+        return list(self._agents)
+
+
+class TestEnumName:
+    """_enum_name() normalizes SDK enums and their str forms."""
+
+    def test_dotted_str_form(self):
+        assert foundry_backend._enum_name("RunStatus.COMPLETED") == "completed"
+
+    def test_plain_str(self):
+        assert foundry_backend._enum_name("completed") == "completed"
+
+    def test_object_with_value(self):
+        class _E:
+            value = "MessageRole.AGENT"
+
+        assert foundry_backend._enum_name(_E()) == "agent"
+
+
+class TestLatestAgentText:
+    """_latest_agent_text() returns the newest assistant text, skipping the user."""
+
+    def test_picks_first_agent_message(self):
+        client = _FakeAgentsClient(
+            [],
+            [
+                _FakeMessage("MessageRole.AGENT", "pong"),
+                _FakeMessage("MessageRole.USER", "ping"),
+            ],
+        )
+        assert foundry_backend._latest_agent_text(client, "t1") == "pong"
+
+    def test_joins_multiple_parts(self):
+        client = _FakeAgentsClient([], [_FakeMessage("agent", "a", "b")])
+        assert foundry_backend._latest_agent_text(client, "t1") == "a\nb"
+
+    def test_returns_empty_without_agent_message(self):
+        client = _FakeAgentsClient([], [_FakeMessage("MessageRole.USER", "ping")])
+        assert foundry_backend._latest_agent_text(client, "t1") == ""
+
+
+class TestAgentRoster:
+    """_agent_roster() lists once per project endpoint and reuses the result."""
+
+    def test_caches_per_endpoint(self):
+        endpoint = "https://cache-probe.example/api/projects/p"
+        foundry_backend._AGENT_ROSTER_CACHE.pop(endpoint, None)
+        client = _FakeAgentsClient([_FakeAgent("azbrief-research", "asst_1")], [])
+        try:
+            first = foundry_backend._agent_roster(client, endpoint)
+            second = foundry_backend._agent_roster(client, endpoint)
+            assert first == {"azbrief-research": "asst_1"}
+            assert second == first
+            assert client.list_calls == 1
+        finally:
+            foundry_backend._AGENT_ROSTER_CACHE.pop(endpoint, None)
