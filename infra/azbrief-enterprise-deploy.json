@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "227231035594019630"
+      "templateHash": "14395672845096490825"
     },
     "description": "AzBrief Enterprise — Container Apps Job (scheduler) + Microsoft Foundry hosted multi-agent + Container App (orchestrator/Admin Page) + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
@@ -148,6 +148,13 @@
       ],
       "metadata": {
         "description": "How the topology is protected on the network. \"vnetInjection\" (default) injects the Foundry agents and the Container App into a virtual network and reaches Foundry, Key Vault and the state account over private endpoints. \"perimeter\" keeps public endpoints but wraps Foundry, Key Vault and Log Analytics in a Network Security Perimeter. \"public\" keeps public endpoints with authentication as the only boundary — evaluation use only. Foundry network injection cannot be added after the account exists, so switching to vnetInjection later requires deleting and purging the account."
+      }
+    },
+    "allowPublicAccessDuringSetup": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Keep the Foundry data plane reachable from the public internet even in vnetInjection mode. An agent can only be created from a network that can reach the data plane, so the roster cannot be provisioned from a workstation once the account is closed. Turn this on for the initial setup, then redeploy with it off. Agent network injection and the private endpoints are unaffected either way."
       }
     },
     "existingVnetResourceId": {
@@ -393,6 +400,7 @@
     },
     "hasRegistry": "[not(empty(parameters('containerRegistryServer')))]",
     "vnetMode": "[equals(parameters('networkIsolationMode'), 'vnetInjection')]",
+    "foundryPublicAccess": "[or(not(variables('vnetMode')), parameters('allowPublicAccessDuringSetup'))]",
     "perimeterMode": "[equals(parameters('networkIsolationMode'), 'perimeter')]",
     "createVnet": "[and(variables('vnetMode'), empty(parameters('existingVnetResourceId')))]",
     "vnetResourceId": "[if(variables('createVnet'), resourceId('Microsoft.Network/virtualNetworks', variables('vnetName')), parameters('existingVnetResourceId'))]",
@@ -587,8 +595,8 @@
       "dependsOn": [
         "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', variables('foundryAccountName')))]",
         "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[2])]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[0])]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[1])]"
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[1])]",
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[0])]"
       ]
     },
     {
@@ -799,9 +807,9 @@
         "customSubDomainName": "[variables('foundryAccountName')]",
         "allowProjectManagement": true,
         "disableLocalAuth": true,
-        "publicNetworkAccess": "[if(variables('vnetMode'), 'Disabled', 'Enabled')]",
+        "publicNetworkAccess": "[if(variables('foundryPublicAccess'), 'Enabled', 'Disabled')]",
         "networkAcls": {
-          "defaultAction": "[if(variables('vnetMode'), 'Deny', 'Allow')]",
+          "defaultAction": "[if(variables('foundryPublicAccess'), 'Allow', 'Deny')]",
           "bypass": "AzureServices"
         },
         "networkInjections": "[if(variables('vnetMode'), createArray(createObject('scenario', 'agent', 'subnetArmId', variables('agentSubnetId'), 'useMicrosoftManagedNetwork', false())), null())]"
@@ -1827,19 +1835,33 @@
       },
       "value": "[format('az role assignment create --assignee {0} --role Reader --scope /subscriptions/{1}', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId, subscription().subscriptionId)]"
     },
+    "grantAcrPullCommand": {
+      "type": "string",
+      "metadata": {
+        "description": "Command that lets the identity pull from your registry. The template wires the registry reference but cannot assign a role on a registry it does not own."
+      },
+      "value": "[if(variables('hasRegistry'), format('az role assignment create --assignee {0} --role AcrPull --scope $(az acr show --name {1} --query id -o tsv)', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId, split(parameters('containerRegistryServer'), '.')[0]), '(no containerRegistryServer supplied)')]"
+    },
     "deployContainerImageCommand": {
       "type": "string",
       "metadata": {
-        "description": "Command that rolls out the real AzBrief container image."
+        "description": "Commands that roll the real AzBrief image onto BOTH the app and the scheduler job. Updating only the app leaves the nightly digest on the previous build."
       },
-      "value": "[format('az containerapp update --name {0} --resource-group {1} --image <your-registry>/azbrief:latest', variables('containerAppName'), resourceGroup().name)]"
+      "value": "[format('az containerapp update --name {0} --resource-group {1} --image <your-registry>/azbrief-enterprise:latest ; az containerapp job update --name {2} --resource-group {3} --image <your-registry>/azbrief-enterprise:latest', variables('containerAppName'), resourceGroup().name, variables('schedulerJobName'), resourceGroup().name)]"
+    },
+    "provisionAgentsCommand": {
+      "type": "string",
+      "metadata": {
+        "description": "Command that creates the hosted agent roster. ARM cannot: agents are data-plane objects, so the project stays empty until this runs."
+      },
+      "value": "[format('FOUNDRY_PROJECT_ENDPOINT={0} python -m scripts.provision_foundry_agents', variables('foundryProjectEndpoint'))]"
     },
     "nextSteps": {
       "type": "string",
       "metadata": {
         "description": "Post-deployment checklist."
       },
-      "value": "[format('1) Run grantReaderCommand so Resource Graph queries can see your resources. 2) Push the AzBrief image and run deployContainerImageCommand, then point the scheduler job at the same image — it runs \"python -m src.scheduler\" and fails until the real image is in place. 3) Create the hosted agents ({0}-research/-impact/-action) in the Foundry project. 4) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 5) networkIsolationMode=vnetInjection: Foundry, Key Vault and the state account are private — reach the Foundry portal from inside the virtual network. 6) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', parameters('baseName'))]"
+      "value": "[format('1) Run grantReaderCommand so Resource Graph queries can see your resources. 2) Push the AzBrief image, run grantAcrPullCommand, then deployContainerImageCommand — it updates the app AND the scheduler job, which runs \"python -m src.scheduler\" and does nothing useful until the real image is in place. 3) Run provisionAgentsCommand to create the {0}-research/-impact/-action/-review agents: the template configures FOUNDRY_AGENTS but ARM cannot create the agents themselves, and without them every analysis silently falls back to the single-model path. 4) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 5) networkIsolationMode=vnetInjection: the data plane is private, so run step 3 from inside the virtual network — or deploy once with allowPublicAccessDuringSetup=true, provision the agents, and redeploy with it off. 6) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', parameters('baseName'))]"
     }
   }
 }

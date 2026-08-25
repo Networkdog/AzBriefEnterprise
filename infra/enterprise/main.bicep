@@ -136,6 +136,9 @@ param internalIngressOnly bool = false
 ])
 param networkIsolationMode string = 'vnetInjection'
 
+@description('Keep the Foundry data plane reachable from the public internet even in vnetInjection mode. An agent can only be created from a network that can reach the data plane, so the roster cannot be provisioned from a workstation once the account is closed. Turn this on for the initial setup, then redeploy with it off. Agent network injection and the private endpoints are unaffected either way.')
+param allowPublicAccessDuringSetup bool = false
+
 @description('Existing virtual network resource ID used when networkIsolationMode is vnetInjection. Leave empty to have the template create one. When supplied, the three subnets named below must already exist with the delegations described in their descriptions.')
 param existingVnetResourceId string = ''
 
@@ -297,6 +300,8 @@ var roleIds = {
 var hasRegistry = !empty(containerRegistryServer)
 
 var vnetMode = networkIsolationMode == 'vnetInjection'
+// Closed only when the isolation mode asks for it AND setup access is not held open.
+var foundryPublicAccess = !vnetMode || allowPublicAccessDuringSetup
 var perimeterMode = networkIsolationMode == 'perimeter'
 var createVnet = vnetMode && empty(existingVnetResourceId)
 var vnetResourceId = createVnet ? resourceId('Microsoft.Network/virtualNetworks', vnetName) : existingVnetResourceId
@@ -753,9 +758,9 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
     allowProjectManagement: true
     // Entra-only: no API key exists to leak or rotate.
     disableLocalAuth: true
-    publicNetworkAccess: vnetMode ? 'Disabled' : 'Enabled'
+    publicNetworkAccess: foundryPublicAccess ? 'Enabled' : 'Disabled'
     networkAcls: {
-      defaultAction: vnetMode ? 'Deny' : 'Allow'
+      defaultAction: foundryPublicAccess ? 'Allow' : 'Deny'
       bypass: 'AzureServices'
     }
     // Agent compute joins the delegated subnet. Network injection can only be
@@ -1411,8 +1416,16 @@ output runNowCommand string = 'az containerapp job start --name ${schedulerJobNa
 @description('Command that grants the identity subscription-wide Reader access.')
 output grantReaderCommand string = 'az role assignment create --assignee ${managedIdentity.properties.principalId} --role Reader --scope /subscriptions/${subscription().subscriptionId}'
 
-@description('Command that rolls out the real AzBrief container image.')
-output deployContainerImageCommand string = 'az containerapp update --name ${containerAppName} --resource-group ${resourceGroup().name} --image <your-registry>/azbrief:latest'
+@description('Command that lets the identity pull from your registry. The template wires the registry reference but cannot assign a role on a registry it does not own.')
+output grantAcrPullCommand string = hasRegistry
+  ? 'az role assignment create --assignee ${managedIdentity.properties.principalId} --role AcrPull --scope $(az acr show --name ${split(containerRegistryServer, '.')[0]} --query id -o tsv)'
+  : '(no containerRegistryServer supplied)'
+
+@description('Commands that roll the real AzBrief image onto BOTH the app and the scheduler job. Updating only the app leaves the nightly digest on the previous build.')
+output deployContainerImageCommand string = 'az containerapp update --name ${containerAppName} --resource-group ${resourceGroup().name} --image <your-registry>/azbrief-enterprise:latest ; az containerapp job update --name ${schedulerJobName} --resource-group ${resourceGroup().name} --image <your-registry>/azbrief-enterprise:latest'
+
+@description('Command that creates the hosted agent roster. ARM cannot: agents are data-plane objects, so the project stays empty until this runs.')
+output provisionAgentsCommand string = 'FOUNDRY_PROJECT_ENDPOINT=${foundryProjectEndpoint} python -m scripts.provision_foundry_agents'
 
 @description('Post-deployment checklist.')
-output nextSteps string = '1) Run grantReaderCommand so Resource Graph queries can see your resources. 2) Push the AzBrief image and run deployContainerImageCommand, then point the scheduler job at the same image — it runs "python -m src.scheduler" and fails until the real image is in place. 3) Create the hosted agents (${baseName}-research/-impact/-action) in the Foundry project. 4) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 5) networkIsolationMode=vnetInjection: Foundry, Key Vault and the state account are private — reach the Foundry portal from inside the virtual network. 6) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.'
+output nextSteps string = '1) Run grantReaderCommand so Resource Graph queries can see your resources. 2) Push the AzBrief image, run grantAcrPullCommand, then deployContainerImageCommand — it updates the app AND the scheduler job, which runs "python -m src.scheduler" and does nothing useful until the real image is in place. 3) Run provisionAgentsCommand to create the ${baseName}-research/-impact/-action/-review agents: the template configures FOUNDRY_AGENTS but ARM cannot create the agents themselves, and without them every analysis silently falls back to the single-model path. 4) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 5) networkIsolationMode=vnetInjection: the data plane is private, so run step 3 from inside the virtual network — or deploy once with allowPublicAccessDuringSetup=true, provision the agents, and redeploy with it off. 6) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.'
