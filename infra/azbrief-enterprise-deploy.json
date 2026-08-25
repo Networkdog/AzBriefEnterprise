@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "14395672845096490825"
+      "templateHash": "5555764245595030572"
     },
     "description": "AzBrief Enterprise — Container Apps Job (scheduler) + Microsoft Foundry hosted multi-agent + Container App (orchestrator/Admin Page) + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
@@ -78,11 +78,11 @@
     },
     "modelCapacity": {
       "type": "int",
-      "defaultValue": 30,
+      "defaultValue": 200,
       "minValue": 1,
       "maxValue": 1000,
       "metadata": {
-        "description": "Model deployment capacity in thousands of tokens per minute (TPM)."
+        "description": "Model deployment capacity in thousands of tokens per minute (TPM). A single report prompt alone runs ~27K tokens, and the multi-agent stages, planning and execution share the same deployment, so 30 rate-limits every run."
       }
     },
     "containerImage": {

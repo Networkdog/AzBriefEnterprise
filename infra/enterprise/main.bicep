@@ -90,10 +90,10 @@ param modelVersion string = ''
 ])
 param modelSkuName string = 'GlobalStandard'
 
-@description('Model deployment capacity in thousands of tokens per minute (TPM).')
+@description('Model deployment capacity in thousands of tokens per minute (TPM). A single report prompt alone runs ~27K tokens, and the multi-agent stages, planning and execution share the same deployment, so 30 rate-limits every run.')
 @minValue(1)
 @maxValue(1000)
-param modelCapacity int = 30
+param modelCapacity int = 200
 
 // ============================================================================
 // Container App (orchestrator + Admin Page)
