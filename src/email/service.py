@@ -51,23 +51,30 @@ def _escape_braces(s: str) -> str:
     return s.replace("{", "{{").replace("}", "}}")
 
 
-def _save_html_to_out(html_content: str, filename: str) -> str:
+def _save_html_to_out(html_content: str, filename: str) -> Optional[str]:
     """Save HTML content to the out/ directory for debugging.
+
+    Best-effort by design: this runs before delivery, so a write failure
+    (read-only filesystem, unwritable directory) must not cost the caller its
+    email or console output.
 
     Args:
         html_content: The HTML email content.
         filename: Output filename (e.g., 'digest_ko.html').
 
     Returns:
-        Absolute path of the saved file.
+        Absolute path of the saved file, or None when it could not be written.
     """
     import os
     from pathlib import Path
 
-    out_dir = Path(os.environ.get("AZBRIEF_OUT_DIR", "out"))
-    out_dir.mkdir(parents=True, exist_ok=True)
-    filepath = out_dir / filename
-    filepath.write_text(html_content, encoding="utf-8")
+    filepath = Path(os.environ.get("AZBRIEF_OUT_DIR", "out")) / filename
+    try:
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(html_content, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("html_report_save_failed", path=str(filepath), error=str(exc))
+        return None
     logger.info("html_report_saved", path=str(filepath), size=len(html_content))
     return str(filepath)
 

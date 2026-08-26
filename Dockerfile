@@ -24,10 +24,11 @@ COPY src/ ./src/
 
 # Create non-root user. /app is root-owned, so the writable runtime directories
 # have to be created and handed over explicitly — history.py and pattern_memory.py
-# call data/.mkdir() at runtime, which otherwise fails with EACCES.
+# call data/.mkdir() at runtime, and the email service writes HTML into out/,
+# which otherwise fails with EACCES.
 RUN useradd --create-home --shell /bin/bash appuser \
-    && mkdir -p /app/data /app/logs \
-    && chown -R appuser:appuser /app/data /app/logs
+    && mkdir -p /app/data /app/logs /app/out \
+    && chown -R appuser:appuser /app/data /app/logs /app/out
 USER appuser
 
 # Disable verbose console output in production

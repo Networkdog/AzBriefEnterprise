@@ -613,3 +613,29 @@ def test_additional_checks_precede_references():
     checks = HTML_EMAIL_TEMPLATE.index("{additional_checks_html}")
     refs = HTML_EMAIL_TEMPLATE.index("{reference_docs_section_html}")
     assert checks < refs
+
+
+def test_save_html_to_out_survives_an_unwritable_directory(tmp_path, monkeypatch):
+    """A debugging artefact must never cost the caller its email.
+
+    This ran before delivery, so an EACCES on out/ suppressed the whole digest.
+    """
+    from src.email.service import _save_html_to_out
+
+    blocked = tmp_path / "blocked"
+    blocked.write_text("a file where a directory is expected")
+    monkeypatch.setenv("AZBRIEF_OUT_DIR", str(blocked))
+
+    assert _save_html_to_out("<p>digest</p>", "digest.html") is None
+
+
+def test_save_html_to_out_writes_when_it_can(tmp_path, monkeypatch):
+    """The happy path still writes the file and returns its path."""
+    from src.email.service import _save_html_to_out
+
+    monkeypatch.setenv("AZBRIEF_OUT_DIR", str(tmp_path / "out"))
+
+    saved = _save_html_to_out("<p>digest</p>", "digest.html")
+
+    assert saved is not None
+    assert (tmp_path / "out" / "digest.html").read_text(encoding="utf-8") == "<p>digest</p>"
