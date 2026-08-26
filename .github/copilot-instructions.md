@@ -537,6 +537,9 @@ These issues compile fine but cause subtle runtime bugs.
 | Tool definition | `args_schema` mismatch | Agent silently passes wrong args | Match Pydantic schema to tool signature |
 | KQL query | Using `join`, `let`, or `mv-expand` | `ParserFailure` from Resource Graph | Stick to single-table queries with `where`/`project`/`summarize` |
 | Settings | New env var not in `Settings` class | Value silently `None` | Add to `src/config.py` with default |
+| Settings | Env var present but **empty** checked with `is not None` | The template always defines it, so unconfigured reads as configured | Check truthiness, not `is not None` |
+| Email | Debug artefact written before delivery | An unwritable `out/` suppressed the whole digest | Keep pre-delivery side effects best-effort |
+| Orchestrator | Returning a hardcoded `True` for a delivery | `email_sent` reports success for a failed send | Propagate the transport's own result |
 | Settings | New setting added but no code reads it | Config looks right, behaviour never changes | Assert the *resolved* value end-to-end, not just that the field parses |
 | Container image | New dependency not in `requirements.txt` | `ImportError` at container start | Keep `pyproject.toml` and `requirements.txt` in sync |
 | Service class | Returning data without `"success": True` | Caller treats result as failure | Always return `{"success": bool, ...}` |
