@@ -401,10 +401,9 @@ async def _send_digest(digest_items: list[dict], analyzer: Any, email_service: A
 
     try:
         if not subscribers:
-            await email_service.send_digest_report(digest_items, date_range=date_range)
-            return True
+            return bool(await email_service.send_digest_report(digest_items, date_range=date_range))
 
-        async def _customize_and_send(subscriber) -> None:
+        async def _customize_and_send(subscriber) -> bool:
             with_results = [item for item in digest_items if item["result"]]
             without_results = [item for item in digest_items if not item["result"]]
             customized = await asyncio.gather(
@@ -421,18 +420,27 @@ async def _send_digest(digest_items: list[dict], analyzer: Any, email_service: A
                 else:
                     items.append({"update": item["update"], "result": result, "skip_reason": ""})
             items.extend(without_results)
-            await email_service.send_digest_report(
-                items,
-                date_range=date_range,
-                recipient=subscriber.email,
-                language=subscriber.language,
+            return bool(
+                await email_service.send_digest_report(
+                    items,
+                    date_range=date_range,
+                    recipient=subscriber.email,
+                    language=subscriber.language,
+                )
             )
 
-        await asyncio.gather(
+        outcomes = await asyncio.gather(
             *[_customize_and_send(sub) for sub in subscribers],
             return_exceptions=True,
         )
-        return True
+        delivered = sum(1 for outcome in outcomes if outcome is True)
+        if delivered < len(subscribers):
+            logger.warning(
+                "orchestrator_digest_partial",
+                delivered=delivered,
+                total=len(subscribers),
+            )
+        return delivered > 0
     except Exception as exc:
         logger.warning("orchestrator_digest_failed", error=str(exc))
         return False

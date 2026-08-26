@@ -142,11 +142,13 @@ class _FakeAnalyzer:
 
 
 class _FakeEmailService:
-    def __init__(self):
+    def __init__(self, delivered: bool = True):
         self.calls: list[dict] = []
+        self._delivered = delivered
 
     async def send_digest_report(self, items, date_range=None, recipient=None, language=None):
         self.calls.append({"items": len(items), "recipient": recipient})
+        return self._delivered
 
 
 @pytest.fixture(autouse=True)
@@ -180,6 +182,19 @@ class TestExecuteRun:
         assert record.failed == 0
         assert record.email_sent is True
         assert record.watermark == targets[-1].published_date
+        assert email.calls == [{"items": 3, "recipient": None}]
+
+    @pytest.mark.asyncio
+    async def test_a_rejected_digest_is_not_reported_as_sent(self):
+        """A transport rejection must reach the record instead of reading as delivered."""
+        targets = _targets(3)
+        record = RunRecord(run_id="r2b", since=datetime(2026, 7, 1, tzinfo=UTC))
+        email = _FakeEmailService(delivered=False)
+
+        await execute_run(record, _FakeAnalyzer(), email, _FakeParser(targets))
+
+        assert record.analyzed == 3
+        assert record.email_sent is False
         assert email.calls == [{"items": 3, "recipient": None}]
 
     @pytest.mark.asyncio

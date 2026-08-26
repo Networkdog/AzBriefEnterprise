@@ -692,15 +692,20 @@ class Settings(BaseSettings):
 
     @property
     def use_email(self) -> bool:
-        """Check if email should be used (vs console output)."""
-        has_transport = (
-            self.communication_services_connection_string is not None
-            or self.communication_services_endpoint is not None
+        """Check if email should be used (vs console output).
+
+        An empty value counts as unset. The deployment template always defines
+        these variables, so an ``is not None`` check reads an unconfigured
+        recipient as configured and sends to "" — which the transport rejects
+        while the console fallback is skipped, losing the digest entirely.
+        """
+        has_transport = bool(
+            self.communication_services_connection_string or self.communication_services_endpoint
         )
         return bool(
             has_transport
-            and self.email_sender_address is not None
-            and (self.email_recipient_address is not None or self.get_subscribers())
+            and self.email_sender_address
+            and (self.email_recipient_address or self.get_subscribers())
         )
 
     def get_subscribers(self) -> list[Subscriber]:

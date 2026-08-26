@@ -172,3 +172,26 @@ class TestEmailTransport:
             email_sender_address="DoNotReply@example.com",
         )
         assert settings.use_email is False
+
+    def test_empty_recipient_disables_email(self):
+        """The template always defines these, so "" has to read as unset.
+
+        Otherwise delivery is attempted against an empty address, the transport
+        rejects it, and the console fallback is skipped — losing the digest.
+        """
+        settings = _settings(
+            communication_services_connection_string="endpoint=https://x;accesskey=y",
+            email_sender_address="DoNotReply@example.com",
+            email_recipient_address="",
+            subscribers="",
+        )
+        assert settings.use_email is False
+
+    def test_empty_transport_disables_email(self):
+        settings = _settings(
+            communication_services_connection_string="",
+            communication_services_endpoint="",
+            email_sender_address="DoNotReply@example.com",
+            email_recipient_address="admin@example.com",
+        )
+        assert settings.use_email is False
