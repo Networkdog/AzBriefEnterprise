@@ -2,14 +2,14 @@ name: Report Quality Gate
 
 # Evaluates AzBrief report quality (G-Eval LLM-as-a-Judge) and agent trajectory
 # (rule-based process quality) against live Azure data, and FAILS the run on a
-# quality regression. Because it calls Azure OpenAI (and optionally Azure), it is
+# quality regression. Because it calls Microsoft Foundry Agent Service and Azure, it is
 # NOT a per-commit gate: it runs nightly, on demand, and on PRs that touch the
 # prompt assembly (the most common source of quality regressions).
 #
-# Required secrets (workflow is skipped gracefully if absent):
-#   AZURE_TENANT_ID, AZURE_OPENAI_ENDPOINT, AZURE_OPENAI_API_KEY,
-#   AZURE_OPENAI_DEPLOYMENT_NAME
-# Optional: AZURE_SUBSCRIPTION_ID (tenant-wide query if omitted).
+# Required repository variables (workflow is skipped gracefully if absent):
+#   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
+#   FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_PRIMARY_AGENT_NAME
+# Optional: FOUNDRY_CODEX_AGENT_NAME, FOUNDRY_FAST_AGENT_NAME.
 
 on:
   workflow_dispatch:
@@ -42,6 +42,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   check-secrets:
@@ -49,19 +50,27 @@ jobs:
     outputs:
       has_secrets: ${{ steps.check.outputs.has_secrets }}
     steps:
-      - name: Check Azure OpenAI secrets
+      - name: Check Foundry configuration
         id: check
         run: |
-          if [ -n "$AZURE_OPENAI_ENDPOINT" ] && [ -n "$AZURE_TENANT_ID" ]; then
+          FOUNDRY_PROJECT_ENDPOINT=$(jq -r '.FOUNDRY_PROJECT_ENDPOINT // empty' <<< "$REPOSITORY_VARS")
+          FOUNDRY_PRIMARY_AGENT_NAME=$(jq -r '.FOUNDRY_PRIMARY_AGENT_NAME // empty' <<< "$REPOSITORY_VARS")
+          AZURE_CLIENT_ID=$(jq -r '.AZURE_CLIENT_ID // empty' <<< "$REPOSITORY_VARS")
+          AZURE_TENANT_ID=$(jq -r '.AZURE_TENANT_ID // empty' <<< "$REPOSITORY_VARS")
+          AZURE_SUBSCRIPTION_ID=$(jq -r '.AZURE_SUBSCRIPTION_ID // empty' <<< "$REPOSITORY_VARS")
+          if [ -n "$FOUNDRY_PROJECT_ENDPOINT" ] && \
+             [ -n "$FOUNDRY_PRIMARY_AGENT_NAME" ] && \
+             [ -n "$AZURE_CLIENT_ID" ] && \
+             [ -n "$AZURE_TENANT_ID" ] && \
+             [ -n "$AZURE_SUBSCRIPTION_ID" ]; then
             echo "has_secrets=true" >> "$GITHUB_OUTPUT"
-            echo "Azure OpenAI secrets detected — quality gate will run."
+            echo "Foundry Agent Service configuration detected — quality gate will run."
           else
             echo "has_secrets=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Skipping — AZURE_OPENAI_ENDPOINT or AZURE_TENANT_ID secret not configured."
+            echo "::notice::Skipping — Foundry/OIDC repository variables are incomplete."
           fi
         env:
-          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          REPOSITORY_VARS: ${{ toJSON(vars) }}
 
   quality-gate:
     needs: check-secrets
@@ -70,6 +79,32 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Load Foundry configuration
+        id: config
+        env:
+          REPOSITORY_VARS: ${{ toJSON(vars) }}
+        run: |
+          for key in \
+            AZURE_CLIENT_ID \
+            AZURE_TENANT_ID \
+            AZURE_SUBSCRIPTION_ID \
+            FOUNDRY_PROJECT_ENDPOINT \
+            FOUNDRY_PRIMARY_AGENT_NAME \
+            FOUNDRY_CODEX_AGENT_NAME \
+            FOUNDRY_FAST_AGENT_NAME; do
+            value=$(jq -r --arg key "$key" '.[$key] // empty' <<< "$REPOSITORY_VARS")
+            output_name=$(tr '[:upper:]' '[:lower:]' <<< "$key")
+            echo "::add-mask::$value"
+            echo "$output_name=$value" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Sign in to Azure with OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ steps.config.outputs.azure_client_id }}
+          tenant-id: ${{ steps.config.outputs.azure_tenant_id }}
+          subscription-id: ${{ steps.config.outputs.azure_subscription_id }}
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
@@ -87,11 +122,13 @@ jobs:
 
       - name: Run report quality gate
         env:
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-          AZURE_OPENAI_ENDPOINT: ${{ secrets.AZURE_OPENAI_ENDPOINT }}
-          AZURE_OPENAI_API_KEY: ${{ secrets.AZURE_OPENAI_API_KEY }}
-          AZURE_OPENAI_DEPLOYMENT_NAME: ${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          AZURE_CLIENT_ID: ${{ steps.config.outputs.azure_client_id }}
+          AZURE_TENANT_ID: ${{ steps.config.outputs.azure_tenant_id }}
+          AZURE_SUBSCRIPTION_ID: ${{ steps.config.outputs.azure_subscription_id }}
+          FOUNDRY_PROJECT_ENDPOINT: ${{ steps.config.outputs.foundry_project_endpoint }}
+          FOUNDRY_PRIMARY_AGENT_NAME: ${{ steps.config.outputs.foundry_primary_agent_name }}
+          FOUNDRY_CODEX_AGENT_NAME: ${{ steps.config.outputs.foundry_codex_agent_name }}
+          FOUNDRY_FAST_AGENT_NAME: ${{ steps.config.outputs.foundry_fast_agent_name }}
           AZBRIEF_VERBOSE: "false"
           FAIL_UNDER: ${{ github.event.inputs.fail_under || '3.0' }}
           MIN_TRAJECTORY: ${{ github.event.inputs.min_trajectory || '60' }}

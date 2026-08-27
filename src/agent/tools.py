@@ -48,10 +48,9 @@ WRITE_TOOL_NAMES: frozenset[str] = frozenset()
 # KQL routing registry
 # ---------------------------------------------------------------------------
 # Names of tools whose arguments carry a KQL query (Resource Graph or Log
-# Analytics). LLM-assisted repair of these arguments MUST use the dedicated
-# Codex model/endpoint (AZURE_OPENAI_CODEX_*, temperature 0) — never the fast
-# model — because KQL correctness is the whole reason the Codex deployment
-# exists. See ``AzureUpdateAnalyzer._is_kql_task``.
+# Analytics). LLM-assisted repair of these arguments MUST use the Foundry
+# codex agent — never the fast agent. When no dedicated codex agent is named,
+# the role resolves to the primary agent. See ``AzureUpdateAnalyzer._is_kql_task``.
 KQL_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "query_azure_resources",
@@ -492,60 +491,14 @@ Rules:
             raise
 
     def _get_llm(self):
-        """Get a lightweight LLM instance for query fixing."""
+        """Get the Foundry agent used for query fixing."""
         if self._llm is None:
             from src.config import get_settings
 
             settings = get_settings()
-            if settings.use_azure_openai:
-                from langchain_openai import AzureChatOpenAI
+            from src.agent.foundry_backend import create_foundry_chat_model
 
-                codex_endpoint = (
-                    settings.azure_openai_codex_endpoint or settings.azure_openai_endpoint
-                )
-                codex_api_version = (
-                    settings.azure_openai_codex_api_version or settings.azure_openai_api_version
-                )
-                codex_api_key = settings.azure_openai_codex_api_key or settings.azure_openai_api_key
-                codex_deployment = (
-                    settings.azure_openai_codex_deployment_name
-                    or settings.azure_openai_deployment_name
-                )
-                kwargs = {
-                    "azure_endpoint": codex_endpoint,
-                    "api_version": codex_api_version,
-                    "azure_deployment": codex_deployment,
-                    "max_tokens": 1024,
-                }
-                # Match analyzer.py codex config: reasoning models use reasoning_effort,
-                # non-reasoning models use temperature=0 for max precision
-                if any(tag in (codex_deployment or "").lower() for tag in ("o1", "o3", "o4")):
-                    kwargs["reasoning_effort"] = "medium"
-                else:
-                    kwargs["temperature"] = 0
-                    kwargs["seed"] = 42
-                if codex_api_key:
-                    kwargs["api_key"] = codex_api_key
-                else:
-                    from azure.identity import get_bearer_token_provider
-
-                    from src.config import get_azure_credential
-
-                    credential = get_azure_credential()
-                    token_provider = get_bearer_token_provider(
-                        credential, "https://cognitiveservices.azure.com/.default"
-                    )
-                    kwargs["azure_ad_token_provider"] = token_provider
-                self._llm = AzureChatOpenAI(**kwargs)
-            else:
-                from langchain_openai import ChatOpenAI
-
-                self._llm = ChatOpenAI(
-                    api_key=settings.openai_api_key,
-                    model="gpt-5.3-codex",
-                    max_tokens=1024,
-                    reasoning_effort="high",
-                )
+            self._llm = create_foundry_chat_model(settings, "codex")
         return self._llm
 
     async def fix_query(

@@ -103,7 +103,7 @@ Located in `src/agent/tools.py`:
 - Re-executes corrected query automatically
 - Records successful patterns in `kql_knowledge_base.json` via `kql_knowledge.py`
 - **Circuit breaker**: After 3 consecutive LLM fix failures, falls back to rule-based fixes
-- **Model fallback**: Uses codex LLM for KQL fixes; if codex fails, falls back to primary LLM. The fast model (`AZURE_OPENAI_FAST_*`) is never used for KQL
+- **Agent routing**: Uses `FOUNDRY_CODEX_AGENT_NAME` for KQL fixes; when unset, the role resolves to `FOUNDRY_PRIMARY_AGENT_NAME`. The fast Agent is never used for KQL
 
 ### sanitize/`_rule_based_fix` hardening — never emit a guaranteed-broken query
 

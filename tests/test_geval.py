@@ -31,12 +31,14 @@ from src.rss.parser import AzureUpdate
 # ============================================================================
 
 
-def _fake_settings(deployment="gpt-4o", logprob=True, target=4.5):
-    return SimpleNamespace(
-        azure_openai_deployment_name=deployment,
+def _fake_settings(deployment="azbrief-primary", logprob=True, target=4.5):
+    settings = SimpleNamespace(
+        foundry_primary_agent_name=deployment,
         geval_logprob_normalization=logprob,
         geval_target_score=target,
     )
+    settings.foundry_agent_for_role = lambda role: settings.foundry_primary_agent_name
+    return settings
 
 
 class _FakeMsg:

@@ -15,7 +15,11 @@ _ADMIN_ENV = (
     "ADMIN_UI_ENABLED",
     "ADMIN_REQUIRE_AUTH",
     "ADMIN_ALLOWED_PRINCIPALS",
-    "LLM_BACKEND",
+    "FOUNDRY_PROJECT_ENDPOINT",
+    "FOUNDRY_PRIMARY_AGENT_NAME",
+    "FOUNDRY_PLANNER_AGENT_NAME",
+    "FOUNDRY_EVALUATOR_AGENT_NAME",
+    "FOUNDRY_REPORTER_AGENT_NAME",
 )
 
 
@@ -228,10 +232,12 @@ class TestAdminRoutes:
             monkeypatch,
             ADMIN_UI_ENABLED="true",
             ADMIN_REQUIRE_AUTH="false",
-            LLM_BACKEND="foundry",
+            FOUNDRY_PROJECT_ENDPOINT=("https://demo.services.ai.azure.com/api/projects/azbrief"),
+            FOUNDRY_PRIMARY_AGENT_NAME="azbrief-primary",
         )
         payload = client.get("/api/admin/status").json()
-        assert payload["LLM 백엔드"] == "foundry"
+        assert payload["AI 런타임"] == "Microsoft Foundry Agent Service"
+        assert payload["Primary 에이전트"] == "azbrief-primary"
         serialized = str(payload).lower()
         for forbidden in ("accesskey", "api_key", "connection string=", "secret"):
             assert forbidden not in serialized
@@ -253,5 +259,17 @@ def test_admin_env_names_are_documented():
     template = os.path.join("infra", "azbrief-enterprise-deploy.json")
     with open(template, encoding="utf-8") as handle:
         content = handle.read()
-    for name in ("ADMIN_UI_ENABLED", "ADMIN_ALLOWED_PRINCIPALS", "LLM_BACKEND"):
-        assert name in content
+    for name in (
+        "ADMIN_UI_ENABLED",
+        "ADMIN_ALLOWED_PRINCIPALS",
+        "FOUNDRY_PROJECT_ENDPOINT",
+        "FOUNDRY_PRIMARY_AGENT_NAME",
+        "FOUNDRY_ENRICHMENT_AGENTS",
+    ):
+        assert f'"name": "{name}"' in content
+    for removed in (
+        "LLM_BACKEND",
+        "AZURE_OPENAI_ENDPOINT",
+        "AZURE_OPENAI_DEPLOYMENT_NAME",
+    ):
+        assert f'"name": "{removed}"' not in content

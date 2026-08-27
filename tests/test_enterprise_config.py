@@ -22,7 +22,6 @@ _ISOLATED_PREFIXES = (
     "ADMIN_",
     "FOUNDRY_",
     "ORCHESTRATOR_",
-    "LLM_BACKEND",
 )
 
 
@@ -40,40 +39,31 @@ def _settings(**overrides) -> Settings:
     return Settings(_env_file=None, **base)
 
 
-class TestBackendSelection:
-    """llm_backend validation and the Foundry readiness flag."""
-
-    def test_defaults_to_foundry(self):
-        assert _settings().llm_backend == "foundry"
+class TestFoundryReadiness:
+    """Foundry readiness requires both the project and primary agent."""
 
     def test_foundry_requires_an_endpoint(self):
-        # Asking for Foundry without a project must degrade, not crash the run.
         assert _settings().use_foundry is False
 
-    def test_foundry_is_active_once_configured(self):
+    def test_foundry_requires_a_primary_agent(self):
         settings = _settings(
             foundry_project_endpoint="https://r.services.ai.azure.com/api/projects/p"
         )
-        assert settings.use_foundry is True
-
-    def test_openai_backend_never_activates_foundry(self):
-        settings = _settings(
-            llm_backend="openai",
-            foundry_project_endpoint="https://r.services.ai.azure.com/api/projects/p",
-        )
         assert settings.use_foundry is False
 
-    def test_unknown_backend_is_rejected(self):
-        # A typo must fail loudly rather than silently running the wrong backend.
-        with pytest.raises(ValueError, match="llm_backend"):
-            _settings(llm_backend="bedrock")
+    def test_foundry_is_active_once_configured(self):
+        settings = _settings(
+            foundry_project_endpoint="https://r.services.ai.azure.com/api/projects/p",
+            foundry_primary_agent_name="azbrief-primary",
+        )
+        assert settings.use_foundry is True
 
 
 class TestFoundryAgentRoster:
-    """FOUNDRY_AGENTS parsing for the hosted multi-agent pipeline."""
+    """FOUNDRY_ENRICHMENT_AGENTS parsing for the optional enrichment pipeline."""
 
     def test_empty_by_default(self):
-        assert _settings().get_foundry_agents() == []
+        assert _settings().get_foundry_enrichment_agents() == []
 
     def test_parses_roster(self):
         roster = json.dumps(
@@ -83,9 +73,12 @@ class TestFoundryAgentRoster:
                 {"name": "azbrief-action", "stage": "action"},
             ]
         )
-        agents = _settings(foundry_agents=roster).get_foundry_agents()
+        agents = _settings(foundry_enrichment_agents=roster).get_foundry_enrichment_agents()
         assert {a.stage for a in agents} == {"research", "impact", "action"}
-        assert all(a.version == "latest" for a in agents)
+
+    def test_unsupported_version_entry_is_skipped(self):
+        roster = '[{"name":"old-api","stage":"research","version":"latest"}]'
+        assert _settings(foundry_enrichment_agents=roster).get_foundry_enrichment_agents() == []
 
     def test_last_entry_wins_per_stage(self):
         roster = json.dumps(
@@ -94,7 +87,7 @@ class TestFoundryAgentRoster:
                 {"name": "new", "stage": "research"},
             ]
         )
-        agents = _settings(foundry_agents=roster).get_foundry_agents()
+        agents = _settings(foundry_enrichment_agents=roster).get_foundry_enrichment_agents()
         assert [a.name for a in agents] == ["new"]
 
     def test_unknown_stage_entry_is_skipped(self):
@@ -105,12 +98,12 @@ class TestFoundryAgentRoster:
                 {"name": "good", "stage": "impact"},
             ]
         )
-        agents = _settings(foundry_agents=roster).get_foundry_agents()
+        agents = _settings(foundry_enrichment_agents=roster).get_foundry_enrichment_agents()
         assert [a.name for a in agents] == ["good"]
 
     @pytest.mark.parametrize("raw", ["not json", "{}", '"a string"', "[1, 2, 3]"])
     def test_malformed_roster_degrades_to_empty(self, raw: str):
-        assert _settings(foundry_agents=raw).get_foundry_agents() == []
+        assert _settings(foundry_enrichment_agents=raw).get_foundry_enrichment_agents() == []
 
     def test_stage_names_match_pipeline_order(self):
         assert FOUNDRY_AGENT_STAGES == ("research", "impact", "action", "review")

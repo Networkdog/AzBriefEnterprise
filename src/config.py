@@ -10,16 +10,16 @@ from functools import lru_cache
 from typing import Optional
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.i18n import DEFAULT_LANGUAGE, is_supported, normalize_language, supported_language_codes
 
 load_dotenv(override=not _os.environ.get("CONTAINER_APP_NAME"))
 
-# LLM roles with their own optional deployment. Each role reads the
-# azure_openai_<role>_* fields and falls back to the primary ones.
-LLM_ROLES = ("primary", "codex", "fast")
+# Runtime agent roles. Optional role-specific agents fall back to the primary
+# Foundry agent so a single-agent deployment remains a valid configuration.
+LLM_ROLES = ("primary", "planner", "evaluator", "reporter", "codex", "fast")
 
 
 class Subscriber(BaseModel):
@@ -56,34 +56,14 @@ class Subscriber(BaseModel):
         return normalize_language(v)
 
 
-class FoundryMcpServer(BaseModel):
-    """Remote MCP server attached to the Foundry enrichment agent.
-
-    Used only when ``llm_backend='foundry'``. Each entry is passed to the
-    Foundry Agent Service as an MCP tool connection so the enrichment agent
-    can call the server's tools (e.g. Azure MCP, Microsoft Learn MCP).
-
-    Example JSON::
-
-        [{"label": "azure", "url": "https://<host>/runtime/webhooks/mcp",
-          "allowed_tools": ["query_azure_resource_graph"]},
-         {"label": "learn", "url": "https://learn.microsoft.com/api/mcp"}]
-    """
-
-    label: str
-    url: str
-    allowed_tools: list[str] = []  # empty = all tools exposed by the server
-    require_approval: str = "never"  # "always" | "never" (background job → never)
-
-
-# Stages of the Foundry hosted multi-agent pipeline, in execution order.
+# Stages of the Foundry Prompt Agent enrichment pipeline, in execution order.
 # 'research' and 'impact' are independent and run concurrently; 'action'
 # consumes both; 'review' audits the merged context.
 FOUNDRY_AGENT_STAGES = ("research", "impact", "action", "review")
 
 
 class FoundryAgentSpec(BaseModel):
-    """One hosted Foundry agent participating in the multi-agent pipeline.
+    """One Foundry Prompt Agent participating in the enrichment pipeline.
 
     Each entry names an agent that already exists in the Foundry project, so
     its tools, model and guardrails stay governed in Foundry rather than
@@ -96,9 +76,10 @@ class FoundryAgentSpec(BaseModel):
          {"name": "azbrief-action",   "stage": "action"}]
     """
 
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     stage: str = "research"
-    version: str = "latest"
     instructions: str = ""  # appended to the stage prompt when set
 
     @field_validator("stage")
@@ -128,79 +109,6 @@ class Settings(BaseSettings):
         default=None,
         description="Azure Subscription ID (optional - if not set, use all accessible subscriptions in tenant)",
     )
-
-    # Azure OpenAI
-    azure_openai_endpoint: Optional[str] = Field(default=None, description="Azure OpenAI endpoint")
-    azure_openai_api_key: Optional[str] = Field(default=None, description="Azure OpenAI API Key")
-    azure_openai_api_version: str = Field(
-        default="2024-02-15-preview", description="Azure OpenAI API version"
-    )
-    azure_openai_deployment_name: str = Field(
-        default="gpt-4o", description="Azure OpenAI deployment name"
-    )
-    azure_openai_codex_endpoint: Optional[str] = Field(
-        default=None,
-        description="Azure OpenAI endpoint for Codex model (all KQL work: Resource Graph / Log Analytics query generation and fixing)",
-    )
-    azure_openai_codex_api_key: Optional[str] = Field(
-        default=None,
-        description="Azure OpenAI API key for Codex model (all KQL work: Resource Graph / Log Analytics query generation and fixing)",
-    )
-    azure_openai_codex_api_version: Optional[str] = Field(
-        default=None,
-        description="Azure OpenAI API version for Codex model (all KQL work: Resource Graph / Log Analytics query generation and fixing)",
-    )
-    azure_openai_codex_deployment_name: Optional[str] = Field(
-        default=None,
-        description="Azure OpenAI Codex deployment name for all KQL work (Resource Graph / Log Analytics)",
-    )
-
-    # Azure OpenAI Fast Model (lightweight tasks: task revision, subscriber
-    # customization). Never used for KQL — that always goes to the Codex model.
-    azure_openai_fast_endpoint: Optional[str] = Field(
-        default=None,
-        description="Azure OpenAI endpoint for fast model. Falls back to main endpoint if not set.",
-    )
-    azure_openai_fast_api_key: Optional[str] = Field(
-        default=None,
-        description="Azure OpenAI API key for fast model. Falls back to main API key if not set.",
-    )
-    azure_openai_fast_api_version: Optional[str] = Field(
-        default=None,
-        description="Azure OpenAI API version for fast model. Falls back to main API version if not set.",
-    )
-    azure_openai_fast_deployment_name: Optional[str] = Field(
-        default=None,
-        description="Azure OpenAI fast model deployment name (e.g., gpt-4o-mini). Falls back to main deployment if not set.",
-    )
-
-    def llm_profile(self, role: str = "primary") -> dict[str, Optional[str]]:
-        """Azure OpenAI connection settings for an LLM role.
-
-        Role-specific fields fall back to the primary ones when unset, so a role
-        that has no separate deployment transparently shares the main model.
-
-        Args:
-            role: One of LLM_ROLES ("primary", "codex", "fast")
-
-        Returns:
-            Dict with endpoint, api_key, api_version and deployment
-        """
-        if role not in LLM_ROLES:
-            raise ValueError(f"Unknown LLM role '{role}'. Expected one of {LLM_ROLES}.")
-        prefix = "" if role == "primary" else f"{role}_"
-        return {
-            "endpoint": getattr(self, f"azure_openai_{prefix}endpoint")
-            or self.azure_openai_endpoint,
-            "api_key": getattr(self, f"azure_openai_{prefix}api_key") or self.azure_openai_api_key,
-            "api_version": getattr(self, f"azure_openai_{prefix}api_version")
-            or self.azure_openai_api_version,
-            "deployment": getattr(self, f"azure_openai_{prefix}deployment_name")
-            or self.azure_openai_deployment_name,
-        }
-
-    # OpenAI (fallback)
-    openai_api_key: Optional[str] = Field(default=None, description="OpenAI API Key")
 
     # Azure Communication Services
     communication_services_connection_string: Optional[str] = Field(
@@ -452,20 +360,10 @@ class Settings(BaseSettings):
         ),
     )
 
-    # ── Microsoft Foundry backend ────────────────────────────
-    # Foundry is this build's primary backend: hosted agents supply the staged
-    # multi-agent pipeline plus Bing/Web search, Azure MCP, Microsoft Learn MCP
-    # and memory. The core Plan-Execute-Evaluate loop, KQL determinism, and
-    # G-Eval quality pipeline are unchanged, and an unreachable Foundry project
-    # degrades to Azure OpenAI rather than failing the run.
-    llm_backend: str = Field(
-        default="foundry",
-        description=(
-            "LLM/agent backend: 'foundry' (Microsoft Foundry Agent Service, default) "
-            "or 'openai' (Azure OpenAI / OpenAI). 'foundry' falls back to 'openai' "
-            "gracefully when the SDK or endpoint is unavailable."
-        ),
-    )
+    # ── Microsoft Foundry Agent Service runtime ──────────────
+    # Every model-mediated operation goes through a named agent in this project.
+    # Models, tools, guardrails, and memory are governed by the agent definition
+    # in Foundry rather than by application-side endpoint or API-key settings.
     foundry_project_endpoint: Optional[str] = Field(
         default=None,
         description=(
@@ -473,69 +371,84 @@ class Settings(BaseSettings):
             "https://<resource>.services.ai.azure.com/api/projects/<project>"
         ),
     )
+    foundry_primary_agent_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Foundry Agent Service agent used for planning, evaluation, report generation, "
+            "and other primary reasoning calls."
+        ),
+    )
+    foundry_planner_agent_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Foundry Agent Service agent used for analysis planning. "
+            "Falls back to foundry_primary_agent_name when unset."
+        ),
+    )
+    foundry_evaluator_agent_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Foundry Agent Service agent used to evaluate evidence completeness. "
+            "Falls back to foundry_primary_agent_name when unset."
+        ),
+    )
+    foundry_reporter_agent_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Foundry Agent Service agent used for final report generation and recovery. "
+            "Falls back to foundry_primary_agent_name when unset."
+        ),
+    )
+    foundry_codex_agent_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Foundry Agent Service agent used for KQL generation and repair. "
+            "Falls back to foundry_primary_agent_name when unset."
+        ),
+    )
+    foundry_fast_agent_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Foundry Agent Service agent used for lightweight revisions and subscriber "
+            "customization. Falls back to foundry_primary_agent_name when unset."
+        ),
+    )
     foundry_model_deployment: Optional[str] = Field(
         default=None,
         description=(
-            "Foundry chat model deployment name. Falls back to "
-            "azure_openai_deployment_name when not set."
+            "Model deployment used only by scripts/provision_foundry_agents.py when "
+            "creating or updating agent definitions. The running app does not call it directly."
         ),
     )
-    foundry_api_version: Optional[str] = Field(
-        default=None,
-        description="Foundry inference API version (optional; SDK default when unset).",
-    )
-    foundry_enrichment_agent_name: Optional[str] = Field(
+    foundry_enrichment_agents: Optional[str] = Field(
         default=None,
         description=(
-            "Name of a pre-configured Foundry Agent Service agent used as a "
-            "LangGraph enrichment node. Configure its tools (Bing/Web search, "
-            "Azure MCP, Microsoft Learn MCP, memory) in the Foundry portal/SDK. "
-            "When unset, no enrichment node is added (core loop unchanged)."
-        ),
-    )
-    foundry_enable_web_search: bool = Field(
-        default=True,
-        description=(
-            "Allow the Foundry enrichment agent to use Web/Bing grounding for "
-            "real-time public context. Effective only with the foundry backend."
-        ),
-    )
-    foundry_bing_connection_id: Optional[str] = Field(
-        default=None,
-        description=(
-            "Foundry project connection ID for a Grounding with Bing Search "
-            "resource. Optional; the hosted Web search tool needs no connection."
-        ),
-    )
-    foundry_mcp_servers: Optional[str] = Field(
-        default=None,
-        description=(
-            "Remote MCP servers for the Foundry enrichment agent — JSON array, "
-            'e.g. [{"label":"azure","url":"https://.../mcp"},'
-            '{"label":"learn","url":"https://learn.microsoft.com/api/mcp"}]'
-        ),
-    )
-    foundry_enable_memory: bool = Field(
-        default=False,
-        description=(
-            "Allow the Foundry enrichment agent to use a Foundry-managed memory "
-            "store (preview) for cross-run analysis context. Off by default."
-        ),
-    )
-    foundry_agents: Optional[str] = Field(
-        default=None,
-        description=(
-            "Hosted Foundry agents forming the multi-agent pipeline — JSON array, "
+            "Optional Foundry agents that enrich context before the core analysis — JSON array, "
             'e.g. [{"name":"azbrief-research","stage":"research"},'
             '{"name":"azbrief-impact","stage":"impact"},'
-            '{"name":"azbrief-action","stage":"action"}]. When set, this replaces '
-            "the single enrichment agent with a staged pipeline."
+            '{"name":"azbrief-action","stage":"action"}]. Tools and guardrails are '
+            "configured on each agent in Foundry."
         ),
     )
     foundry_agent_timeout_s: int = Field(
         default=180,
         description="Per-agent timeout for a hosted Foundry agent invocation, in seconds.",
     )
+
+    def foundry_agent_for_role(self, role: str = "primary") -> Optional[str]:
+        """Resolve the Foundry agent name for a runtime role.
+
+        Args:
+            role: One of LLM_ROLES.
+
+        Returns:
+            Configured role-specific agent name, or the primary agent name.
+        """
+        if role not in LLM_ROLES:
+            raise ValueError(f"Unknown LLM role '{role}'. Expected one of {LLM_ROLES}.")
+        if role == "primary":
+            return self.foundry_primary_agent_name
+        return getattr(self, f"foundry_{role}_agent_name") or self.foundry_primary_agent_name
 
     # ── Scheduling & durable state ──────────────────────────────
     # A Container Apps Job runs the scheduled digest and the Container App
@@ -603,16 +516,6 @@ class Settings(BaseSettings):
         ),
     )
 
-    @field_validator("llm_backend")
-    @classmethod
-    def validate_llm_backend(cls, v: str) -> str:
-        """Restrict llm_backend to supported values."""
-        allowed = {"openai", "foundry"}
-        v_lower = v.lower()
-        if v_lower not in allowed:
-            raise ValueError(f"llm_backend must be one of {allowed}, got '{v}'")
-        return v_lower
-
     @field_validator("geval_target_score")
     @classmethod
     def validate_geval_target_score(cls, v: float) -> float:
@@ -622,47 +525,21 @@ class Settings(BaseSettings):
         return v
 
     @property
-    def use_azure_openai(self) -> bool:
-        """Check if Azure OpenAI should be used."""
-        return self.azure_openai_endpoint is not None
-
-    @property
     def use_foundry(self) -> bool:
-        """Check if the Microsoft Foundry backend is requested and configured.
+        """Return True when the required Foundry runtime settings are present."""
+        return bool(self.foundry_project_endpoint and self.foundry_primary_agent_name)
 
-        True only when llm_backend='foundry' AND a project endpoint is set.
-        Even when True, callers must degrade gracefully to Azure OpenAI if the
-        'foundry' extra (langchain-azure-ai) is not installed.
-        """
-        return self.llm_backend == "foundry" and self.foundry_project_endpoint is not None
-
-    def get_foundry_mcp_servers(self) -> list[FoundryMcpServer]:
-        """Parse FOUNDRY_MCP_SERVERS JSON into a list of FoundryMcpServer.
-
-        Returns an empty list on missing or malformed input (graceful degrade),
-        so a bad MCP config never blocks the analysis run.
-        """
-        if not self.foundry_mcp_servers:
-            return []
-        try:
-            raw = json.loads(self.foundry_mcp_servers)
-            if not isinstance(raw, list):
-                return []
-            return [FoundryMcpServer(**item) for item in raw]
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return []
-
-    def get_foundry_agents(self) -> list[FoundryAgentSpec]:
-        """Parse FOUNDRY_AGENTS JSON into a list of FoundryAgentSpec.
+    def get_foundry_enrichment_agents(self) -> list[FoundryAgentSpec]:
+        """Parse FOUNDRY_ENRICHMENT_AGENTS into FoundryAgentSpec entries.
 
         Returns an empty list on missing or malformed input so a bad roster
         degrades to the single-agent (or plain LLM) path instead of failing
         the run. Entries are de-duplicated by stage, last one winning.
         """
-        if not self.foundry_agents:
+        if not self.foundry_enrichment_agents:
             return []
         try:
-            raw = json.loads(self.foundry_agents)
+            raw = json.loads(self.foundry_enrichment_agents)
             if not isinstance(raw, list):
                 return []
             parsed: dict[str, FoundryAgentSpec] = {}

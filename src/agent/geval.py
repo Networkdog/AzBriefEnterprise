@@ -474,7 +474,7 @@ class GEvalJudge:
             settings: Optional settings override (mostly for tests).
         """
         self.settings = settings or get_settings()
-        self._deployment = self.settings.azure_openai_deployment_name
+        self._deployment = self.settings.foundry_agent_for_role("primary") or ""
         self._is_reasoning = self._is_reasoning_model(self._deployment)
         self._llm = llm if llm is not None else self._create_judge_llm()
 
@@ -484,7 +484,9 @@ class GEvalJudge:
             )
         # o-series reasoning models do not support logprobs.
         self.enable_logprob_normalization = bool(
-            enable_logprob_normalization and not self._is_reasoning
+            enable_logprob_normalization
+            and not self._is_reasoning
+            and getattr(self._llm, "supports_logprobs", True)
         )
 
         self.target_score = (
@@ -510,46 +512,10 @@ class GEvalJudge:
         )
 
     def _create_judge_llm(self) -> Any:
-        """Create a deterministic judge model (temperature=0 for consistency)."""
-        from langchain_openai import AzureChatOpenAI, ChatOpenAI
+        """Create the Foundry primary agent used as the report judge."""
+        from src.agent.foundry_backend import create_foundry_chat_model
 
-        if self.settings.use_azure_openai:
-            kwargs: dict[str, Any] = {
-                "azure_endpoint": self.settings.azure_openai_endpoint,
-                "api_version": self.settings.azure_openai_api_version,
-                "azure_deployment": self._deployment,
-                "request_timeout": 120,
-            }
-            if self._is_reasoning:
-                kwargs["reasoning_effort"] = "medium"
-            else:
-                # A judge must be maximally deterministic and calibrated.
-                kwargs["temperature"] = 0
-                kwargs["seed"] = 42
-            if self.settings.azure_openai_api_key:
-                kwargs["api_key"] = self.settings.azure_openai_api_key
-            else:
-                from azure.identity import get_bearer_token_provider
-
-                from src.config import get_azure_credential
-
-                credential = get_azure_credential()
-                kwargs["azure_ad_token_provider"] = get_bearer_token_provider(
-                    credential, "https://cognitiveservices.azure.com/.default"
-                )
-            return AzureChatOpenAI(**kwargs)
-
-        kwargs = {
-            "api_key": self.settings.openai_api_key,
-            "model": "gpt-4o",
-            "request_timeout": 120,
-        }
-        if self._is_reasoning:
-            kwargs["reasoning_effort"] = "medium"
-        else:
-            kwargs["temperature"] = 0
-            kwargs["seed"] = 42
-        return ChatOpenAI(**kwargs)
+        return create_foundry_chat_model(self.settings, "primary")
 
     # ------------------------------------------------------------------
     # Public API

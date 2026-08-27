@@ -7,7 +7,6 @@ python-dotenv>=1.0.0,<2.0
 
 # LangChain
 langchain-core>=0.1.0,<1.0
-langchain-openai>=0.0.5,<1.0
 langgraph>=0.0.20,<1.0
 
 # Azure SDKs
@@ -31,8 +30,7 @@ structlog>=24.1.0,<26.0
 # project endpoint is unreachable, but the SDK ships with the image so the
 # default path works out of the box. Both are still beta, so the lower bound is
 # the version this was verified against.
-azure-ai-projects>=1.1.0b4,<2.0
-azure-ai-agents>=1.2.0b6,<2.0
+azure-ai-projects>=2.5.0,<3.0
 
 # OpenTelemetry export to Application Insights (OTEL_ENABLED=true)
 azure-monitor-opentelemetry>=1.6.0,<2.0

@@ -16,8 +16,19 @@ Do not claim success — it is only success if you actually verified it.
 
 ## Project Overview
 
-AzBrief Enterprise is an **Azure Update Intelligence Agent** for Azure administrators, running a Microsoft Foundry hosted multi-agent pipeline on Container Apps.
+AzBrief Enterprise is the enterprise edition of AzBrief and shares the same product identity, analysis core, and mission. It is an **Azure Update Intelligence Agent** for Azure administrators. Its custom LangGraph harness runs on Container Apps and invokes persisted Microsoft Foundry Prompt Agents; the application is not itself a Foundry Hosted Agent.
 It analyzes Azure Update RSS feeds, queries the administrator's actual Azure resources via Resource Graph to assess relevance, evaluates each update on three independent axes — importance (update's inherent significance), impact (effect on the admin's resource environment), and job relevance (fit to the subscriber's role) — generates impact analysis and action items via AI Agent (LangChain/LangGraph), and delivers a consolidated daily digest email. All updates are analyzed without pre-filtering — the email summary displays a compact table with columns for 중요성, 영향도, and 직무연관성 (높음/보통/낮음 badges), and each title links to its detailed analysis below. It aims to provide practical help to Azure administrators who manage diverse roles.
+
+### Product Identity and Direction
+
+- **Mission**: Translate every generic Azure announcement into what it means for the administrator's actual environment and what the responsible operator should do next.
+- **Vision**: Make Azure change intelligence a routine operational capability so every Azure team knows what changed, where and why it matters, and what comes next for its own environment.
+- **Evidence before inference**: Ground conclusions in actual tenant resources, configuration, health, policy, cost, and regional availability. AzBrief is environment-aware decision intelligence, not a generic update summarizer.
+- **Action over notification**: Turn findings into safe, specific procedures, commands, deadlines, and risk warnings instead of merely restating announcements.
+- **Coverage without silent filtering**: Analyze every collected update before deciding its importance, impact, or job relevance so risks and opportunities are not discarded prematurely.
+- **One investigation, role-specific delivery**: Reuse the same evidence while adapting the briefing to each subscriber's responsibility and language.
+- **Enterprise extension, not product divergence**: Foundry Prompt Agents, Entra-only access, Container Apps, private networking, observability, and durable state extend the original AzBrief mission into regulated environments; they do not replace or redefine it.
+- **Trust before autonomy**: Keep evidence traceable, validate executable actions, and fail closed when identity, permissions, or model capabilities are unclear.
 
 > This is a Korean-language project. Email templates and comments are written in **Korean**.
 > Code (variable names, function names, class names, docstrings) is written in **English**. Prompts are written in **English** to save tokens, but final user-facing output must be in **Korean**.
@@ -94,13 +105,16 @@ Tools follow a self-contained module pattern:
 
 ### Multi-Model Strategy
 
-| Model Role | Purpose | Temperature | Used In |
-|------------|---------|-------------|---------|
-| **Primary** (`llm`) | Planning, evaluation, reporting | 0.1 (gpt-4o) or reasoning_effort=medium (o-series) | `_planning_node`, `_evaluation_node`, `_report_node` |
-| **Codex** (`llm_codex`) | KQL query generation/fixing | 0 (max precision) | `_fix_tool_args` (KQL), `ResourceGraphQueryFixer` |
-| **Fast** (`llm_fast`) | Task revision, subscriber customization | reasoning_effort=low | `_revise_tasks_node`, `customize_for_subscriber` |
+| Agent Role | Purpose | Used In |
+|------------|---------|---------|
+| **Primary** (`llm`) | Judging, action verification, optional-role fallback | G-Eval, `ActionItemVerifier`, query-fixer fallback |
+| **Planner** (`llm_planner`) | Evidence-plan generation + local planning-tool requests | `_planning_node` |
+| **Evaluator** (`llm_evaluator`) | Independent evidence-completeness verdict | `_evaluation_node` |
+| **Reporter** (`llm_reporter`) | Final report generation + output recovery | `_report_node` |
+| **Codex** (`llm_codex`) | KQL query generation/fixing | `_fix_tool_args` (KQL), `ResourceGraphQueryFixer` |
+| **Fast** (`llm_fast`) | Task revision, subscriber customization | `_revise_tasks_node`, `customize_for_subscriber` |
 
-Each role resolves its endpoint/key/api-version/deployment through `Settings.llm_profile(role)` (`LLM_ROLES = ("primary", "codex", "fast")`). Unset `azure_openai_<role>_*` fields fall back to the primary ones, so a role without its own deployment transparently shares the main model. Add a role by extending `LLM_ROLES` plus the four matching settings fields — do not hand-roll a second factory.
+Each role resolves to a Foundry Agent Service name through `Settings.foundry_agent_for_role(role)` (`LLM_ROLES = ("primary", "planner", "evaluator", "reporter", "codex", "fast")`). `FOUNDRY_PRIMARY_AGENT_NAME` is required; every unset optional role falls back to it. The app invokes Prompt Agents through `AIProjectClient(...).agents` and never constructs an Azure OpenAI/OpenAI chat-completions client.
 
 ### Memory & Caching
 
@@ -115,8 +129,8 @@ Each role resolves its endpoint/key/api-version/deployment through `Settings.llm
 | Area | Technology |
 |------|-----------|
 | Language | Python 3.10+ |
-| AI Framework | `langchain-core`, `langchain-openai`, `langgraph` |
-| LLM | Azure OpenAI (GPT-4o) — fallback: OpenAI API |
+| AI Framework | `langchain-core`, `langgraph`, `azure-ai-projects`, `azure-ai-agents` |
+| AI Runtime | Microsoft Foundry Agent Service only |
 | Web Framework | FastAPI + Uvicorn |
 | Settings | pydantic-settings (`.env` → `Settings` class) |
 | Logging | structlog (JSON structured logging) |
@@ -195,7 +209,7 @@ no fat wheel — the Enterprise edition runs entirely on Container Apps.
 
 ```
 Container Apps Job (cron)  ──  python -m src.scheduler
-    -> Microsoft Foundry hosted multi-agent
+    -> Microsoft Foundry Prompt Agents
     -> Azure Communication Services
 Container App  ──  uvicorn src.main:app  (orchestrator API + /admin)
 ```
@@ -245,28 +259,25 @@ Constraints that are easy to get wrong:
 - Container Apps and Communication Services are **not** NSP-onboarded, so `perimeter` mode
   leaves them on ingress IP restrictions plus the API key.
 
-### Backend selection
+### Foundry Agent Service runtime
 
-`LLM_BACKEND` defaults to `foundry`. `Settings.use_foundry` is True only when the backend is
-`foundry` **and** `foundry_project_endpoint` is set, so an unconfigured or unreachable
-project degrades to Azure OpenAI instead of failing the run. Never make a code path assume
-the Foundry pipeline actually ran.
+`Settings.use_foundry` is True only when both `FOUNDRY_PROJECT_ENDPOINT` and
+`FOUNDRY_PRIMARY_AGENT_NAME` are set. Missing configuration, a missing Agent, an incomplete
+run, or an unavailable SDK fails closed; there is no Azure OpenAI/OpenAI fallback.
 
-**The Foundry backend supplies hosted *agents*, not a chat model.** The project endpoint does
-not serve chat completions — verified live: an inference client pointed at it returns 401
-(`audience is incorrect`), pointing at `<account>/models` returns 401 as well, and the SDK's
-`project_endpoint=` form raises `No default connection found for ConnectionType.AZURE_OPEN_AI`
-because an agent-only project has no Azure OpenAI connection. `_create_llm()` therefore always
-builds an `AzureChatOpenAI` against `AZURE_OPENAI_ENDPOINT` (the same Foundry account, via its
-`.openai.azure.com` endpoint, Entra-authenticated). Do not reintroduce a Foundry chat-model
-branch there.
+The Foundry project endpoint does not serve chat completions. Never point an inference client
+at it and never add an `.openai.azure.com` endpoint to the application settings. Persisted
+models, standing instructions, server-side tools, guardrails, and memory belong to Prompt
+Agent definitions. The Plan-Execute-Evaluate state machine and Azure SDK/LangChain tools remain
+application-owned. Planning tools are exposed through an allow-listed JSON request bridge;
+client-side `bind_tools()` alone is not a Prompt Agent tool attachment.
 
-Agents are invoked through the **Agents data plane** (`AIProjectClient(...).agents` →
+Prompt Agents are invoked through the classic **Agents data plane** (`AIProjectClient(...).agents` →
 `create_thread_and_process_run`), not through `langchain-azure-ai`: `AgentServiceFactory` only
 exposes `create_declarative_chat_*`, which *creates* agents rather than referencing the ones
-already published in the project, and has no `get_agent_node`. The roster is listed once per
-project endpoint and cached (`_AGENT_ROSTER_CACHE`), so a four-stage pipeline does not pay
-four listings per update.
+already published in the project, and has no `get_agent_node`. One-shot threads are deleted
+after each response. The roster is cached per endpoint and refreshed once on a name miss, so
+newly provisioned phase Agents do not require a process restart.
 
 ---
 
@@ -330,26 +341,33 @@ python -m scripts.test_local resources               # View resource summary
 
 ### Foundry agent provisioning
 
-The ARM template configures `FOUNDRY_AGENTS` but cannot create the agents — they live in the
-project's data plane. `scripts/provision_foundry_agents.py` closes that gap:
+The ARM template configures the primary and phase Agent names but cannot create the Agents —
+they live in the project's data plane. Enrichment defaults off until its server tools pass the
+read-only roster check. `scripts/provision_foundry_agents.py` closes that gap:
 
 ```bash
 python -m scripts.provision_foundry_agents --dry-run   # print instructions, no project needed
-python -m scripts.provision_foundry_agents             # create or update all four stages
+python -m scripts.provision_foundry_agents             # create/update runtime + enrichment agents
+python -m scripts.provision_foundry_agents --runtime-roles primary codex
+python -m scripts.provision_foundry_agents --check      # names + instructions + required tools
 python -m scripts.provision_foundry_agents --delete    # tear the roster down
 ```
 
-Agent instructions are **derived** from `STAGE_PROMPTS` in `src/agent/foundry_backend.py` by
-cutting at the runtime context marker — never copy them into the script, or the standing role
-and the per-run message will drift. A missing agent is not an error at analysis time: the
-pipeline degrades to the LangGraph path.
+Runtime instructions live in `RUNTIME_AGENT_INSTRUCTIONS`; enrichment instructions are
+derived from `STAGE_PROMPTS` by cutting at the runtime context marker. Research and impact
+must have at least one server-side tool before `--check` passes. Enrichment output is strict,
+evidence-addressable JSON; review rejection removes rejected claims and dependent actions.
+A missing enrichment stage is isolated, but required runtime Agents fail closed.
 
 
 ### Required Environment Variables
 Copy `.env.example` to `.env` and fill in:
 - `AZURE_TENANT_ID` (required)
-- `AZURE_OPENAI_ENDPOINT` + `AZURE_OPENAI_API_KEY` (or `OPENAI_API_KEY`)
-- `AZURE_OPENAI_DEPLOYMENT_NAME` (default: gpt-4o)
+- `FOUNDRY_PROJECT_ENDPOINT` (required)
+- `FOUNDRY_PRIMARY_AGENT_NAME` (required)
+- `FOUNDRY_PLANNER_AGENT_NAME` / `FOUNDRY_EVALUATOR_AGENT_NAME` / `FOUNDRY_REPORTER_AGENT_NAME` (optional; primary fallback)
+- `FOUNDRY_CODEX_AGENT_NAME` / `FOUNDRY_FAST_AGENT_NAME` (optional; primary fallback)
+- `FOUNDRY_MODEL_DEPLOYMENT` (provisioning only)
 - `AZURE_SUBSCRIPTION_ID` (optional — omit for tenant-wide query)
 
 ---

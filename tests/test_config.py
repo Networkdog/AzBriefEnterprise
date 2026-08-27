@@ -8,80 +8,43 @@ import pytest
 from src.config import LLM_ROLES, Settings, Subscriber
 
 
-class TestLlmProfile:
-    """Per-role LLM deployment resolution."""
-
-    @pytest.fixture(autouse=True)
-    def _isolate_env(self, monkeypatch):
-        # Settings reads AZURE_OPENAI_* from the developer's real environment,
-        # which would otherwise leak into the role-fallback assertions.
-        for key in list(os.environ):
-            if key.upper().startswith("AZURE_OPENAI_"):
-                monkeypatch.delenv(key, raising=False)
+class TestFoundryAgentRoles:
+    """Per-role Foundry Agent Service name resolution."""
 
     def _settings(self, **overrides) -> Settings:
         base = {
             "azure_tenant_id": "00000000-0000-0000-0000-000000000000",
-            "azure_openai_endpoint": "https://main.openai.azure.com",
-            "azure_openai_api_key": "main-key",
-            "azure_openai_api_version": "2024-02-15-preview",
-            "azure_openai_deployment_name": "gpt-main",
+            "foundry_primary_agent_name": "azbrief-primary",
         }
         base.update(overrides)
-        # _env_file=None keeps the repo's .env out of the fixture.
         return Settings(_env_file=None, **base)
 
-    def test_primary_uses_main_fields(self):
-        profile = self._settings().llm_profile("primary")
-        assert profile["deployment"] == "gpt-main"
-        assert profile["endpoint"] == "https://main.openai.azure.com"
-        assert profile["api_key"] == "main-key"
-
-    def test_unset_role_falls_back_to_primary(self):
-        # An unconfigured role must behave exactly like the primary model.
+    def test_primary_agent_is_used_for_every_unset_role(self):
         settings = self._settings()
-        assert settings.llm_profile("fast") == settings.llm_profile("primary")
-        assert settings.llm_profile("codex") == settings.llm_profile("primary")
+        assert settings.foundry_agent_for_role("primary") == "azbrief-primary"
+        assert settings.foundry_agent_for_role("planner") == "azbrief-primary"
+        assert settings.foundry_agent_for_role("evaluator") == "azbrief-primary"
+        assert settings.foundry_agent_for_role("reporter") == "azbrief-primary"
+        assert settings.foundry_agent_for_role("codex") == "azbrief-primary"
+        assert settings.foundry_agent_for_role("fast") == "azbrief-primary"
 
-    def test_fast_role_uses_its_own_deployment(self):
-        # Regression: the azure_openai_fast_* fields were documented and
-        # configurable but never read, so the fast model silently ran on the
-        # primary deployment.
-        profile = self._settings(azure_openai_fast_deployment_name="gpt-mini").llm_profile("fast")
-        assert profile["deployment"] == "gpt-mini"
-        assert profile["endpoint"] == "https://main.openai.azure.com"
-        assert profile["api_key"] == "main-key"
-
-    def test_role_can_override_every_field(self):
-        profile = self._settings(
-            azure_openai_codex_endpoint="https://codex.openai.azure.com",
-            azure_openai_codex_api_key="codex-key",
-            azure_openai_codex_api_version="2025-01-01-preview",
-            azure_openai_codex_deployment_name="gpt-codex",
-        ).llm_profile("codex")
-        assert profile == {
-            "endpoint": "https://codex.openai.azure.com",
-            "api_key": "codex-key",
-            "api_version": "2025-01-01-preview",
-            "deployment": "gpt-codex",
-        }
-
-    def test_partial_override_inherits_the_rest(self):
-        profile = self._settings(azure_openai_codex_deployment_name="gpt-codex").llm_profile(
-            "codex"
+    def test_role_specific_agent_overrides_primary(self):
+        settings = self._settings(
+            foundry_planner_agent_name="azbrief-planner",
+            foundry_evaluator_agent_name="azbrief-evaluator",
+            foundry_reporter_agent_name="azbrief-reporter",
+            foundry_codex_agent_name="azbrief-codex",
+            foundry_fast_agent_name="azbrief-fast",
         )
-        assert profile["deployment"] == "gpt-codex"
-        assert profile["endpoint"] == "https://main.openai.azure.com"
-        assert profile["api_version"] == "2024-02-15-preview"
+        assert settings.foundry_agent_for_role("planner") == "azbrief-planner"
+        assert settings.foundry_agent_for_role("evaluator") == "azbrief-evaluator"
+        assert settings.foundry_agent_for_role("reporter") == "azbrief-reporter"
+        assert settings.foundry_agent_for_role("codex") == "azbrief-codex"
+        assert settings.foundry_agent_for_role("fast") == "azbrief-fast"
 
-    def test_unknown_role_rejected(self):
+    def test_unknown_role_is_rejected(self):
         with pytest.raises(ValueError, match="Unknown LLM role"):
-            self._settings().llm_profile("writer")
-
-    def test_all_declared_roles_resolve(self):
-        settings = self._settings()
-        for role in LLM_ROLES:
-            assert settings.llm_profile(role)["deployment"]
+            self._settings().foundry_agent_for_role("writer")
 
 
 class TestSubscriberModel:

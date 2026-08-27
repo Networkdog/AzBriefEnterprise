@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "azbrief-enterprise"
 version = "1.0.0"
-description = "Azure Update Intelligence Agent — Microsoft Foundry hosted multi-agent analysis on Container Apps"
+description = "Azure Update Intelligence Agent - environment-grounded change intelligence for enterprise Azure operations"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.10"
@@ -32,7 +32,6 @@ dependencies = [
     "pydantic-settings>=2.1.0",
     "python-dotenv>=1.0.0",
     "langchain-core>=0.1.0",
-    "langchain-openai>=0.0.5",
     "langgraph>=0.0.20",
     "azure-identity>=1.15.0",
     "azure-mgmt-resourcegraph>=8.0.0",
@@ -45,8 +44,7 @@ dependencies = [
     "structlog>=24.1.0",
     # Foundry is the default backend, so its SDK ships with the image. The code
     # still degrades to Azure OpenAI when the project endpoint is unreachable.
-    "azure-ai-projects>=1.1.0b4",
-    "azure-ai-agents>=1.2.0b6",
+    "azure-ai-projects>=2.5.0,<3.0",
     "azure-monitor-opentelemetry>=1.6.0",
 ]
 

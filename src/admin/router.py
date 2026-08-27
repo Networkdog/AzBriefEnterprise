@@ -50,10 +50,10 @@ def _parse_since(value: Optional[str]) -> Optional[datetime]:
 
 
 def _backend_label(settings) -> str:
-    """Header badge naming the backend actually in force, not the one requested."""
+    """Header badge naming the configured Foundry agent profile."""
     if not settings.use_foundry:
-        return "Azure OpenAI"
-    stages = len(settings.get_foundry_agents())
+        return "Foundry 구성 오류"
+    stages = len(settings.get_foundry_enrichment_agents())
     return f"Foundry 멀티 에이전트 ({stages}단계)" if stages else "Foundry"
 
 
@@ -99,7 +99,7 @@ async def admin_page(request: Request):
 async def admin_status(_: AdminPrincipal = Depends(require_admin)) -> dict:
     """Report the effective configuration. Values are flags and names, never secrets."""
     settings = get_settings()
-    agents = settings.get_foundry_agents()
+    agents = settings.get_foundry_enrichment_agents()
     if settings.communication_services_connection_string:
         email_transport = "Communication Services (연결 문자열)"
     elif settings.communication_services_endpoint:
@@ -108,10 +108,15 @@ async def admin_status(_: AdminPrincipal = Depends(require_admin)) -> dict:
         email_transport = "콘솔 출력"
 
     return {
-        "LLM 백엔드": settings.llm_backend,
+        "AI 런타임": "Microsoft Foundry Agent Service",
         "Foundry 프로젝트": "설정됨" if settings.foundry_project_endpoint else "없음",
-        "Foundry 에이전트": [f"{a.stage}: {a.name}" for a in agents],
-        "모델 배포": settings.foundry_model_deployment or settings.azure_openai_deployment_name,
+        "Primary 에이전트": settings.foundry_primary_agent_name or "없음",
+        "Planner 에이전트": settings.foundry_agent_for_role("planner") or "없음",
+        "Evaluator 에이전트": settings.foundry_agent_for_role("evaluator") or "없음",
+        "Reporter 에이전트": settings.foundry_agent_for_role("reporter") or "없음",
+        "Codex 에이전트": settings.foundry_agent_for_role("codex") or "없음",
+        "Fast 에이전트": settings.foundry_agent_for_role("fast") or "없음",
+        "보강 에이전트": [f"{a.stage}: {a.name}" for a in agents],
         "이메일 전송": email_transport,
         "구독자 수": len(settings.get_subscribers()),
         "리포트 언어": settings.report_language,

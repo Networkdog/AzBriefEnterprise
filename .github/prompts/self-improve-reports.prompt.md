@@ -59,8 +59,8 @@ tools: ["codebase", "search", "editFiles", "runCommands", "runTests", "problems"
    python -m pytest tests/ -o "addopts=" -q
    ```
    실패하면 **먼저 고치고** 나서 개선 루프를 시작한다 (깨진 위에 쌓지 않는다).
-3. **자격증명 확인** (`.env`): `AZURE_OPENAI_ENDPOINT`/`AZURE_OPENAI_API_KEY`(또는 `OPENAI_API_KEY`),
-   `AZURE_TENANT_ID`. 있으면 **라이브 경로**, 없으면 **degrade 경로**.
+3. **자격증명 확인** (`.env`): `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_PRIMARY_AGENT_NAME`,
+   `AZURE_TENANT_ID`. 로컬에서는 `az login` 토큰까지 유효하면 **라이브 경로**, 없으면 **degrade 경로**.
    - **라이브 경로**: `scripts/evaluate_report.py`로 실제 Azure 데이터 + G-Eval 사용 (1반복 ≈ 2분).
    - **degrade 경로**: 자격증명이 없으면 `python -m scripts.run_quality_loop`(mock)와 규칙기반 채점,
      그리고 과거 감사 데이터(`results_2026-03.jsonl`·`results_2026-04.jsonl`·`results_2026-06.jsonl`)의

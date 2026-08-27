@@ -58,8 +58,8 @@ async def lifespan(app: FastAPI):
 
     logger.info(
         "AzBrief application started",
-        llm_backend=get_settings().llm_backend,
-        foundry_agents=len(get_settings().get_foundry_agents()),
+        foundry_primary_agent=get_settings().foundry_primary_agent_name,
+        foundry_enrichment_agents=len(get_settings().get_foundry_enrichment_agents()),
         admin_ui=get_settings().admin_ui_enabled,
     )
 
@@ -181,29 +181,19 @@ async def health_check():
     except Exception as e:
         checks["azure_credential"] = f"error: {str(e)[:80]}"
 
-    # Check LLM configuration
+    # Check Foundry Agent Service configuration
     settings = get_settings()
-    if settings.use_azure_openai:
-        checks["llm"] = "configured (Azure OpenAI)"
-        # Validate LLM connectivity with a lightweight call
-        try:
-            from langchain_openai import AzureChatOpenAI
+    if settings.use_foundry:
+        from src.agent.foundry_backend import foundry_available
 
-            llm = AzureChatOpenAI(
-                azure_endpoint=settings.azure_openai_endpoint,
-                api_version=settings.azure_openai_api_version,
-                azure_deployment=settings.azure_openai_deployment_name,
-                api_key=settings.azure_openai_api_key or "dummy",
-                max_tokens=1,
-            )
-            # Just validate the endpoint is reachable — don't actually invoke
-            checks["llm"] = "connected (Azure OpenAI)"
-        except Exception as e:
-            checks["llm"] = f"configured but error: {str(e)[:60]}"
-    elif settings.openai_api_key:
-        checks["llm"] = "configured (OpenAI)"
+        if foundry_available():
+            checks["foundry_agent"] = f"configured ({settings.foundry_primary_agent_name})"
+        else:
+            checks["foundry_agent"] = "error: Foundry Agent Service SDK unavailable"
     else:
-        checks["llm"] = "not configured"
+        checks["foundry_agent"] = (
+            "error: FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_PRIMARY_AGENT_NAME are required"
+        )
 
     has_errors = any("error" in v for v in checks.values())
     status = "degraded" if has_errors else "healthy"

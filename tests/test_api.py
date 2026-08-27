@@ -65,12 +65,13 @@ class TestHealthEndpoint:
         """Health endpoint returns 200."""
         with patch("src.main.get_settings") as mock_settings:
             settings = MagicMock()
-            settings.use_azure_openai = True
-            settings.openai_api_key = None
+            settings.use_foundry = True
+            settings.foundry_primary_agent_name = "azbrief-primary"
             mock_settings.return_value = settings
             with patch("src.config.get_azure_credential") as mock_cred:
                 mock_cred.return_value.get_token.return_value = MagicMock()
-                response = client.get("/health")
+                with patch("src.agent.foundry_backend.foundry_available", return_value=True):
+                    response = client.get("/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] in ("healthy", "degraded")
@@ -80,11 +81,12 @@ class TestHealthEndpoint:
         """Health returns degraded when Azure credential fails."""
         with patch("src.main.get_settings") as mock_settings:
             settings = MagicMock()
-            settings.use_azure_openai = False
-            settings.openai_api_key = None
+            settings.use_foundry = True
+            settings.foundry_primary_agent_name = "azbrief-primary"
             mock_settings.return_value = settings
             with patch("src.config.get_azure_credential", side_effect=Exception("Auth failed")):
-                response = client.get("/health")
+                with patch("src.agent.foundry_backend.foundry_available", return_value=True):
+                    response = client.get("/health")
         assert response.status_code == 200
         assert response.json()["status"] == "degraded"
 

@@ -11,9 +11,8 @@ from enum import Enum
 from typing import Annotated, Any, Literal, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
-from langchain_openai import AzureChatOpenAI, ChatOpenAI
 from langgraph.graph import END, StateGraph
-from pydantic import BaseModel
+from pydantic import BaseModel, PrivateAttr
 from structlog import get_logger
 from typing_extensions import TypedDict
 
@@ -34,7 +33,6 @@ from src.agent.resilience import (
     OUTPUT_RECOVERY_MESSAGE,
     TOOL_RESULT_BUDGET_CHARS,
     CircuitBreaker,
-    DiminishingReturnsTracker,
     ModelFallbackError,
     TransitionType,
     calculate_backoff,
@@ -223,6 +221,9 @@ class AnalysisResult(BaseModel):
     reference_docs: list[dict[str, str]]
     additional_checks: list[str] = []  # additional verification items
     should_notify: bool
+    _evidence_resource_summary: str = PrivateAttr(default="")
+    _evidence_task_results: dict[str, str] = PrivateAttr(default_factory=dict)
+    _evidence_update_context: str = PrivateAttr(default="")
 
 
 class AnalysisTask(BaseModel):
@@ -266,7 +267,7 @@ class AnalysisPlan(BaseModel):
 class EvaluationResult(BaseModel):
     """Evaluation of analysis results."""
 
-    verdict: Literal["sufficient", "partial", "insufficient"]
+    verdict: Literal["sufficient", "partial", "insufficient", "model_error"]
     coverage: dict[str, bool]
     missing_aspects: list[str]
     suggestions: list[str]
@@ -293,6 +294,7 @@ class AgentState(TypedDict):
     phase: str
     plan_revision_count: int
     task_revision_count: int
+    task_result_char_history: list[int]
     # Result fields
     analysis_result: Optional[dict]
     iteration: int
@@ -317,8 +319,11 @@ class AzureUpdateAnalyzer:
         self.settings = get_settings()
         self.max_iterations = max_iterations
         self.tools = get_all_tools()
-        # Primary model: medium reasoning for planning, evaluation, report generation
+        # Primary agent: judging, safety verification, and role fallback.
         self.llm = self._create_llm(reasoning_effort="medium")
+        self.llm_planner = self._create_llm("planner", reasoning_effort="medium")
+        self.llm_evaluator = self._create_llm("evaluator", reasoning_effort="medium")
+        self.llm_reporter = self._create_llm("reporter", reasoning_effort="medium")
         # Codex model: optimized for KQL query writing/fixing (Resource Graph + Log Analytics)
         self.llm_codex = self._create_codex_llm()
         # Fast model: low reasoning for task revision, subscriber customization.
@@ -331,10 +336,6 @@ class AzureUpdateAnalyzer:
         get_query_fixer(llm=self.llm_codex, fallback_llm=self.llm)
         # Resilience: Circuit breaker for LLM calls (3 consecutive failures → open)
         self._llm_circuit_breaker = CircuitBreaker(failure_threshold=3, reset_timeout=120)
-        # Resilience: Diminishing returns tracker for agent loop
-        self._diminishing_tracker = DiminishingReturnsTracker(
-            min_delta_chars=500, lookback_window=3
-        )
         # Evidence from the most recent analysis (resource summary + tool results).
         # Exposed so external quality judges (G-Eval) can assess faithfulness against
         # the same ground truth the report was generated from.
@@ -350,27 +351,6 @@ class AzureUpdateAnalyzer:
         # G-Eval verdict of the most recent analysis. Populated by analyze_update
         # when geval_runtime_enabled is on.
         self._last_geval = None
-
-    @staticmethod
-    def _is_reasoning_model(deployment_name: str) -> bool:
-        """Check if the deployment is an o-series reasoning model.
-
-        Reasoning models (o1, o3, o4-mini, etc.) use reasoning_effort instead
-        of temperature/seed. Standard models (gpt-4o, gpt-5, etc.) use
-        temperature and seed for deterministic output.
-
-        Args:
-            deployment_name: Azure OpenAI deployment name or model identifier
-
-        Returns:
-            True if the model is an o-series reasoning model
-        """
-        name_lower = deployment_name.lower()
-        # o1, o1-mini, o1-preview, o3, o3-mini, o4-mini, etc.
-        return any(
-            name_lower.startswith(prefix) or f"/{prefix}" in name_lower
-            for prefix in ("o1", "o3", "o4")
-        )
 
     @staticmethod
     def _is_kql_task(task: AnalysisTask) -> bool:
@@ -404,73 +384,21 @@ class AzureUpdateAnalyzer:
         temperature: float = 0.1,
         request_timeout: int = 120,
     ):
-        """Create an LLM instance for a role.
-
-        For o-series models: uses reasoning_effort (temperature is fixed at 1).
-        For standard models (gpt-4o, gpt-5): uses the given temperature + seed=42
-        for deterministic, reproducible analysis outputs.
+        """Create a Foundry Agent Service chat adapter for a runtime role.
 
         Args:
-            role: LLM role whose deployment/credentials to use (see LLM_ROLES)
-            reasoning_effort: Reasoning effort level (low, medium, high)
-            temperature: Sampling temperature for non-reasoning models
-            request_timeout: Per-request timeout in seconds
+            role: Runtime role whose Foundry agent should be used.
+            reasoning_effort: Retained for call-site compatibility; configured on the agent.
+            temperature: Retained for call-site compatibility; configured on the agent.
+            request_timeout: Retained for call-site compatibility; the Foundry timeout setting wins.
         """
-        profile = self.settings.llm_profile(role)
-        deployment = profile["deployment"]
+        del reasoning_effort, temperature, request_timeout
+        from src.agent.foundry_backend import create_foundry_chat_model
 
-        # The Foundry backend supplies hosted *agents*, not a chat model: its
-        # project endpoint does not serve chat completions (401, and the SDK's
-        # project form needs an Azure OpenAI connection an agent-only project
-        # lacks). The model therefore always comes from Azure OpenAI below —
-        # against the same Foundry account when AZURE_OPENAI_ENDPOINT points at it.
-        is_reasoning = self._is_reasoning_model(deployment)
-
-        if self.settings.use_azure_openai:
-            kwargs = {
-                "azure_endpoint": profile["endpoint"],
-                "api_version": profile["api_version"],
-                "azure_deployment": deployment,
-                "request_timeout": request_timeout,
-            }
-            if is_reasoning:
-                kwargs["reasoning_effort"] = reasoning_effort
-            else:
-                kwargs["temperature"] = temperature
-                kwargs["seed"] = 42
-            if profile["api_key"]:
-                kwargs["api_key"] = profile["api_key"]
-            else:
-                from azure.identity import get_bearer_token_provider
-
-                from src.config import get_azure_credential
-
-                credential = get_azure_credential()
-                token_provider = get_bearer_token_provider(
-                    credential, "https://cognitiveservices.azure.com/.default"
-                )
-                kwargs["azure_ad_token_provider"] = token_provider
-            return AzureChatOpenAI(**kwargs)
-        else:
-            kwargs = {
-                "api_key": self.settings.openai_api_key,
-                "model": "gpt-4o",
-                "request_timeout": request_timeout,
-            }
-            if is_reasoning:
-                kwargs["reasoning_effort"] = reasoning_effort
-            else:
-                kwargs["temperature"] = temperature
-                kwargs["seed"] = 42
-            return ChatOpenAI(**kwargs)
+        return create_foundry_chat_model(self.settings, role)
 
     def _create_codex_llm(self):
-        """Create a Codex LLM instance for KQL query generation/fixing.
-
-        Uses temperature=0 for maximum precision in KQL query writing, and the
-        codex deployment when configured (llm_profile falls back to the primary
-        deployment otherwise).
-        """
+        """Create the Foundry agent used for KQL generation and repair."""
         return self._create_llm("codex", temperature=0, request_timeout=60)
 
     def _build_graph(self) -> StateGraph:
@@ -484,16 +412,10 @@ class AzureUpdateAnalyzer:
         workflow.add_node("revise_tasks", self._revise_tasks_node)
         workflow.add_node("report", self._report_node)
 
-        # Optional Microsoft Foundry enrichment ahead of planning (opt-in).
-        # Preference order: hosted multi-agent pipeline (FOUNDRY_AGENTS) →
-        # single enrichment agent → no enrichment (entry point stays 'plan').
-        from src.agent.foundry_backend import build_enrichment_node, build_multi_agent_node
+        # Optional Foundry multi-agent enrichment ahead of core planning.
+        from src.agent.foundry_backend import build_multi_agent_node
 
         enrich_node = build_multi_agent_node(self.settings)
-        enrich_mode = "multi_agent"
-        if enrich_node is None:
-            enrich_node = build_enrichment_node(self.settings)
-            enrich_mode = "single_agent"
 
         if enrich_node is not None:
             workflow.add_node("enrich", enrich_node)
@@ -501,9 +423,8 @@ class AzureUpdateAnalyzer:
             workflow.add_edge("enrich", "plan")
             logger.info(
                 "foundry_enrichment_node_enabled",
-                mode=enrich_mode,
-                agent=self.settings.foundry_enrichment_agent_name,
-                agents=[spec.name for spec in self.settings.get_foundry_agents()],
+                mode="multi_agent",
+                agents=[spec.name for spec in self.settings.get_foundry_enrichment_agents()],
             )
         else:
             # Entry point
@@ -521,6 +442,7 @@ class AzureUpdateAnalyzer:
                 "sufficient": "report",
                 "partial": "revise_tasks",
                 "insufficient": "plan",
+                "model_error": END,
             },
         )
         workflow.add_edge("revise_tasks", "execute")
@@ -575,7 +497,7 @@ class AzureUpdateAnalyzer:
         # Use only doc-search tools during planning
         planning_tools = [t for t in self.tools if t.name in self.PLANNING_TOOL_NAMES]
         tools_by_name = {t.name: t for t in planning_tools}
-        llm_with_tools = self.llm.bind_tools(planning_tools)
+        llm_with_tools = self.llm_planner.bind_tools(planning_tools)
 
         messages: list[Any] = [
             SystemMessage(content=system_prompt),
@@ -1315,35 +1237,37 @@ class AzureUpdateAnalyzer:
             logger.error("llm_circuit_breaker_open", phase="evaluate")
             return {
                 "evaluation": EvaluationResult(
-                    verdict="sufficient",
+                    verdict="model_error",
                     coverage={},
-                    missing_aspects=[],
+                    missing_aspects=["evaluation_unavailable"],
                     suggestions=[],
-                    reason="Circuit breaker open — forcing report generation.",
+                    reason="Evaluation circuit breaker is open; evidence was not validated.",
                 ).model_dump(),
-                "phase": "reporting",
+                "phase": "error",
                 "iteration": state.get("iteration", 0) + 1,
+                "last_transition": TransitionType.MODEL_ERROR.value,
                 "messages": [
-                    HumanMessage(content="[Evaluate] Circuit breaker open, forcing sufficient.")
+                    HumanMessage(content="[Evaluate] Circuit breaker open; analysis aborted.")
                 ],
             }
         try:
-            response = await self.llm.ainvoke([HumanMessage(content=prompt_text)])
+            response = await self.llm_evaluator.ainvoke([HumanMessage(content=prompt_text)])
             self._llm_circuit_breaker.record_success()
         except Exception as llm_err:
             self._llm_circuit_breaker.record_failure()
             logger.error("evaluation_llm_failed", error=str(llm_err))
             return {
                 "evaluation": EvaluationResult(
-                    verdict="sufficient",
+                    verdict="model_error",
                     coverage={},
-                    missing_aspects=[],
+                    missing_aspects=["evaluation_unavailable"],
                     suggestions=[],
-                    reason=f"Evaluation LLM failed: {str(llm_err)[:100]}. Proceeding to report.",
+                    reason=f"Evaluation Agent failed: {str(llm_err)[:100]}",
                 ).model_dump(),
-                "phase": "reporting",
+                "phase": "error",
                 "iteration": state.get("iteration", 0) + 1,
-                "messages": [HumanMessage(content="[Evaluate] LLM error, forcing sufficient.")],
+                "last_transition": TransitionType.MODEL_ERROR.value,
+                "messages": [HumanMessage(content="[Evaluate] Agent error; analysis aborted.")],
             }
         _llm_elapsed = time.time() - _llm_t0
         llm_meta = _extract_llm_meta(response)
@@ -1399,10 +1323,17 @@ class AzureUpdateAnalyzer:
             elapsed_s=round(_elapsed, 2),
         )
 
+        result_chars = sum(len(value) for value in task_results.values())
+        result_char_history = [
+            *state.get("task_result_char_history", []),
+            result_chars,
+        ][-4:]
+
         return {
             "evaluation": evaluation.model_dump(),
             "phase": ("reporting" if evaluation.verdict == "sufficient" else "executing"),
             "iteration": state.get("iteration", 0) + 1,
+            "task_result_char_history": result_char_history,
             "last_transition": (
                 TransitionType.COMPLETED.value
                 if evaluation.verdict == "sufficient"
@@ -1603,7 +1534,7 @@ class AzureUpdateAnalyzer:
             content = '{"relevance": "unknown", "detailed_analysis": "LLM circuit breaker open. Unable to generate report."}'
         else:
             try:
-                response = await self.llm.ainvoke(
+                response = await self.llm_reporter.ainvoke(
                     [
                         SystemMessage(content=report_system),
                         HumanMessage(content=prompt_text),
@@ -1626,7 +1557,7 @@ class AzureUpdateAnalyzer:
                             content_chars=len(content),
                         )
                         try:
-                            recovery_response = await self.llm.ainvoke(
+                            recovery_response = await self.llm_reporter.ainvoke(
                                 [
                                     SystemMessage(content=report_system),
                                     HumanMessage(content=prompt_text),
@@ -1702,18 +1633,53 @@ class AzureUpdateAnalyzer:
     # Routing
     # ------------------------------------------------------------------
 
-    def build_evidence_context(self) -> str:
+    @staticmethod
+    def _attach_result_evidence(
+        result: AnalysisResult,
+        resource_summary: str,
+        task_results: dict[str, str],
+        update_context: str,
+    ) -> AnalysisResult:
+        """Attach a non-serialized evidence snapshot to one analysis result."""
+        result._evidence_resource_summary = resource_summary
+        result._evidence_task_results = dict(task_results)
+        result._evidence_update_context = update_context
+        return result
+
+    @classmethod
+    def _copy_result_evidence(
+        cls, source: AnalysisResult, target: AnalysisResult
+    ) -> AnalysisResult:
+        """Carry an evidence snapshot across rewrites and subscriber customization."""
+        return cls._attach_result_evidence(
+            target,
+            getattr(source, "_evidence_resource_summary", ""),
+            getattr(source, "_evidence_task_results", {}),
+            getattr(source, "_evidence_update_context", ""),
+        )
+
+    def build_evidence_context(self, result: Optional[AnalysisResult] = None) -> str:
         """Ground truth the most recent report was generated from.
 
         A judge that sees less than this penalises grounded claims as
         unverified, so tool results keep the analyzer's own budget.
         """
+        resource_summary = (
+            getattr(result, "_evidence_resource_summary", "")
+            if result is not None
+            else self._last_resource_summary
+        )
+        task_results = (
+            getattr(result, "_evidence_task_results", {})
+            if result is not None
+            else self._last_task_results
+        )
         parts: list[str] = []
-        if self._last_resource_summary:
-            parts.append("### Administrator resource summary\n" + self._last_resource_summary)
-        if self._last_task_results:
+        if resource_summary:
+            parts.append("### Administrator resource summary\n" + resource_summary)
+        if task_results:
             lines = ["### Tool / Resource Graph results"]
-            for task_id, res in self._last_task_results.items():
+            for task_id, res in task_results.items():
                 lines.append(f"- **{task_id}**: {str(res)[:TOOL_RESULT_BUDGET_CHARS]}")
             parts.append("\n".join(lines))
         return "\n\n".join(parts)
@@ -1735,13 +1701,16 @@ class AzureUpdateAnalyzer:
 
         judge = GEvalJudge(llm=self.llm, settings=self.settings)
         language = self.settings.report_language
-        evidence = self.build_evidence_context()
+        evidence = self.build_evidence_context(result)
+        update_context = (
+            getattr(result, "_evidence_update_context", "") or self._last_update_context
+        )
 
         report = await judge.evaluate(
             result,
             update,
             language=language,
-            update_context=self._last_update_context or None,
+            update_context=update_context or None,
             evidence_context=evidence,
         )
         self._last_geval = report
@@ -1761,12 +1730,13 @@ class AzureUpdateAnalyzer:
         )
         rewritten_state = await self._report_node({**final_state, "report_feedback": feedback})
         revised = self._parse_analysis_result({**final_state, **rewritten_state}, update)
+        self._copy_result_evidence(result, revised)
 
         rescored = await judge.evaluate(
             revised,
             update,
             language=language,
-            update_context=self._last_update_context or None,
+            update_context=update_context or None,
             evidence_context=evidence,
         )
         improved = rescored.weighted_score > report.weighted_score
@@ -1791,10 +1761,20 @@ class AzureUpdateAnalyzer:
             'sufficient'   → go to report
             'partial'      → go to revise_tasks
             'insufficient' → go back to plan
+            'model_error'  → terminate without a report
         """
         evaluation = state.get("evaluation")
         if evaluation is None:
-            return "sufficient"
+            return "model_error"
+
+        verdict = evaluation.get("verdict", "model_error")
+        if verdict == "model_error":
+            logger.error(
+                "evaluation_routing_model_error",
+                reason=evaluation.get("reason", "Evaluation result missing"),
+                transition_type=TransitionType.MODEL_ERROR.value,
+            )
+            return "model_error"
 
         # Check overall iteration limit
         iteration = state.get("iteration", 0)
@@ -1806,24 +1786,20 @@ class AzureUpdateAnalyzer:
             )
             return "sufficient"
 
-        # Track diminishing returns: measure NEW content added in this iteration
-        task_results = state.get("task_results", {})
-        total_chars = sum(len(v) for v in task_results.values())
-        # Compute incremental delta from previous iterations
-        prev_total = getattr(self, "_prev_task_results_chars", 0)
-        delta_chars = max(0, total_chars - prev_total)
-        self._prev_task_results_chars = total_chars
-        self._diminishing_tracker.record_iteration(delta_chars)
-        if self._diminishing_tracker.should_stop:
+        result_char_history = state.get("task_result_char_history", [])
+        result_char_deltas = []
+        for index, total in enumerate(result_char_history):
+            previous = result_char_history[index - 1] if index else 0
+            result_char_deltas.append(max(0, total - previous))
+        if len(result_char_deltas) >= 3 and all(delta < 500 for delta in result_char_deltas[-3:]):
             logger.warning(
                 "diminishing_returns_detected",
                 iteration=iteration,
-                recent_delta_chars=delta_chars,
+                recent_delta_chars=result_char_deltas[-3:],
                 reason="3+ iterations with insufficient new content",
             )
             return "sufficient"
 
-        verdict = evaluation.get("verdict", "sufficient")
         logger.info(
             "evaluation_routing",
             verdict=verdict,
@@ -1846,9 +1822,9 @@ class AzureUpdateAnalyzer:
                 )
             ),
         )
-        if verdict in ("sufficient", "partial", "insufficient"):
+        if verdict in ("sufficient", "partial", "insufficient", "model_error"):
             return verdict
-        return "sufficient"
+        return "model_error"
 
     # ------------------------------------------------------------------
     # Parsing helpers
@@ -1968,7 +1944,7 @@ class AzureUpdateAnalyzer:
             raw: Raw LLM response text
 
         Returns:
-            Parsed EvaluationResult (defaults to sufficient on failure)
+            Parsed EvaluationResult, or a model_error verdict on invalid output.
         """
 
         json_match = re.search(r"```(?:json)?\s*(\{.*)", raw, re.DOTALL)
@@ -1987,18 +1963,33 @@ class AzureUpdateAnalyzer:
             json_str = re.sub(r",\s*([}\]])", r"\1", json_str)
             data = json.loads(json_str, strict=False)
         except json.JSONDecodeError:
-            logger.warning("Failed to parse evaluation JSON, defaulting to sufficient")
+            logger.error("evaluation_json_invalid")
             return EvaluationResult(
-                verdict="sufficient",
+                verdict="model_error",
                 coverage={},
-                missing_aspects=[],
+                missing_aspects=["evaluation_output_invalid"],
                 suggestions=[],
-                reason="Evaluation JSON parse failed, proceeding to report.",
+                reason="Evaluation Agent returned invalid JSON.",
             )
 
-        verdict = data.get("verdict", "sufficient")
+        if not isinstance(data, dict):
+            return EvaluationResult(
+                verdict="model_error",
+                coverage={},
+                missing_aspects=["evaluation_output_invalid"],
+                suggestions=[],
+                reason="Evaluation Agent returned a non-object JSON value.",
+            )
+
+        verdict = data.get("verdict", "model_error")
         if verdict not in ("sufficient", "partial", "insufficient"):
-            verdict = "sufficient"
+            return EvaluationResult(
+                verdict="model_error",
+                coverage={},
+                missing_aspects=["evaluation_output_invalid"],
+                suggestions=[],
+                reason=f"Evaluation Agent returned unknown verdict: {verdict!r}.",
+            )
 
         return EvaluationResult(
             verdict=verdict,
@@ -2467,13 +2458,8 @@ class AzureUpdateAnalyzer:
         # Configure OpenTelemetry once (idempotent, no-op when disabled/absent).
         setup_telemetry(self.settings)
 
-        # Reset resilience trackers for new analysis
-        self._diminishing_tracker = DiminishingReturnsTracker(
-            min_delta_chars=500, lookback_window=3
-        )
-        self._prev_task_results_chars = 0  # For incremental delta tracking
-        # Note: circuit breaker is NOT reset between analyses — it accumulates
-        # to protect against sustained service outages
+        # The circuit breaker is intentionally shared across analyses so it can
+        # protect the process against sustained service outages.
 
         logger.info(
             "update_content",
@@ -2657,6 +2643,7 @@ class AzureUpdateAnalyzer:
             "phase": "planning",
             "plan_revision_count": 0,
             "task_revision_count": 0,
+            "task_result_char_history": [],
             "analysis_result": None,
             "iteration": 0,
             "trace_id": trace_id,
@@ -2675,8 +2662,21 @@ class AzureUpdateAnalyzer:
         ):
             final_state = await self.graph.ainvoke(initial_state)
 
+        if final_state.get("last_transition") == TransitionType.MODEL_ERROR.value:
+            evaluation = final_state.get("evaluation") or {}
+            raise RuntimeError(
+                "Analysis aborted because evidence evaluation failed: "
+                f"{evaluation.get('reason', 'unknown evaluation error')}"
+            )
+
         # Parse the result
         result = self._parse_analysis_result(final_state, update)
+        self._attach_result_evidence(
+            result,
+            resource_summary,
+            final_state.get("task_results", {}),
+            final_state.get("update_context", ""),
+        )
 
         # Stash evidence for quality evaluation (G-Eval faithfulness fairness):
         # the report was built from the resource summary + tool results, so a judge must
@@ -3208,12 +3208,15 @@ class AzureUpdateAnalyzer:
                     build_source_evidence,
                 )
 
-                env_evidence = build_evidence(self._last_resource_summary, self._last_task_results)
+                evidence_resource_summary = getattr(original, "_evidence_resource_summary", "")
+                evidence_task_results = getattr(original, "_evidence_task_results", {})
+                evidence_update_context = getattr(original, "_evidence_update_context", "")
+                env_evidence = build_evidence(evidence_resource_summary, evidence_task_results)
                 apply_static_verification(
                     action_items,
                     env_evidence,
                     language=language or "ko",
-                    source_evidence=build_source_evidence(env_evidence, self._last_update_context),
+                    source_evidence=build_source_evidence(env_evidence, evidence_update_context),
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("action_reverification_skipped", error=str(exc)[:200])
@@ -3251,7 +3254,7 @@ class AzureUpdateAnalyzer:
             in [RelevanceStatus.RELEVANT, RelevanceStatus.OPPORTUNITY, RelevanceStatus.UNKNOWN]
         )
 
-        return AnalysisResult(
+        customized_result = AnalysisResult(
             update_id=original.update_id,
             update_title=original.update_title,
             update_category=self._validate_enum_value(
@@ -3289,6 +3292,7 @@ class AzureUpdateAnalyzer:
             additional_checks=customized.get("additional_checks", original.additional_checks),
             should_notify=should_notify,
         )
+        return self._copy_result_evidence(original, customized_result)
 
     def _parse_analysis_result(self, state: AgentState, update: AzureUpdate) -> AnalysisResult:
         """Parse the analysis result from agent state."""

@@ -5,9 +5,9 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "13463459492854958230"
+      "templateHash": "14749912135906246007"
     },
-    "description": "AzBrief Enterprise — Container Apps Job (scheduler) + Microsoft Foundry hosted multi-agent + Container App (orchestrator/Admin Page) + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
+    "description": "AzBrief Enterprise — Container Apps-hosted LangGraph harness + Microsoft Foundry Prompt Agents + scheduler Job + orchestrator/Admin Page + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
   "parameters": {
     "baseName": {
@@ -83,6 +83,13 @@
       "maxValue": 1000,
       "metadata": {
         "description": "Model deployment capacity in thousands of tokens per minute (TPM). A single report prompt alone runs ~27K tokens, and the multi-agent stages, planning and execution share the same deployment, so 30 rate-limits every run."
+      }
+    },
+    "enableFoundryEnrichmentAgents": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Enable the optional research/impact/action/review Prompt Agent enrichment pipeline. Keep false until server-side tools are attached to research and impact and provision_foundry_agents --check passes."
       }
     },
     "containerImage": {
@@ -393,7 +400,6 @@
     "roleIds": {
       "keyVaultSecretsUser": "4633458b-17de-408a-b874-0445c86b69e6",
       "foundryUser": "53ca6127-db72-4b80-b1b0-d745d6d5456d",
-      "cognitiveServicesOpenAIUser": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
       "reader": "acdd72a7-3385-48ef-bd42-f606fba81ae7",
       "acrPull": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
       "storageBlobDataContributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
@@ -423,8 +429,11 @@
     "adminAuthConfigured": "[and(not(empty(parameters('adminEntraClientId'))), not(empty(parameters('adminEntraClientSecret'))))]",
     "adminUiEnabled": "[and(variables('adminAuthConfigured'), not(empty(parameters('adminAllowedPrincipals'))))]",
     "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', variables('foundryAccountName'), variables('foundryProjectName'))]",
-    "azureOpenAIEndpoint": "[format('https://{0}.openai.azure.com/', variables('foundryAccountName'))]",
-    "foundryAgentRoster": [
+    "foundryPrimaryAgentName": "[format('{0}-primary', parameters('baseName'))]",
+    "foundryPlannerAgentName": "[format('{0}-planner', parameters('baseName'))]",
+    "foundryEvaluatorAgentName": "[format('{0}-evaluator', parameters('baseName'))]",
+    "foundryReporterAgentName": "[format('{0}-reporter', parameters('baseName'))]",
+    "foundryEnrichmentAgentRoster": [
       {
         "name": "[format('{0}-research', parameters('baseName'))]",
         "stage": "research"
@@ -595,9 +604,9 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', variables('foundryAccountName')))]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[1])]",
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[0])]",
         "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[2])]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[0])]"
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[1])]"
       ]
     },
     {
@@ -850,7 +859,7 @@
       },
       "properties": {
         "displayName": "AzBrief agents",
-        "description": "Hosted multi-agent workspace for AzBrief Azure Update analysis"
+        "description": "Prompt Agent workspace for AzBrief Azure Update analysis"
       },
       "dependsOn": [
         "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
@@ -1030,28 +1039,28 @@
                   "value": "[subscription().subscriptionId]"
                 },
                 {
-                  "name": "LLM_BACKEND",
-                  "value": "foundry"
-                },
-                {
                   "name": "FOUNDRY_PROJECT_ENDPOINT",
                   "value": "[variables('foundryProjectEndpoint')]"
                 },
                 {
-                  "name": "FOUNDRY_MODEL_DEPLOYMENT",
-                  "value": "[parameters('modelDeploymentName')]"
+                  "name": "FOUNDRY_PRIMARY_AGENT_NAME",
+                  "value": "[variables('foundryPrimaryAgentName')]"
                 },
                 {
-                  "name": "FOUNDRY_AGENTS",
-                  "value": "[string(variables('foundryAgentRoster'))]"
+                  "name": "FOUNDRY_PLANNER_AGENT_NAME",
+                  "value": "[variables('foundryPlannerAgentName')]"
                 },
                 {
-                  "name": "AZURE_OPENAI_ENDPOINT",
-                  "value": "[variables('azureOpenAIEndpoint')]"
+                  "name": "FOUNDRY_EVALUATOR_AGENT_NAME",
+                  "value": "[variables('foundryEvaluatorAgentName')]"
                 },
                 {
-                  "name": "AZURE_OPENAI_DEPLOYMENT_NAME",
-                  "value": "[parameters('modelDeploymentName')]"
+                  "name": "FOUNDRY_REPORTER_AGENT_NAME",
+                  "value": "[variables('foundryReporterAgentName')]"
+                },
+                {
+                  "name": "FOUNDRY_ENRICHMENT_AGENTS",
+                  "value": "[if(parameters('enableFoundryEnrichmentAgents'), string(variables('foundryEnrichmentAgentRoster')), '')]"
                 },
                 {
                   "name": "CHECKPOINT_BLOB_URL",
@@ -1252,28 +1261,28 @@
                   "value": "[subscription().subscriptionId]"
                 },
                 {
-                  "name": "LLM_BACKEND",
-                  "value": "foundry"
-                },
-                {
                   "name": "FOUNDRY_PROJECT_ENDPOINT",
                   "value": "[variables('foundryProjectEndpoint')]"
                 },
                 {
-                  "name": "FOUNDRY_MODEL_DEPLOYMENT",
-                  "value": "[parameters('modelDeploymentName')]"
+                  "name": "FOUNDRY_PRIMARY_AGENT_NAME",
+                  "value": "[variables('foundryPrimaryAgentName')]"
                 },
                 {
-                  "name": "FOUNDRY_AGENTS",
-                  "value": "[string(variables('foundryAgentRoster'))]"
+                  "name": "FOUNDRY_PLANNER_AGENT_NAME",
+                  "value": "[variables('foundryPlannerAgentName')]"
                 },
                 {
-                  "name": "AZURE_OPENAI_ENDPOINT",
-                  "value": "[variables('azureOpenAIEndpoint')]"
+                  "name": "FOUNDRY_EVALUATOR_AGENT_NAME",
+                  "value": "[variables('foundryEvaluatorAgentName')]"
                 },
                 {
-                  "name": "AZURE_OPENAI_DEPLOYMENT_NAME",
-                  "value": "[parameters('modelDeploymentName')]"
+                  "name": "FOUNDRY_REPORTER_AGENT_NAME",
+                  "value": "[variables('foundryReporterAgentName')]"
+                },
+                {
+                  "name": "FOUNDRY_ENRICHMENT_AGENTS",
+                  "value": "[if(parameters('enableFoundryEnrichmentAgents'), string(variables('foundryEnrichmentAgentRoster')), '')]"
                 },
                 {
                   "name": "CHECKPOINT_BLOB_URL",
@@ -1391,22 +1400,6 @@
       "dependsOn": [
         "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
         "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]",
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
-      ]
-    },
-    {
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
-      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').cognitiveServicesOpenAIUser)]",
-      "properties": {
-        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roleIds').cognitiveServicesOpenAIUser)]",
-        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
-        "principalType": "ServicePrincipal"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
-        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').foundryUser))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
       ]
     },
@@ -1784,16 +1777,27 @@
     "foundryProjectEndpoint": {
       "type": "string",
       "metadata": {
-        "description": "Microsoft Foundry project endpoint used by the hosted agents."
+        "description": "Microsoft Foundry project endpoint used by the persisted Prompt Agents."
       },
       "value": "[variables('foundryProjectEndpoint')]"
     },
-    "azureOpenAIEndpoint": {
+    "foundryPrimaryAgentName": {
       "type": "string",
       "metadata": {
-        "description": "Azure OpenAI compatible endpoint on the same Foundry account."
+        "description": "Required primary Foundry agent name used by the application runtime."
       },
-      "value": "[variables('azureOpenAIEndpoint')]"
+      "value": "[variables('foundryPrimaryAgentName')]"
+    },
+    "foundryPhaseAgentNames": {
+      "type": "object",
+      "metadata": {
+        "description": "Specialized Foundry agents used for planning, evaluation, and reporting."
+      },
+      "value": {
+        "planner": "[variables('foundryPlannerAgentName')]",
+        "evaluator": "[variables('foundryEvaluatorAgentName')]",
+        "reporter": "[variables('foundryReporterAgentName')]"
+      }
     },
     "emailSenderDomain": {
       "type": "string",
@@ -1868,16 +1872,16 @@
     "provisionAgentsCommand": {
       "type": "string",
       "metadata": {
-        "description": "Command that creates the hosted agent roster. ARM cannot: agents are data-plane objects, so the project stays empty until this runs."
+        "description": "Command that creates the Prompt Agent roster. ARM cannot: agents are data-plane objects, so the project stays empty until this runs."
       },
-      "value": "[format('FOUNDRY_PROJECT_ENDPOINT={0} python -m scripts.provision_foundry_agents', variables('foundryProjectEndpoint'))]"
+      "value": "[format('python -m scripts.provision_foundry_agents --model {0}', parameters('modelDeploymentName'))]"
     },
     "nextSteps": {
       "type": "string",
       "metadata": {
         "description": "Post-deployment checklist."
       },
-      "value": "[format('1) Run grantReaderCommand so Resource Graph queries can see your resources. 2) Push the AzBrief image, run grantAcrPullCommand, then deployContainerImageCommand — it updates the app AND the scheduler job, which runs \"python -m src.scheduler\" and does nothing useful until the real image is in place. 3) Run provisionAgentsCommand to create the {0}-research/-impact/-action/-review agents: the template configures FOUNDRY_AGENTS but ARM cannot create the agents themselves, and without them every analysis silently falls back to the single-model path. 4) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 5) networkIsolationMode=vnetInjection: the data plane is private, so run step 3 from inside the virtual network — or deploy once with allowPublicAccessDuringSetup=true, provision the agents, and redeploy with it off. 6) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', parameters('baseName'))]"
+      "value": "[format('1) Run grantReaderCommand so Resource Graph queries can see your resources. 2) Push the AzBrief image, run grantAcrPullCommand, then deployContainerImageCommand — it updates the app AND the scheduler job, which runs \"python -m src.scheduler\" and does nothing useful until the real image is in place. 3) Set FOUNDRY_PROJECT_ENDPOINT={0}, FOUNDRY_PRIMARY_AGENT_NAME={1}, FOUNDRY_PLANNER_AGENT_NAME={2}, FOUNDRY_EVALUATOR_AGENT_NAME={3}, and FOUNDRY_REPORTER_AGENT_NAME={4}, then run provisionAgentsCommand. ARM cannot create these data-plane agents, and the primary agent is required. 4) Attach server-side documentation tools to research and Azure resource tools to impact, run \"python -m scripts.provision_foundry_agents --check\", then redeploy with enableFoundryEnrichmentAgents=true. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 6) networkIsolationMode=vnetInjection: the data plane is private, so run steps 3-4 from inside the virtual network — or deploy once with allowPublicAccessDuringSetup=true, provision the agents, and redeploy with it off. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', variables('foundryProjectEndpoint'), variables('foundryPrimaryAgentName'), variables('foundryPlannerAgentName'), variables('foundryEvaluatorAgentName'), variables('foundryReporterAgentName'))]"
     }
   }
 }

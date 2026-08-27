@@ -161,14 +161,15 @@ class TestParseEvaluationJson:
         assert result.verdict == "partial"
         assert "cost analysis" in result.missing_aspects
 
-    def test_parse_invalid_json_defaults_sufficient(self):
-        """Invalid JSON defaults to 'sufficient' to prevent loops."""
+    def test_parse_invalid_json_fails_closed(self):
+        """Invalid evaluator output must not be treated as sufficient evidence."""
         analyzer = object.__new__(AzureUpdateAnalyzer)
         result = analyzer._parse_evaluation_json("not json")
-        assert result.verdict == "sufficient"
+        assert result.verdict == "model_error"
+        assert "evaluation_output_invalid" in result.missing_aspects
 
-    def test_parse_unknown_verdict_defaults_sufficient(self):
-        """Unknown verdict value normalized to 'sufficient'."""
+    def test_parse_unknown_verdict_fails_closed(self):
+        """Unknown verdict values terminate instead of silently reporting."""
         raw = json.dumps(
             {
                 "verdict": "unknown_value",
@@ -180,7 +181,28 @@ class TestParseEvaluationJson:
         )
         analyzer = object.__new__(AzureUpdateAnalyzer)
         result = analyzer._parse_evaluation_json(raw)
-        assert result.verdict == "sufficient"
+        assert result.verdict == "model_error"
+
+    def test_missing_evaluation_routes_to_model_error(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        assert analyzer._route_after_evaluation({"evaluation": None}) == "model_error"
+
+    def test_diminishing_returns_are_scoped_to_the_agent_state(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.max_iterations = 5
+        low_progress = {
+            "evaluation": {"verdict": "partial", "reason": "more evidence"},
+            "iteration": 3,
+            "task_result_char_history": [100, 200, 250],
+        }
+        healthy_progress = {
+            "evaluation": {"verdict": "partial", "reason": "more evidence"},
+            "iteration": 2,
+            "task_result_char_history": [100, 900],
+        }
+
+        assert analyzer._route_after_evaluation(low_progress) == "sufficient"
+        assert analyzer._route_after_evaluation(healthy_progress) == "partial"
 
 
 class TestShouldSkipUpdate:
@@ -407,7 +429,7 @@ class TestKqlTaskRouting:
     """Test that KQL-bearing tasks are routed to the codex model.
 
     KQL repair must use the dedicated codex deployment/endpoint
-    (AZURE_OPENAI_CODEX_*), never the fast model (AZURE_OPENAI_FAST_*).
+    (FOUNDRY_CODEX_AGENT_NAME), never the fast agent.
     """
 
     @staticmethod

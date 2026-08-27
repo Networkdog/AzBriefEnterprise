@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.agent.analyzer import AzureUpdateAnalyzer
+from src.agent.analyzer import AnalysisResult, AzureUpdateAnalyzer, RelevanceStatus
 from src.agent.resilience import TOOL_RESULT_BUDGET_CHARS
 
 
@@ -56,6 +56,36 @@ class TestBuildEvidenceContext:
         analyzer = _analyzer(_last_task_results={"task-1": "x" * (TOOL_RESULT_BUDGET_CHARS + 500)})
         evidence = analyzer.build_evidence_context()
         assert evidence.count("x") == TOOL_RESULT_BUDGET_CHARS
+
+    def test_result_snapshot_wins_over_shared_last_evidence(self):
+        analyzer = _analyzer(
+            _last_resource_summary="wrong shared summary",
+            _last_task_results={"wrong": "wrong shared result"},
+        )
+        result = AnalysisResult(
+            update_id="u1",
+            update_title="Update 1",
+            relevance=RelevanceStatus.RELEVANT,
+            relevance_reason="reason",
+            affected_resources=[],
+            impact_summary="impact",
+            recommendations=[],
+            reference_docs=[],
+            should_notify=True,
+        )
+        analyzer._attach_result_evidence(
+            result,
+            "correct result summary",
+            {"task-1": "correct result evidence"},
+            "correct update context",
+        )
+
+        evidence = analyzer.build_evidence_context(result)
+
+        assert "correct result summary" in evidence
+        assert "correct result evidence" in evidence
+        assert "wrong shared" not in evidence
+        assert "_evidence_resource_summary" not in result.model_dump()
 
 
 class TestCriticPass:
