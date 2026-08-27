@@ -1,9 +1,11 @@
 """Tests for analyzer parsing helpers and pre-filter logic."""
 
 import json
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from langchain_core.messages import AIMessage
 
 from src.agent.analyzer import (
     ActionItem,
@@ -16,6 +18,7 @@ from src.agent.analyzer import (
     UrgencyLevel,
     _escape_braces,
 )
+from src.agent.resilience import CircuitBreaker, TransitionType
 from src.config import Subscriber
 
 
@@ -203,6 +206,50 @@ class TestParseEvaluationJson:
 
         assert analyzer._route_after_evaluation(low_progress) == "sufficient"
         assert analyzer._route_after_evaluation(healthy_progress) == "partial"
+
+    @pytest.mark.asyncio
+    async def test_malformed_evaluator_response_records_terminal_model_error(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.llm_evaluator = type("Evaluator", (), {})()
+        analyzer.llm_evaluator.ainvoke = AsyncMock(
+            return_value=type("Response", (), {"content": "not json", "response_metadata": {}})()
+        )
+        analyzer._llm_circuit_breaker = CircuitBreaker(
+            failure_threshold=3,
+            reset_timeout=120,
+        )
+        plan = AnalysisPlan(
+            plan_id="p1",
+            update_summary="update",
+            analysis_goal="verify evidence",
+            tasks=[
+                AnalysisTask(
+                    task_id="t1",
+                    description="search docs",
+                    method="learn_search",
+                    tool_name="search_azure_docs",
+                    tool_args={"query": "test"},
+                    purpose="ground the report",
+                    status="completed",
+                )
+            ],
+        )
+        state = {
+            "update_context": "update context",
+            "task_results": {"t1": "result"},
+            "analysis_plan": plan.model_dump(),
+            "task_revision_count": 0,
+            "plan_revision_count": 1,
+            "task_result_char_history": [],
+            "iteration": 1,
+            "trace_id": "trace-1",
+        }
+
+        result = await analyzer._evaluation_node(state)
+
+        assert result["evaluation"]["verdict"] == "model_error"
+        assert result["phase"] == "error"
+        assert result["last_transition"] == TransitionType.MODEL_ERROR.value
 
 
 class TestShouldSkipUpdate:
@@ -469,3 +516,131 @@ class TestKqlTaskRouting:
     def test_no_query_arg_is_not_kql(self):
         task = self._task("policy", "get_policy_compliance", {"scope": "sub"})
         assert AzureUpdateAnalyzer._is_kql_task(task) is False
+
+
+class TestContextualToolArguments:
+    def test_required_service_name_is_filled_from_update(self):
+        from pydantic import BaseModel
+
+        class ToolInput(BaseModel):
+            service_name: str
+            resource_type: str = ""
+
+        tool = type("Tool", (), {"args_schema": ToolInput})()
+        task = AnalysisTask(
+            task_id="t1",
+            description="details",
+            method="kql",
+            tool_name="get_service_resource_details",
+            tool_args={"resource_type": "microsoft.network/bastionhosts"},
+            purpose="find affected resources",
+        )
+        state = {"update": {"azure_services": ["Azure Bastion"]}}
+
+        AzureUpdateAnalyzer._fill_contextual_tool_args(task, tool, state)
+
+        assert task.tool_args == {
+            "resource_type": "microsoft.network/bastionhosts",
+            "service_name": "Azure Bastion",
+        }
+
+    def test_existing_service_name_is_never_overwritten(self):
+        from pydantic import BaseModel
+
+        class ToolInput(BaseModel):
+            service_name: str
+
+        tool = type("Tool", (), {"args_schema": ToolInput})()
+        task = AnalysisTask(
+            task_id="t1",
+            description="details",
+            method="kql",
+            tool_name="get_service_resource_details",
+            tool_args={"service_name": "Storage"},
+            purpose="find affected resources",
+        )
+
+        AzureUpdateAnalyzer._fill_contextual_tool_args(
+            task,
+            tool,
+            {"update": {"azure_services": ["Azure Bastion"]}},
+        )
+
+        assert task.tool_args == {"service_name": "Storage"}
+
+    def test_missing_update_service_remains_for_normal_validation(self):
+        from pydantic import BaseModel
+
+        class ToolInput(BaseModel):
+            service_name: str
+
+        tool = type("Tool", (), {"args_schema": ToolInput})()
+        task = AnalysisTask(
+            task_id="t1",
+            description="details",
+            method="kql",
+            tool_name="get_service_resource_details",
+            tool_args={},
+            purpose="find affected resources",
+        )
+
+        AzureUpdateAnalyzer._fill_contextual_tool_args(
+            task,
+            tool,
+            {"update": {"azure_services": []}},
+        )
+
+        assert task.tool_args == {}
+
+
+class TestReportOutputRecovery:
+    @pytest.mark.asyncio
+    async def test_length_limited_foundry_response_is_continued(self, monkeypatch):
+        from src.agent import analyzer as analyzer_module
+
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.settings = SimpleNamespace(report_language="ko", custom_system_prompt="")
+        analyzer._llm_circuit_breaker = CircuitBreaker(
+            failure_threshold=3,
+            reset_timeout=120,
+        )
+        analyzer.llm_reporter = type("Reporter", (), {})()
+        analyzer.llm_reporter.ainvoke = AsyncMock(
+            side_effect=[
+                AIMessage(
+                    content='{"relevance":"not_relevant",',
+                    response_metadata={"finish_reason": "length"},
+                ),
+                AIMessage(
+                    content='"detailed_analysis":"complete"}',
+                    response_metadata={"finish_reason": "stop"},
+                ),
+            ]
+        )
+        monkeypatch.setattr(analyzer_module, "get_settings", lambda: analyzer.settings)
+        plan = AnalysisPlan(
+            plan_id="p1",
+            update_summary="update",
+            analysis_goal="report",
+            tasks=[],
+        )
+        state = {
+            "update_context": "update context",
+            "resource_summary": "resource summary",
+            "task_results": {},
+            "analysis_plan": plan.model_dump(),
+            "update": {"title": "Update", "update_type": "General Availability"},
+            "trace_id": "trace-1",
+            "iteration": 1,
+            "report_feedback": "",
+        }
+
+        result = await analyzer._report_node(state)
+
+        assert analyzer.llm_reporter.ainvoke.await_count == 2
+        assert result["analysis_result"]["raw_analysis"] == (
+            '{"relevance":"not_relevant",'
+            '"detailed_analysis":"complete"}'
+        )
+        recovery_messages = analyzer.llm_reporter.ainvoke.await_args_list[1].args[0]
+        assert recovery_messages[-1].content == analyzer_module.OUTPUT_RECOVERY_MESSAGE

@@ -645,6 +645,18 @@
         "properties.state"
       ],
       "updated": "2026-08-03"
+    },
+    "microsoft.network/bastionhosts": {
+      "paths": [
+        "properties.dnsName",
+        "properties.ipConfigurations",
+        "properties.provisioningState",
+        "properties.scaleUnits",
+        "properties.virtualNetwork",
+        "properties.virtualNetwork.id",
+        "sku.name"
+      ],
+      "updated": "2026-08-27"
     }
   },
   "queries": {
@@ -745,28 +757,28 @@
     "microsoft.network/privateendpoints": [
       {
         "purpose": "Result-improved query (was empty)",
-        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| extend privateLinkServiceConnections = properties.privateLinkServiceConnections\n| mv-expand conn = privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| where targetId contains 'Microsoft.Storage/storageAccounts'\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
-        "recorded": "2026-08-01"
+        "query": "Resources \n| where type =~ 'microsoft.network/privateendpoints' \n| mv-expand conn = properties.privateLinkServiceConnections \n| extend targetId = tostring(conn.properties.privateLinkServiceId) \n| where targetId contains 'automationAccounts' \n| project name, resourceGroup, subscriptionId, targetId \n| limit 200",
+        "recorded": "2026-08-27"
       },
       {
         "purpose": "Result-improved query (was empty)",
-        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| mv-expand conn = properties.privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
-        "recorded": "2026-08-01"
+        "query": "Resources  \n| where type =~ 'microsoft.network/privateendpoints'  \n| mv-expand conn = properties.privateLinkServiceConnections  \n| extend targetId = tostring(conn.properties.privateLinkServiceId)  \n| where targetId contains 'storageAccounts'  \n| project name, resourceGroup, subscriptionId, targetId  \n| limit 200",
+        "recorded": "2026-08-27"
       },
       {
         "purpose": "Result-improved query (was empty)",
-        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| mv-expand conn = properties.privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| where isnotempty(targetId)\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
-        "recorded": "2026-08-02"
+        "query": "Resources \n| where type =~ 'microsoft.network/privateendpoints' \n| mv-expand conn = properties.privateLinkServiceConnections \n| extend targetId = tostring(conn.properties.privateLinkServiceId) \n| where targetId contains 'storageAccounts' \n| project name, resourceGroup, subscriptionId, targetId \n| limit 200",
+        "recorded": "2026-08-27"
       },
       {
         "purpose": "Result-improved query (was empty)",
-        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| extend privateLinkServiceConnections = properties.privateLinkServiceConnections\n| mv-expand conn = privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
-        "recorded": "2026-08-06"
+        "query": "Resources \n| where type =~ 'microsoft.network/privateendpoints' \n| mv-expand conn = properties.privateLinkServiceConnections \n| extend targetId = tostring(conn.properties.privateLinkServiceId) \n| where targetId contains '/providers/Microsoft.Storage/storageAccounts' \n| project name, resourceGroup, subscriptionId, targetId \n| limit 200",
+        "recorded": "2026-08-27"
       },
       {
         "purpose": "Result-improved query (was empty)",
-        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| extend privateLinkServiceConnections = properties.privateLinkServiceConnections\n| mv-expand conn = privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| where isnotempty(targetId)\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
-        "recorded": "2026-08-09"
+        "query": "Resources  \n| where type =~ 'microsoft.network/privateendpoints'  \n| mv-expand conn = properties.privateLinkServiceConnections  \n| extend targetId = tostring(conn.properties.privateLinkServiceId)  \n| where targetId contains 'microsoft.cognitiveservices'  \n| project name, resourceGroup, subscriptionId, targetId  \n| limit 200",
+        "recorded": "2026-08-27"
       }
     ],
     "microsoft.insights/diagnosticsettings": [
@@ -1185,6 +1197,13 @@
         "purpose": "Get Storage Mover resource details",
         "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend allowSharedKeyAccess = properties.allowSharedKeyAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend primaryLocation = properties.primaryLocation\n        | extend secondaryLocation = properties.secondaryLocation\n        | extend largeFileSharesState = properties.largeFileSharesState\n        | extend infrastructureEncryption = properties.encryption.requireInfrastructureEncryption\n        | extend keySource = properties.encryption.keySource\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, allowSharedKeyAccess,\n                  networkAcls, publicNetworkAccess, privateEndpoints, secondaryLocation,\n                  largeFileSharesState, infrastructureEncryption, keySource\n        | order by name asc",
         "recorded": "2026-08-09"
+      }
+    ],
+    "blob storage": [
+      {
+        "purpose": "Get Blob Storage resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend allowSharedKeyAccess = properties.allowSharedKeyAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend primaryLocation = properties.primaryLocation\n        | extend secondaryLocation = properties.secondaryLocation\n        | extend largeFileSharesState = properties.largeFileSharesState\n        | extend infrastructureEncryption = properties.encryption.requireInfrastructureEncryption\n        | extend keySource = properties.encryption.keySource\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, allowSharedKeyAccess,\n                  networkAcls, publicNetworkAccess, privateEndpoints, secondaryLocation,\n                  largeFileSharesState, infrastructureEncryption, keySource\n        | order by name asc",
+        "recorded": "2026-08-27"
       }
     ]
   },

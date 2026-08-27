@@ -378,6 +378,17 @@ class Settings(BaseSettings):
             "and other primary reasoning calls."
         ),
     )
+    foundry_hosted_agent_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Foundry Hosted Agent that owns the complete Plan-Execute-Evaluate-Report "
+            "workflow and subscriber customization. Required by Container Apps runtimes."
+        ),
+    )
+    foundry_hosted_agent_timeout_s: int = Field(
+        default=1800,
+        description="Wall-clock timeout for one complete Hosted Agent analysis request.",
+    )
     foundry_planner_agent_name: Optional[str] = Field(
         default=None,
         description=(
@@ -430,9 +441,27 @@ class Settings(BaseSettings):
             "configured on each agent in Foundry."
         ),
     )
+    foundry_research_web_search_enabled: bool = Field(
+        default=False,
+        description=(
+            "Provision Web Search on the research Prompt Agent. Microsoft Learn remains "
+            "the primary source and Web Search may only supplement missing or current facts."
+        ),
+    )
+    azure_mcp_server_url: Optional[str] = Field(
+        default=None,
+        description="HTTPS endpoint of the read-only Azure MCP Server Container App.",
+    )
+    azure_mcp_project_connection_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Foundry project connection name that authenticates the impact Prompt Agent "
+            "to the Azure MCP Server."
+        ),
+    )
     foundry_agent_timeout_s: int = Field(
         default=180,
-        description="Per-agent timeout for a hosted Foundry agent invocation, in seconds.",
+        description="Per-Prompt-Agent timeout inside the analysis runtime, in seconds.",
     )
 
     def foundry_agent_for_role(self, role: str = "primary") -> Optional[str]:
@@ -452,8 +481,7 @@ class Settings(BaseSettings):
 
     # ── Scheduling & durable state ──────────────────────────────
     # A Container Apps Job runs the scheduled digest and the Container App
-    # serves the orchestrator API and admin page, both driving the Foundry
-    # multi-agent pipeline.
+    # serves API/Admin/MCP. Both delegate analysis to the Hosted Agent.
     checkpoint_blob_url: Optional[str] = Field(
         default=None,
         description=(
@@ -528,6 +556,11 @@ class Settings(BaseSettings):
     def use_foundry(self) -> bool:
         """Return True when the required Foundry runtime settings are present."""
         return bool(self.foundry_project_endpoint and self.foundry_primary_agent_name)
+
+    @property
+    def use_hosted_agent(self) -> bool:
+        """Return True when the external Hosted Agent runtime is configured."""
+        return bool(self.foundry_project_endpoint and self.foundry_hosted_agent_name)
 
     def get_foundry_enrichment_agents(self) -> list[FoundryAgentSpec]:
         """Parse FOUNDRY_ENRICHMENT_AGENTS into FoundryAgentSpec entries.

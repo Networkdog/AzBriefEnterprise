@@ -65,13 +65,12 @@ class TestHealthEndpoint:
         """Health endpoint returns 200."""
         with patch("src.main.get_settings") as mock_settings:
             settings = MagicMock()
-            settings.use_foundry = True
-            settings.foundry_primary_agent_name = "azbrief-primary"
+            settings.use_hosted_agent = True
+            settings.foundry_hosted_agent_name = "azbrief-analysis-hosted"
             mock_settings.return_value = settings
             with patch("src.config.get_azure_credential") as mock_cred:
                 mock_cred.return_value.get_token.return_value = MagicMock()
-                with patch("src.agent.foundry_backend.foundry_available", return_value=True):
-                    response = client.get("/health")
+                response = client.get("/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] in ("healthy", "degraded")
@@ -81,12 +80,11 @@ class TestHealthEndpoint:
         """Health returns degraded when Azure credential fails."""
         with patch("src.main.get_settings") as mock_settings:
             settings = MagicMock()
-            settings.use_foundry = True
-            settings.foundry_primary_agent_name = "azbrief-primary"
+            settings.use_hosted_agent = True
+            settings.foundry_hosted_agent_name = "azbrief-analysis-hosted"
             mock_settings.return_value = settings
             with patch("src.config.get_azure_credential", side_effect=Exception("Auth failed")):
-                with patch("src.agent.foundry_backend.foundry_available", return_value=True):
-                    response = client.get("/health")
+                response = client.get("/health")
         assert response.status_code == 200
         assert response.json()["status"] == "degraded"
 

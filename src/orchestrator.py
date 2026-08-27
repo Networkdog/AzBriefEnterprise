@@ -1,8 +1,8 @@
-"""Orchestrated digest runs.
+"""Orchestrated digest control-plane runs.
 
-A Container Apps Job (or an admin pressing "run now") drives a run here, inside
-the Container App image, so the analysis is bounded by the job's replica timeout
-rather than by a sandbox's fair-share limit.
+A Container Apps Job (or an admin pressing "run now") drives RSS selection,
+checkpointing, and delivery here. Each update is delegated through the analyzer
+interface to the Foundry Hosted Agent; this module never owns the LangGraph runtime.
 
 The checkpoint is durable and lives in :mod:`src.services.checkpoint`. A run
 resolves its start point from it and commits back only the watermark covering
@@ -290,7 +290,7 @@ async def execute_run(
 
     Args:
         record: Run record to update in place.
-        analyzer: ``AzureUpdateAnalyzer`` instance.
+        analyzer: Hosted Agent analyzer proxy (or a compatible test double).
         email_service: ``EmailService`` instance.
         rss_parser: ``AzureUpdateParser`` instance.
 

@@ -22,6 +22,7 @@ File-based (no DB), thread-safe, self-pruning. Never raises into the caller.
 from __future__ import annotations
 
 import json
+import os
 import threading
 from collections import Counter
 from datetime import datetime, timezone
@@ -32,7 +33,8 @@ from structlog import get_logger
 
 logger = get_logger()
 
-_DATA_DIR = Path(__file__).parent.parent.parent / "data"
+_DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "data"
+_DATA_DIR = Path(os.environ.get("AZBRIEF_DATA_DIR", str(_DEFAULT_DATA_DIR))).expanduser()
 _PATTERN_FILE = _DATA_DIR / "analysis_patterns.json"
 _PATTERN_LOCK = threading.Lock()
 
@@ -89,7 +91,6 @@ def _load() -> dict[str, Any]:
 
 def _save(data: dict[str, Any]) -> None:
     """Persist the pattern store (best-effort, pruned to MAX_PATTERN_KEYS)."""
-    _DATA_DIR.mkdir(parents=True, exist_ok=True)
     patterns = data.get("patterns", {})
     if len(patterns) > MAX_PATTERN_KEYS:
         # Prune the least-sampled keys first (weakest evidence).
@@ -100,6 +101,7 @@ def _save(data: dict[str, Any]) -> None:
         )
         data["patterns"] = dict(ranked[:MAX_PATTERN_KEYS])
     try:
+        _DATA_DIR.mkdir(parents=True, exist_ok=True)
         with open(_PATTERN_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:  # pragma: no cover - disk problem is non-fatal

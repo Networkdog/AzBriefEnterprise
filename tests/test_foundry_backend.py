@@ -1,9 +1,7 @@
 """Tests for the Microsoft Foundry backend integration.
 
-These tests verify the backend switch and the graceful-degrade contract:
-asking for Foundry without a reachable project must fall back to Azure OpenAI,
-and every Foundry helper must return a safe fallback when the backend is off or
-the SDK is absent.
+These tests verify the Foundry-only fail-closed contract, current Responses API
+invocation, native function tools, strict stage schemas, and client cleanup.
 """
 
 import json
@@ -51,6 +49,66 @@ class TestFoundryAvailable:
 
     def test_returns_bool(self):
         assert isinstance(foundry_backend.foundry_available(), bool)
+
+
+class TestEnrichmentFunctionTools:
+    def test_stage_tool_allowlists_are_disjoint_except_context_lookup(self):
+        research = foundry_backend.ENRICHMENT_LOCAL_TOOL_NAMES["research"]
+        impact = foundry_backend.ENRICHMENT_LOCAL_TOOL_NAMES["impact"]
+        assert research.intersection(impact) == {"query_tool_result"}
+        assert "search_azure_docs" in research
+        assert "query_azure_resources" in impact
+
+    def test_select_enrichment_tools_excludes_unlisted_tools(self, monkeypatch):
+        tools = [
+            type("Tool", (), {"name": "search_azure_docs"})(),
+            type("Tool", (), {"name": "query_azure_resources"})(),
+            type("Tool", (), {"name": "dangerous_write"})(),
+        ]
+        monkeypatch.setattr("src.agent.tools.WRITE_TOOL_NAMES", frozenset({"dangerous_write"}))
+
+        selected = foundry_backend.select_enrichment_tools("research", tools)
+
+        assert list(selected) == ["search_azure_docs"]
+
+    def test_function_tool_uses_pydantic_schema(self):
+        from pydantic import BaseModel, Field
+
+        class Input(BaseModel):
+            query: str = Field(description="Search query")
+
+        tool = type(
+            "Tool",
+            (),
+            {
+                "name": "search_azure_docs",
+                "description": "Search Azure documentation",
+                "args_schema": Input,
+            },
+        )()
+
+        definitions = foundry_backend.build_foundry_function_tools({tool.name: tool})
+
+        assert len(definitions) == 1
+        definition = definitions[0]
+        assert definition.name == "search_azure_docs"
+        assert definition.description == "Search Azure documentation"
+        assert definition.parameters["properties"]["query"]["type"] == "string"
+
+    @pytest.mark.parametrize("stage", ["research", "impact", "action", "review"])
+    def test_stage_response_format_is_strict_json_schema(self, stage):
+        options = foundry_backend.build_stage_text_options(stage)
+        response_format = options.format
+        assert response_format.type == "json_schema"
+        assert response_format.strict is True
+        assert response_format.schema["additionalProperties"] is False
+        assert response_format.name == f"azbrief_{stage}_output"
+
+    def test_impact_schema_requires_evidence_prefix(self):
+        options = foundry_backend.build_stage_text_options("impact")
+        claim = options.format.schema["properties"]["claims"]["items"]
+        evidence_item = claim["properties"]["evidence"]["items"]
+        assert evidence_item["pattern"] == "^(/subscriptions/|resource:|tool:)"
 
 
 class TestFoundryAgentChatModel:
@@ -201,17 +259,31 @@ class TestFoundryAgentChatModel:
 
 class _FakeResponses:
     def __init__(self, response) -> None:
-        self.response = response
+        self.responses = response if isinstance(response, list) else [response]
         self.calls: list[dict] = []
 
     def create(self, **kwargs):
         self.calls.append(kwargs)
-        return self.response
+        return self.responses.pop(0)
+
+
+class _FakeConversations:
+    def __init__(self) -> None:
+        self.created = 0
+        self.deleted: list[str] = []
+
+    def create(self):
+        self.created += 1
+        return type("Conversation", (), {"id": "conv-1"})()
+
+    def delete(self, *, conversation_id: str) -> None:
+        self.deleted.append(conversation_id)
 
 
 class _FakeOpenAIClient:
     def __init__(self, response) -> None:
         self.responses = _FakeResponses(response)
+        self.conversations = _FakeConversations()
         self.closed = False
 
     def close(self) -> None:
@@ -254,7 +326,9 @@ class TestFoundryAgentCleanup:
         monkeypatch.setattr("src.config.get_azure_credential", lambda: credential)
         result = foundry_backend._run_foundry_agent_sync(endpoint, "azbrief-primary", "prompt")
 
-        assert result == "done"
+        assert result.text == "done"
+        assert result.status == "completed"
+        assert result.finish_reason == "stop"
         assert openai.responses.calls == [
             {
                 "input": "prompt",
@@ -269,6 +343,202 @@ class TestFoundryAgentCleanup:
         assert openai.closed is True
         assert project.closed is True
         assert credential.closed is True
+
+
+class TestFoundryFunctionLoop:
+    def test_executes_function_calls_and_submits_outputs(self, monkeypatch):
+        monkeypatch.setattr(foundry_backend, "MAX_AGENT_TOOL_ROUNDS", 1)
+        function_response = type(
+            "Response",
+            (),
+            {
+                "status": "completed",
+                "output_text": "",
+                "error": None,
+                "output": [
+                    type(
+                        "FunctionCall",
+                        (),
+                        {
+                            "type": "function_call",
+                            "name": "search_azure_docs",
+                            "arguments": '{"query":"storage TLS"}',
+                            "call_id": "call-1",
+                        },
+                    )(),
+                    type(
+                        "FunctionCall",
+                        (),
+                        {
+                            "type": "function_call",
+                            "name": "get_service_documentation",
+                            "arguments": '{"service_name":"Storage"}',
+                            "call_id": "call-2",
+                        },
+                    )(),
+                ],
+                "usage": type(
+                    "Usage",
+                    (),
+                    {"input_tokens": 10, "output_tokens": 4, "total_tokens": 14},
+                )(),
+            },
+        )()
+        final_response = type(
+            "Response",
+            (),
+            {
+                "id": "resp-final",
+                "status": "completed",
+                "output_text": "grounded answer",
+                "error": None,
+                "output": [],
+                "model": "gpt-5-mini",
+                "usage": type(
+                    "Usage",
+                    (),
+                    {"input_tokens": 20, "output_tokens": 6, "total_tokens": 26},
+                )(),
+            },
+        )()
+
+        class FakeTool:
+            def __init__(self, result: str) -> None:
+                self.result = result
+                self.calls: list[dict] = []
+
+            async def ainvoke(self, args: dict):
+                self.calls.append(args)
+                return self.result
+
+        search_tool = FakeTool("search result")
+        docs_tool = FakeTool("documentation result")
+        openai = _FakeOpenAIClient([function_response, final_response])
+        project = _FakeProjectClient(openai)
+        credential = _FakeCredential()
+        monkeypatch.setattr("azure.ai.projects.AIProjectClient", lambda **kwargs: project)
+        monkeypatch.setattr("src.config.get_azure_credential", lambda: credential)
+
+        result = foundry_backend._run_foundry_agent_sync(
+            "https://example/api/projects/p",
+            "azbrief-research",
+            "prompt",
+            {
+                "search_azure_docs": search_tool,
+                "get_service_documentation": docs_tool,
+            },
+            "trace-1",
+            "research",
+        )
+
+        assert result.text == "grounded answer"
+        assert result.response_id == "resp-final"
+        assert result.token_usage == {
+            "prompt_tokens": 30,
+            "completion_tokens": 10,
+            "total_tokens": 40,
+        }
+        assert search_tool.calls == [{"query": "storage TLS"}]
+        assert docs_tool.calls == [{"service_name": "Storage"}]
+        assert openai.responses.calls[0]["conversation"] == "conv-1"
+        assert openai.responses.calls[1]["conversation"] == "conv-1"
+        assert openai.responses.calls[1]["tool_choice"] == "none"
+        assert openai.responses.calls[1]["input"] == [
+            {
+                "type": "function_call_output",
+                "call_id": "call-1",
+                "output": "search result",
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call-2",
+                "output": "documentation result",
+            },
+        ]
+        assert openai.conversations.deleted == ["conv-1"]
+        assert openai.closed is True
+        assert project.closed is True
+        assert credential.closed is True
+
+    def test_unknown_function_call_fails_closed_and_deletes_conversation(self, monkeypatch):
+        response = type(
+            "Response",
+            (),
+            {
+                "status": "completed",
+                "output_text": "",
+                "error": None,
+                "output": [
+                    type(
+                        "FunctionCall",
+                        (),
+                        {
+                            "type": "function_call",
+                            "name": "delete_resource",
+                            "arguments": "{}",
+                            "call_id": "call-1",
+                        },
+                    )()
+                ],
+            },
+        )()
+        openai = _FakeOpenAIClient(response)
+        project = _FakeProjectClient(openai)
+        credential = _FakeCredential()
+        monkeypatch.setattr("azure.ai.projects.AIProjectClient", lambda **kwargs: project)
+        monkeypatch.setattr("src.config.get_azure_credential", lambda: credential)
+
+        with pytest.raises(foundry_backend.FoundryAgentError, match="unlisted tool"):
+            foundry_backend._run_foundry_agent_sync(
+                "https://example/api/projects/p",
+                "azbrief-impact",
+                "prompt",
+                {"query_azure_resources": object()},
+                "trace-1",
+                "impact",
+            )
+
+        assert openai.conversations.deleted == ["conv-1"]
+        assert openai.closed is True
+
+    def test_partial_response_preserves_text_and_usage_for_recovery(self, monkeypatch):
+        response = type(
+            "Response",
+            (),
+            {
+                "id": "resp-1",
+                "status": "incomplete",
+                "output_text": "partial JSON",
+                "error": None,
+                "model": "gpt-5-mini",
+                "incomplete_details": type("Incomplete", (), {"reason": "max_output_tokens"})(),
+                "usage": type(
+                    "Usage",
+                    (),
+                    {"input_tokens": 10, "output_tokens": 20, "total_tokens": 30},
+                )(),
+            },
+        )()
+        openai = _FakeOpenAIClient(response)
+        project = _FakeProjectClient(openai)
+        credential = _FakeCredential()
+        monkeypatch.setattr("azure.ai.projects.AIProjectClient", lambda **kwargs: project)
+        monkeypatch.setattr("src.config.get_azure_credential", lambda: credential)
+
+        result = foundry_backend._run_foundry_agent_sync(
+            "https://example/api/projects/p", "azbrief-reporter", "prompt"
+        )
+
+        assert result.text == "partial JSON"
+        assert result.response_id == "resp-1"
+        assert result.status == "incomplete"
+        assert result.model == "gpt-5-mini"
+        assert result.finish_reason == "length"
+        assert result.token_usage == {
+            "prompt_tokens": 10,
+            "completion_tokens": 20,
+            "total_tokens": 30,
+        }
 
     @pytest.mark.parametrize(
         ("status", "output_text", "match"),

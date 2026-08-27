@@ -50,11 +50,10 @@ def _parse_since(value: Optional[str]) -> Optional[datetime]:
 
 
 def _backend_label(settings) -> str:
-    """Header badge naming the configured Foundry agent profile."""
-    if not settings.use_foundry:
-        return "Foundry 구성 오류"
-    stages = len(settings.get_foundry_enrichment_agents())
-    return f"Foundry 멀티 에이전트 ({stages}단계)" if stages else "Foundry"
+    """Header badge naming the configured Hosted Agent profile."""
+    if not settings.use_hosted_agent:
+        return "Hosted Agent 구성 오류"
+    return "Microsoft Foundry Hosted Agent"
 
 
 @router.get("/admin", response_class=HTMLResponse, include_in_schema=False)
@@ -99,7 +98,6 @@ async def admin_page(request: Request):
 async def admin_status(_: AdminPrincipal = Depends(require_admin)) -> dict:
     """Report the effective configuration. Values are flags and names, never secrets."""
     settings = get_settings()
-    agents = settings.get_foundry_enrichment_agents()
     if settings.communication_services_connection_string:
         email_transport = "Communication Services (연결 문자열)"
     elif settings.communication_services_endpoint:
@@ -108,15 +106,10 @@ async def admin_status(_: AdminPrincipal = Depends(require_admin)) -> dict:
         email_transport = "콘솔 출력"
 
     return {
-        "AI 런타임": "Microsoft Foundry Agent Service",
+        "AI 런타임": "Microsoft Foundry Hosted Agent",
         "Foundry 프로젝트": "설정됨" if settings.foundry_project_endpoint else "없음",
-        "Primary 에이전트": settings.foundry_primary_agent_name or "없음",
-        "Planner 에이전트": settings.foundry_agent_for_role("planner") or "없음",
-        "Evaluator 에이전트": settings.foundry_agent_for_role("evaluator") or "없음",
-        "Reporter 에이전트": settings.foundry_agent_for_role("reporter") or "없음",
-        "Codex 에이전트": settings.foundry_agent_for_role("codex") or "없음",
-        "Fast 에이전트": settings.foundry_agent_for_role("fast") or "없음",
-        "보강 에이전트": [f"{a.stage}: {a.name}" for a in agents],
+        "Hosted 에이전트": settings.foundry_hosted_agent_name or "없음",
+        "MCP 엔드포인트": "/mcp (X-API-Key)" if settings.api_key else "비활성 (인증 키 없음)",
         "이메일 전송": email_transport,
         "구독자 수": len(settings.get_subscribers()),
         "리포트 언어": settings.report_language,

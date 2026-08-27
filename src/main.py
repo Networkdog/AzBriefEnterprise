@@ -9,11 +9,12 @@ from pydantic import BaseModel, Field, field_validator
 from structlog import get_logger
 
 from src.admin.router import router as admin_router
-from src.agent.analyzer import AnalysisResult, AzureUpdateAnalyzer
+from src.agent.hosted_client import HostedAgentAnalyzer
 from src.config import get_settings
 from src.email.service import EmailService
 from src.logging_config import setup_logging
-from src.middleware import rate_limiter, verify_api_key
+from src.mcp_server import mcp, mcp_http_app, register_mcp_services
+from src.middleware import verify_api_key
 from src.orchestrator import get_run_store, register_services, start_run
 from src.rss.parser import AzureUpdate, AzureUpdateParser
 
@@ -36,7 +37,7 @@ os.environ.setdefault("AZBRIEF_VERBOSE", "false")
 logger = get_logger()
 
 # Global instances
-analyzer: Optional[AzureUpdateAnalyzer] = None
+analyzer: Optional[HostedAgentAnalyzer] = None
 email_service: Optional[EmailService] = None
 rss_parser: Optional[AzureUpdateParser] = None
 
@@ -48,32 +49,32 @@ async def lifespan(app: FastAPI):
 
     logger.info("Initializing AzBrief application")
 
-    # Initialize services
-    analyzer = AzureUpdateAnalyzer()
+    # Container Apps owns the control plane only. All model-mediated analysis
+    # and subscriber customization execute in the Foundry Hosted Agent.
+    settings = get_settings()
+    analyzer = HostedAgentAnalyzer(settings)
     email_service = EmailService()
     rss_parser = AzureUpdateParser()
 
     # Expose them to orchestrated runs and the admin console.
     register_services(analyzer, email_service, rss_parser)
+    register_mcp_services(analyzer, rss_parser)
 
     logger.info(
         "AzBrief application started",
-        foundry_primary_agent=get_settings().foundry_primary_agent_name,
-        foundry_enrichment_agents=len(get_settings().get_foundry_enrichment_agents()),
-        admin_ui=get_settings().admin_ui_enabled,
+        foundry_hosted_agent=settings.foundry_hosted_agent_name,
+        admin_ui=settings.admin_ui_enabled,
     )
 
-    yield
-
-    # Cleanup: close httpx clients to prevent resource leaks
-    if analyzer:
-        for tool in getattr(analyzer, "_tools", []):
-            learn_svc = getattr(tool, "learn_service", None)
-            if learn_svc and hasattr(learn_svc, "close"):
-                try:
-                    await learn_svc.close()
-                except Exception:
-                    pass
+    try:
+        # A mounted MCP sub-application does not receive ASGI lifespan events;
+        # the owning FastAPI process must run its session manager explicitly.
+        async with mcp.session_manager.run():
+            yield
+    finally:
+        # Cleanup the runtime proxy. Each Hosted request owns its HTTP client.
+        if analyzer:
+            await analyzer.close()
 
     logger.info("Shutting down AzBrief application")
 
@@ -86,6 +87,7 @@ app = FastAPI(
 )
 
 app.include_router(admin_router)
+app.mount("/mcp", mcp_http_app, name="mcp")
 
 
 @app.middleware("http")
@@ -181,18 +183,14 @@ async def health_check():
     except Exception as e:
         checks["azure_credential"] = f"error: {str(e)[:80]}"
 
-    # Check Foundry Agent Service configuration
+    # Check the full-analysis Hosted Agent configuration. Container Apps no
+    # longer initializes Prompt Agent SDK clients or a local LangGraph runtime.
     settings = get_settings()
-    if settings.use_foundry:
-        from src.agent.foundry_backend import foundry_available
-
-        if foundry_available():
-            checks["foundry_agent"] = f"configured ({settings.foundry_primary_agent_name})"
-        else:
-            checks["foundry_agent"] = "error: Foundry Agent Service SDK unavailable"
+    if settings.use_hosted_agent:
+        checks["hosted_agent"] = f"configured ({settings.foundry_hosted_agent_name})"
     else:
-        checks["foundry_agent"] = (
-            "error: FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_PRIMARY_AGENT_NAME are required"
+        checks["hosted_agent"] = (
+            "error: FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_HOSTED_AGENT_NAME are required"
         )
 
     has_errors = any("error" in v for v in checks.values())

@@ -42,9 +42,11 @@ dependencies = [
     "httpx>=0.26.0",
     "beautifulsoup4>=4.12.0",
     "structlog>=24.1.0",
-    # Foundry is the default backend, so its SDK ships with the image. The code
-    # still degrades to Azure OpenAI when the project endpoint is unreachable.
+    # Foundry is the only model backend. Prompt Agents are versioned through the
+    # current Agent Service SDK and invoked through the Responses API.
     "azure-ai-projects>=2.5.0,<3.0",
+    "azure-ai-agentserver-responses==2.0.0b0",
+    "mcp>=2.0.0,<3.0",
     "azure-monitor-opentelemetry>=1.6.0",
 ]
 

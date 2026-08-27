@@ -8,10 +8,11 @@ Instructions are derived from :data:`src.agent.foundry_backend.STAGE_PROMPTS`,
 so the agent's standing role and the per-run message can never drift: the
 runtime prompt is the same text plus the update context appended.
 
-Server-side tools (Bing/Web grounding, Azure MCP, Microsoft Learn MCP, memory)
-are attached in the Foundry portal — they need connection IDs this script has
-no business inventing. Research and impact agents are not production-ready
-until those tools are attached and ``--check`` passes.
+The script derives app-owned FunctionTool definitions from the live LangChain
+Pydantic schemas, publishes strict stage JSON response formats, and preserves
+non-app-owned Foundry tools when creating a new immutable Agent version.
+Optional managed tools (Web Search, MCP, memory) can still be attached in
+Foundry. Enrichment is ready only when ``--check`` passes.
 
 Usage:
     python -m scripts.provision_foundry_agents --dry-run
@@ -26,8 +27,9 @@ from __future__ import annotations
 
 import argparse
 import sys
+from functools import lru_cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 # Agent instructions contain characters the Windows console code page cannot encode.
 if hasattr(sys.stdout, "reconfigure"):
@@ -35,7 +37,14 @@ if hasattr(sys.stdout, "reconfigure"):
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from src.agent.foundry_backend import RUNTIME_AGENT_INSTRUCTIONS, STAGE_PROMPTS  # noqa: E402
+from src.agent.foundry_backend import (  # noqa: E402
+    ENRICHMENT_LOCAL_TOOL_NAMES,
+    RUNTIME_AGENT_INSTRUCTIONS,
+    STAGE_PROMPTS,
+    build_foundry_function_tools,
+    build_stage_text_options,
+    select_enrichment_tools,
+)
 from src.config import (  # noqa: E402
     FOUNDRY_AGENT_STAGES,
     LLM_ROLES,
@@ -46,7 +55,19 @@ from src.config import (  # noqa: E402
 # The runtime prompt ends with the update context; an agent's standing
 # instructions are everything before that.
 _CONTEXT_MARKER = "\n\nAzure Update under analysis:"
-_TOOL_REQUIRED_STAGES = frozenset({"research", "impact"})
+_RETIRED_APP_FUNCTION_NAMES = frozenset(
+    {
+        "get_resource_type_summary",
+        "get_resource_configurations",
+        "get_resource_dependencies",
+        "get_resource_health",
+        "get_policy_compliance",
+        "get_service_health_events",
+    }
+)
+_APP_OWNED_FUNCTION_NAMES = (
+    frozenset().union(*ENRICHMENT_LOCAL_TOOL_NAMES.values()) | _RETIRED_APP_FUNCTION_NAMES
+)
 
 
 def stage_instructions(stage: str) -> str:
@@ -88,6 +109,64 @@ def resolve_roster(stages: list[str] | None) -> list[tuple[str, str]]:
     return [(configured.get(stage, f"azbrief-{stage}"), stage) for stage in wanted]
 
 
+def _tool_type(tool: Any) -> str:
+    """Return one Agent tool's stable type value."""
+    value = getattr(tool, "type", "")
+    return str(getattr(value, "value", value) or "")
+
+
+def _server_tool_key(tool: Any) -> Optional[tuple[str, str]]:
+    """Return the identity used to replace one app-managed server tool."""
+    tool_type = _tool_type(tool)
+    if tool_type == "mcp":
+        return tool_type, str(getattr(tool, "server_label", "") or "")
+    if tool_type in {"web_search", "web_search_preview"}:
+        return "web_search", ""
+    return None
+
+
+def _managed_server_tools(purpose: str) -> tuple[Any, ...]:
+    """Build server-side tools required by one enrichment Agent."""
+    from azure.ai.projects.models import MCPTool, WebSearchTool
+
+    settings = get_settings()
+    if purpose == "research":
+        tools: list[Any] = [
+            MCPTool(
+                server_label="microsoft_learn",
+                server_url="https://learn.microsoft.com/api/mcp",
+                require_approval="never",
+                server_description=(
+                    "Primary source for official Microsoft Learn documentation. "
+                    "Use this before Web Search."
+                ),
+            )
+        ]
+        if settings.foundry_research_web_search_enabled:
+            tools.append(WebSearchTool(search_context_size="medium"))
+        return tuple(tools)
+
+    if (
+        purpose == "impact"
+        and settings.azure_mcp_server_url
+        and settings.azure_mcp_project_connection_name
+    ):
+        return (
+            MCPTool(
+                server_label="azure_read_only",
+                server_url=settings.azure_mcp_server_url,
+                project_connection_id=settings.azure_mcp_project_connection_name,
+                allowed_tools=["azure"],
+                require_approval="never",
+                server_description=(
+                    "Read-only Azure MCP Server. Use it as the primary source for live "
+                    "tenant resource evidence."
+                ),
+            ),
+        )
+    return ()
+
+
 class _FoundryAdminClient:
     """Small lifecycle-safe adapter over the current Foundry Agent version API."""
 
@@ -107,19 +186,35 @@ class _FoundryAdminClient:
         model: str,
         instructions: str,
         previous_definition: Any = None,
+        managed_tools: Optional[list[Any]] = None,
+        managed_text: Any = None,
     ):
         """Create an immutable Prompt Agent version, preserving prior configuration."""
         from azure.ai.projects.models import PromptAgentDefinition
 
+        previous_tools = list(getattr(previous_definition, "tools", None) or [])
+        managed_server_keys = {
+            key for tool in (managed_tools or []) if (key := _server_tool_key(tool)) is not None
+        }
+        preserved_tools = [
+            tool
+            for tool in previous_tools
+            if getattr(tool, "name", None) not in _APP_OWNED_FUNCTION_NAMES
+            and _server_tool_key(tool) not in managed_server_keys
+        ]
         definition = PromptAgentDefinition(
             model=model,
             instructions=instructions,
             temperature=getattr(previous_definition, "temperature", None),
             top_p=getattr(previous_definition, "top_p", None),
             reasoning=getattr(previous_definition, "reasoning", None),
-            tools=list(getattr(previous_definition, "tools", None) or []),
+            tools=[*(managed_tools or []), *preserved_tools],
             tool_choice=getattr(previous_definition, "tool_choice", None),
-            text=getattr(previous_definition, "text", None),
+            text=(
+                managed_text
+                if managed_text is not None
+                else getattr(previous_definition, "text", None)
+            ),
             structured_inputs=getattr(previous_definition, "structured_inputs", None),
         )
         return self._project.agents.create_version(
@@ -160,9 +255,85 @@ def _definition_matches(version: Any, model: str, instructions: str) -> bool:
     return bool(
         definition is not None
         and getattr(definition, "model", None) == model
-        and str(getattr(definition, "instructions", "") or "").strip()
-        == instructions.strip()
+        and str(getattr(definition, "instructions", "") or "").strip() == instructions.strip()
     )
+
+
+@lru_cache(maxsize=1)
+def _managed_function_tools() -> dict[str, tuple[Any, ...]]:
+    """Build app-owned Foundry FunctionTools once from the live LangChain schemas."""
+    from src.agent.tools import get_all_tools
+
+    tools = get_all_tools()
+    return {
+        stage: tuple(build_foundry_function_tools(select_enrichment_tools(stage, tools)))
+        for stage in ENRICHMENT_LOCAL_TOOL_NAMES
+    }
+
+
+def _managed_tool_names(purpose: str) -> frozenset[str]:
+    """Return the exact app-owned function names required by one Agent purpose."""
+    return ENRICHMENT_LOCAL_TOOL_NAMES.get(purpose, frozenset())
+
+
+def _has_managed_tools(version: Any, purpose: str) -> bool:
+    """Return whether the latest Agent version has the exact required functions."""
+    required = _managed_tool_names(purpose)
+    if not required:
+        return True
+    definition = getattr(version, "definition", None)
+    deployed = {
+        str(getattr(tool, "name", "") or "") for tool in (getattr(definition, "tools", None) or [])
+    }
+    return deployed.intersection(_APP_OWNED_FUNCTION_NAMES) == required
+
+
+def _server_tool_payload(tool: Any) -> dict[str, Any]:
+    """Return a stable serialized server-tool definition for drift checks."""
+    as_dict = getattr(tool, "as_dict", None)
+    payload = as_dict() if callable(as_dict) else dict(tool)
+    if payload.get("type") != "mcp":
+        return payload
+
+    normalized = dict(payload)
+    server_url = normalized.get("server_url")
+    if isinstance(server_url, str):
+        normalized["server_url"] = server_url.rstrip("/")
+
+    allowed_tools = normalized.get("allowed_tools")
+    if isinstance(allowed_tools, dict):
+        allowed_tools = allowed_tools.get("tool_names")
+    if isinstance(allowed_tools, list):
+        normalized["allowed_tools"] = sorted(str(name) for name in allowed_tools)
+    return normalized
+
+
+def _server_tool_drift(version: Any, purpose: str) -> set[tuple[str, str]]:
+    """Return required server-side tools that are absent or stale."""
+    required = {
+        key: _server_tool_payload(tool)
+        for tool in _managed_server_tools(purpose)
+        if (key := _server_tool_key(tool)) is not None
+    }
+    definition = getattr(version, "definition", None)
+    deployed = {
+        key: _server_tool_payload(tool)
+        for tool in (getattr(definition, "tools", None) or [])
+        if (key := _server_tool_key(tool)) is not None
+    }
+    return {key for key, payload in required.items() if deployed.get(key) != payload}
+
+
+def _has_managed_text(version: Any, purpose: str) -> bool:
+    """Return whether the latest Agent version has the exact stage output schema."""
+    expected = build_stage_text_options(purpose)
+    if expected is None:
+        return True
+    definition = getattr(version, "definition", None)
+    actual = getattr(definition, "text", None)
+    if actual is None:
+        return False
+    return actual.as_dict() == expected.as_dict()
 
 
 def _roster_conflicts(roster: list[tuple[str, str]]) -> dict[str, set[str]]:
@@ -216,11 +387,27 @@ def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: 
                     continue
 
                 instructions = agent_instructions(stage)
+                managed_tools = [
+                    *_managed_server_tools(stage),
+                    *_managed_function_tools().get(stage, ()),
+                ]
+                managed_text = build_stage_text_options(stage)
                 latest = _latest_version(existing) if existing is not None else None
                 if existing is None:
-                    created = client.create_version(name, model, instructions)
+                    created = client.create_version(
+                        name,
+                        model,
+                        instructions,
+                        managed_tools=managed_tools,
+                        managed_text=managed_text,
+                    )
                     print(f"created {name} (version {created.version})")
-                elif _definition_matches(latest, model, instructions):
+                elif (
+                    _definition_matches(latest, model, instructions)
+                    and _has_managed_tools(latest, stage)
+                    and not _server_tool_drift(latest, stage)
+                    and _has_managed_text(latest, stage)
+                ):
                     print(f"current {name} (version {latest.version})")
                 else:
                     created = client.create_version(
@@ -228,6 +415,8 @@ def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: 
                         model,
                         instructions,
                         previous_definition=getattr(latest, "definition", None),
+                        managed_tools=managed_tools,
+                        managed_text=managed_text,
                     )
                     print(f"updated {name} (version {created.version})")
             except Exception as exc:  # one bad stage must not abort the rest
@@ -273,21 +462,47 @@ def validate_roster(roster: list[tuple[str, str]]) -> int:
                 continue
             definition = getattr(latest, "definition", None)
             expected_instructions = agent_instructions(purpose).strip()
-            actual_instructions = str(
-                getattr(definition, "instructions", "") or ""
-            ).strip()
+            actual_instructions = str(getattr(definition, "instructions", "") or "").strip()
             if actual_instructions != expected_instructions:
                 failures += 1
                 print(f"STALE   {name} ({purpose}) instructions differ from runtime contract")
 
-            tools = list(getattr(definition, "tools", None) or [])
-            if purpose in _TOOL_REQUIRED_STAGES and not tools:
+            if not _has_managed_text(latest, purpose):
                 failures += 1
-                print(f"NO-TOOL {name} ({purpose}) requires at least one server-side tool")
-            elif actual_instructions == expected_instructions:
+                print(f"NO-FORMAT {name} ({purpose}) stage JSON schema is missing or stale")
+
+            tools = list(getattr(definition, "tools", None) or [])
+            deployed_tool_names = {str(getattr(tool, "name", "") or "") for tool in tools}
+            missing_tools = sorted(_managed_tool_names(purpose) - deployed_tool_names)
+            extra_tools = sorted(
+                deployed_tool_names.intersection(_APP_OWNED_FUNCTION_NAMES)
+                - _managed_tool_names(purpose)
+            )
+            if missing_tools:
+                failures += 1
                 print(
-                    f"OK      {name} ({purpose}, version={latest.version}, tools={len(tools)})"
+                    f"NO-TOOL {name} ({purpose}) missing app functions: "
+                    f"{', '.join(missing_tools)}"
                 )
+            if extra_tools:
+                failures += 1
+                print(
+                    f"EXTRA-TOOL {name} ({purpose}) stale app functions: "
+                    f"{', '.join(extra_tools)}"
+                )
+            stale_server_tools = sorted(_server_tool_drift(latest, purpose))
+            if stale_server_tools:
+                failures += 1
+                labels = [
+                    f"{tool_type}:{label}" if label else tool_type
+                    for tool_type, label in stale_server_tools
+                ]
+                print(
+                    f"STALE-SERVER-TOOL {name} ({purpose}) missing or stale: "
+                    f"{', '.join(labels)}"
+                )
+            elif actual_instructions == expected_instructions:
+                print(f"OK      {name} ({purpose}, version={latest.version}, tools={len(tools)})")
     finally:
         client.close()
 

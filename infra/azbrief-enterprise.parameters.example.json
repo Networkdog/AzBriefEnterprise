@@ -21,7 +21,13 @@
       "value": "gpt-4o"
     },
     "modelCapacity": {
-      "value": 30
+      "value": 200
+    },
+    "enableFoundryEnrichmentAgents": {
+      "value": false
+    },
+    "foundryHostedAgentName": {
+      "value": "azbrief-analysis-hosted"
     },
     "emailDataLocation": {
       "value": "Korea"

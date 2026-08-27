@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from structlog.testing import capture_logs
 
 from src.agent import foundry_backend
 from src.config import Settings
@@ -141,6 +142,33 @@ class TestNodeConstruction:
 
 class TestPipelineExecution:
     @pytest.mark.asyncio
+    async def test_stage_receives_only_its_allowlisted_local_tools(self, sdk_present, monkeypatch):
+        calls = []
+
+        async def fake_invoke(endpoint, agent, prompt, timeout_s, **kwargs):
+            calls.append(kwargs)
+            return _stage_result("research", "grounded research")
+
+        tools = [
+            type("Tool", (), {"name": "search_azure_docs"})(),
+            type("Tool", (), {"name": "query_azure_resources"})(),
+            type("Tool", (), {"name": "dangerous_write"})(),
+        ]
+        roster = json.dumps([{"name": "azbrief-research", "stage": "research"}])
+        monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
+        node = foundry_backend.build_multi_agent_node(
+            _settings(foundry_enrichment_agents=roster),
+            tools,
+        )
+
+        await node({"update_context": "ctx", "trace_id": "trace-1"})
+
+        assert len(calls) == 1
+        assert set(calls[0]["local_tools"]) == {"search_azure_docs"}
+        assert calls[0]["trace_id"] == "trace-1"
+        assert calls[0]["task_id"] == "enrichment:research"
+
+    @pytest.mark.asyncio
     async def test_every_stage_contributes_a_labelled_section(self, sdk_present, recorded_calls):
         calls, _ = recorded_calls
         node = foundry_backend.build_multi_agent_node(_settings())
@@ -264,12 +292,19 @@ class TestPipelineExecution:
 
         monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
         node = foundry_backend.build_multi_agent_node(_settings(foundry_enrichment_agents=roster))
-        merged = (await node({"update_context": "ctx"}))["update_context"]
+        with capture_logs() as logs:
+            merged = (await node({"update_context": "ctx"}))["update_context"]
 
         assert "supported fact" in merged
         assert "unsupported fact" not in merged
         assert "action based on unsupported fact" not in merged
         assert "Confirm the effective date" in merged
+        review_log = next(
+            entry for entry in logs if entry["event"] == "foundry_multi_agent_review_applied"
+        )
+        assert review_log["explicit_rejected_claim_ids"] == ["research-2"]
+        assert review_log["dependent_rejected_claim_ids"] == ["action-1"]
+        assert review_log["missing_facts"] == ["Confirm the effective date"]
 
     @pytest.mark.asyncio
     async def test_malformed_stage_output_is_excluded(self, sdk_present, monkeypatch):
@@ -324,6 +359,49 @@ class TestPipelineExecution:
 
         assert "supported" in merged
         assert "orphan action" not in merged
+
+        @pytest.mark.asyncio
+        async def test_ok_status_with_gaps_is_downgraded_to_partial(self, sdk_present, monkeypatch):
+            async def fake_invoke(endpoint, agent, prompt, timeout_s):
+                if agent == "azbrief-research":
+                    return _stage_result("research", "supported")
+                return json.dumps(
+                    {
+                        "status": "ok",
+                        "claims": [
+                            {
+                                "id": "action-1",
+                                "text": "verify the feature",
+                                "evidence": ["research-1"],
+                                "confidence": "medium",
+                            }
+                        ],
+                        "gaps": ["Confirm the rollout date"],
+                    }
+                )
+
+            monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
+            roster = json.dumps(
+                [
+                    {"name": "azbrief-research", "stage": "research"},
+                    {"name": "azbrief-action", "stage": "action"},
+                ]
+            )
+            node = foundry_backend.build_multi_agent_node(
+                _settings(foundry_enrichment_agents=roster)
+            )
+
+            with capture_logs() as logs:
+                merged = (await node({"update_context": "ctx"}))["update_context"]
+
+            assert "Proposed actions [partial]" in merged
+            assert "verify the feature" in merged
+            assert "Confirm the rollout date" in merged
+            normalized = next(
+                entry for entry in logs if entry["event"] == "foundry_multi_agent_output_normalized"
+            )
+            assert normalized["stage"] == "action"
+            assert normalized["normalization"] == "normalized_ok_with_gaps"
 
     @pytest.mark.asyncio
     async def test_extra_instructions_are_appended(self, sdk_present, recorded_calls):

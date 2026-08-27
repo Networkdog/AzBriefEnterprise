@@ -5,11 +5,12 @@ Agents data plane. The project endpoint, agent roster, models, server-side tools
 guardrails, and memory remain governed in Foundry; the application never calls
 an Azure OpenAI chat-completions endpoint directly.
 
-Requires ``azure-ai-projects`` and ``azure-ai-agents``.
+Requires ``azure-ai-projects`` 2.5 or later.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 from copy import copy
 from dataclasses import dataclass, replace
@@ -22,9 +23,52 @@ from src.config import Settings
 
 logger = get_logger()
 
+ENRICHMENT_LOCAL_TOOL_NAMES: dict[str, frozenset[str]] = {
+    "research": frozenset(
+        {
+            "search_update_related_docs",
+            "search_azure_docs",
+            "get_service_documentation",
+            "search_resource_graph_docs",
+            "query_tool_result",
+        }
+    ),
+    "impact": frozenset(
+        {
+            "query_azure_resources",
+            "find_related_resources",
+            "get_service_resource_details",
+            "get_service_region_availability",
+            "query_tool_result",
+        }
+    ),
+}
+
+MAX_AGENT_TOOL_ROUNDS = 6
+MAX_AGENT_TOOL_CALLS_PER_ROUND = 8
+
 
 class FoundryAgentError(RuntimeError):
     """Raised when a required Foundry Agent Service invocation fails."""
+
+
+@dataclass(frozen=True)
+class FoundryAgentInvocation:
+    """Text plus observability metadata returned by one Responses API call."""
+
+    text: str
+    response_id: str = ""
+    status: str = "completed"
+    model: str = ""
+    finish_reason: str = ""
+    token_usage: Optional[dict[str, int]] = None
+
+
+def _coerce_invocation(value: Any) -> FoundryAgentInvocation:
+    """Keep test doubles and compatibility callers usable during migration."""
+    if isinstance(value, FoundryAgentInvocation):
+        return value
+    return FoundryAgentInvocation(text=str(value or ""))
 
 
 def _render_chat_messages(messages: Any) -> str:
@@ -71,18 +115,11 @@ def _local_tool_contract(tools: dict[str, Any]) -> str:
     """Build the strict text protocol used to request application-managed tools."""
     specs = []
     for name, tool in tools.items():
-        args_schema = getattr(tool, "args_schema", None)
-        if args_schema is not None and hasattr(args_schema, "model_json_schema"):
-            input_schema = args_schema.model_json_schema()
-        elif args_schema is not None and hasattr(args_schema, "schema"):
-            input_schema = args_schema.schema()
-        else:
-            input_schema = {"type": "object"}
         specs.append(
             {
                 "name": name,
                 "description": getattr(tool, "description", ""),
-                "input_schema": input_schema,
+                "input_schema": _tool_input_schema(tool),
             }
         )
     return (
@@ -93,6 +130,135 @@ def _local_tool_contract(tools: dict[str, Any]) -> str:
         "the serialized conversation, continue the original task. Never request an unlisted "
         "tool and never claim that a local tool ran unless a TOOL result is present.\n\n"
         f"Local tool catalog:\n{json.dumps(specs, ensure_ascii=False)}"
+    )
+
+
+def _tool_input_schema(tool: Any) -> dict[str, Any]:
+    """Return one LangChain tool's Pydantic input schema."""
+    args_schema = getattr(tool, "args_schema", None)
+    if args_schema is not None and hasattr(args_schema, "model_json_schema"):
+        return args_schema.model_json_schema()
+    if args_schema is not None and hasattr(args_schema, "schema"):
+        return args_schema.schema()
+    return {"type": "object", "properties": {}, "additionalProperties": False}
+
+
+def select_enrichment_tools(stage: str, tools: list[Any]) -> dict[str, Any]:
+    """Select the stage's read-only application tools in stable name order."""
+    from src.agent.tools import WRITE_TOOL_NAMES
+
+    allowed = ENRICHMENT_LOCAL_TOOL_NAMES.get(stage, frozenset())
+    selected = {
+        tool.name: tool
+        for tool in tools
+        if getattr(tool, "name", "") in allowed
+        and getattr(tool, "name", "") not in WRITE_TOOL_NAMES
+    }
+    return {name: selected[name] for name in sorted(selected)}
+
+
+def build_foundry_function_tools(tools: dict[str, Any]) -> list[Any]:
+    """Convert allow-listed LangChain tools to persisted Foundry FunctionTools."""
+    from azure.ai.projects.models import FunctionTool
+
+    return [
+        FunctionTool(
+            name=name,
+            parameters=_tool_input_schema(tool),
+            description=str(getattr(tool, "description", "") or ""),
+            strict=False,
+        )
+        for name, tool in tools.items()
+    ]
+
+
+def build_stage_text_options(stage: str) -> Any:
+    """Build the strict JSON response format for one enrichment stage."""
+    from azure.ai.projects.models import (
+        PromptAgentDefinitionTextOptions,
+        TextResponseFormatJsonSchema,
+    )
+
+    if stage == "review":
+        schema = {
+            "type": "object",
+            "properties": {
+                "verdict": {"type": "string", "enum": ["pass", "revise"]},
+                "rejected_claim_ids": {
+                    "type": "array",
+                    "maxItems": 24,
+                    "items": {
+                        "type": "string",
+                        "pattern": "^(research|impact|action)-[1-9][0-9]*$",
+                    },
+                },
+                "missing_facts": {
+                    "type": "array",
+                    "maxItems": 12,
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["verdict", "rejected_claim_ids", "missing_facts"],
+            "additionalProperties": False,
+        }
+    elif stage in ("research", "impact", "action"):
+        evidence_patterns = {
+            "research": "^https?://",
+            "impact": "^(/subscriptions/|resource:|tool:)",
+            "action": "^(research|impact)-[1-9][0-9]*$",
+        }
+        schema = {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string", "enum": ["ok", "partial"]},
+                "claims": {
+                    "type": "array",
+                    "maxItems": 12,
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": {
+                                "type": "string",
+                                "pattern": f"^{stage}-[1-9][0-9]*$",
+                            },
+                            "text": {"type": "string"},
+                            "evidence": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 12,
+                                "items": {
+                                    "type": "string",
+                                    "pattern": evidence_patterns[stage],
+                                },
+                            },
+                            "confidence": {
+                                "type": "string",
+                                "enum": ["high", "medium", "low"],
+                            },
+                        },
+                        "required": ["id", "text", "evidence", "confidence"],
+                        "additionalProperties": False,
+                    },
+                },
+                "gaps": {
+                    "type": "array",
+                    "maxItems": 12,
+                    "items": {"type": "string"},
+                },
+            },
+            "required": ["status", "claims", "gaps"],
+            "additionalProperties": False,
+        }
+    else:
+        return None
+
+    return PromptAgentDefinitionTextOptions(
+        format=TextResponseFormatJsonSchema(
+            name=f"azbrief_{stage}_output",
+            schema=schema,
+            description=f"Strict AzBrief {stage} stage output contract",
+            strict=True,
+        )
     )
 
 
@@ -180,12 +346,15 @@ class FoundryAgentChatModel:
         prompt = _render_chat_messages(messages)
         if self._bound_tools:
             prompt = f"{_local_tool_contract(self._bound_tools)}\n\n{prompt}"
-        text = await _invoke_foundry_agent(
-            self.project_endpoint,
-            self.agent_name,
-            prompt,
-            self.timeout_s,
+        invocation = _coerce_invocation(
+            await _invoke_foundry_agent(
+                self.project_endpoint,
+                self.agent_name,
+                prompt,
+                self.timeout_s,
+            )
         )
+        text = invocation.text
         if not text:
             raise FoundryAgentError(
                 f"Foundry agent '{self.agent_name}' returned no completed response"
@@ -196,8 +365,13 @@ class FoundryAgentChatModel:
             tool_calls=tool_calls,
             response_metadata={
                 "backend": "foundry_agent_service",
-                "model_name": f"foundry-agent:{self.agent_name}",
+                "agent_name": self.agent_name,
                 "agent_role": self.role,
+                "model_name": invocation.model or f"foundry-agent:{self.agent_name}",
+                "response_id": invocation.response_id,
+                "response_status": invocation.status,
+                "finish_reason": invocation.finish_reason,
+                "token_usage": invocation.token_usage or {},
             },
         )
 
@@ -267,7 +441,10 @@ STAGE_PROMPTS: dict[str, str] = {
         "You are the RESEARCH agent for an Azure Update analysis pipeline.\n"
         "Establish what actually changed: the capability or change itself, its "
         "release stage, effective dates and retirement deadlines, prerequisites, "
-        "and the official documentation that describes it.\n"
+        "and the official documentation that describes it. Always query the Microsoft "
+        "Learn MCP tool first. Use Web Search only when Learn does not establish a needed "
+        "fact or when a newer public announcement must be confirmed. Prefer Learn URLs in "
+        "the final evidence and clearly distinguish supplementary web evidence.\n"
         "Return only one JSON object with status, claims, and gaps. status is ok or partial. "
         "claims is an array of at most 12 objects with id, text, evidence, and confidence. "
         "Use research-1, research-2, ... as ids; evidence is an array of exact source URLs; "
@@ -279,13 +456,20 @@ STAGE_PROMPTS: dict[str, str] = {
         "Determine how this update touches the tenant's actual Azure estate: which "
         "resource types and configurations are involved, whether the relevant "
         "services and regions are in use, and what is demonstrably NOT affected.\n"
-        "Use your live resource tools. Never guess a resource name - report an "
+        "Use the read-only Azure MCP tool first for live tenant evidence, then use declared "
+        "application function tools only to fill a specific evidence gap. Never use Web "
+        "Search as evidence of tenant state. Never guess a resource name - report an "
         "absence as an absence.\n"
+        "Use the minimum tool calls needed. Stop once resource presence or absence, the "
+        "relevant configuration, and any stated regional condition are established; do not "
+        "exhaust the tool catalog. The downstream Plan-Execute loop performs deeper health, "
+        "policy, dependency, and configuration checks.\n"
         "Return only one JSON object with status, claims, and gaps. status is ok or partial. "
         "claims is an array of at most 12 objects with id, text, evidence, and confidence. "
         "Use impact-1, impact-2, ... as ids; evidence is an array of exact resource IDs or "
-        "tool-result identifiers; confidence is high, medium, or low. Put unverified facts "
-        "in gaps, not claims.\n\n"
+        "tool-result identifiers. Every evidence value must start with /subscriptions/, "
+        "resource:, or tool:. Never use a display name alone as evidence. confidence is "
+        "high, medium, or low. Put unverified facts in gaps, not claims.\n\n"
         "Azure Update under analysis:\n{update_context}"
     ),
     "action": (
@@ -369,18 +553,18 @@ def _string_tuple(value: Any, *, limit: int, item_chars: int) -> Optional[tuple[
     return tuple(items)
 
 
-def _parse_stage_result(stage: str, text: str) -> Optional[EnrichmentStageResult]:
-    """Validate one evidence-producing enrichment stage response."""
+def _parse_stage_result(stage: str, text: str) -> tuple[Optional[EnrichmentStageResult], str]:
+    """Validate one evidence-producing stage response and return a reason code."""
     payload = _decode_json_object(text)
     if payload is None or set(payload) != {"status", "claims", "gaps"}:
-        return None
+        return None, "invalid_envelope"
     status = payload["status"]
     raw_claims = payload["claims"]
     gaps = _string_tuple(payload["gaps"], limit=12, item_chars=1000)
     if status not in ("ok", "partial") or not isinstance(raw_claims, list) or gaps is None:
-        return None
+        return None, "invalid_status_claims_or_gaps"
     if len(raw_claims) > 12:
-        return None
+        return None, "too_many_claims"
 
     claims = []
     seen_ids = set()
@@ -391,7 +575,7 @@ def _parse_stage_result(stage: str, text: str) -> Optional[EnrichmentStageResult
             "evidence",
             "confidence",
         }:
-            return None
+            return None, "invalid_claim_shape"
         claim_id = raw_claim["id"]
         claim_text = raw_claim["text"]
         confidence = raw_claim["confidence"]
@@ -400,25 +584,24 @@ def _parse_stage_result(stage: str, text: str) -> Optional[EnrichmentStageResult
             not isinstance(claim_id, str)
             or not claim_id.startswith(f"{stage}-")
             or claim_id in seen_ids
-            or not isinstance(claim_text, str)
-            or not claim_text.strip()
-            or len(claim_text) > 2000
-            or confidence not in ("high", "medium", "low")
-            or not evidence
         ):
-            return None
+            return None, "invalid_or_duplicate_claim_id"
+        if not isinstance(claim_text, str) or not claim_text.strip() or len(claim_text) > 2000:
+            return None, "invalid_claim_text"
+        if confidence not in ("high", "medium", "low") or not evidence:
+            return None, "invalid_confidence_or_evidence"
         if stage == "research" and any(
             not source.startswith(("https://", "http://")) for source in evidence
         ):
-            return None
+            return None, "invalid_research_evidence_prefix"
         if stage == "impact" and any(
             not source.startswith(("/subscriptions/", "resource:", "tool:")) for source in evidence
         ):
-            return None
+            return None, "invalid_impact_evidence_prefix"
         if stage == "action" and any(
             not source.startswith(("research-", "impact-")) for source in evidence
         ):
-            return None
+            return None, "invalid_action_evidence_prefix"
         seen_ids.add(claim_id)
         claims.append(
             EnrichmentClaim(
@@ -429,10 +612,12 @@ def _parse_stage_result(stage: str, text: str) -> Optional[EnrichmentStageResult
             )
         )
     if not claims and not gaps:
-        return None
+        return None, "empty_claims_and_gaps"
     if status == "ok" and gaps:
-        return None
-    return EnrichmentStageResult(stage, status, tuple(claims), gaps)
+        return EnrichmentStageResult(stage, "partial", tuple(claims), gaps), (
+            "normalized_ok_with_gaps"
+        )
+    return EnrichmentStageResult(stage, status, tuple(claims), gaps), ""
 
 
 def _parse_review(text: str) -> Optional[EnrichmentReview]:
@@ -465,19 +650,33 @@ def foundry_available() -> bool:
 # Foundry Prompt Agent invocation
 # ---------------------------------------------------------------------------
 
-def _run_foundry_agent_sync(project_endpoint: str, agent_name: str, prompt: str) -> str:
+
+def _run_foundry_agent_sync(
+    project_endpoint: str,
+    agent_name: str,
+    prompt: str,
+    local_tools: Optional[dict[str, Any]] = None,
+    trace_id: str = "",
+    task_id: str = "",
+) -> FoundryAgentInvocation:
     """Invoke one current Foundry Prompt Agent through the Responses API.
 
     Args:
         project_endpoint: Foundry project endpoint.
         agent_name: Name of an agent already published in the project.
         prompt: Fully rendered prompt to send as the user message.
+        local_tools: Allow-listed function implementations declared on the Agent.
+        trace_id: Analysis trace used to isolate oversized tool results.
+        task_id: Stage identifier used for tool-result observability.
 
     Returns:
-        The agent's completed response text.
+        The response text and observability metadata.
     """
+    import asyncio
+
     from azure.ai.projects import AIProjectClient
 
+    from src.agent.context_store import store_and_handle
     from src.config import get_azure_credential
 
     credential = get_azure_credential()
@@ -486,35 +685,175 @@ def _run_foundry_agent_sync(project_endpoint: str, agent_name: str, prompt: str)
         credential=credential,
     )
     openai_client = project_client.get_openai_client()
+    conversation_id = ""
+    tool_loop = None
     try:
-        response = openai_client.responses.create(
-            input=prompt,
-            extra_body={
-                "agent_reference": {
-                    "name": agent_name,
-                    "type": "agent_reference",
-                }
-            },
-        )
-        status = str(getattr(response, "status", "") or "").lower()
-        if status != "completed":
-            logger.warning(
-                "foundry_agent_response_incomplete",
-                agent=agent_name,
+        if local_tools:
+            conversation = openai_client.conversations.create()
+            conversation_id = str(conversation.id)
+            tool_loop = asyncio.new_event_loop()
+
+        response_input: Any = prompt
+        total_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        for tool_round in range(MAX_AGENT_TOOL_ROUNDS + 1):
+            request: dict[str, Any] = {
+                "input": response_input,
+                "extra_body": {
+                    "agent_reference": {
+                        "name": agent_name,
+                        "type": "agent_reference",
+                    }
+                },
+            }
+            if conversation_id:
+                request["conversation"] = conversation_id
+                if tool_round >= MAX_AGENT_TOOL_ROUNDS:
+                    request["tool_choice"] = "none"
+            response = openai_client.responses.create(**request)
+
+            usage = getattr(response, "usage", None)
+            if usage is not None:
+                total_usage["prompt_tokens"] += int(getattr(usage, "input_tokens", 0) or 0)
+                total_usage["completion_tokens"] += int(getattr(usage, "output_tokens", 0) or 0)
+                total_usage["total_tokens"] += int(getattr(usage, "total_tokens", 0) or 0)
+
+            function_calls = [
+                item
+                for item in (getattr(response, "output", None) or [])
+                if getattr(item, "type", "") == "function_call"
+            ]
+            if function_calls:
+                if not local_tools:
+                    raise FoundryAgentError(
+                        f"Foundry agent '{agent_name}' requested undeclared local tools"
+                    )
+                if tool_round >= MAX_AGENT_TOOL_ROUNDS:
+                    raise FoundryAgentError(
+                        f"Foundry agent '{agent_name}' exceeded {MAX_AGENT_TOOL_ROUNDS} "
+                        "local tool rounds"
+                    )
+                if len(function_calls) > MAX_AGENT_TOOL_CALLS_PER_ROUND:
+                    raise FoundryAgentError(
+                        f"Foundry agent '{agent_name}' requested too many tools in one round"
+                    )
+
+                parsed_calls = []
+                for item in function_calls:
+                    name = str(getattr(item, "name", "") or "")
+                    tool = local_tools.get(name)
+                    if tool is None:
+                        raise FoundryAgentError(
+                            f"Foundry agent '{agent_name}' requested unlisted tool '{name}'"
+                        )
+                    try:
+                        args = json.loads(str(getattr(item, "arguments", "") or "{}"))
+                    except json.JSONDecodeError as exc:
+                        raise FoundryAgentError(
+                            f"Foundry agent '{agent_name}' returned invalid arguments for '{name}'"
+                        ) from exc
+                    if not isinstance(args, dict):
+                        raise FoundryAgentError(
+                            f"Foundry agent '{agent_name}' returned non-object arguments for '{name}'"
+                        )
+                    parsed_calls.append((item, name, tool, args))
+
+                async def _execute_calls() -> list[Any]:
+                    return await asyncio.gather(
+                        *[tool.ainvoke(args) for _, _, tool, args in parsed_calls],
+                        return_exceptions=True,
+                    )
+
+                results = tool_loop.run_until_complete(_execute_calls())
+                outputs = []
+                for (item, name, _, args), result in zip(parsed_calls, results):
+                    if isinstance(result, BaseException):
+                        raise FoundryAgentError(
+                            f"Local tool '{name}' failed for agent '{agent_name}': "
+                            f"{type(result).__name__}"
+                        ) from result
+                    result_text = store_and_handle(
+                        tool=name,
+                        result=str(result),
+                        trace_id=trace_id,
+                        task_id=f"{task_id}:{tool_round + 1}:{name}",
+                    )
+                    outputs.append(
+                        {
+                            "type": "function_call_output",
+                            "call_id": str(getattr(item, "call_id", "") or ""),
+                            "output": result_text,
+                        }
+                    )
+                    logger.info(
+                        "foundry_agent_local_tool_completed",
+                        agent=agent_name,
+                        tool=name,
+                        args_keys=sorted(args),
+                        args_fingerprint=hashlib.sha256(
+                            json.dumps(
+                                args,
+                                ensure_ascii=True,
+                                sort_keys=True,
+                                separators=(",", ":"),
+                            ).encode("utf-8")
+                        ).hexdigest()[:12],
+                        result_chars=len(result_text),
+                        tool_round=tool_round + 1,
+                    )
+                response_input = outputs
+                continue
+
+            status = str(getattr(response, "status", "") or "").lower()
+            text = str(getattr(response, "output_text", "") or "").strip()
+            incomplete_details = getattr(response, "incomplete_details", None)
+            incomplete_reason = str(getattr(incomplete_details, "reason", "") or "")
+            recoverable_partial = bool(
+                status == "incomplete" and incomplete_reason == "max_output_tokens" and text
+            )
+            if status != "completed" and not recoverable_partial:
+                logger.warning(
+                    "foundry_agent_response_incomplete",
+                    agent=agent_name,
+                    status=status,
+                    reason=incomplete_reason,
+                    error=str(getattr(response, "error", "") or ""),
+                )
+                raise FoundryAgentError(
+                    f"Foundry agent '{agent_name}' response ended with status={status}: "
+                    f"{str(getattr(response, 'error', '') or '')}"
+                )
+            if not text:
+                raise FoundryAgentError(
+                    f"Foundry agent '{agent_name}' returned no completed response text"
+                )
+            return FoundryAgentInvocation(
+                text=text,
+                response_id=str(getattr(response, "id", "") or ""),
                 status=status,
-                error=str(getattr(response, "error", "") or ""),
+                model=str(getattr(response, "model", "") or ""),
+                finish_reason="length" if recoverable_partial else "stop",
+                token_usage=total_usage,
             )
-            raise FoundryAgentError(
-                f"Foundry agent '{agent_name}' response ended with status={status}: "
-                f"{str(getattr(response, 'error', '') or '')}"
-            )
-        text = str(getattr(response, "output_text", "") or "").strip()
-        if not text:
-            raise FoundryAgentError(
-                f"Foundry agent '{agent_name}' returned no completed response text"
-            )
-        return text
+        raise FoundryAgentError(
+            f"Foundry agent '{agent_name}' did not complete its local tool loop"
+        )
     finally:
+        if conversation_id:
+            try:
+                openai_client.conversations.delete(conversation_id=conversation_id)
+            except Exception as exc:
+                logger.warning(
+                    "foundry_agent_conversation_cleanup_failed",
+                    agent=agent_name,
+                    conversation_id=conversation_id,
+                    error=str(exc),
+                )
+        if tool_loop is not None:
+            tool_loop.close()
         openai_client.close()
         project_client.close()
         credential.close()
@@ -530,7 +869,10 @@ async def _invoke_foundry_agent(
     agent_name: str,
     prompt: str,
     timeout_s: int,
-) -> str:
+    local_tools: Optional[dict[str, Any]] = None,
+    trace_id: str = "",
+    task_id: str = "",
+) -> FoundryAgentInvocation:
     """Run one Foundry Prompt Agent and preserve failures for caller recovery.
 
     Args:
@@ -538,15 +880,26 @@ async def _invoke_foundry_agent(
         agent_name: Name of the agent already published in the project.
         prompt: Fully rendered prompt to send.
         timeout_s: Per-agent wall-clock timeout.
+        local_tools: Allow-listed application function implementations.
+        trace_id: Analysis trace used for context-store isolation.
+        task_id: Stage identifier used for tool-result logging.
 
     Returns:
-        The agent's response text.
+        The agent response plus usage and completion metadata.
     """
     import asyncio
 
     try:
         return await asyncio.wait_for(
-            asyncio.to_thread(_run_foundry_agent_sync, project_endpoint, agent_name, prompt),
+            asyncio.to_thread(
+                _run_foundry_agent_sync,
+                project_endpoint,
+                agent_name,
+                prompt,
+                local_tools,
+                trace_id,
+                task_id,
+            ),
             timeout=timeout_s,
         )
     except Exception as exc:  # pragma: no cover - requires live SDK
@@ -595,6 +948,7 @@ def _apply_review(
 
 def build_multi_agent_node(
     settings: Settings,
+    tools: Optional[list[Any]] = None,
 ) -> Optional[Callable[[dict], Awaitable[dict]]]:
     """Build a LangGraph node that runs the Foundry Prompt Agent enrichment pipeline.
 
@@ -611,6 +965,7 @@ def build_multi_agent_node(
 
     Args:
         settings: Application settings.
+        tools: Shared application tools; only stage allow-listed read-only tools are exposed.
 
     Returns:
         An async node callable ``(state) -> dict``, or ``None``.
@@ -630,6 +985,9 @@ def build_multi_agent_node(
         return None
 
     by_stage = {spec.stage: spec for spec in roster}
+    stage_tools = {
+        stage: select_enrichment_tools(stage, tools or []) for stage in ENRICHMENT_LOCAL_TOOL_NAMES
+    }
     project_endpoint = settings.foundry_project_endpoint
     timeout_s = settings.foundry_agent_timeout_s
 
@@ -641,21 +999,37 @@ def build_multi_agent_node(
         )
         return f"{base}\n\n{spec.instructions}" if spec.instructions else base
 
-    async def _run_stage(stage: str, update_context: str, prior: str) -> tuple[str, str]:
+    async def _run_stage(
+        stage: str,
+        update_context: str,
+        prior: str,
+        trace_id: str,
+    ) -> tuple[str, str]:
         spec = by_stage[stage]
-        text = await _invoke_foundry_agent(
-            project_endpoint,
-            spec.name,
-            _prompt(stage, update_context, prior),
-            timeout_s,
+        invoke_kwargs: dict[str, Any] = {}
+        if stage_tools.get(stage):
+            invoke_kwargs = {
+                "local_tools": stage_tools[stage],
+                "trace_id": trace_id,
+                "task_id": f"enrichment:{stage}",
+            }
+        invocation = _coerce_invocation(
+            await _invoke_foundry_agent(
+                project_endpoint,
+                spec.name,
+                _prompt(stage, update_context, prior),
+                timeout_s,
+                **invoke_kwargs,
+            )
         )
-        return stage, text
+        return stage, invocation.text
 
     async def multi_agent_node(state: dict) -> dict:
         import asyncio
         import time
 
         update_context = state.get("update_context", "")
+        trace_id = state.get("trace_id", "")
         started = time.time()
         sections: list[EnrichmentStageResult] = []
 
@@ -663,7 +1037,7 @@ def build_multi_agent_node(
         parallel = [s for s in ("research", "impact") if s in by_stage]
         if parallel:
             results = await asyncio.gather(
-                *[_run_stage(s, update_context, "") for s in parallel],
+                *[_run_stage(s, update_context, "", trace_id) for s in parallel],
                 return_exceptions=True,
             )
             for item in results:
@@ -671,14 +1045,21 @@ def build_multi_agent_node(
                     logger.warning("foundry_multi_agent_stage_error", error=str(item))
                     continue
                 stage, text = item
-                parsed = _parse_stage_result(stage, text)
+                parsed, validation_error = _parse_stage_result(stage, text)
                 if parsed is None:
                     logger.warning(
                         "foundry_multi_agent_invalid_output",
                         stage=stage,
                         output_chars=len(text),
+                        validation_error=validation_error,
                     )
                     continue
+                if validation_error:
+                    logger.info(
+                        "foundry_multi_agent_output_normalized",
+                        stage=stage,
+                        normalization=validation_error,
+                    )
                 sections.append(parsed)
 
         # Phase 2 — dependent stages, each seeing everything gathered so far.
@@ -687,7 +1068,7 @@ def build_multi_agent_node(
                 continue
             prior = _render_findings(sections)
             try:
-                _, text = await _run_stage(stage, update_context, prior)
+                _, text = await _run_stage(stage, update_context, prior, trace_id)
             except Exception as exc:  # pragma: no cover - requires live SDK
                 logger.warning("foundry_multi_agent_stage_error", stage=stage, error=str(exc))
                 continue
@@ -700,16 +1081,39 @@ def build_multi_agent_node(
                         output_chars=len(text),
                     )
                     continue
+                before_claim_ids = {
+                    claim.claim_id for section in sections for claim in section.claims
+                }
                 sections = _apply_review(sections, review)
+                after_claim_ids = {
+                    claim.claim_id for section in sections for claim in section.claims
+                }
+                removed_claim_ids = before_claim_ids - after_claim_ids
+                explicit_rejections = removed_claim_ids.intersection(review.rejected_claim_ids)
+                dependent_rejections = removed_claim_ids - explicit_rejections
+                logger.info(
+                    "foundry_multi_agent_review_applied",
+                    verdict=review.verdict,
+                    explicit_rejected_claim_ids=sorted(explicit_rejections),
+                    dependent_rejected_claim_ids=sorted(dependent_rejections),
+                    missing_facts=list(review.missing_facts),
+                )
                 continue
-            parsed = _parse_stage_result(stage, text)
+            parsed, validation_error = _parse_stage_result(stage, text)
             if parsed is None:
                 logger.warning(
                     "foundry_multi_agent_invalid_output",
                     stage=stage,
                     output_chars=len(text),
+                    validation_error=validation_error,
                 )
                 continue
+            if validation_error:
+                logger.info(
+                    "foundry_multi_agent_output_normalized",
+                    stage=stage,
+                    normalization=validation_error,
+                )
             if stage == "action":
                 known_claim_ids = {
                     claim.claim_id for section in sections for claim in section.claims
@@ -746,5 +1150,6 @@ def build_multi_agent_node(
         "foundry_multi_agent_ready",
         stages=sorted(by_stage),
         agents=[spec.name for spec in roster],
+        local_tools={stage: sorted(stage_tools.get(stage, {})) for stage in sorted(by_stage)},
     )
     return multi_agent_node

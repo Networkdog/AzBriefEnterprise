@@ -32,7 +32,7 @@ def wired(monkeypatch):
     analyzer = _FakeAnalyzer()
     captured = {}
 
-    monkeypatch.setattr("src.agent.analyzer.AzureUpdateAnalyzer", lambda: analyzer)
+    monkeypatch.setattr("src.agent.hosted_client.HostedAgentAnalyzer", lambda: analyzer)
     monkeypatch.setattr("src.email.service.EmailService", lambda: object())
     monkeypatch.setattr("src.rss.parser.AzureUpdateParser", lambda: object())
 

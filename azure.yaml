@@ -1,0 +1,51 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: azbrief-enterprise
+requiredVersions:
+  extensions:
+    azure.ai.agents: '>=1.0.0-beta.4'
+services:
+  azbrief-agents:
+    host: azure.ai.project
+    endpoint: https://aif-azbrief-kzfj3xb4.services.ai.azure.com/api/projects/azbrief-agents
+  azbrief-analysis-hosted:
+    host: azure.ai.agent
+    project: .
+    language: python
+    startupCommand: python hosted_agent_main.py
+    uses:
+      - azbrief-agents
+    codeConfiguration:
+      dependencyResolution: remote_build
+      entryPoint: hosted_agent_main.py
+      runtime: python_3_13
+    container:
+      resources:
+        cpu: '1'
+        memory: 2Gi
+    kind: hosted
+    name: azbrief-analysis-hosted
+    displayName: AzBrief Analysis Runtime
+    description: Owns the complete Plan-Execute-Evaluate-Report graph and subscriber customization for Azure updates.
+    protocols:
+      - protocol: responses
+        version: 2.0.0
+    environmentVariables:
+      - name: AZURE_TENANT_ID
+        value: ${AZURE_TENANT_ID}
+      - name: AZBRIEF_PROMPT_PRIMARY_AGENT_NAME
+        value: ${AZBRIEF_PROMPT_PRIMARY_AGENT_NAME}
+      - name: AZBRIEF_PROMPT_PLANNER_AGENT_NAME
+        value: ${AZBRIEF_PROMPT_PLANNER_AGENT_NAME}
+      - name: AZBRIEF_PROMPT_EVALUATOR_AGENT_NAME
+        value: ${AZBRIEF_PROMPT_EVALUATOR_AGENT_NAME}
+      - name: AZBRIEF_PROMPT_REPORTER_AGENT_NAME
+        value: ${AZBRIEF_PROMPT_REPORTER_AGENT_NAME}
+      - name: AZBRIEF_PROMPT_CODEX_AGENT_NAME
+        value: ${AZBRIEF_PROMPT_CODEX_AGENT_NAME}
+      - name: AZBRIEF_PROMPT_FAST_AGENT_NAME
+        value: ${AZBRIEF_PROMPT_FAST_AGENT_NAME}
+      - name: AZBRIEF_ENRICHMENT_AGENT_ROSTER
+        value: ${AZBRIEF_ENRICHMENT_AGENT_ROSTER}
+infra:
+  provider: microsoft.foundry

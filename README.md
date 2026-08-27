@@ -5,13 +5,13 @@
 **Azure updates, analyzed for your environment, delivered to your inbox.**
 
 [![Python](https://img.shields.io/badge/python-3.10+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![Microsoft Foundry](https://img.shields.io/badge/Microsoft_Foundry-multi--agent-0078D4.svg?style=flat&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/azure/ai-foundry/)
+[![Microsoft Foundry](https://img.shields.io/badge/Microsoft_Foundry-Hosted_Agent-0078D4.svg?style=flat&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents)
 [![LangGraph](https://img.shields.io/badge/LangGraph-agent-blue.svg?style=flat)](https://github.com/langchain-ai/langgraph)
 [![Container Apps](https://img.shields.io/badge/Container_Apps-job%20%2B%20app-0078D4.svg?style=flat&logo=microsoftazure&logoColor=white)](https://learn.microsoft.com/azure/container-apps/)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Container Apps Job (cron) → Microsoft Foundry Prompt Agents → Communication Services
-· Container App orchestrator + `/admin` · VNet injection + Private Endpoint by default
+Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication Services
+· Container App control plane + `/admin` + `/mcp` · VNet injection + Private Endpoint by default
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json)
 
@@ -126,11 +126,12 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
 
 | | |
 |---|---|
-| **Governed multi-agent** | Phase-specialized Prompt Agents plus optional research/impact/action/review enrichment, with standing instructions, models, tools and guardrails governed in Foundry |
-| **No API keys** | Foundry runs Entra-only (`disableLocalAuth`); the state account is Entra-only too. There is no key to leak or rotate |
+| **Governed Hosted Agent** | The complete LangGraph Plan-Execute-Evaluate-Report runtime and subscriber customization run as a Foundry Hosted Agent; phase Prompt Agents remain governed data-plane dependencies |
+| **No model API keys** | Foundry runs Entra-only (`disableLocalAuth`); the state account is Entra-only too. Container App API/MCP access uses its own scoped control-plane key |
 | **Private by default** | `vnetInjection` injects the agent compute into a delegated subnet, integrates Container Apps with the same VNet, and puts Foundry, Key Vault and the state account behind private endpoints |
-| **No sandbox ceiling** | A Container Apps Job replaces the Automation sandbox, so a run is bounded by its replica timeout (12 h default, up to 7 days) instead of a 3-hour fair-share limit and a 400 MB memory cap |
+| **Managed analysis compute** | Foundry provisions an isolated Hosted Agent sandbox per session and owns its endpoint, lifecycle, scaling, identity, and observability |
 | **Admin console** | `/admin` behind Entra ID sign-in with an explicit principal allow-list — trigger a run, inspect configuration, review run history |
+| **MCP control plane** | Authenticated Streamable HTTP at `/mcp` exposes recent updates, Hosted Agent analysis, and digest-run status without putting analysis logic back in Container Apps |
 | **Durable checkpoint** | The "analysed up to" watermark is a blob that only moves forward, written after a run completes, so an interrupted run repeats a window instead of skipping an update |
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
@@ -168,38 +169,43 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
 ```
 Container Apps Job  ──  cron (0 2 * * * UTC), python -m src.scheduler
   │
-  ├─ Azure Update RSS ──────── what changed
-  ├─ LangGraph agent ───────── Plan → Execute → Evaluate → Report
-  │    ├─ Azure Resource Graph ─── affected resources
-  │    ├─ Microsoft Learn ──────── related documentation
-  │    ├─ Cost Management ──────── cost impact
-  │    ├─ Azure Advisor ────────── optimization recommendations
-  │    ├─ Resource Health ──────── availability status
-  │    ├─ Policy Compliance ────── governance state
-  │    ├─ Service Health ───────── active incidents & maintenance
-  │    └─ Region Availability ──── service-by-region support (ARM providers API)
-  │
-  ├─ Microsoft Foundry Prompt Agents
-  │    planner → evaluator → reporter     (primary fallback when unset)
-  │    research ┐
-  │    impact   ┴→ action → review        (optional evidence enrichment)
-  │
+  ├─ Azure Update RSS ──────── select the digest window
+  ├─ Hosted Agent endpoint ─── one complete analysis per update
   ├─ Storage blob ──────────── digest checkpoint (forward-only watermark)
   └─ Communication Services ── per-subscriber email
 
-Container App  ──  same image, same identity, same VNet
+Microsoft Foundry Hosted Agent  ──  hosted_agent_main.py → src/hosted_agent.py
+  ├─ LangGraph ──────────────── Plan → Execute → Evaluate → Report
+  ├─ Prompt Agents ──────────── planner/evaluator/reporter + optional enrichment
+  ├─ Microsoft Learn MCP ────── primary official documentation source
+  ├─ Web Search ─────────────── supplementary current/public evidence
+  ├─ Azure MCP Server ───────── read-only tenant evidence via Container Apps
+  ├─ Cost/Advisor/Health/Policy/Region evidence tools
+  └─ Subscriber customization
+
+Azure MCP Container App  ──  Entra-authenticated HTTPS remote MCP
+  ├─ single-tool routing ────── broad Azure service coverage
+  ├─ --read-only ────────────── no create/update/delete tools
+  └─ managed identity ───────── subscription Reader only
+
+Container App  ──  control-plane image and identity
   ├─ /admin ─────────────────  Entra ID sign-in + principal allow-list
-  └─ /api/* ─────────────────  orchestrator API (X-API-Key)
+  ├─ /api/* ─────────────────  orchestration API (X-API-Key)
+  └─ /mcp ──────────────────── authenticated MCP Streamable HTTP
 ```
 
-The job and the app run the **same container image** with different entry points, so the
-schedule inherits the app's identity, network and settings and the two can never drift into
-analysing with different configuration.
+The job and app use the same **control-plane image**. They own feed selection, checkpointing,
+email delivery, Admin, API, and MCP, but never construct `AzureUpdateAnalyzer`. Both use
+`HostedAgentAnalyzer`, which fails closed unless the Hosted Agent endpoint is configured.
 
-AzBrief itself is **not a Foundry Hosted Agent**. The custom LangGraph harness runs in
-Container Apps and invokes persisted Foundry Prompt Agents through the Agents data plane.
+AzBrief's analysis runtime **is a Foundry Hosted Agent**. Its source is deployed directly from
+`azure.yaml`; Foundry builds the image and creates an immutable version with a dedicated
+endpoint and Entra identity. The Hosted Agent invokes persisted Prompt Agents through the
+project-scoped Responses API and runs Azure evidence tools under its own identity.
+File-based history and pattern optimizations use the session-persistent `$HOME/.azbrief`
+directory because the deployed application package under `/app` is read-only.
 See [the architecture assessment](.github/skills/foundry-agent-architecture/references/assessment.md)
-for the trade-off, rubric, and Hosted Agent migration criteria.
+for the responsibility boundary and validation evidence.
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
 
@@ -224,7 +230,12 @@ AZURE_CLIENT_ID=
 AZURE_SUBSCRIPTION_ID=your-subscription-id
 FOUNDRY_PROJECT_ENDPOINT=https://your-resource.services.ai.azure.com/api/projects/your-project
 FOUNDRY_PRIMARY_AGENT_NAME=azbrief-primary
+FOUNDRY_HOSTED_AGENT_NAME=azbrief-analysis-hosted
 ```
+
+`FOUNDRY_PRIMARY_AGENT_NAME` is used by direct local analysis and inside the Hosted Agent;
+`FOUNDRY_HOSTED_AGENT_NAME` is required when running the Container App or scheduler. The
+control plane does not fall back to local analysis when the Hosted Agent is absent.
 
 Leave `AZURE_CLIENT_ID` empty for local development, then sign in and select the subscription:
 
@@ -255,9 +266,10 @@ python -m scripts.test_local resources                               # view your
 
 ### One-click deploy
 
-Deploys the full agent topology: a Foundry account and project with a model deployment,
-the Container App (orchestrator API + admin console), the Container Apps Job that runs the
-daily digest, Key Vault, the state storage account, and Communication Services.
+Deploys the Azure foundation and control plane: a Foundry account and project with a model
+deployment, the Container App (API + Admin + MCP), the Container Apps Job that drives the
+daily digest, Key Vault, state storage, and Communication Services. Prompt Agents and the
+Hosted Agent are Foundry data-plane objects and are deployed in the post-deployment steps.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json)
 
@@ -268,17 +280,18 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 |----------|------|-------|
 | User Assigned Managed Identity | `id-{baseName}` | Container App과 스케줄러 Job이 공유 |
 | Microsoft Foundry account | `aif-{baseName}-{suffix}` | `AIServices` · `allowProjectManagement` · **`disableLocalAuth`** |
-| Foundry project | `{baseName}-agents` | Prompt Agent 데이터 플레인 작업 공간 |
+| Foundry project | `{baseName}-agents` | Hosted Agent와 Prompt Agent 데이터 플레인 작업 공간 |
 | Model deployment | `gpt-4o` (변경 가능) | GlobalStandard, 기본 200K TPM |
 | Key Vault | `kv-{baseName}-{suffix}` | RBAC 전용, 모든 런타임 시크릿 보관 |
 | Storage account + `azbrief-state` 컨테이너 | `st{baseName}{suffix}` | 체크포인트 blob, **`allowSharedKeyAccess: false`** |
 | Container Apps Environment | `cae-{baseName}-{suffix}` | 기본값에서 VNet 통합 |
-| Container App | `ca-{baseName}` | 오케스트레이터 API + `/admin` |
-| Container Apps Job | `caj-{baseName}` | cron 스케줄, `python -m src.scheduler` |
+| Container App | `ca-{baseName}` | 제어면 API + `/admin` + 인증된 `/mcp` |
+| Container Apps Job | `caj-{baseName}` | cron 스케줄, Hosted Agent 호출 + 체크포인트 + 이메일 |
+| Hosted Agent (후속 `azd deploy`) | `{baseName}-analysis-hosted` | 전체 LangGraph 분석과 구독자 맞춤화, 전용 Entra identity |
 | Container App authConfig | `current` | Entra ID 로그인 (클라이언트 ID 제공 시에만) |
 | Communication Services + Email | `acs-{baseName}-{suffix}` | Azure 관리 도메인 자동 연결 |
 | Log Analytics + Application Insights | `log-` / `appi-` | 구조화 로그 및 추적 |
-| Role assignments | 5건 | Key Vault Secrets User · Storage Blob Data Contributor · Foundry User · Monitoring Metrics Publisher · RG Reader |
+| Control-plane role assignments | 5건 | Key Vault Secrets User · Storage Blob Data Contributor · Foundry User · Monitoring Metrics Publisher · RG Reader |
 
 **보안 설계 (기본값이 안전한 쪽):**
 
@@ -287,7 +300,10 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 - **런타임 시크릿은 Key Vault에만** 있습니다. Container App과 스케줄러 Job은 관리 ID로 참조만 하며, 템플릿 출력이나 API 응답에 값이 나타나지 않습니다.
 - **관리자 콘솔은 이중 조건**을 모두 만족해야 열립니다 — Entra 앱 등록(`adminEntraClientId` + secret)과 명시적 허용 목록(`adminAllowedPrincipals`). 하나라도 비어 있으면 `/admin`은 404를 반환합니다.
 - **오케스트레이터 API는 생성된 키**로 보호되며, 필요하면 `allowedIpRanges`로 인그레스를 CIDR 단위로 제한할 수 있습니다.
-- **구독 전체 Reader 권한은 자동 부여하지 않습니다.** 템플릿은 리소스 그룹 범위 권한만 만들고, 더 넓은 범위는 관리자가 의도적으로 부여하도록 명령어를 출력합니다.
+- **두 identity를 구분합니다.** Container Apps 관리 ID는 체크포인트·이메일·Admin/MCP
+  제어면에 사용됩니다. Hosted Agent는 배포 시 자동 생성되는 별도 identity로 tenant evidence를
+  조회합니다. 구독 Reader와 서비스별 data-plane 권한은 **Hosted Agent identity**에 부여해야
+  하며 템플릿이 자동으로 넓은 권한을 주지 않습니다.
 
 ### Network isolation (`networkIsolationMode`)
 
@@ -316,7 +332,7 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 - **주소 공간은 RFC1918이어야 합니다.** Foundry 에이전트 서브넷은 `10.0.0.0/8` · `172.16-31.0.0/12` · `192.168.0.0/16` 밖의 범위를 거부합니다.
 - **Key Vault와 상태 계정은 `publicNetworkAccess: Disabled`가 됩니다.** Container App과 스케줄러 Job은 관리 ID로 프라이빗 엔드포인트를 통해 시크릿과 체크포인트를 읽고 쓰며, 템플릿이 선언한 시크릿 쓰기는 신뢰할 수 있는 서비스 예외로 계속 동작합니다.
 - **기존 VNet을 쓸 때는** 위 세 서브넷이 이미 존재하고 위임까지 끝나 있어야 합니다. 템플릿은 남의 서브넷 정책을 덮어쓰지 않습니다.
-- **`internalIngressOnly: true`** 로 두면 인그레스가 VNet 전용이 되고 환경 기본 도메인을 가리키는 Private DNS 존이 자동으로 만들어집니다. 스케줄러가 Container Apps Job이라 **매일 실행은 그대로 동작합니다** — Job은 앱을 HTTP로 부르지 않고 직접 분석하기 때문입니다. 다만 `/admin`과 `/api/*`는 VNet 안에서만 접근됩니다.
+- **`internalIngressOnly: true`** 로 두면 인그레스가 VNet 전용이 되고 환경 기본 도메인을 가리키는 Private DNS 존이 자동으로 만들어집니다. 스케줄러는 앱 ingress가 아니라 Foundry Hosted Agent endpoint를 직접 호출하므로 **매일 실행은 그대로 동작합니다**. `/admin`, `/api/*`, `/mcp`는 VNet 안에서만 접근됩니다.
 
 **`perimeter`가 추가로 만드는 리소스**
 
@@ -335,20 +351,72 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 
 ### Post-deployment steps
 
-1. **Reader 역할 부여** — 배포 출력의 `grantReaderCommand`를 그대로 실행합니다. 이 권한이 없으면 Resource Graph 조회가 빈 결과를 돌려주고 영향도 분석이 무의미해집니다.
-2. **컨테이너 이미지 배포** — 템플릿은 자리표시자 이미지로 시작합니다. `deployContainerImageCommand` 출력을 사용하거나 `deploy-container-app.yml` 워크플로를 실행하세요. 워크플로는 Container App과 스케줄러 Job을 **함께** 갱신합니다.
-3. **Foundry Prompt Agent 생성** — ARM은 Agent 데이터 플레인 객체를 만들 수 없습니다. `.env`에 프로젝트 endpoint, primary/phase Agent 이름, 프로비저닝 모델을 설정한 뒤 실행합니다:
+1. **Azure MCP Server 배포** — `infra/azure-mcp-server`는 공식 Azure MCP 이미지를
+  별도 Container App에 배포합니다. 서버는 Entra 인증을 유지하고 `single` 모드와
+  `--read-only`로 실행되며, 관리 ID에는 대상 구독 `Reader`만 부여합니다.
+  ```powershell
+  cd infra/azure-mcp-server
+  azd env new production
+  azd env set AZURE_SUBSCRIPTION_ID '<subscription-id>'
+  azd env set AZURE_LOCATION 'koreacentral'
+  azd env set AZURE_RESOURCE_GROUP 'RG-AZBRIEF-ENTERPRISE-2'
+  azd env set AZURE_MCP_CONTAINER_APP_NAME 'ca-azbrief-mcp'
+  azd env set FOUNDRY_PROJECT_RESOURCE_ID '<project-arm-resource-id>'
+  azd env set SERVICE_MANAGEMENT_REFERENCE ''
+  azd up --no-prompt
+  ```
+2. **Azure MCP project connection 생성** — Azure MCP 출력의 HTTPS URL과 Entra
+  application identifier URI를 사용합니다. Project Managed Identity 토큰이 MCP API의
+  audience로 발급되며, Bicep이 해당 identity에 MCP app role을 부여합니다.
+  ```powershell
+  azd ai connection create azbrief-azure-mcp-read-only `
+    --kind remote-tool `
+    --target '<AZURE_MCP_SERVER_URL>' `
+    --auth-type project-managed-identity `
+    --audience '<AZURE_MCP_ENTRA_APP_IDENTIFIER_URI>' `
+    --project-endpoint '<project-endpoint>'
+  ```
+3. **Foundry Prompt Agent 생성** — ARM은 Agent 데이터 플레인 객체를 만들 수 없습니다.
+  Research에는 Microsoft Learn MCP가 먼저, Web Search가 보완 수단으로 배치됩니다.
+  Impact에는 위 Azure MCP connection이 연결됩니다. `.env`에 endpoint, Agent 이름,
+  프로비저닝 모델과 다음 설정을 넣은 뒤 실행합니다:
+  ```env
+  FOUNDRY_RESEARCH_WEB_SEARCH_ENABLED=true
+  AZURE_MCP_SERVER_URL=<AZURE_MCP_SERVER_URL>
+  AZURE_MCP_PROJECT_CONNECTION_NAME=azbrief-azure-mcp-read-only
+  ```
    ```bash
    python -m scripts.provision_foundry_agents --dry-run   # 지시문 미리보기
-  python -m scripts.provision_foundry_agents             # 생성 또는 갱신
+   python -m scripts.provision_foundry_agents             # 생성 또는 갱신
    ```
-  `planner`·`evaluator`·`reporter`·`codex`·`fast`는 각각 비워 두면 primary Agent를 사용합니다. 필수 Agent가 없거나 evaluation Agent가 실패하면 분석은 `model_error`로 종료되며 다른 모델 endpoint로 우회하지 않습니다.
-4. **Enrichment 준비 확인** — research에는 documentation/web 도구를, impact에는 Azure resource 도구를 Foundry에서 붙인 뒤 읽기 전용 검증을 실행합니다:
-  ```bash
-  python -m scripts.provision_foundry_agents --check
+  `planner`·`evaluator`·`reporter`·`codex`·`fast`는 비워 두면 primary Agent를 사용합니다.
+  이어서 `python -m scripts.provision_foundry_agents --check`가 Agent, FunctionTool,
+  server tool, instruction, schema drift 없이 통과하는지 확인합니다.
+  이 검사는 Foundry가 저장 시 적용하는 MCP URL의 trailing slash와
+  `allowed_tools.tool_names` 표현을 정규화한 뒤 의미가 같은지 비교합니다.
+4. **Hosted Agent 설정과 배포** — 기존 Foundry 프로젝트의 endpoint와 ARM resource ID를
+  azd environment에 연결하고, Prompt Agent 이름 alias를 설정합니다. `azure.yaml`에는
+  `codeConfiguration`이 있으므로 `azd deploy`가 소스를 ZIP으로 올리고 Foundry가 이미지를
+  빌드합니다. Docker/ACR은 이 단계에 필요하지 않습니다.
+  ```powershell
+  $env:AZURE_DEV_USER_AGENT='microsoft_foundry_skill'
+  azd env set AZURE_AI_PROJECT_ENDPOINT '<project-endpoint>'
+  azd env set AZURE_AI_PROJECT_ID '<project-arm-resource-id>'
+  azd env set AZBRIEF_PROMPT_PRIMARY_AGENT_NAME 'azbrief-primary'
+  azd env set AZBRIEF_ENRICHMENT_AGENT_ROSTER '[{"name":"azbrief-research","stage":"research"},{"name":"azbrief-impact","stage":"impact"},{"name":"azbrief-action","stage":"action"},{"name":"azbrief-review","stage":"review"}]'
+  azd deploy azbrief-analysis-hosted --no-prompt
+  azd ai agent show --output json
   ```
-  Agent 누락, instruction drift, research/impact의 도구 누락이 하나라도 있으면 실패합니다. 그 뒤에만 `enableFoundryEnrichmentAgents=true`로 재배포하세요. 기본값은 `false`입니다.
-5. **(선택) 관리자 콘솔 활성화** — Entra 앱을 등록한 뒤 `adminEntraClientId` · `adminEntraClientSecret` · `adminAllowedPrincipals`를 채워 재배포합니다.
+5. **Hosted Agent identity 권한 부여** — `azd ai agent show --output json` 또는 Foundry Portal에서
+  새 Hosted Agent의 identity principal ID를 확인합니다. 분석 대상 각 구독에 Reader를,
+  Log Analytics·Cost Management 등 실제 사용 도구에 필요한 최소 data-plane 역할을 부여합니다.
+  Container Apps용 `grantReaderCommand`를 대신 사용하면 잘못된 identity에 권한이 갑니다.
+6. **Container Apps 제어면 이미지 배포** — 템플릿은 자리표시자 이미지로 시작합니다.
+  `deployContainerImageCommand` 또는 `deploy-container-app.yml`로 Container App과 scheduler
+  Job을 **함께** 갱신합니다. 둘 다 `FOUNDRY_HOSTED_AGENT_NAME`이 없거나 endpoint가 비활성이면
+  로컬 분석으로 우회하지 않고 실패합니다.
+7. **(선택) 관리자 콘솔 활성화** — Entra 앱을 등록한 뒤 `adminEntraClientId` ·
+  `adminEntraClientSecret` · `adminAllowedPrincipals`를 채워 재배포합니다.
 
 > **검증 범위:** 템플릿은 Bicep 타입 검사(리소스 종류·API 버전·속성명)를 통과했습니다. 구독에 대한
 > ARM 프리플라이트(`az deployment group validate`)는 개발 환경의 MFA 요구로 실행하지 못했으므로,
@@ -372,9 +440,11 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 
 ## Multi-agent pipeline
 
-Every model-mediated call uses a persisted Foundry Prompt Agent. Optional role overrides
-separate phase instructions, model selection, guardrails, and traces; every unset role falls
-back to `FOUNDRY_PRIMARY_AGENT_NAME`:
+The outer runtime is the `azbrief-analysis-hosted` **Hosted Agent**. Inside its isolated
+sandbox, `AzureUpdateAnalyzer` owns the complete LangGraph state machine and every
+model-mediated call uses a persisted Foundry Prompt Agent. Optional role overrides separate
+phase instructions, model selection, guardrails, and traces; every unset role falls back to
+the primary Prompt Agent.
 
 ```env
 FOUNDRY_PRIMARY_AGENT_NAME=azbrief-primary
@@ -385,15 +455,15 @@ FOUNDRY_CODEX_AGENT_NAME=azbrief-codex  # optional; primary when empty
 FOUNDRY_FAST_AGENT_NAME=azbrief-fast    # optional; primary when empty
 ```
 
-`FOUNDRY_ENRICHMENT_AGENTS` optionally adds a staged pre-analysis pipeline. The ARM template
-keeps it disabled until `enableFoundryEnrichmentAgents=true`; each stage maps to an Agent
-governed in Foundry.
+The Hosted Agent receives these values through non-reserved `AZBRIEF_PROMPT_*` aliases in
+`azure.yaml`. `AZBRIEF_ENRICHMENT_AGENT_ROSTER` optionally adds a staged pre-analysis pipeline;
+each stage maps to a Prompt Agent governed in Foundry.
 
 ```bash
-FOUNDRY_ENRICHMENT_AGENTS='[{"name":"azbrief-research","stage":"research"},
-                            {"name":"azbrief-impact","stage":"impact"},
-                            {"name":"azbrief-action","stage":"action"},
-                            {"name":"azbrief-review","stage":"review"}]'
+AZBRIEF_ENRICHMENT_AGENT_ROSTER='[{"name":"azbrief-research","stage":"research"},
+                                  {"name":"azbrief-impact","stage":"impact"},
+                                  {"name":"azbrief-action","stage":"action"},
+                                  {"name":"azbrief-review","stage":"review"}]'
 ```
 
 | Stage | Runs | Job |
@@ -409,10 +479,13 @@ evidence, confidence, and gaps. Review rejection removes the rejected claim and 
 that depends on it before context reaches the planner. This does not apply to required runtime
 Agents, which fail closed.
 
-Tool wiring (Bing/Web search, Azure MCP, Microsoft Learn MCP, memory) lives **in the Foundry
-portal or SDK**, referenced here only by agent name — so the agents stay governable and the
-application stays version-robust. The managed identity needs **Foundry User** on the project,
-which the template grants.
+Research and impact expose a minimal set of app-owned read-only tools as Foundry native
+FunctionTools. Research always calls Microsoft Learn MCP before using Web Search as a
+supplement. Impact uses the Entra-authenticated, read-only Azure MCP Server first and falls
+back to app-owned FunctionTools only for a specific evidence gap. Foundry chooses the calls;
+the Hosted Agent validates local function arguments, executes them with its dedicated
+identity, returns `function_call_output`, and forces final synthesis after a bounded number
+of rounds. Oversized results stay queryable through the trace-scoped context store.
 
 Create or update the roster with:
 
@@ -427,15 +500,18 @@ python -m scripts.provision_foundry_agents --delete           # tear the roster 
 
 Each agent's standing instructions are **derived from** the runtime prompt in
 `src/agent/foundry_backend.py`, so an agent's role and the message it receives per run can
-never drift apart. A failure on one stage is reported and the rest still run.
+never drift apart. Stage responses use strict JSON schemas; evidence claims carry stable IDs,
+and review rejection removes dependent actions. A failure on one stage is reported and the
+rest still run.
 
 Foundry versioned Skills and toolbox skill discovery are public preview, so AzBrief does not
 make them a production prerequisite. When adopted, skills must be versioned and loaded through
 the toolbox MCP resource discovery flow rather than copied into every Agent instruction.
 
-The whole path is **read-only** with respect to your Azure resources. Model selection,
-server-side tools, guardrails, and memory live on the Foundry Agent definitions; AzBrief
-never constructs an Azure OpenAI/OpenAI chat client.
+The whole path is **read-only** with respect to your Azure resources. Models, strict output
+formats, app FunctionTool declarations, optional managed tools, guardrails, and memory live on
+the Foundry Agent definitions; app FunctionTools execute under the Hosted Agent identity.
+AzBrief never constructs a direct Azure OpenAI/OpenAI chat client.
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
 
@@ -452,12 +528,19 @@ never constructs an Azure OpenAI/OpenAI chat client.
 | `GET /api/admin/updates` | 최근 Azure 업데이트 |
 | `GET /api/admin/runs` · `GET /api/admin/runs/{id}` | 실행 이력 및 단건 조회 |
 | `POST /api/admin/runs` | 분석 실행 시작 (동시 실행 1건으로 제한) |
+| `POST /mcp` | MCP Streamable HTTP — 최근 업데이트, Hosted 분석, digest 상태 도구 |
 
 인증은 Container Apps 기본 제공 인증(EasyAuth)이 처리합니다. 사이드카가 Entra ID 토큰을
 검증한 뒤 `X-MS-CLIENT-PRINCIPAL*` 헤더를 주입하며, 외부에서 들어온 동일 헤더는 제거합니다.
 애플리케이션은 그 신원을 `ADMIN_ALLOWED_PRINCIPALS` 허용 목록과 대조합니다 — 목록이 비어
 있으면 인증된 사용자라도 거부됩니다. 콘솔이 꺼져 있으면 `/admin`은 403이 아니라 **404**를
 반환합니다. 잠긴 배포는 그 표면이 존재한다는 사실조차 알리지 않아야 하기 때문입니다.
+
+MCP는 공식 Python SDK v2의 stateless Streamable HTTP transport를 사용합니다. 모든 MCP 요청은
+payload를 파싱하기 전에 `X-API-Key`를 검증하며, `API_KEY` 자체가 설정되지 않은 경우 **503으로
+fail closed**합니다. 노출 도구는 `list_recent_azure_updates`, `analyze_azure_update`,
+`get_recent_digest_runs` 세 개입니다. 분석 도구는 Container App에서 LangGraph를 실행하지 않고
+`HostedAgentAnalyzer`를 통해 Foundry endpoint로 위임합니다.
 
 플랫폼 인증은 **AllowAnonymous** 모드로 구성됩니다. 플랫폼 수준의 "인증 필수"는 예외 없이
 *모든* 요청에 적용되어 API 키 호출까지 로그인 페이지로 돌려보내기 때문입니다. 대신 사이드카는
@@ -540,14 +623,20 @@ reports what is still untranslated.
 | `AZURE_CLIENT_ID` | User-assigned managed identity client ID; empty with local `az login` | | — |
 | `AZURE_SUBSCRIPTION_ID` | Subscription (all if unset) | | — |
 | `FOUNDRY_PROJECT_ENDPOINT` | Foundry project endpoint | Yes | — |
-| `FOUNDRY_PRIMARY_AGENT_NAME` | Required Agent for judging, safety verification, and role fallback | Yes | — |
-| `FOUNDRY_PLANNER_AGENT_NAME` | Analysis planning Agent | | primary Agent |
-| `FOUNDRY_EVALUATOR_AGENT_NAME` | Evidence-completeness evaluation Agent | | primary Agent |
-| `FOUNDRY_REPORTER_AGENT_NAME` | Final report and output-recovery Agent | | primary Agent |
-| `FOUNDRY_CODEX_AGENT_NAME` | KQL generation/repair Agent | | primary Agent |
-| `FOUNDRY_FAST_AGENT_NAME` | Lightweight revision/customization Agent | | primary Agent |
+| `FOUNDRY_HOSTED_AGENT_NAME` | Complete analysis runtime invoked by Container App and scheduler | Yes¹ | — |
+| `FOUNDRY_HOSTED_AGENT_TIMEOUT_S` | Timeout for one complete Hosted Agent operation | | `1800` |
+| `AZBRIEF_DATA_DIR` | Hosted Agent history/pattern directory; set automatically to `$HOME/.azbrief` | | runtime-managed |
+| `FOUNDRY_PRIMARY_AGENT_NAME` | Primary Prompt Agent inside Hosted Agent/direct local analysis | Yes² | — |
+| `FOUNDRY_PLANNER_AGENT_NAME` | Analysis planning Prompt Agent | | primary Agent |
+| `FOUNDRY_EVALUATOR_AGENT_NAME` | Evidence-completeness Prompt Agent | | primary Agent |
+| `FOUNDRY_REPORTER_AGENT_NAME` | Final report and output-recovery Prompt Agent | | primary Agent |
+| `FOUNDRY_CODEX_AGENT_NAME` | KQL generation/repair Prompt Agent | | primary Agent |
+| `FOUNDRY_FAST_AGENT_NAME` | Lightweight revision/customization Prompt Agent | | primary Agent |
 | `FOUNDRY_MODEL_DEPLOYMENT` | Model used only when provisioning Agent definitions | * | — |
 | `FOUNDRY_ENRICHMENT_AGENTS` | Optional pre-analysis multi-agent roster (JSON) | | — |
+| `FOUNDRY_RESEARCH_WEB_SEARCH_ENABLED` | Add Web Search after the primary Microsoft Learn MCP source | | `false` |
+| `AZURE_MCP_SERVER_URL` | HTTPS endpoint of the read-only Azure MCP Container App | For Impact MCP | — |
+| `AZURE_MCP_PROJECT_CONNECTION_NAME` | Foundry project connection used to authenticate to Azure MCP | For Impact MCP | — |
 | `FOUNDRY_AGENT_TIMEOUT_S` | Per-agent timeout | | `180` |
 | `CHECKPOINT_BLOB_URL` | Blob holding the digest checkpoint | | — |
 | `CHECKPOINT_FILE_PATH` | Local checkpoint file, used only when the blob URL is unset | | — |
@@ -555,7 +644,7 @@ reports what is still untranslated.
 | `MAX_CONCURRENT_ANALYSES` | Updates analyzed in parallel | | `3` |
 | `ORCHESTRATOR_ENDPOINT` | Container App URL an external scheduler calls (https only) | | — |
 | `ORCHESTRATOR_API_KEY` | Key an external scheduler presents as `X-API-Key` | | — |
-| `API_KEY` | Key required by every `/api/*` route | | — |
+| `API_KEY` | Key for `/api/*` and `/mcp`; MCP returns 503 when unset | Yes³ | — |
 | `ADMIN_UI_ENABLED` | Serve `/admin` and `/api/admin/*` | | `false` |
 | `ADMIN_REQUIRE_AUTH` | Require an authenticated principal (local dev only when `false`) | | `true` |
 | `ADMIN_ALLOWED_PRINCIPALS` | Comma-separated UPN/object-ID allow-list (empty denies all) | | — |
@@ -581,6 +670,10 @@ reports what is still untranslated.
 \* `FOUNDRY_MODEL_DEPLOYMENT` is required by `scripts.provision_foundry_agents.py` unless
 `--model` is supplied. It is not read by the running application.
 
+¹ Required by the Container App and scheduler. ² Required inside the Hosted Agent and by
+direct local analysis scripts. ³ Required when exposing MCP; existing `/api/*` behavior remains
+open when unset for local compatibility.
+
 </details>
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
@@ -593,6 +686,7 @@ POST /api/rss/check                List updates not yet processed
 POST /api/batch/analyze            Analyze up to 10 URLs
 GET  /health                       Health check
 GET  /                             Service info
+POST /mcp                          MCP Streamable HTTP (X-API-Key required)
 
 GET  /admin                        Admin console (Entra ID sign-in)
 GET  /api/admin/status             Effective configuration — no secrets
@@ -603,8 +697,8 @@ GET  /api/admin/runs/{id}          Single run
 POST /api/admin/runs               Start a run (one at a time)
 ```
 
-Every `/api/*` route requires the `X-API-Key` header when `API_KEY` is set, and is rate
-limited per source IP.
+Every `/api/*` route requires `X-API-Key` when `API_KEY` is set. `/mcp` always fails closed:
+missing configuration returns 503, a missing key returns 401, and an invalid key returns 403.
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
 
@@ -621,9 +715,21 @@ python -c "import src"                        # import check — must pass befor
 
 ```bash
 docker build -t azbrief-enterprise:local .
-docker run -p 8000:8000 --env-file .env azbrief-enterprise:local          # orchestrator API
-docker run --env-file .env azbrief-enterprise:local python -m src.scheduler  # one digest run
+docker run -p 8000:8000 --env-file .env azbrief-enterprise:local  # API + Admin + MCP
+docker run --env-file .env azbrief-enterprise:local python -m src.scheduler  # control-plane run; analysis is remote
 ```
+
+Run the Hosted Agent locally through the Foundry agent adapter:
+
+```powershell
+$env:AZURE_DEV_USER_AGENT='microsoft_foundry_skill'
+azd ai agent run azbrief-analysis-hosted --no-client
+azd ai agent invoke azbrief-analysis-hosted --local --input-file <request.json>
+```
+
+For `azd ai agent invoke`, `<request.json>` contains the inner versioned AzBrief contract
+(`operation`, `update`, and `trace_id`), not an outer OpenAI Responses envelope. The
+Container Apps proxy builds the outer envelope itself in production.
 
 ### Infrastructure
 
@@ -662,14 +768,18 @@ python -m scripts.evaluate_batch --months 6 --count 12 --seed 42
 AzBriefEnterprise/
 ├── src/
 │   ├── config.py               # pydantic-settings (env → Settings)
-│   ├── main.py                 # FastAPI app — orchestrator API + /admin
-│   ├── scheduler.py            # Container Apps Job entry point
+│   ├── main.py                 # Container Apps control plane — API + /admin + /mcp
+│   ├── mcp_server.py           # authenticated MCP Streamable HTTP tools
+│   ├── hosted_agent.py         # Foundry Hosted Agent entry point (full analysis runtime)
+│   ├── scheduler.py            # Container Apps Job control-plane entry point
 │   ├── orchestrator.py         # Run registry, watermark cursor, checkpoint commit
 │   ├── middleware.py           # API key auth + per-IP rate limiting
 │   ├── admin/                  # Admin console (auth, page, router)
 │   ├── agent/                  # LangGraph agent, tools, prompts
 │   │   ├── analyzer.py         # Plan-Execute-Evaluate state machine
 │   │   ├── foundry_backend.py  # Foundry Prompt Agent adapter + enrichment pipeline
+│   │   ├── hosted_client.py    # Container Apps → Hosted Agent proxy
+│   │   ├── hosted_contract.py  # strict versioned request/response wire models
 │   │   ├── tools.py            # Tool definitions (LangChain BaseTool)
 │   │   ├── context_store.py    # Addressable store for oversized tool results
 │   │   ├── action_verification.py  # Three-layer action-item safety gate
@@ -686,6 +796,9 @@ AzBriefEnterprise/
 │   └── azbrief-enterprise-deploy.json  # compiled ARM template (Deploy button)
 ├── scripts/                    # Local CLI, crawler, Foundry agent provisioning, quality eval
 ├── tests/
+├── hosted_agent_main.py        # root bootstrap referenced by azure.yaml
+├── azure.yaml                  # Foundry Hosted Agent direct-code deployment
+├── .agentignore                # Hosted Agent deployment package exclusions
 ├── Dockerfile
 ├── pyproject.toml
 └── requirements.txt
@@ -696,16 +809,16 @@ AzBriefEnterprise/
 | Area | Technology |
 |------|-----------|
 | Language | Python 3.10+ |
-| AI framework | `langchain-core`, `langgraph`, `azure-ai-projects`, `azure-ai-agents` |
-| Models | Microsoft Foundry Agent Service only |
-| Web framework | FastAPI + Uvicorn |
+| AI framework | `langchain-core`, `langgraph`, `azure-ai-projects` 2.5+ Responses API |
+| Agent runtime | Microsoft Foundry Hosted Agent + persisted Prompt Agents |
+| Web/MCP framework | FastAPI + Uvicorn + MCP Python SDK v2 Streamable HTTP |
 | Settings | pydantic-settings |
 | Logging | structlog (JSON) + OpenTelemetry → Application Insights |
 | Azure SDKs | `azure-identity`, `azure-mgmt-resourcegraph`, `azure-mgmt-costmanagement`, `azure-communication-email`, `azure-monitor-query` |
 | HTTP | httpx (async) |
 | HTML parsing | BeautifulSoup4 with `html.parser` (stdlib — **not** lxml) |
 | IaC | Bicep → ARM |
-| Compute | Container Apps Job (schedule) + Container App (API/admin) |
+| Compute | Foundry Hosted Agent (analysis) + Container Apps Job (schedule/control) + Container App (API/Admin/MCP) |
 | CI/CD | GitHub Actions |
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
@@ -714,10 +827,12 @@ AzBriefEnterprise/
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| Analysis reports no affected resources | The identity has no Reader on the subscription | Run the `grantReaderCommand` deployment output |
+| Analysis reports no affected resources | The Hosted Agent identity has no Reader on the subscription | Grant Reader to the Hosted Agent's dedicated principal, not the Container Apps identity |
 | `/admin` returns 404 | The console is disabled | Supply `adminEntraClientId` + secret **and** `adminAllowedPrincipals`, then redeploy |
-| Startup fails with `FOUNDRY_PRIMARY_AGENT_NAME is required` | Foundry runtime settings are incomplete | Set the project endpoint and exact published primary Agent name |
-| Foundry Agent returns no completed response | Agent name, RBAC, network access, or Agent run failed | Verify the Agent in Foundry and grant the identity `Foundry User`; there is no model-endpoint fallback |
+| Container App startup fails with Hosted Agent configuration error | `FOUNDRY_HOSTED_AGENT_NAME` or project endpoint is missing | Deploy the Hosted Agent, then set both exact values; there is no local analyzer fallback |
+| Hosted Agent returns no completed response | Agent version, dedicated identity RBAC, network, or Prompt Agent dependency failed | Inspect `azd ai agent show`/monitor and grant the Hosted identity the required roles |
+| `/mcp` returns 503 | `API_KEY` is not configured | Set the control-plane API key; MCP never opens anonymously |
+| `azd ai agent eval generate` returns `Data generation is not supported in this region` | Foundry evaluation data generation is unavailable in Korea Central | Use a supported evaluation region or register an existing dataset; the Hosted runtime is unaffected |
 | A dedicated KQL Agent is unavailable | `FOUNDRY_CODEX_AGENT_NAME` points to a missing Agent | Fix the name, or leave it empty so KQL uses the primary Agent |
 | Cannot switch to `vnetInjection` | Foundry network injection is create-time only | Delete **and purge** the Foundry account, then redeploy |
 | The nightly digest runs an old build | The job was not updated with the app | Redeploy via `deploy-container-app.yml`, which now updates both |

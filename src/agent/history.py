@@ -9,6 +9,7 @@ File-based storage (no database dependency). Thread-safe writes.
 """
 
 import json
+import os
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -18,8 +19,10 @@ from structlog import get_logger
 
 logger = get_logger()
 
-# Default paths
-_DATA_DIR = Path(__file__).parent.parent.parent / "data"
+# Default paths. Hosted Agent code is mounted read-only, so its entry point sets
+# AZBRIEF_DATA_DIR to the session-persistent $HOME filesystem.
+_DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "data"
+_DATA_DIR = Path(os.environ.get("AZBRIEF_DATA_DIR", str(_DEFAULT_DATA_DIR))).expanduser()
 _HISTORY_FILE = _DATA_DIR / "analysis_results.jsonl"
 _RETIREMENT_FILE = _DATA_DIR / "retirement_tracker.json"
 _HISTORY_LOCK = threading.Lock()
@@ -46,8 +49,6 @@ def save_analysis_record(result: Any) -> None:
     Args:
         result: AnalysisResult instance (or any object with matching attributes)
     """
-    _ensure_data_dir()
-
     record = {
         "update_id": getattr(result, "update_id", ""),
         "update_title": getattr(result, "update_title", ""),
@@ -75,6 +76,7 @@ def save_analysis_record(result: Any) -> None:
 
     with _HISTORY_LOCK:
         try:
+            _ensure_data_dir()
             with open(_HISTORY_FILE, "a", encoding="utf-8") as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
             logger.debug(
@@ -376,9 +378,9 @@ def save_retirement_tracker(entries: list[dict]) -> None:
     Args:
         entries: List of retirement entries
     """
-    _ensure_data_dir()
     with _RETIREMENT_LOCK:
         try:
+            _ensure_data_dir()
             with open(_RETIREMENT_FILE, "w", encoding="utf-8") as f:
                 json.dump(entries, f, ensure_ascii=False, indent=2)
             logger.debug("retirement_tracker_saved", count=len(entries))

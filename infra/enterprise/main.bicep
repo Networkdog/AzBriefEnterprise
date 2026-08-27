@@ -1,11 +1,12 @@
 /*
-  AzBrief Enterprise — Prompt Agent-backed multi-agent deployment.
+  AzBrief Enterprise — Foundry Hosted Agent analysis + Container Apps control plane.
 
   Topology:
     Container Apps Job (cron schedule)
-        -> Microsoft Foundry project (persisted Prompt Agents)
+        -> Microsoft Foundry Hosted Agent (complete analysis runtime)
+            -> persisted Prompt Agents + Azure evidence services
         -> Azure Communication Services (email delivery)
-    Container App (orchestrator API + Admin Page) — manual runs, same image
+    Container App (orchestrator API + Admin Page + MCP surface) — manual runs
 
   The job runs the same image as the app with a different entry point, so the
   schedule inherits the app's identity, network and settings and a run is bounded
@@ -46,7 +47,7 @@
 
 targetScope = 'resourceGroup'
 
-metadata description = 'AzBrief Enterprise — Container Apps-hosted LangGraph harness + Microsoft Foundry Prompt Agents + scheduler Job + orchestrator/Admin Page + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth.'
+metadata description = 'AzBrief Enterprise — Microsoft Foundry Hosted Agent analysis runtime + Container Apps control plane and scheduler + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth.'
 
 // ============================================================================
 // General
@@ -95,8 +96,11 @@ param modelSkuName string = 'GlobalStandard'
 @maxValue(1000)
 param modelCapacity int = 200
 
-@description('Enable the optional research/impact/action/review Prompt Agent enrichment pipeline. Keep false until server-side tools are attached to research and impact and provision_foundry_agents --check passes.')
+@description('Enable the optional research/impact/action/review Prompt Agent enrichment pipeline. Keep false until provision_foundry_agents publishes the app-owned FunctionTools and strict stage schemas and --check passes.')
 param enableFoundryEnrichmentAgents bool = false
+
+@description('Name of the Foundry Hosted Agent that owns the complete analysis and subscriber-customization runtime. Deploy this name from azure.yaml before starting the Container App or scheduler.')
+param foundryHostedAgentName string = '${baseName}-analysis-hosted'
 
 // ============================================================================
 // Container App (orchestrator + Admin Page)
@@ -124,7 +128,7 @@ param allowedIpRanges array = []
 @description('Existing subnet resource ID for Container Apps infrastructure (VNet integration). Overrides the subnet the template would otherwise use. Leave empty to let Azure manage the network.')
 param infrastructureSubnetId string = ''
 
-@description('Make the Container App ingress internal (VNet-only). The scheduled job is unaffected because it analyses in-process, but /admin and /api/* then resolve only from inside the virtual network.')
+@description('Make the Container App ingress internal (VNet-only). The scheduled job calls Foundry directly, while /admin, /api/*, and /mcp then resolve only from inside the virtual network.')
 param internalIngressOnly bool = false
 
 // ============================================================================
@@ -384,18 +388,15 @@ var ipRestrictions = [
   }
 ]
 
-// Shared by the Container App and the scheduler job so the two can never drift
-// into analysing with different settings.
+// Shared by the Container App and scheduler control planes. Model and Prompt
+// Agent settings belong to the Hosted Agent service in azure.yaml, not here.
 var runtimeEnv = [
   { name: 'AZURE_TENANT_ID', value: tenant().tenantId }
   { name: 'AZURE_CLIENT_ID', value: managedIdentity.properties.clientId }
   { name: 'AZURE_SUBSCRIPTION_ID', value: subscription().subscriptionId }
   { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
-  { name: 'FOUNDRY_PRIMARY_AGENT_NAME', value: foundryPrimaryAgentName }
-  { name: 'FOUNDRY_PLANNER_AGENT_NAME', value: foundryPlannerAgentName }
-  { name: 'FOUNDRY_EVALUATOR_AGENT_NAME', value: foundryEvaluatorAgentName }
-  { name: 'FOUNDRY_REPORTER_AGENT_NAME', value: foundryReporterAgentName }
-  { name: 'FOUNDRY_ENRICHMENT_AGENTS', value: enableFoundryEnrichmentAgents ? string(foundryEnrichmentAgentRoster) : '' }
+  { name: 'FOUNDRY_HOSTED_AGENT_NAME', value: foundryHostedAgentName }
+  { name: 'FOUNDRY_HOSTED_AGENT_TIMEOUT_S', value: '1800' }
   { name: 'CHECKPOINT_BLOB_URL', value: checkpointBlobUrl }
   { name: 'RUN_TIME_BUDGET_S', value: string(runTimeBudgetSeconds) }
   { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: 'https://${communicationService.properties.hostName}' }
@@ -817,7 +818,7 @@ resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-0
   }
   properties: {
     displayName: 'AzBrief agents'
-    description: 'Prompt Agent workspace for AzBrief Azure Update analysis'
+    description: 'Hosted Agent runtime and Prompt Agent roster for Azure Update analysis'
   }
   // A conditional resource that is not deployed drops out of dependsOn, so this
   // stays correct when networkIsolationMode is not vnetInjection.
@@ -1369,7 +1370,7 @@ resource perimeterDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-
 // Outputs
 // ============================================================================
 
-@description('Container App URL hosting the orchestrator API and Admin Page.')
+@description('Container App URL hosting the orchestrator API, Admin Page, and MCP surface.')
 output containerAppUrl string = internalIngress ? '${containerAppUrl} (VNet-only — reachable from inside the virtual network)' : containerAppUrl
 
 @description('Network isolation applied to this deployment.')
@@ -1392,10 +1393,13 @@ output enforcePerimeterCommand string = perimeterMode
 @description('Admin Page URL. Serves content only when Entra sign-in and an allow-list are configured.')
 output adminPageUrl string = adminUiEnabled ? '${containerAppUrl}/admin' : '(disabled — supply adminEntraClientId, adminEntraClientSecret and adminAllowedPrincipals)'
 
-@description('Microsoft Foundry project endpoint used by the persisted Prompt Agents.')
+@description('Microsoft Foundry project endpoint used by the Hosted Agent and persisted Prompt Agents.')
 output foundryProjectEndpoint string = foundryProjectEndpoint
 
-@description('Required primary Foundry agent name used by the application runtime.')
+@description('Foundry Hosted Agent name that owns the complete analysis runtime.')
+output foundryHostedAgentName string = foundryHostedAgentName
+
+@description('Primary Prompt Agent name used inside the Hosted Agent runtime.')
 output foundryPrimaryAgentName string = foundryPrimaryAgentName
 
 @description('Specialized Foundry agents used for planning, evaluation, and reporting.')
@@ -1404,6 +1408,9 @@ output foundryPhaseAgentNames object = {
   evaluator: foundryEvaluatorAgentName
   reporter: foundryReporterAgentName
 }
+
+@description('Optional enrichment roster value to set as AZBRIEF_ENRICHMENT_AGENT_ROSTER in the azd environment before deploying the Hosted Agent.')
+output foundryEnrichmentAgentRoster string = enableFoundryEnrichmentAgents ? string(foundryEnrichmentAgentRoster) : ''
 
 @description('Azure managed email sender domain.')
 output emailSenderDomain string = emailDomain.properties.fromSenderDomain
@@ -1441,4 +1448,4 @@ output deployContainerImageCommand string = 'az containerapp update --name ${con
 output provisionAgentsCommand string = 'python -m scripts.provision_foundry_agents --model ${modelDeploymentName}'
 
 @description('Post-deployment checklist.')
-output nextSteps string = '1) Run grantReaderCommand so Resource Graph queries can see your resources. 2) Push the AzBrief image, run grantAcrPullCommand, then deployContainerImageCommand — it updates the app AND the scheduler job, which runs "python -m src.scheduler" and does nothing useful until the real image is in place. 3) Set FOUNDRY_PROJECT_ENDPOINT=${foundryProjectEndpoint}, FOUNDRY_PRIMARY_AGENT_NAME=${foundryPrimaryAgentName}, FOUNDRY_PLANNER_AGENT_NAME=${foundryPlannerAgentName}, FOUNDRY_EVALUATOR_AGENT_NAME=${foundryEvaluatorAgentName}, and FOUNDRY_REPORTER_AGENT_NAME=${foundryReporterAgentName}, then run provisionAgentsCommand. ARM cannot create these data-plane agents, and the primary agent is required. 4) Attach server-side documentation tools to research and Azure resource tools to impact, run "python -m scripts.provision_foundry_agents --check", then redeploy with enableFoundryEnrichmentAgents=true. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 6) networkIsolationMode=vnetInjection: the data plane is private, so run steps 3-4 from inside the virtual network — or deploy once with allowPublicAccessDuringSetup=true, provision the agents, and redeploy with it off. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.'
+output nextSteps string = '1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd environment project endpoint plus AZBRIEF_PROMPT_PRIMARY_AGENT_NAME=${foundryPrimaryAgentName} and optional role/roster aliases, run provisionAgentsCommand and its --check, then deploy ${foundryHostedAgentName} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.'

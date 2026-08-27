@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+name: azbrief-azure-mcp
+metadata:
+  template: azbrief-azure-mcp@1.0.0
+infra:
+  provider: bicep
+  path: ./infra
+  outputs:
+    AZURE_RESOURCE_GROUP: AZURE_RESOURCE_GROUP
+    AZURE_MCP_CONTAINER_APP_NAME: AZURE_MCP_CONTAINER_APP_NAME
+    AZURE_MCP_SERVER_URL: AZURE_MCP_SERVER_URL
+    AZURE_MCP_ENTRA_APP_CLIENT_ID: AZURE_MCP_ENTRA_APP_CLIENT_ID
+    AZURE_MCP_ENTRA_APP_IDENTIFIER_URI: AZURE_MCP_ENTRA_APP_IDENTIFIER_URI

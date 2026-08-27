@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "4830660800916451485"
+      "templateHash": "17446584893512979106"
     },
     "description": "AzBrief Enterprise — Microsoft Foundry Hosted Agent analysis runtime + Container Apps control plane and scheduler + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
@@ -611,9 +611,9 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', variables('foundryAccountName')))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[2])]",
         "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[1])]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[0])]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[2])]"
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[0])]"
       ]
     },
     {

@@ -40,7 +40,7 @@ from src.agent.resilience import (
 )
 from src.agent.telemetry import setup_telemetry, traced_span
 from src.agent.tools import KQL_TOOL_NAMES, WRITE_TOOL_NAMES, get_all_tools
-from src.config import Subscriber, get_settings
+from src.config import Settings, Subscriber, get_settings
 from src.i18n import language_display, normalize_language
 from src.rss.parser import AzureUpdate, clean_url
 
@@ -310,13 +310,14 @@ class AgentState(TypedDict):
 class AzureUpdateAnalyzer:
     """AI Agent for analyzing Azure Updates."""
 
-    def __init__(self, max_iterations: int = 5):
+    def __init__(self, max_iterations: int = 5, settings: Optional[Settings] = None):
         """Initialize the analyzer.
 
         Args:
             max_iterations: Maximum number of tool execution iterations (default: 5)
+            settings: Optional runtime settings override for Hosted Agent execution.
         """
-        self.settings = get_settings()
+        self.settings = settings or get_settings()
         self.max_iterations = max_iterations
         self.tools = get_all_tools()
         # Primary agent: judging, safety verification, and role fallback.
@@ -412,10 +413,11 @@ class AzureUpdateAnalyzer:
         workflow.add_node("revise_tasks", self._revise_tasks_node)
         workflow.add_node("report", self._report_node)
 
-        # Optional Foundry multi-agent enrichment ahead of core planning.
+        # Optional Foundry multi-agent enrichment ahead of core planning. It runs
+        # in this process; the complete graph itself is already the Hosted Agent.
         from src.agent.foundry_backend import build_multi_agent_node
 
-        enrich_node = build_multi_agent_node(self.settings)
+        enrich_node = build_multi_agent_node(self.settings, self.tools)
 
         if enrich_node is not None:
             workflow.add_node("enrich", enrich_node)
@@ -423,7 +425,7 @@ class AzureUpdateAnalyzer:
             workflow.add_edge("enrich", "plan")
             logger.info(
                 "foundry_enrichment_node_enabled",
-                mode="multi_agent",
+                mode="in_process",
                 agents=[spec.name for spec in self.settings.get_foundry_enrichment_agents()],
             )
         else:
@@ -488,7 +490,7 @@ class AzureUpdateAnalyzer:
         )
 
         # Build phase-specific system prompt (excludes writing/language guides)
-        settings = get_settings()
+        settings = self.settings
         system_prompt = build_system_prompt(
             phase="planning",
             custom_suffix=settings.custom_system_prompt or "",
@@ -917,6 +919,33 @@ class AzureUpdateAnalyzer:
 
         return plan
 
+    @staticmethod
+    def _fill_contextual_tool_args(task: AnalysisTask, tool: Any, state: AgentState) -> None:
+        """Fill required tool arguments already known from immutable update context."""
+        args_schema = getattr(tool, "args_schema", None)
+        fields = getattr(args_schema, "model_fields", {}) or {}
+        service_field = fields.get("service_name")
+        if (
+            service_field is None
+            or not service_field.is_required()
+            or task.tool_args.get("service_name")
+        ):
+            return
+        services = state.get("update", {}).get("azure_services", []) or []
+        service_name = next(
+            (str(service).strip() for service in services if str(service).strip()),
+            "",
+        )
+        if not service_name:
+            return
+        task.tool_args = {**task.tool_args, "service_name": service_name}
+        logger.info(
+            "tool_args_filled_from_context",
+            task_id=task.task_id,
+            tool=task.tool_name,
+            filled_keys=["service_name"],
+        )
+
     async def _execution_node(self, state: AgentState) -> dict:
         """Phase 2: Execute pending AnalysisTasks in parallel.
 
@@ -962,6 +991,7 @@ class AzureUpdateAnalyzer:
                 logger.warning("Tool not found", tool_name=task.tool_name)
                 return
 
+            self._fill_contextual_tool_args(task, tool, state)
             task.status = "running"
             _task_t0 = time.time()
             _console(f"\n  ▶ {task.task_id}: {task.tool_name}({task.tool_args})")
@@ -1328,16 +1358,25 @@ class AzureUpdateAnalyzer:
             *state.get("task_result_char_history", []),
             result_chars,
         ][-4:]
+        evaluation_failed = evaluation.verdict == "model_error"
 
         return {
             "evaluation": evaluation.model_dump(),
-            "phase": ("reporting" if evaluation.verdict == "sufficient" else "executing"),
+            "phase": (
+                "error"
+                if evaluation_failed
+                else "reporting" if evaluation.verdict == "sufficient" else "executing"
+            ),
             "iteration": state.get("iteration", 0) + 1,
             "task_result_char_history": result_char_history,
             "last_transition": (
-                TransitionType.COMPLETED.value
-                if evaluation.verdict == "sufficient"
-                else TransitionType.TOOL_USE.value
+                TransitionType.MODEL_ERROR.value
+                if evaluation_failed
+                else (
+                    TransitionType.COMPLETED.value
+                    if evaluation.verdict == "sufficient"
+                    else TransitionType.TOOL_USE.value
+                )
             ),
             "messages": [
                 HumanMessage(
@@ -1495,7 +1534,7 @@ class AzureUpdateAnalyzer:
         update = state.get("update", {})
         category_hint = self._guess_category(update.get("update_type") or "")
 
-        settings = get_settings()
+        settings = self.settings
         report_language = settings.report_language
 
         custom_suffix = settings.custom_system_prompt or ""
@@ -2379,7 +2418,7 @@ class AzureUpdateAnalyzer:
         Returns:
             Prompt section text, or "" when there is nothing to add.
         """
-        settings = get_settings()
+        settings = self.settings
         if not settings.community_insights_enabled:
             return ""
 
@@ -2436,16 +2475,19 @@ class AzureUpdateAnalyzer:
         )
         return "\n".join(lines)
 
-    async def analyze_update(self, update: AzureUpdate) -> AnalysisResult:
+    async def analyze_update(
+        self, update: AzureUpdate, trace_id: Optional[str] = None
+    ) -> AnalysisResult:
         """Analyze an Azure Update.
 
         Args:
             update: Azure Update to analyze
+            trace_id: Optional caller trace ID for cross-runtime correlation.
 
         Returns:
             Analysis result
         """
-        trace_id = generate_trace_id()
+        trace_id = trace_id or generate_trace_id()
         logger.info(
             "analysis_started",
             trace_id=trace_id,
@@ -2911,7 +2953,7 @@ class AzureUpdateAnalyzer:
             Customized AnalysisResult for this subscriber
         """
 
-        settings = get_settings()
+        settings = self.settings
         base_language = normalize_language(settings.report_language)
         subscriber_language = normalize_language(subscriber.language)
         needs_translation = subscriber_language != base_language

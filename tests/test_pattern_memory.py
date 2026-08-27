@@ -106,3 +106,13 @@ def test_tool_frequency_accumulates():
     # The more frequent tool should be listed; both are present.
     assert "query_azure_resources" in hint
     assert "from 4 past analyses" in hint
+
+
+def test_save_does_not_fail_analysis_when_directory_is_read_only(monkeypatch):
+    class ReadOnlyDirectory:
+        def mkdir(self, **_kwargs):
+            raise OSError(30, "Read-only file system")
+
+    monkeypatch.setattr(pm, "_DATA_DIR", ReadOnlyDirectory())
+
+    pm._save({"patterns": {}})

@@ -16,7 +16,7 @@ Do not claim success — it is only success if you actually verified it.
 
 ## Project Overview
 
-AzBrief Enterprise is the enterprise edition of AzBrief and shares the same product identity, analysis core, and mission. It is an **Azure Update Intelligence Agent** for Azure administrators. Its custom LangGraph harness runs on Container Apps and invokes persisted Microsoft Foundry Prompt Agents; the application is not itself a Foundry Hosted Agent.
+AzBrief Enterprise is the enterprise edition of AzBrief and shares the same product identity, analysis core, and mission. It is an **Azure Update Intelligence Agent** for Azure administrators. Its complete custom LangGraph harness and subscriber customization run as a Microsoft Foundry **Hosted Agent**. Container Apps is the control plane: FastAPI/Admin/MCP, RSS selection, digest checkpointing, scheduling, and email delivery. It invokes the Hosted Agent through a strict versioned Responses contract and never constructs the analyzer locally.
 It analyzes Azure Update RSS feeds, queries the administrator's actual Azure resources via Resource Graph to assess relevance, evaluates each update on three independent axes — importance (update's inherent significance), impact (effect on the admin's resource environment), and job relevance (fit to the subscriber's role) — generates impact analysis and action items via AI Agent (LangChain/LangGraph), and delivers a consolidated daily digest email. All updates are analyzed without pre-filtering — the email summary displays a compact table with columns for 중요성, 영향도, and 직무연관성 (높음/보통/낮음 badges), and each title links to its detailed analysis below. It aims to provide practical help to Azure administrators who manage diverse roles.
 
 ### Product Identity and Direction
@@ -27,7 +27,7 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 - **Action over notification**: Turn findings into safe, specific procedures, commands, deadlines, and risk warnings instead of merely restating announcements.
 - **Coverage without silent filtering**: Analyze every collected update before deciding its importance, impact, or job relevance so risks and opportunities are not discarded prematurely.
 - **One investigation, role-specific delivery**: Reuse the same evidence while adapting the briefing to each subscriber's responsibility and language.
-- **Enterprise extension, not product divergence**: Foundry Prompt Agents, Entra-only access, Container Apps, private networking, observability, and durable state extend the original AzBrief mission into regulated environments; they do not replace or redefine it.
+- **Enterprise extension, not product divergence**: A Foundry Hosted Agent, governed Prompt Agents, Entra-only access, Container Apps control surfaces, private networking, observability, and durable state extend the original AzBrief mission into regulated environments; they do not replace or redefine it.
 - **Trust before autonomy**: Keep evidence traceable, validate executable actions, and fail closed when identity, permissions, or model capabilities are unclear.
 
 > This is a Korean-language project. Email templates and comments are written in **Korean**.
@@ -73,7 +73,7 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 - **Multi-turn output recovery**: If LLM hits output token limit, inject meta-message ("Resume directly — no apology, no recap") and retry up to 3 times
 - **Error withholding**: Recoverable errors (prompt-too-long, max-output-tokens) are not surfaced to callers until recovery is attempted. Surface only if recovery fails
 - **Graceful degradation**: If Resource Graph query fails, continue analysis with reduced confidence (set `relevance=UNKNOWN`); if codex model fails, fall back to primary LLM
-- **Wall-clock run budget**: `RunDeadline` (`run_time_budget_s`, default 39600s = 11h) stays an hour under the Container Apps Job `replicaTimeout`, so updates that no longer fit are deferred to the next run and the checkpoint is committed instead of the replica being killed mid-analysis. Set to `0` to disable
+- **Wall-clock run budget**: `RunDeadline` (`run_time_budget_s`, default 39600s = 11h) stays an hour under the Container Apps Job `replicaTimeout`, so the control-plane run stops dispatching new Hosted Agent requests, defers leftover updates, and commits only the contiguous completed watermark. Set to `0` to disable
 - **Incremental checkpoint**: analyses complete out of order under concurrency, so only the **contiguous prefix** of finished updates may be committed (`_WatermarkCursor` in `src/orchestrator.py`) — committing the newest finished update would permanently skip the unfinished gaps behind it. The watermark is persisted to a blob (`src/services/checkpoint.py`) once the run completes
 
 ### Context Management
@@ -89,7 +89,7 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 - **SSRF protection**: Allowed domains whitelist for URL fetching (`azure.microsoft.com`, `learn.microsoft.com`)
 - **Input validation**: Pydantic schemas on all tool inputs; JSON parsing with multi-strategy fallback
 - **Prompt injection defense**: Tool results from external sources are treated as untrusted; system prompt instructs the agent to flag suspicious patterns
-- **API key validation**: Optional API key middleware for production endpoints
+- **API key validation**: Optional compatibility behavior for `/api/*`; `/mcp` always fails closed when `API_KEY` is unset and validates it before parsing MCP payloads
 - **Rate limiting**: Per-IP rate limiting middleware to prevent abuse
 
 ### Tool System Design & Concurrency
@@ -114,12 +114,13 @@ Tools follow a self-contained module pattern:
 | **Codex** (`llm_codex`) | KQL query generation/fixing | `_fix_tool_args` (KQL), `ResourceGraphQueryFixer` |
 | **Fast** (`llm_fast`) | Task revision, subscriber customization | `_revise_tasks_node`, `customize_for_subscriber` |
 
-Each role resolves to a Foundry Agent Service name through `Settings.foundry_agent_for_role(role)` (`LLM_ROLES = ("primary", "planner", "evaluator", "reporter", "codex", "fast")`). `FOUNDRY_PRIMARY_AGENT_NAME` is required; every unset optional role falls back to it. The app invokes Prompt Agents through `AIProjectClient(...).agents` and never constructs an Azure OpenAI/OpenAI chat-completions client.
+Each role resolves to a Foundry Agent Service name through `Settings.foundry_agent_for_role(role)` (`LLM_ROLES = ("primary", "planner", "evaluator", "reporter", "codex", "fast")`). `FOUNDRY_PRIMARY_AGENT_NAME` is required; every unset optional role falls back to it. Agent definitions use `AIProjectClient.agents`; runtime invocation uses the project-scoped Responses API. The app never constructs a direct Azure OpenAI/OpenAI chat-completions client.
 
 ### Memory & Caching
 
 - **Session memoization**: `get_settings()` via `@lru_cache`, `get_resource_summary()` with 5-min TTL thread-safe cache
 - **KQL knowledge persistence**: Discovered schemas and successful queries stored in `kql_knowledge_base.json` and loaded lazily
+- **Hosted writable state**: The code package under `/app` is read-only. `src/hosted_agent.py` sets `AZBRIEF_DATA_DIR=$HOME/.azbrief` before loading history/pattern stores; those optimization writes are best-effort and must never discard a completed analysis
 - **Lazy module loading**: Heavy imports (`langchain`, `openai`, Azure SDKs) deferred via `__getattr__` in `__init__.py`
 
 ---
@@ -129,9 +130,9 @@ Each role resolves to a Foundry Agent Service name through `Settings.foundry_age
 | Area | Technology |
 |------|-----------|
 | Language | Python 3.10+ |
-| AI Framework | `langchain-core`, `langgraph`, `azure-ai-projects`, `azure-ai-agents` |
-| AI Runtime | Microsoft Foundry Agent Service only |
-| Web Framework | FastAPI + Uvicorn |
+| AI Framework | `langchain-core`, `langgraph`, `azure-ai-projects` 2.5+ |
+| AI Runtime | Microsoft Foundry Hosted Agent + persisted Prompt Agents |
+| Web/MCP Framework | FastAPI + Uvicorn + MCP Python SDK v2 |
 | Settings | pydantic-settings (`.env` → `Settings` class) |
 | Logging | structlog (JSON structured logging) |
 | Azure SDKs | `azure-identity`, `azure-mgmt-resourcegraph`, `azure-mgmt-costmanagement`, `azure-communication-email`, `azure-monitor-query` |
@@ -139,7 +140,7 @@ Each role resolves to a Foundry Agent Service name through `Settings.foundry_age
 | HTML Parsing | BeautifulSoup4 with `html.parser` (stdlib, **NOT** lxml) |
 | IaC | Bicep (`infra/main.bicep`) |
 | CI/CD | GitHub Actions |
-| Container | Docker (python:3.10-slim) |
+| Container | Container Apps: Docker `python:3.11-slim`; Hosted Agent: `python_3_13` remote build |
 
 ---
 
@@ -150,10 +151,14 @@ AzBrief/
 ├── src/                          # Main application package
 │   ├── __init__.py               # Version
 │   ├── config.py                 # pydantic-settings (env → Settings)
-│   ├── main.py                   # FastAPI app (orchestrator API + /admin)
-│   ├── scheduler.py              # Container Apps Job entry point
+│   ├── main.py                   # Container Apps control plane (API + /admin + /mcp)
+│   ├── mcp_server.py             # Authenticated MCP Streamable HTTP tools
+│   ├── hosted_agent.py           # Foundry Hosted Agent entry point; full analysis runtime
+│   ├── scheduler.py              # Container Apps Job control-plane entry point
 │   ├── agent/                    # LangGraph agent, tools, prompts
 │   │   ├── analyzer.py           # Plan-Execute-Evaluate state machine
+│   │   ├── hosted_client.py      # Container Apps → Hosted Agent proxy
+│   │   ├── hosted_contract.py    # Strict versioned analysis/customization contract
 │   │   ├── tools.py              # Tool definitions (LangChain BaseTool)
 │   │   ├── context_store.py      # Addressable store for oversized tool results
 │   │   ├── prompts/              # Phase-specific prompt assembly package
@@ -194,7 +199,10 @@ AzBrief/
 │       ├── report-quality/       # Rule-based report scoring & improvement
 │       ├── report-evaluation/    # G-Eval LLM-as-a-Judge methodology
 │       └── language-naturalness/ # Per-language (ko/en/ja) phrasing audit
+├── hosted_agent_main.py         # Root bootstrap referenced by azure.yaml
 ├── Dockerfile
+├── azure.yaml                    # Hosted Agent direct-code deployment
+├── .agentignore                  # Hosted Agent package exclusions
 ├── pyproject.toml
 ├── requirements.txt
 └── .env.example
@@ -205,13 +213,19 @@ AzBrief/
 ## Deployment Topology
 
 This repository ships **one** topology. There is no Automation Account, no Function App and
-no fat wheel — the Enterprise edition runs entirely on Container Apps.
+no fat wheel. Analysis runs in a Foundry Hosted Agent; Container Apps hosts only control-plane
+surfaces and the scheduled digest driver.
 
 ```
 Container Apps Job (cron)  ──  python -m src.scheduler
-    -> Microsoft Foundry Prompt Agents
+  -> Foundry Hosted Agent (one full analysis per update)
     -> Azure Communication Services
-Container App  ──  uvicorn src.main:app  (orchestrator API + /admin)
+Foundry Hosted Agent  ──  python hosted_agent_main.py → src/hosted_agent.py
+  -> LangGraph Plan-Execute-Evaluate-Report
+  -> persisted Prompt Agents
+    -> Microsoft Learn MCP first, Web Search only as supplementary research
+    -> read-only Azure MCP Server on a separate Container App for tenant evidence
+Container App  ──  uvicorn src.main:app  (orchestrator API + /admin + /mcp)
 ```
 
 Template: `infra/azbrief-enterprise-deploy.json`, **compiled from**
@@ -224,12 +238,13 @@ az bicep build --file infra/enterprise/main.bicep --outfile infra/azbrief-enterp
 CI fails when the compiled template drifts from the Bicep source, because the Deploy button
 points at the JSON.
 
-The job runs the **same image** as the app with a different entry point, so it inherits the
-app's identity, network and settings; a run is bounded by `replicaTimeout` (12 h default,
-7 days max) and `RUN_TIME_BUDGET_S` is set an hour below it so leftover updates are deferred
-rather than killed mid-analysis. `replicaRetryLimit` is **0** on purpose — a failed execution
-did not advance the checkpoint, so the next schedule re-covers the window without paying for
-the same analysis twice in one night.
+The job runs the **same control-plane image** as the app with a different entry point. Neither
+constructs `AzureUpdateAnalyzer`; both use `HostedAgentAnalyzer`, which requires
+`FOUNDRY_PROJECT_ENDPOINT` + `FOUNDRY_HOSTED_AGENT_NAME` and has no local fallback. A run is
+bounded by `replicaTimeout` (12 h default, 7 days max), while each remote analysis has
+`FOUNDRY_HOSTED_AGENT_TIMEOUT_S` (1800 s default). `RUN_TIME_BUDGET_S` stays an hour below the
+job timeout so leftover updates are deferred. `replicaRetryLimit` is **0** because a failed
+execution did not advance the checkpoint and the next schedule safely re-covers the window.
 
 The checkpoint lives in `src/services/checkpoint.py`: a blob in the state storage account,
 read at run start and advanced **after** a run completes. Two invariants keep it safe — only
@@ -254,30 +269,62 @@ Constraints that are easy to get wrong:
   moved to `vnetInjection` — the account has to be deleted *and purged* first. That
   irreversibility is why `vnetInjection` is the default.
 - The agent subnet must be RFC1918 and **exclusive to one Foundry account**.
-- `internalIngressOnly: true` does not break the schedule (the job analyses in-process
-  instead of calling the app over HTTP), but it does make `/admin` and `/api/*` VNet-only.
+- `internalIngressOnly: true` does not break the schedule (the job calls Foundry directly
+  instead of the app ingress), but it makes `/admin`, `/api/*`, and `/mcp` VNet-only.
 - Container Apps and Communication Services are **not** NSP-onboarded, so `perimeter` mode
   leaves them on ingress IP restrictions plus the API key.
 
 ### Foundry Agent Service runtime
 
-`Settings.use_foundry` is True only when both `FOUNDRY_PROJECT_ENDPOINT` and
-`FOUNDRY_PRIMARY_AGENT_NAME` are set. Missing configuration, a missing Agent, an incomplete
-run, or an unavailable SDK fails closed; there is no Azure OpenAI/OpenAI fallback.
+The Container App and scheduler use `Settings.use_hosted_agent`, which is true only when both
+`FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_HOSTED_AGENT_NAME` are set. Missing configuration,
+an inactive Hosted Agent version, an invalid contract, or an endpoint failure fails closed;
+the control plane never imports a local analysis fallback. Inside `src/hosted_agent.py`,
+non-reserved `AZBRIEF_PROMPT_*` aliases populate the Prompt Agent roles and explicitly clear
+`foundry_hosted_agent_name` to prevent recursive self-invocation.
 
 The Foundry project endpoint does not serve chat completions. Never point an inference client
 at it and never add an `.openai.azure.com` endpoint to the application settings. Persisted
-models, standing instructions, server-side tools, guardrails, and memory belong to Prompt
-Agent definitions. The Plan-Execute-Evaluate state machine and Azure SDK/LangChain tools remain
-application-owned. Planning tools are exposed through an allow-listed JSON request bridge;
-client-side `bind_tools()` alone is not a Prompt Agent tool attachment.
+models, standing instructions, strict output formats, FunctionTool declarations, optional
+managed tools, guardrails, and memory belong to Prompt Agent definitions. The Plan-Execute-
+Evaluate state machine and FunctionTool implementations are application-owned **inside the
+Hosted Agent sandbox**. Planning tools use an allow-listed JSON request bridge; enrichment
+tools use the native Responses function-call loop. Client-side `bind_tools()` alone is not a
+Prompt Agent tool attachment.
 
-Prompt Agents are invoked through the classic **Agents data plane** (`AIProjectClient(...).agents` →
-`create_thread_and_process_run`), not through `langchain-azure-ai`: `AgentServiceFactory` only
-exposes `create_declarative_chat_*`, which *creates* agents rather than referencing the ones
-already published in the project, and has no `get_agent_node`. One-shot threads are deleted
-after each response. The roster is cached per endpoint and refreshed once on a name miss, so
-newly provisioned phase Agents do not require a process restart.
+Prompt Agent definitions use immutable Agent versions (`AIProjectClient.agents.create_version`),
+and runtime calls use the project-scoped OpenAI client (`get_openai_client()` →
+`responses.create(..., extra_body={"agent_reference": ...})`). AzBrief is one-shot per analysis,
+so Hosted Agent proxy requests set `store=false` and do not require the resilient task subsystem
+or a conversation; all required context is serialized into the request.
+Responses metadata (ID, status, model, token usage, incomplete reason) is preserved on the
+LangChain `AIMessage`, and `max_output_tokens` partial responses enter the existing recovery loop.
+Never reintroduce `azure-ai-agents`, threads/runs, mutable `create_agent`/`update_agent`,
+`langchain-azure-ai`, or a direct Azure OpenAI/OpenAI endpoint fallback.
+
+Research and impact have explicit evidence precedence. Research must query Microsoft Learn
+MCP first and may use Web Search only when Learn cannot establish a needed fact or a newer
+public announcement must be confirmed. Never send tenant resource payloads, secrets, or
+personal data to Web Search. Impact must query the Entra-authenticated Azure MCP Server first
+for live tenant state; it may use app-owned FunctionTools only to fill a specific gap and must
+never use Web Search as tenant evidence.
+
+The Azure MCP Server is a separate Container App defined under `infra/azure-mcp-server`.
+It runs the official image in `single` mode with `--read-only`, keeps incoming Entra
+authentication enabled, and uses its own managed identity with subscription `Reader` only.
+Never add a dangerous authentication or elicitation bypass, Contributor, Key Vault secret,
+or storage data-plane role to this server. The Foundry project managed identity receives only
+the MCP Entra application role needed to call it.
+
+Hosted Agent source deploys separately through `azure.yaml` with `codeConfiguration` and
+`azd deploy azbrief-analysis-hosted --no-prompt`; Foundry performs the remote build and creates
+an immutable version. ARM/Bicep creates the account, project, model, and Container Apps control
+plane but cannot create these data-plane versions. The Hosted Agent has its own Entra identity;
+grant tenant/subscription evidence permissions to that principal, not the Container Apps UAMI.
+
+The Container App mounts an MCP Python SDK v2 stateless Streamable HTTP server at `/mcp`.
+It exposes only recent-update listing, full Hosted Agent analysis, and recent digest status.
+MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY` is unset.
 
 ---
 
@@ -342,8 +389,9 @@ python -m scripts.test_local resources               # View resource summary
 ### Foundry agent provisioning
 
 The ARM template configures the primary and phase Agent names but cannot create the Agents —
-they live in the project's data plane. Enrichment defaults off until its server tools pass the
-read-only roster check. `scripts/provision_foundry_agents.py` closes that gap:
+they live in the project's data plane. Enrichment defaults off until app-owned FunctionTools,
+strict stage schemas, and instructions pass the read-only roster check.
+`scripts/provision_foundry_agents.py` closes that gap:
 
 ```bash
 python -m scripts.provision_foundry_agents --dry-run   # print instructions, no project needed
@@ -353,11 +401,19 @@ python -m scripts.provision_foundry_agents --check      # names + instructions +
 python -m scripts.provision_foundry_agents --delete    # tear the roster down
 ```
 
+Foundry normalizes persisted MCP definitions by adding a trailing slash to the
+server URL and serializing `allowed_tools` as `{"tool_names": [...]}`. Roster
+drift checks canonicalize those service representations before comparing them;
+do not replace that semantic comparison with raw payload equality.
+
 Runtime instructions live in `RUNTIME_AGENT_INSTRUCTIONS`; enrichment instructions are
 derived from `STAGE_PROMPTS` by cutting at the runtime context marker. Research and impact
-must have at least one server-side tool before `--check` passes. Enrichment output is strict,
-evidence-addressable JSON; review rejection removes rejected claims and dependent actions.
-A missing enrichment stage is isolated, but required runtime Agents fail closed.
+FunctionTools are generated from the live LangChain Pydantic schemas and executed locally
+through a bounded Responses function-call loop; strict JSON response schemas are stored on
+all four stage versions. `--check` verifies exact functions, rejects retired app functions,
+and detects instruction/schema drift. Non-app-owned Foundry tools are preserved. Review
+rejection removes rejected claims and dependent actions. A missing enrichment stage is
+isolated, but required runtime Agents fail closed.
 
 
 ### Required Environment Variables
@@ -502,7 +558,7 @@ Do **NOT** modify these files unless explicitly asked:
 
 0. **Virtual Environment**: Always use a virtual environment for local development. Do not install dependencies globally.
 1. **Do not add `lxml`** as a dependency. Use `html.parser` everywhere.
-2. **Keep the Container App and the scheduler Job in step** — they share one image, so a change must work for both entry points.
+2. **Keep the Container App and scheduler Job in step as control-plane entry points** — they share one image, but neither may construct `AzureUpdateAnalyzer`; all analysis and subscriber customization must cross the strict Hosted Agent contract.
 3. **Korean for user-facing content** (prompts, emails, comments), **English for code**.
 4. **`langchain-core`** is the correct package — not `langchain` (full).
 5. **Services in `src/services/`** are data-access only. Business logic belongs in `agent/`.
@@ -512,6 +568,7 @@ Do **NOT** modify these files unless explicitly asked:
 9. **Resource Graph queries are tenant-scoped** — do not assume single subscription.
 10. **Never commit `.env`** — only `.env.example` with empty values.
 11. **Update docs on every code change** — `README.md`, `.github/copilot-instructions.md`, and relevant `.github/skills/*/SKILL.md` must reflect the current code (new/changed functions, labels, features, deployment modes).
+12. **MCP stays a control-plane surface** — expose only bounded tools through the official MCP SDK, require `X-API-Key`, and delegate model-mediated analysis to `HostedAgentAnalyzer`.
 
 ---
 

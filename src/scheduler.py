@@ -1,8 +1,8 @@
-"""Scheduled digest run — entry point for the Container Apps Job.
+"""Scheduled digest control-plane run — entry point for the Container Apps Job.
 
-The job runs the same orchestrated pipeline the API drives, but as a one-shot
-process: there is no HTTP hop that can be lost mid-run, and the job's replica
-timeout bounds the analysis.
+The job owns RSS selection, checkpointing, and digest delivery. Each update's
+model-mediated analysis runs behind the Foundry Hosted Agent endpoint, so this
+process never constructs the LangGraph runtime itself.
 
 The start point comes from the durable checkpoint and the watermark is written
 back only when the run completes, so a failed execution (exit code 1) leaves the
@@ -26,14 +26,10 @@ logger = get_logger()
 
 
 async def _close_analyzer(analyzer) -> None:
-    """Release the analyzer's httpx clients the way the app lifespan does."""
-    for tool in getattr(analyzer, "_tools", []):
-        learn_svc = getattr(tool, "learn_service", None)
-        if learn_svc and hasattr(learn_svc, "close"):
-            try:
-                await learn_svc.close()
-            except Exception:
-                pass
+    """Release the analyzer proxy the way the app lifespan does."""
+    close = getattr(analyzer, "close", None)
+    if close:
+        await close()
 
 
 async def run_scheduled_digest(dry_run: bool = False) -> int:
@@ -45,12 +41,12 @@ async def run_scheduled_digest(dry_run: bool = False) -> int:
     Returns:
         0 when the run completed, 1 otherwise.
     """
-    from src.agent.analyzer import AzureUpdateAnalyzer
+    from src.agent.hosted_client import HostedAgentAnalyzer
     from src.email.service import EmailService
     from src.orchestrator import RunRecord, execute_run
     from src.rss.parser import AzureUpdateParser
 
-    analyzer = AzureUpdateAnalyzer()
+    analyzer = HostedAgentAnalyzer()
     record = RunRecord(run_id=uuid.uuid4().hex, dry_run=dry_run)
 
     try:
