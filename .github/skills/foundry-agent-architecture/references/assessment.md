@@ -32,9 +32,9 @@ The ceiling is intentionally unreachable while a known gap remains.
 | Concurrency and evidence isolation | 2.0 | 4.5 | Diminishing-return history is in AgentState; evidence snapshots are attached privately to each AnalysisResult |
 | Retry, cleanup, and discovery resilience | 2.5 | 4.5 | Transient errors propagate; conversation/Responses/project/credential clients close; partial outputs enter recovery |
 | Observability and evaluation | 4.0 | 4.6 | Response usage/IDs, function fingerprints, stage normalization, review removals, trajectory, action verification, and G-Eval are logged |
-| Deployment/readiness | 2.0 | 4.7 | Bicep/manifest validate; Prompt roster check passes; Hosted v5 is active and completed a remote full analysis |
+| Deployment/readiness | 2.0 | 4.7 | Bicep/manifest validate; Prompt roster check passes; Hosted v6 and control-plane v8 completed a remote full analysis |
 | Current-platform upgrade path | 2.0 | 4.6 | Classic Agents removed; Prompt and Hosted immutable versions use current Responses contracts |
-| **Weighted mean** | **2.30/5 (46%)** | **4.54/5 (90.8%)** | Remote-verified Hosted Agent runtime; control-plane rollout remains separate |
+| **Weighted mean** | **2.30/5 (46%)** | **4.54/5 (90.8%)** | Remote-verified Hosted Agent, control-plane, and read-only Azure MCP evidence path |
 
 ## Improvement Iterations
 
@@ -57,6 +57,8 @@ The ceiling is intentionally unreachable while a known gap remains.
 17. Added an authenticated MCP Python SDK v2 Streamable HTTP surface to the Container App; its analysis tool delegates to the Hosted Agent instead of recreating the graph.
 18. Set Hosted proxy calls to `store=false` for the one-shot contract, added the required `api-version=v1`, and preserved differential retry semantics.
 19. Moved history and pattern optimizations from read-only `/app/data` to session-persistent `$HOME/.azbrief`; directory creation failures are non-fatal.
+20. Replaced Azure MCP `single` proxy routing with direct leaf tools in `all` mode, server-filtered to the `group`, `resourcehealth`, and `advisor` namespaces under `--read-only`.
+21. Injected the exact tenant GUID and configured subscription GUID into every impact request and forbade the literal tenant value `default`, which remote Azure MCP otherwise resolves as a nonexistent tenant display name.
 
 Every iteration has focused unit tests. The Bicep source compiles into `infra/azbrief-enterprise-deploy.json` without warnings.
 
@@ -64,8 +66,8 @@ Every iteration has focused unit tests. The Bicep source compiles into `infra/az
 
 A deployment and repeated Responses API smoke test on 2026-08-27 established:
 
-- The current immutable versions are primary v1, research v3, impact v5, action v2,
-  and review v2.
+- The current immutable versions are primary v1, research v5, impact v10, action v2,
+  and review v2; the exact roster check passes.
 - The deployed model is `gpt-4o` (`2024-11-20`, GlobalStandard, capacity 200) in
 	Korea Central.
 - Version, instruction, strict response-schema, and exact app-function checks pass for all five Agents.
@@ -80,7 +82,7 @@ A deployment and repeated Responses API smoke test on 2026-08-27 established:
 	their LLM repair calls.
 
 The Prompt Agent roster is deployed, callable, and passes `python -m scripts.provision_foundry_agents
---check`: primary v1, research v5, impact v7, action v2, and review v2. Research has five
+--check`: primary v1, research v5, impact v10, action v2, and review v2. Research has five
 app-owned functions plus Microsoft Learn MCP and Web Search. Impact has five app-owned
 read-only functions plus the Entra-authenticated `azure_read_only` MCP server tool.
 
@@ -89,21 +91,14 @@ read-only functions plus the Entra-authenticated `azure_read_only` MCP server to
 - Contract, client, entry point, API, scheduler, orchestrator, Admin, and MCP focused tests pass.
 - The official MCP Python SDK v2 in-memory client discovers and invokes the three bounded tools.
 - MCP authentication returns 503 without configuration, 401 without a key, and 403 for a bad key.
-- `azure.yaml` parses through `azd show`; its `codeConfiguration` produced active Hosted Agent version 5 through Foundry direct-code build.
+- `azure.yaml` parses through `azd show`; its `codeConfiguration` produced active Hosted Agent version 6 through Foundry direct-code build.
 - `azd ai agent run` starts the local Hosted runtime, and a direct `POST /responses` full
 	`analyze_update` request completed with matching operation/trace ID and update ID `564806`.
 - The first remote run exposed two deployment-only defects: stored Responses required an unavailable resilient-task path, and `/app/data` was read-only. `store=false` and `$HOME/.azbrief` fixed them.
-- A fresh version-5 request completed in 89.7 seconds with matching operation/trace ID, `update_id=564806`, `relevance=not_relevant`, no evidence degradation, a sufficient evaluation, and a completed report.
+- A control-plane request to active version 6 completed in 102.3 seconds with HTTP 200, `update_id=564806`, `relevance=not_relevant`, no email delivery, and a completed report. The matching Azure MCP log shows `group_list` completed with `IsError=False` after subscription-scoped ARM calls returned HTTP 200.
 - `infra/enterprise/main.bicep` compiles without warnings to the tracked ARM JSON.
 
 ## Remaining Gaps
-
-### Control-Plane Rollout
-
-The Foundry data plane is active. The remaining rollout is the Container App/Job management
-plane: deploy the new control-plane image and Bicep settings that require
-`FOUNDRY_HOSTED_AGENT_NAME`. This was intentionally not performed under data-plane-only write
-approval.
 
 ### Foundry Skills
 

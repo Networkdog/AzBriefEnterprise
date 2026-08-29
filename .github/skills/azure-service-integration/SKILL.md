@@ -5,6 +5,18 @@ description: 'Add new Azure service integration to AzBrief. Use when: new servic
 
 # Azure Service Integration
 
+## Foundry Runtime Guidance
+
+- Treat services and FunctionTools as evidence providers, not decision makers. Accept a
+    result as evidence only when its explicit success indicator is true.
+- Prefer live read-only evidence with exact tenant and subscription scope; never treat one
+    subscription as the whole tenant.
+- Make the minimum calls needed to close a named gap. Execute serially when concurrency
+    safety is undeclared.
+- Preserve service errors and lower confidence. Missing evidence never proves absence.
+
+<!-- End Foundry Runtime Guidance -->
+
 ## When to Use
 
 - Adding a new Azure SDK service class in `src/services/`

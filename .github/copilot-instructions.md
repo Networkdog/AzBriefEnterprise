@@ -310,8 +310,16 @@ for live tenant state; it may use app-owned FunctionTools only to fill a specifi
 never use Web Search as tenant evidence.
 
 The Azure MCP Server is a separate Container App defined under `infra/azure-mcp-server`.
-It runs the official image in `single` mode with `--read-only`, keeps incoming Entra
-authentication enabled, and uses its own managed identity with subscription `Reader` only.
+It pins the verified official `3.0.0-beta.38` image through the `azureMcpImage` Bicep
+parameter; never use `latest` in the production template. Upgrade that parameter only after
+validating direct tool schemas and a live read-only inventory call. It runs in `all` mode
+restricted to the `group`, `resourcehealth`, and
+`advisor` namespaces with `--read-only`, keeps incoming Entra authentication enabled, and
+uses its own managed identity with subscription `Reader` only. This exposes direct namespace
+tools instead of the dynamic `azure` proxy. The Hosted Agent injects the exact tenant GUID and
+configured target subscription GUID into every impact request, and the standing instruction
+forbids the literal value `default`; remote leaf tools otherwise treat it as a tenant display
+name and reject the call.
 Never add a dangerous authentication or elicitation bypass, Contributor, Key Vault secret,
 or storage data-plane role to this server. The Foundry project managed identity receives only
 the MCP Entra application role needed to call it.
@@ -406,14 +414,19 @@ server URL and serializing `allowed_tools` as `{"tool_names": [...]}`. Roster
 drift checks canonicalize those service representations before comparing them;
 do not replace that semantic comparison with raw payload equality.
 
-Runtime instructions live in `RUNTIME_AGENT_INSTRUCTIONS`; enrichment instructions are
-derived from `STAGE_PROMPTS` by cutting at the runtime context marker. Research and impact
-FunctionTools are generated from the live LangChain Pydantic schemas and executed locally
-through a bounded Responses function-call loop; strict JSON response schemas are stored on
-all four stage versions. `--check` verifies exact functions, rejects retired app functions,
-and detects instruction/schema drift. Non-app-owned Foundry tools are preserved. Review
-rejection removes rejected claims and dependent actions. A missing enrichment stage is
-isolated, but required runtime Agents fail closed.
+Base runtime instructions live in `RUNTIME_AGENT_INSTRUCTIONS`; enrichment instructions are
+derived from `STAGE_PROMPTS` by cutting at the runtime context marker. Every domain document
+under `.github/skills/*/SKILL.md` that contributes runtime behavior has one bounded
+`Foundry Runtime Guidance` section. `scripts/provision_foundry_agents.py` loads only those
+sections and appends a role-scoped set to each immutable Prompt Agent definition; never inject
+the full developer-oriented Skill body. A runtime-section change is instruction drift and must
+be published as a new Agent version. Research and impact FunctionTools are generated from the
+live LangChain Pydantic schemas and executed locally through a bounded Responses function-call
+loop; strict JSON response schemas are stored on all four stage versions. `--check` verifies
+exact functions, rejects retired app functions, and detects instruction/schema drift.
+Non-app-owned Foundry tools are preserved. Review rejection removes rejected claims and
+dependent actions. A missing enrichment stage is isolated, but required runtime Agents fail
+closed.
 
 
 ### Required Environment Variables

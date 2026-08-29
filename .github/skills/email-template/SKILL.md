@@ -5,6 +5,19 @@ description: 'Edit HTML email templates for AzBrief reports. Use when: email tem
 
 # Email Template Editing
 
+## Foundry Runtime Guidance
+
+- Return only the requested schema; the deterministic renderer owns HTML, CSS, labels,
+    responsiveness, and client compatibility.
+- Layer the content for scanning: decisive summary, compact evidence, operational detail,
+    then executable actions. Do not repeat conclusions across fields.
+- Keep resource reasons and action fields concise, self-contained, and renderable without
+    reconstructing missing context.
+- Use the requested language and verified HTTP(S) links only. Never expose HTML, tracking
+    wrappers, unsafe URLs, fabricated links, schema names, tools, queries, or delivery details.
+
+<!-- End Foundry Runtime Guidance -->
+
 ## When to Use
 
 - Modifying HTML email layout in `src/email/templates.py`

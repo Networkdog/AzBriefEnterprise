@@ -5,6 +5,19 @@ description: 'Audit and improve per-language naturalness of AzBrief report text 
 
 # Per-Language Naturalness Audit
 
+## Foundry Runtime Guidance
+
+- Write as a native senior engineer in the requested language while preserving facts,
+  release stage, names, IDs, commands, dates, and uncertainty.
+- State what changed directly. Avoid announcement framing, subject-predicate category
+  mismatch, nominalization, passive defaults, causative translation, and repeated endings.
+- In Korean, keep 합쇼체, write `약어(풀네임)`, and replace generic "CSA 사전 검토" with
+  what to check, where, and why.
+- Apply the rules to every user-facing field. Definition-style concept boxes are the
+  exception to a blanket ban on noun-ending sentences.
+
+<!-- End Foundry Runtime Guidance -->
+
 Checks whether generated report text reads as if a native senior engineer wrote it —
 per language (`ko`, `en`, `ja`) — and turns a reader's complaint into a rule that actually
 holds across the whole corpus.

@@ -7,6 +7,7 @@
 
 .git/
 .github/
+.azure/
 .venv/
 __pycache__/
 *.pyc
@@ -20,6 +21,7 @@ pitch/
 infra/
 scripts/
 logs/
+logs*.txt
 out/
 eval_runs/
 data/

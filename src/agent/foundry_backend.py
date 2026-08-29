@@ -459,7 +459,8 @@ STAGE_PROMPTS: dict[str, str] = {
         "Use the read-only Azure MCP tool first for live tenant evidence, then use declared "
         "application function tools only to fill a specific evidence gap. Never use Web "
         "Search as evidence of tenant state. Never guess a resource name - report an "
-        "absence as an absence.\n"
+        "absence as an absence. Pass the exact tenant and subscription IDs from the dynamic "
+        "Azure MCP scope to every Azure MCP call; never pass the literal value default.\n"
         "Use the minimum tool calls needed. Stop once resource presence or absence, the "
         "relevant configuration, and any stated regional condition are established; do not "
         "exhaust the tool catalog. The downstream Plan-Execute loop performs deeper health, "
@@ -993,6 +994,16 @@ def build_multi_agent_node(
 
     def _prompt(stage: str, update_context: str, prior: str) -> str:
         spec = by_stage[stage]
+        if stage == "impact":
+            scope_lines = [f"Azure tenant ID: {settings.azure_tenant_id}"]
+            if settings.azure_subscription_id:
+                scope_lines.append(
+                    f"Azure subscription ID: {settings.azure_subscription_id}"
+                )
+            update_context = (
+                f"{update_context}\n\nAzure MCP scope (use these exact GUIDs):\n"
+                + "\n".join(scope_lines)
+            )
         base = STAGE_PROMPTS[stage].format(
             update_context=update_context,
             prior_findings=prior or "(none)",

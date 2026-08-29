@@ -31,6 +31,7 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 - [Why AzBrief Enterprise?](#why-azbrief-enterprise)
 - [What you get](#what-you-get)
 - [Architecture](#architecture)
+- [End-to-end operation](#end-to-end-operation)
 - [Quick Start](#quick-start)
 - [Deployment](#deployment)
   - [One-click deploy](#one-click-deploy)
@@ -45,6 +46,7 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 - [API](#api)
 - [Development](#development)
 - [Project structure](#project-structure)
+- [Directory guides](#directory-guides)
 - [Tech stack](#tech-stack)
 - [Troubleshooting](#troubleshooting)
 - [License](#license)
@@ -184,7 +186,7 @@ Microsoft Foundry Hosted Agent  ──  hosted_agent_main.py → src/hosted_agen
   └─ Subscriber customization
 
 Azure MCP Container App  ──  Entra-authenticated HTTPS remote MCP
-  ├─ single-tool routing ────── broad Azure service coverage
+  ├─ direct leaf tools ───────── group/resourcehealth/advisor only
   ├─ --read-only ────────────── no create/update/delete tools
   └─ managed identity ───────── subscription Reader only
 
@@ -206,6 +208,192 @@ File-based history and pattern optimizations use the session-persistent `$HOME/.
 directory because the deployed application package under `/app` is read-only.
 See [the architecture assessment](.github/skills/foundry-agent-architecture/references/assessment.md)
 for the responsibility boundary and validation evidence.
+
+<p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
+
+## End-to-end operation
+
+AzBrief Enterprise는 **제어면(control plane)** 과 **분석 런타임(analysis runtime)** 을
+의도적으로 분리합니다. Container App과 Container Apps Job은 어떤 업데이트를 언제 처리하고
+누구에게 전달할지를 결정합니다. Microsoft Foundry Hosted Agent는 업데이트 한 건의 조사,
+테넌트 영향 판정, 보고서 생성과 구독자 맞춤화를 책임집니다.
+
+| 경계 | 소유하는 상태와 동작 | 소유하지 않는 것 |
+|---|---|---|
+| Container Apps Job (`src.scheduler`) | 예약 실행의 프로세스 수명, 성공/실패 종료 코드 | LangGraph, Prompt Agent, 분석 도구 |
+| Orchestrator (`src.orchestrator`) | RSS 처리 구간, 동시성, 실행 기록, digest 조립, 체크포인트 | 업데이트 한 건의 분석 판단 |
+| Hosted proxy (`src.agent.hosted_client`) | 버전이 지정된 요청/응답 계약, 원격 호출 제한 시간 | 로컬 분석 대체 경로 |
+| Hosted Agent (`src.hosted_agent`) | 계약 검증, 분석기 수명, 분석/맞춤화 작업 분기 | 스케줄, digest 체크포인트, 이메일 전송 |
+| Analyzer (`src.agent.analyzer`) | 조사 계획, 도구 실행, 근거 완전성 평가, 보고서, 안전 검증 | 수신자별 전송 결과와 처리 구간 커밋 |
+
+### 한 번의 예약 실행
+
+```mermaid
+sequenceDiagram
+   autonumber
+   participant Job as Container Apps Job
+   participant CP as Orchestrator
+   participant RSS as Azure Update RSS
+   participant HA as Foundry Hosted Agent
+   participant PA as Prompt Agents and tools
+   participant Mail as Communication Services
+   participant State as Checkpoint blob
+
+   Job->>CP: execute_run(run_id)
+   CP->>State: 마지막 안전 watermark 조회
+   CP->>RSS: 최근 업데이트 조회
+   RSS-->>CP: AzureUpdate 목록
+   CP->>CP: published_date 기준 필터 및 오래된 순 정렬
+   loop 최대 MAX_CONCURRENT_ANALYSES
+      CP->>HA: analyze_update(versioned request)
+      HA->>PA: enrich, plan, execute, evaluate, report
+      PA-->>HA: 근거가 포함된 AnalysisResult
+      HA-->>CP: versioned completed response
+   end
+   CP->>HA: 구독자별 customize_for_subscriber
+   HA-->>CP: 역할과 언어가 반영된 결과
+   CP->>Mail: 구독자별 digest 전송
+   CP->>State: 연속 완료 구간의 watermark만 전진
+   CP-->>Job: completed 또는 failed
+```
+
+1. `python -m src.scheduler`가 `HostedAgentAnalyzer`, `EmailService`,
+  `AzureUpdateParser`를 만들고 하나의 `RunRecord`를 시작합니다. 스케줄러는 실행이
+  `completed`이면 프로세스 코드 `0`, 그렇지 않으면 `1`로 종료합니다.
+2. Orchestrator는 명시적인 `since`가 있으면 그것을 사용하고, 없으면 checkpoint blob,
+  로컬 개발용 checkpoint file, 마지막으로 현재 시각의 24시간 전 순으로 시작점을
+  결정합니다. checkpoint 읽기에 실패해도 실행은 계속되므로 일부 작업이 반복될 수는 있어도
+  업데이트가 조용히 누락되지는 않습니다.
+3. RSS 결과 중 시작점보다 새 항목만 골라 `published_date` 오름차순으로 정렬합니다. 이 순서는
+  완료 순서가 뒤섞이더라도 안전한 checkpoint를 계산하는 기준이 됩니다.
+4. 업데이트는 `MAX_CONCURRENT_ANALYSES` 세마포어 안에서 병렬 처리됩니다. 각 작업을 시작하기
+  전 `RUN_TIME_BUDGET_S`와 지금까지 관측된 가장 느린 분석 시간을 비교합니다. 남은 시간이
+  부족하면 새 분석을 시작하지 않고 해당 항목을 `deferred`로 남겨 다음 실행으로 넘깁니다.
+5. 단건 실패는 다른 업데이트와 격리됩니다. 영구적으로 실패하는 한 항목이 checkpoint를
+  계속 붙잡지 않도록 실패한 항목도 “처리 완료”로 표시하지만, 연속 실패가 3건에 이르면 새
+  원격 분석을 중단합니다. 아직 시작하지 않은 항목은 watermark 뒤에 남습니다.
+6. 분석 결과는 하나의 digest 후보 목록으로 모입니다. 기본 digest는 관련성에 관계없이 분석된
+  모든 업데이트를 보여 주며, `should_notify`는 관련 항목 수와 badge를 계산하는 데 사용됩니다.
+7. 구독자가 있으면 같은 근거 기반 결과를 Hosted Agent에 다시 보내 역할과 언어별로 병렬
+  맞춤화합니다. 개별 맞춤화가 실패하면 원본 분석을 사용하고, 개별 이메일 실패는 다른
+  구독자의 전송을 막지 않습니다. 한 명 이상에게 전달되면 실행의 `email_sent`는 참입니다.
+
+### 완료 상태의 정확한 의미
+
+`RunRecord.status == "completed"`는 orchestration 함수가 끝까지 실행됐다는 뜻이지, 모든 단건
+분석과 이메일이 성공했다는 뜻은 아닙니다. scheduler의 process exit code도 이 status만 기준으로
+결정되므로 운영 검증에서는 다음 필드를 함께 봐야 합니다.
+
+| 필드 | 해석 |
+|---|---|
+| `analyzed` | Hosted Agent가 정상 결과를 반환한 항목 수 |
+| `failed` | 개별 실패가 격리된 항목 수; 실패한 항목도 영구 pin 방지를 위해 처리된 것으로 간주 |
+| `deferred` | 실행 시간 예산 때문에 시작하지 않고 다음 window로 넘긴 항목 수 |
+| `pending` | 연속 완료 prefix 뒤에 남아 checkpoint가 아직 덮지 못한 항목 수 |
+| `email_sent` | 구독자가 없으면 기본 digest, 구독자가 있으면 한 명 이상에게 전달됐는지 여부 |
+| `checkpoint_committed` | 계산된 watermark가 durable store에서 실제로 전진했는지 여부 |
+
+현재 checkpoint는 **분석 window의 처리 상태**이며 delivery queue가 아닙니다. 따라서 digest 전송이
+실패해 `email_sent=false`여도 분석된 연속 prefix는 commit될 수 있고 다음 예약 실행이 이메일만
+재시도하지는 않습니다. 전송 보장 수준을 높이려면 별도의 outbox/delivery checkpoint가 필요하며,
+운영자는 `completed` 하나가 아니라 위 카운터와 전송 로그를 함께 경보 조건으로 사용해야 합니다.
+
+### 단건 Hosted Agent 호출
+
+Container App과 Job은 도메인 객체를 그대로 직렬화하지 않습니다. `src.agent.hosted_contract`의
+Pydantic 모델이 업데이트, 작업 종류, 계약 버전, trace ID, 결과를 명시합니다. Proxy는 이 내부
+계약을 Foundry Responses 요청의 입력 텍스트로 넣고 `store=false`로 호출합니다. 응답은 다음
+순서로 검증됩니다.
+
+1. Responses API의 HTTP 요청이 성공했는지 확인합니다. 분석 요청의 일시적 HTTP/네트워크
+  오류는 지수 backoff로 최대 3회 재시도하지만, 구독자 맞춤화는 overload 증폭을 피하려고
+  한 번만 시도합니다.
+2. 출력 텍스트를 `HostedAgentResponse`로 파싱합니다.
+3. 요청과 응답의 trace ID와 operation이 모두 같은지 확인합니다.
+4. 내부 status가 `completed`이고 result가 존재하는지 확인합니다.
+5. result를 최종 `AnalysisResult`로 다시 검증합니다.
+
+계약 불일치, 비활성 Hosted Agent 버전, 제한 시간 초과, 원격 오류는 모두 호출 실패입니다.
+제어면은 이때 `AzureUpdateAnalyzer`를 로컬에서 만들지 않습니다. 이 fail-closed 경계 덕분에
+개발 환경과 운영 환경이 서로 다른 분석 경로를 조용히 사용하는 일을 막습니다.
+
+Hosted Agent는 요청을 받으면 `AZBRIEF_PROMPT_*` 환경 변수를 Prompt Agent 역할 설정으로
+해석하고 `FOUNDRY_HOSTED_AGENT_NAME`을 내부 설정에서 지웁니다. 즉, Hosted Agent 안의
+`AzureUpdateAnalyzer`가 자기 자신을 다시 호출하는 재귀를 구조적으로 차단합니다. 분석기는
+첫 요청에서 지연 생성되며 이후 같은 sandbox 세션에서 재사용됩니다.
+
+### 업데이트 한 건의 분석 상태 머신
+
+```mermaid
+flowchart LR
+   E[Optional enrichment] --> P[Plan]
+   P --> X[Execute]
+   X --> V[Evaluate]
+   V -->|sufficient| R[Report]
+   V -->|partial| T[Revise tasks]
+   T --> X
+   V -->|insufficient| P
+   V -->|model error| F[Fail closed]
+   R --> S[Safety and quality gates]
+   S --> O[AnalysisResult]
+```
+
+**선행 enrichment.** 구성된 경우 `research`와 `impact` Prompt Agent가 병렬로 공식 문서와
+실제 테넌트 상태를 조사합니다. `action`은 두 결과 뒤에서 실행 가능한 대응을 구성하고,
+`review`는 근거가 약하거나 충돌하는 claim을 제거합니다. 이 네 단계는 보강 경로이므로 한
+단계의 실패가 전체 분석을 중단시키지 않습니다. 반대로 planner/reporter 같은 필수 런타임
+역할이 없으면 분석은 실패합니다.
+
+**Plan.** Planner는 업데이트 본문과 Microsoft Learn 문서를 먼저 읽고 조사 목표와
+`AnalysisTask` 목록을 구조화합니다. Planning 단계에서 사용할 수 있는 도구는 문서 검색 계열로
+제한되므로, 아직 근거가 없는 상태에서 테넌트 영향 결론을 내리지 않습니다.
+
+**Execute.** 계획된 도구를 이름으로 찾아 Pydantic 입력 계약에 맞춰 실행합니다. 읽기 전용이며
+동시 실행에 안전하다고 선언된 도구는 병렬 처리하고, 쓰기 도구 또는 안전 여부를 판정할 수 없는
+도구는 직렬 처리합니다. 계획이 놓치기 쉬운 Resource Health, Policy, Service Health, Advisor,
+구성 프로파일, dependency, 지역 가용성 확인은 업데이트 종류에 따라 첫 실행 pass에서 자동
+보강됩니다.
+
+**Evaluate and revise.** Evaluator는 단순히 도구가 성공했는지가 아니라 공식 사실, 테넌트
+영향, 리소스 식별, 지역/구성 정보와 **근거 완전성**을 각각 판정합니다. 충분하면 보고서로
+넘어가고, 일부가 비면 필요한 task만 고쳐 다시 실행하며, 조사 계획 자체가 부족하면 planning으로
+돌아갑니다. 계획 수정, task 수정, 전체 iteration에는 각각 상한이 있어 무한 루프를 막습니다.
+
+**Report.** Reporter는 수집된 근거를 `AnalysisResult` 스키마로 합성합니다. 중요성은 공지
+자체의 중요도, 영향도는 현재 환경에 미치는 효과, 직무연관성은 구독자의 책임과의 관련성으로
+서로 독립적으로 기록합니다. URL 정규화, JSON 복구, 출력 길이 초과 시 이어쓰기 복구가 이
+경계에서 적용됩니다.
+
+**Safety and quality gates.** 실행 명령이 포함된 action item은 정적 규칙, 독립 LLM 검증,
+정책 gate를 통과해야 합니다. 파괴적이거나 placeholder가 남은 명령, 근거에 없는 리소스,
+rollback 없는 위험 명령은 그대로 전달되지 않습니다. 설정에 따라 trajectory 평가와 G-Eval
+품질 평가도 수행하며, runtime G-Eval은 개선된 경우에만 한 번의 재작성 결과를 채택합니다.
+
+### 큰 도구 결과와 근거 보존
+
+도구 출력은 `TOOL_RESULT_BUDGET_CHARS`보다 크다고 잘라 버리지 않습니다. 전체 문자열은
+trace 범위의 `context_store`에 저장되고 prompt에는 앞부분과 `[ref=Rn]` handle이 들어갑니다.
+Evaluator는 preview만 보고 리소스가 없다고 결론 내릴 수 없으며, `query_tool_result`로 전체
+결과를 검색한 뒤에만 부재를 확정할 수 있습니다. 저장소는 항목/전체 크기 제한과 오래된 항목
+퇴출 정책을 가지며, 분석이 끝나면 해당 trace의 결과를 지웁니다.
+
+### 체크포인트가 보장하는 것
+
+병렬 분석에서는 다섯 번째 업데이트가 두 번째보다 먼저 끝날 수 있습니다. 가장 최근에 끝난
+항목의 시간을 저장하면 다음 실행이 아직 끝나지 않은 두 번째 항목 뒤에서 시작하여 이를 영구히
+건너뜁니다. `_WatermarkCursor`는 그래서 **오래된 순서로 끊김 없이 완료된 prefix**만 전진시킵니다.
+
+- 분석 성공과 격리된 단건 실패는 cursor를 전진시킵니다.
+- 시간 부족으로 미룬 항목과 연속 실패 차단 뒤의 미실행 항목은 cursor를 전진시키지 않습니다.
+- dry run은 checkpoint를 쓰지 않습니다.
+- blob 저장은 기존 값보다 뒤로 갈 수 없고 ETag 조건부 요청으로 동시 실행 경쟁을 막습니다.
+- checkpoint 쓰기가 실패해도 digest 실행 자체는 실패시키지 않습니다. 다음 실행의 중복 처리가
+  업데이트 누락보다 안전하기 때문입니다.
+
+Admin의 “run now”와 외부 API가 시작한 실행도 같은 `execute_run()`을 사용하므로 위 의미가
+동일합니다. `/mcp`의 `analyze_azure_update`는 digest 실행을 만들지 않고 단건 Hosted Agent
+분석만 위임하며, `get_recent_digest_runs`는 메모리의 최근 실행 기록을 읽습니다. 이 실행 기록은
+관측용이며 내구성이 필요한 처리 상태는 checkpoint만 소유합니다.
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
 
@@ -351,9 +539,12 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 
 ### Post-deployment steps
 
-1. **Azure MCP Server 배포** — `infra/azure-mcp-server`는 공식 Azure MCP 이미지를
-  별도 Container App에 배포합니다. 서버는 Entra 인증을 유지하고 `single` 모드와
-  `--read-only`로 실행되며, 관리 ID에는 대상 구독 `Reader`만 부여합니다.
+1. **Azure MCP Server 배포** — `infra/azure-mcp-server`는 검증된 공식 Azure MCP
+  `3.0.0-beta.38` 이미지를 별도 Container App에 배포합니다. 버전은 Bicep의
+  `azureMcpImage` 파라미터로 명시적으로 올립니다. 서버는 Entra 인증을 유지하고 `--mode all`과
+  `--namespace group|resourcehealth|advisor`, `--read-only`로 실행됩니다. 따라서
+  동적 `azure` 프록시 없이 세 namespace의 direct tools만 노출하며, 관리 ID에는 대상
+  구독 `Reader`만 부여합니다. 기본 크기는 0.5 vCPU/1 GiB입니다.
   ```powershell
   cd infra/azure-mcp-server
   azd env new production
@@ -378,8 +569,13 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
   ```
 3. **Foundry Prompt Agent 생성** — ARM은 Agent 데이터 플레인 객체를 만들 수 없습니다.
   Research에는 Microsoft Learn MCP가 먼저, Web Search가 보완 수단으로 배치됩니다.
-  Impact에는 위 Azure MCP connection이 연결됩니다. `.env`에 endpoint, Agent 이름,
-  프로비저닝 모델과 다음 설정을 넣은 뒤 실행합니다:
+  Impact에는 위 Azure MCP connection이 연결됩니다. Hosted Agent는 각 impact 요청에
+  정확한 tenant GUID와 설정된 subscription GUID를 동적으로 넣고 literal `default`를
+  금지합니다. Remote leaf tool은 tenant가 빠지거나 `default`이면 이를 tenant 표시 이름으로
+  해석해 거부할 수 있습니다. Azure MCP image를 올린 뒤에는 direct tool schema와 read-only
+  inventory smoke를 먼저 검증합니다. Azure MCP의 mode, namespace, 또는 scope 계약이 바뀌면 Impact
+  Agent와 Hosted Agent의 새 immutable version을 함께 발행해야 합니다. `.env`에 endpoint,
+  Agent 이름, 프로비저닝 모델과 다음 설정을 넣은 뒤 실행합니다:
   ```env
   FOUNDRY_RESEARCH_WEB_SEARCH_ENABLED=true
   AZURE_MCP_SERVER_URL=<AZURE_MCP_SERVER_URL>
@@ -498,15 +694,19 @@ python -m scripts.provision_foundry_agents --check            # read-only readin
 python -m scripts.provision_foundry_agents --delete           # tear the roster down
 ```
 
-Each agent's standing instructions are **derived from** the runtime prompt in
-`src/agent/foundry_backend.py`, so an agent's role and the message it receives per run can
-never drift apart. Stage responses use strict JSON schemas; evidence claims carry stable IDs,
-and review rejection removes dependent actions. A failure on one stage is reported and the
-rest still run.
+Each Agent's base standing instruction comes from `RUNTIME_AGENT_INSTRUCTIONS` or
+`STAGE_PROMPTS` in `src/agent/foundry_backend.py`. The seven domain documents under
+`.github/skills/` additionally own a bounded `Foundry Runtime Guidance` section. Provisioning
+loads only those compact sections and compiles a role-specific set into the immutable Foundry
+Agent instruction: impact receives Azure service/KQL/architecture guidance, reporter receives
+report/language/email guidance, evaluator receives the evaluation rubric, and so on. The full
+developer workflow, file paths, and test commands never enter the model context. A change to a
+runtime section appears as instruction drift in `--check` and requires a new Prompt Agent version.
 
-Foundry versioned Skills and toolbox skill discovery are public preview, so AzBrief does not
-make them a production prerequisite. When adopted, skills must be versioned and loaded through
-the toolbox MCP resource discovery flow rather than copied into every Agent instruction.
+This deterministic instruction compilation does not depend on the public-preview Foundry Skills
+API. Native versioned Skills and toolbox MCP discovery remain an optional future delivery path;
+if adopted, pin tested Skill versions and keep the compiled instructions as the production
+fallback until private-network support and runtime behavior are production-ready.
 
 The whole path is **read-only** with respect to your Azure resources. Models, strict output
 formats, app FunctionTool declarations, optional managed tools, guardrails, and memory live on
@@ -684,6 +884,8 @@ open when unset for local compatibility.
 POST /api/analyze                  Analyze an Azure Update URL
 POST /api/rss/check                List updates not yet processed
 POST /api/batch/analyze            Analyze up to 10 URLs
+POST /api/orchestrate/run          Start a checkpoint-aware digest run
+GET  /api/orchestrate/runs/{id}    Poll one in-memory run record
 GET  /health                       Health check
 GET  /                             Service info
 POST /mcp                          MCP Streamable HTTP (X-API-Key required)
@@ -757,7 +959,7 @@ Fleet-level measurement stratifies updates across categories with a fixed seed, 
 seed selects the same updates and a before/after comparison stays valid:
 
 ```bash
-python -m scripts.evaluate_batch --months 6 --count 12 --seed 42
+python -m scripts.evaluate_batch --months 6 --sample 12 --seed 42
 ```
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
@@ -803,6 +1005,77 @@ AzBriefEnterprise/
 ├── pyproject.toml
 └── requirements.txt
 ```
+
+## Directory guides
+
+각 README는 해당 디렉터리의 목적, runtime 연결, 실제 사용 예시, 변경 시 지켜야 할 불변식과
+집중 검증 명령을 설명합니다. Git에서 유지보수하는 first-party 경계만 개별 문서를 두고, secret,
+dependency, cache, 실행 산출물 디렉터리는 아래 별도 정책으로 관리합니다.
+
+### Application and tests
+
+| 디렉터리 | 가이드 | 핵심 책임 |
+|---|---|---|
+| `src` | [`src/README.md`](src/README.md) | 제어면과 Hosted Agent Python package 지도 |
+| `src/admin` | [`src/admin/README.md`](src/admin/README.md) | EasyAuth, allow-list, nonce CSP, 수동 run |
+| `src/agent` | [`src/agent/README.md`](src/agent/README.md) | LangGraph, Foundry adapter, tools, resilience, safety/evaluation |
+| `src/agent/prompts` | [`src/agent/prompts/README.md`](src/agent/prompts/README.md) | phase-specific prompt assembly |
+| `src/agent/prompts/languages` | [`src/agent/prompts/languages/README.md`](src/agent/prompts/languages/README.md) | 언어별 style guide와 translation notes |
+| `src/agent/prompts/report` | [`src/agent/prompts/report/README.md`](src/agent/prompts/report/README.md) | report schema와 category frame |
+| `src/email` | [`src/email/README.md`](src/email/README.md) | responsive HTML/plain text와 ACS delivery |
+| `src/i18n` | [`src/i18n/README.md`](src/i18n/README.md) | language registry와 fallback chain |
+| `src/i18n/labels` | [`src/i18n/labels/README.md`](src/i18n/labels/README.md) | canonical/translated UI label bundle |
+| `src/rss` | [`src/rss/README.md`](src/rss/README.md) | live RSS, history merge, URL normalization |
+| `src/services` | [`src/services/README.md`](src/services/README.md) | Azure/public API data access와 checkpoint |
+| `scripts` | [`scripts/README.md`](scripts/README.md) | 로컬 분석, provisioning, evaluation, optimization CLI |
+| `tests` | [`tests/README.md`](tests/README.md) | 영역별 pytest suite와 fixture |
+
+### Infrastructure and repository operations
+
+| 디렉터리 | 가이드 | 핵심 책임 |
+|---|---|---|
+| `infra` | [`infra/README.md`](infra/README.md) | Enterprise와 Azure MCP IaC 배포 단위 색인 |
+| `infra/enterprise` | [`infra/enterprise/README.md`](infra/enterprise/README.md) | 제품 topology의 Bicep source of truth |
+| `infra/enterprise/modules` | [`infra/enterprise/modules/README.md`](infra/enterprise/modules/README.md) | internal ingress의 runtime-name Private DNS module |
+| `infra/azure-mcp-server` | [`infra/azure-mcp-server/README.md`](infra/azure-mcp-server/README.md) | read-only Azure MCP `azd` 배포 단위 |
+| `infra/azure-mcp-server/infra` | [`infra/azure-mcp-server/infra/README.md`](infra/azure-mcp-server/infra/README.md) | MCP Container App, Entra, RBAC composition |
+| `infra/azure-mcp-server/infra/modules` | [`infra/azure-mcp-server/infra/modules/README.md`](infra/azure-mcp-server/infra/modules/README.md) | MCP 기능별 Bicep module |
+| `.github` | [`.github/README.md`](.github/README.md) | 저장소 정책, 자동화, prompt, skill |
+| `.github/prompts` | [`.github/prompts/README.md`](.github/prompts/README.md) | VS Code Chat 장시간 작업 prompt |
+| `.github/workflows` | [`.github/workflows/README.md`](.github/workflows/README.md) | CI, App/Job image rollout, 품질 workflow |
+| `.github/skills` | [`.github/skills/README.md`](.github/skills/README.md) | 작업 유형별 저장소 지식 색인 |
+| `.vscode` | [`.vscode/README.md`](.vscode/README.md) | 공유 editor/task/debug/MCP 설정과 현재 제약 |
+
+### Domain skill guides
+
+| Skill | 가이드 | 사용할 때 |
+|---|---|---|
+| Azure service integration | [README](.github/skills/azure-service-integration/README.md) | data-access service와 Agent tool 추가 |
+| Email template | [README](.github/skills/email-template/README.md) | 이메일 layout, label, ACS 경로 변경 |
+| Foundry architecture | [README](.github/skills/foundry-agent-architecture/README.md) | Hosted/Prompt Agent와 identity 경계 감사 |
+| Foundry references | [README](.github/skills/foundry-agent-architecture/references/README.md) | 시점별 평가와 live evidence 확인 |
+| KQL Resource Graph | [README](.github/skills/kql-resource-graph/README.md) | ARG query 작성·복구·완전성 개선 |
+| Language naturalness | [README](.github/skills/language-naturalness/README.md) | corpus 기반 ko/en/ja 문체 개선 |
+| Report evaluation | [README](.github/skills/report-evaluation/README.md) | G-Eval과 holdout 평가 |
+| Report quality | [README](.github/skills/report-quality/README.md) | 결정론적 구조·완결성 검사 |
+
+### Local and generated directories
+
+다음 디렉터리는 설치·실행·평가 과정에서 만들어지며 Git의 유지보수 문서 경계가 아닙니다.
+README를 넣으면 현재 `.gitignore` 정책상 추적되지 않거나, 생성물을 source처럼 오해하게 만들 수
+있어 루트에서만 용도를 설명합니다.
+
+| 경로 | 내용 | 관리 방법 |
+|---|---|---|
+| `.venv/` | Python virtual environment | 삭제 후 requirements로 재생성 |
+| `.azure/`, `infra/azure-mcp-server/.azure/` | 로컬 `azd` environment state | secret 포함 가능; commit 금지 |
+| `data/` | update history, analysis/pattern/retirement local state | crawler/runtime이 생성; 필요한 원본만 별도 정책으로 관리 |
+| `logs/` | 구조화 local run log | 진단 후 보존 기간에 따라 정리 |
+| `eval_runs/` | report, HTML, G-Eval score artifact | 재현 가능한 평가 결과; commit 금지 |
+| `out/` | best-effort email preview | 전달 성공의 source of truth로 사용하지 않음 |
+| `.pytest_cache/`, `__pycache__/`, `.coverage`, `htmlcov/` | test/interpreter cache와 coverage | 언제든 재생성 가능 |
+| `*.egg-info/`, `build/`, `dist/` | packaging 산출물 | source distribution 과정에서 재생성 |
+| `docs/` | 현재 ignore된 로컬 문서/실험 공간 | 제품 문서는 추적되는 README 또는 명시적 docs 정책으로 이동 |
 
 ## Tech stack
 

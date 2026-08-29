@@ -5,6 +5,18 @@ description: 'G-Eval LLM-as-a-Judge methodology for scoring and autonomously imp
 
 # AzBrief Report Evaluation — G-Eval LLM-as-a-Judge
 
+## Foundry Runtime Guidance
+
+- Evaluate independently across actionability, faithfulness, job relevance, structure, and
+  architectural depth. Faithfulness outranks polish.
+- Treat any fabricated resource, date, command, or URL as critical. Reward concise evidence,
+  honest zero-impact findings, and explicit limits rather than verbosity.
+- Return evidence-addressed corrections that name the unsupported claim or missing fact and
+  the smallest required change; never rewrite merely to raise a score.
+- Judge or parser failure is not a pass. Preserve the error and fail closed.
+
+<!-- End Foundry Runtime Guidance -->
+
 ## When to Use
 
 - Scoring a generated report's **semantic** quality with `src/agent/geval.py` (`GEvalJudge`)

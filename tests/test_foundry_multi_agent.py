@@ -199,6 +199,48 @@ class TestPipelineExecution:
         assert "impact-1" in action_prompt
 
     @pytest.mark.asyncio
+    async def test_impact_receives_exact_azure_mcp_scope(self, sdk_present, monkeypatch):
+        calls = []
+
+        async def fake_invoke(endpoint, agent, prompt, timeout_s):
+            calls.append(prompt)
+            return _stage_result("impact", "tenant evidence")
+
+        roster = json.dumps([{"name": "azbrief-impact", "stage": "impact"}])
+        monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
+        node = foundry_backend.build_multi_agent_node(
+            _settings(
+                foundry_enrichment_agents=roster,
+                azure_subscription_id="11111111-1111-1111-1111-111111111111",
+            )
+        )
+
+        await node({"update_context": "ctx"})
+
+        assert f"Azure tenant ID: {_TENANT}" in calls[0]
+        assert "Azure subscription ID: 11111111-1111-1111-1111-111111111111" in calls[0]
+        assert "never pass the literal value default" in calls[0]
+
+    @pytest.mark.asyncio
+    async def test_impact_does_not_invent_subscription_scope(self, sdk_present, monkeypatch):
+        calls = []
+
+        async def fake_invoke(endpoint, agent, prompt, timeout_s):
+            calls.append(prompt)
+            return _stage_result("impact", "tenant evidence")
+
+        roster = json.dumps([{"name": "azbrief-impact", "stage": "impact"}])
+        monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
+        node = foundry_backend.build_multi_agent_node(
+            _settings(foundry_enrichment_agents=roster, azure_subscription_id=None)
+        )
+
+        await node({"update_context": "ctx"})
+
+        assert f"Azure tenant ID: {_TENANT}" in calls[0]
+        assert "Azure subscription ID:" not in calls[0]
+
+    @pytest.mark.asyncio
     async def test_a_failing_stage_is_isolated(self, sdk_present, monkeypatch):
         async def fake_invoke(endpoint, agent, prompt, timeout_s):
             if agent == "azbrief-impact":

@@ -5,6 +5,19 @@ description: 'Write and debug KQL queries for Azure Resource Graph. Use when: KQ
 
 # KQL Resource Graph Queries
 
+## Foundry Runtime Guidance
+
+- Use Resource Graph's restricted dialect: no `join`, `let`, `render`, `datatable`, or
+  `toscalar()`; use `mv-expand` only on arrays.
+- Compare types with `=~`, retain `subscriptionId`, project named fields, and order stably.
+  Never return broad raw `properties`, `tags`, or `sku` bags.
+- Query tenant-wide accessible subscriptions and cite exact IDs. Query ARM resources and
+  properties now; defer only data-plane, application, or in-cluster state.
+- An empty filtered result does not prove absence. Probe the type, correct filters against
+  observed values, and preserve uncertainty when completeness is unresolved.
+
+<!-- End Foundry Runtime Guidance -->
+
 ## When to Use
 
 - Writing or modifying KQL queries in `src/services/resource_graph.py`

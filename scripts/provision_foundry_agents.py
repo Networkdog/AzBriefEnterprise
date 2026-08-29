@@ -4,9 +4,13 @@ The running app calls a required primary agent, optional role-specific codex
 and fast agents, and an optional four-stage enrichment roster. Agent definitions
 live in the Foundry project's data plane and cannot be created by ARM.
 
-Instructions are derived from :data:`src.agent.foundry_backend.STAGE_PROMPTS`,
-so the agent's standing role and the per-run message can never drift: the
-runtime prompt is the same text plus the update context appended.
+Base instructions are derived from
+:data:`src.agent.foundry_backend.RUNTIME_AGENT_INSTRUCTIONS` and
+:data:`src.agent.foundry_backend.STAGE_PROMPTS`. Role-scoped operational rules
+are compiled from the bounded ``Foundry Runtime Guidance`` section in each
+``.github/skills/*/SKILL.md``. The detailed developer workflow is never sent to
+the model, while ``--check`` detects any change to the runtime section as Agent
+instruction drift.
 
 The script derives app-owned FunctionTool definitions from the live LangChain
 Pydantic schemas, publishes strict stage JSON response formats, and preserves
@@ -55,6 +59,53 @@ from src.config import (  # noqa: E402
 # The runtime prompt ends with the update context; an agent's standing
 # instructions are everything before that.
 _CONTEXT_MARKER = "\n\nAzure Update under analysis:"
+_RUNTIME_GUIDANCE_HEADING = "## Foundry Runtime Guidance"
+_RUNTIME_GUIDANCE_END = "<!-- End Foundry Runtime Guidance -->"
+_SKILL_ROOT = Path(__file__).resolve().parent.parent / ".github" / "skills"
+_RUNTIME_SKILLS_BY_PURPOSE: dict[str, tuple[str, ...]] = {
+    # The current deployment reuses primary for unset runtime roles, so primary
+    # carries the complete compact set. Distinct role agents receive narrower sets.
+    "primary": (
+        "foundry-agent-architecture",
+        "azure-service-integration",
+        "kql-resource-graph",
+        "report-quality",
+        "report-evaluation",
+        "language-naturalness",
+        "email-template",
+    ),
+    "planner": (
+        "foundry-agent-architecture",
+        "azure-service-integration",
+        "kql-resource-graph",
+    ),
+    "evaluator": (
+        "foundry-agent-architecture",
+        "report-evaluation",
+        "report-quality",
+    ),
+    "reporter": (
+        "report-quality",
+        "report-evaluation",
+        "language-naturalness",
+        "email-template",
+    ),
+    "codex": ("kql-resource-graph", "azure-service-integration"),
+    "fast": ("language-naturalness", "report-quality"),
+    "research": ("foundry-agent-architecture",),
+    "impact": (
+        "foundry-agent-architecture",
+        "azure-service-integration",
+        "kql-resource-graph",
+    ),
+    "action": ("report-quality",),
+    "review": (
+        "foundry-agent-architecture",
+        "report-evaluation",
+        "report-quality",
+        "language-naturalness",
+    ),
+}
 _RETIRED_APP_FUNCTION_NAMES = frozenset(
     {
         "get_resource_type_summary",
@@ -75,11 +126,45 @@ def stage_instructions(stage: str) -> str:
     return STAGE_PROMPTS[stage].split(_CONTEXT_MARKER)[0].strip()
 
 
+@lru_cache(maxsize=None)
+def _load_runtime_skill_guidance(skill_name: str) -> str:
+    """Load the bounded runtime section from one repository Skill."""
+    path = _SKILL_ROOT / skill_name / "SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    if text.count(_RUNTIME_GUIDANCE_HEADING) != 1 or text.count(_RUNTIME_GUIDANCE_END) != 1:
+        raise RuntimeError(f"{path} must contain one bounded {_RUNTIME_GUIDANCE_HEADING!r} section")
+    section = text.split(_RUNTIME_GUIDANCE_HEADING, 1)[1]
+    section = section.split(_RUNTIME_GUIDANCE_END, 1)[0]
+    guidance = section.strip()
+    if not guidance:
+        raise RuntimeError(f"{path} has an empty Foundry runtime guidance section")
+    return guidance
+
+
+def runtime_skill_names(purpose: str) -> tuple[str, ...]:
+    """Return repository Skills assigned to one Foundry Agent purpose."""
+    return _RUNTIME_SKILLS_BY_PURPOSE.get(purpose, ())
+
+
+def runtime_skill_instructions(purpose: str) -> str:
+    """Compile role-scoped Skill guidance for one Foundry Agent definition."""
+    blocks = [
+        f"### Skill: {name}\n{_load_runtime_skill_guidance(name)}"
+        for name in runtime_skill_names(purpose)
+    ]
+    if not blocks:
+        return ""
+    return "## AzBrief Runtime Skills\n\n" + "\n\n".join(blocks)
+
+
 def agent_instructions(purpose: str) -> str:
     """Return standing instructions for a runtime role or enrichment stage."""
     if purpose in RUNTIME_AGENT_INSTRUCTIONS:
-        return RUNTIME_AGENT_INSTRUCTIONS[purpose]
-    return stage_instructions(purpose)
+        base = RUNTIME_AGENT_INSTRUCTIONS[purpose]
+    else:
+        base = stage_instructions(purpose)
+    skill_guidance = runtime_skill_instructions(purpose)
+    return f"{base}\n\n{skill_guidance}" if skill_guidance else base
 
 
 def resolve_runtime_roster(roles: list[str] | None) -> list[tuple[str, str]]:
@@ -151,16 +236,18 @@ def _managed_server_tools(purpose: str) -> tuple[Any, ...]:
         and settings.azure_mcp_server_url
         and settings.azure_mcp_project_connection_name
     ):
+        subscription_hint = settings.azure_subscription_id or "the target subscription ID"
         return (
             MCPTool(
                 server_label="azure_read_only",
                 server_url=settings.azure_mcp_server_url,
                 project_connection_id=settings.azure_mcp_project_connection_name,
-                allowed_tools=["azure"],
                 require_approval="never",
                 server_description=(
-                    "Read-only Azure MCP Server. Use it as the primary source for live "
-                    "tenant resource evidence."
+                    "Read-only Azure MCP Server exposing direct resource-group, Resource Health, "
+                    "and Advisor tools. Use these tools as the primary source for live tenant "
+                    "evidence; there is no single `azure` proxy tool. Always pass tenant "
+                    f"`{settings.azure_tenant_id}` and subscription `{subscription_hint}`."
                 ),
             ),
         )

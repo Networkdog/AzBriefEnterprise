@@ -757,11 +757,6 @@
     "microsoft.network/privateendpoints": [
       {
         "purpose": "Result-improved query (was empty)",
-        "query": "Resources \n| where type =~ 'microsoft.network/privateendpoints' \n| mv-expand conn = properties.privateLinkServiceConnections \n| extend targetId = tostring(conn.properties.privateLinkServiceId) \n| where targetId contains 'automationAccounts' \n| project name, resourceGroup, subscriptionId, targetId \n| limit 200",
-        "recorded": "2026-08-27"
-      },
-      {
-        "purpose": "Result-improved query (was empty)",
         "query": "Resources  \n| where type =~ 'microsoft.network/privateendpoints'  \n| mv-expand conn = properties.privateLinkServiceConnections  \n| extend targetId = tostring(conn.properties.privateLinkServiceId)  \n| where targetId contains 'storageAccounts'  \n| project name, resourceGroup, subscriptionId, targetId  \n| limit 200",
         "recorded": "2026-08-27"
       },
@@ -779,6 +774,11 @@
         "purpose": "Result-improved query (was empty)",
         "query": "Resources  \n| where type =~ 'microsoft.network/privateendpoints'  \n| mv-expand conn = properties.privateLinkServiceConnections  \n| extend targetId = tostring(conn.properties.privateLinkServiceId)  \n| where targetId contains 'microsoft.cognitiveservices'  \n| project name, resourceGroup, subscriptionId, targetId  \n| limit 200",
         "recorded": "2026-08-27"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources\n| where type =~ 'microsoft.network/privateendpoints'\n| mv-expand conn = properties.privateLinkServiceConnections\n| extend targetId = tostring(conn.properties.privateLinkServiceId)\n| where targetId contains 'storageAccounts'\n| project name, resourceGroup, subscriptionId, targetId\n| limit 200",
+        "recorded": "2026-08-28"
       }
     ],
     "microsoft.insights/diagnosticsettings": [

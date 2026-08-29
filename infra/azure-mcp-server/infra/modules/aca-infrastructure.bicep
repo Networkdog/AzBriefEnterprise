@@ -20,11 +20,23 @@ param azureAdClientId string
 @description('Default subscription exposed to read-only Azure MCP tools.')
 param targetSubscriptionId string
 
+@description('Pinned official Azure MCP Server image.')
+param azureMcpImage string
+
+@description('Azure MCP namespaces exposed to the impact Agent. Keep this list narrow and read-only.')
+@minLength(1)
+@maxLength(3)
+param namespaces array = [
+  'group'
+  'resourcehealth'
+  'advisor'
+]
+
 @description('Number of CPU cores allocated to the server.')
-param cpuCores string = '0.25'
+param cpuCores string = '0.5'
 
 @description('Memory allocated to the server.')
-param memorySize string = '0.5Gi'
+param memorySize string = '1Gi'
 
 @description('Minimum number of replicas.')
 param minReplicas int = 1
@@ -35,15 +47,17 @@ param maxReplicas int = 3
 param tags object = {}
 
 var environmentName = '${name}-env'
-var serverArgs = [
+var baseArgs = [
   '--transport'
   'http'
   '--outgoing-auth-strategy'
   'UseHostingEnvironmentIdentity'
   '--mode'
-  'single'
+  'all'
   '--read-only'
 ]
+var namespaceArgs = [for namespace in namespaces: ['--namespace', namespace]]
+var serverArgs = flatten(concat([baseArgs], namespaceArgs))
 var baseEnvironment = [
   {
     name: 'ASPNETCORE_ENVIRONMENT'
@@ -137,7 +151,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       containers: [
         {
           name: name
-          image: 'mcr.microsoft.com/azure-sdk/azure-mcp:latest'
+          image: azureMcpImage
           command: []
           args: serverArgs
           resources: {

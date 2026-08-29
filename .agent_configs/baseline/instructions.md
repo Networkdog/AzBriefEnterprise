@@ -1,1 +1,0 @@
-Evaluate whether AzBrief produces environment-grounded Azure update analysis with traceable evidence, correct relevance, and safe actionable recommendations.

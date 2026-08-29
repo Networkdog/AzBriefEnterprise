@@ -19,6 +19,8 @@ from scripts.provision_foundry_agents import (
     provision,
     resolve_roster,
     resolve_runtime_roster,
+    runtime_skill_instructions,
+    runtime_skill_names,
     stage_instructions,
     validate_roster,
 )
@@ -95,6 +97,55 @@ class TestStageInstructions:
 
         for stage in FOUNDRY_AGENT_STAGES:
             assert STAGE_PROMPTS[stage].startswith(stage_instructions(stage))
+
+    def test_every_repository_skill_is_assigned_to_an_agent(self):
+        expected = {
+            "azure-service-integration",
+            "email-template",
+            "foundry-agent-architecture",
+            "kql-resource-graph",
+            "language-naturalness",
+            "report-evaluation",
+            "report-quality",
+        }
+        assigned = {
+            skill
+            for purpose in (*LLM_ROLES, *FOUNDRY_AGENT_STAGES)
+            for skill in runtime_skill_names(purpose)
+        }
+        assert assigned == expected
+
+    @pytest.mark.parametrize(
+        ("purpose", "required", "excluded"),
+        [
+            ("research", "foundry-agent-architecture", "kql-resource-graph"),
+            ("impact", "kql-resource-graph", "email-template"),
+            ("action", "report-quality", "report-evaluation"),
+            ("review", "report-evaluation", "email-template"),
+            ("planner", "azure-service-integration", "language-naturalness"),
+            ("evaluator", "report-evaluation", "email-template"),
+            ("reporter", "email-template", "kql-resource-graph"),
+            ("codex", "kql-resource-graph", "report-quality"),
+            ("fast", "language-naturalness", "azure-service-integration"),
+        ],
+    )
+    def test_skill_guidance_is_role_scoped(self, purpose, required, excluded):
+        instructions = runtime_skill_instructions(purpose)
+        assert f"### Skill: {required}" in instructions
+        assert f"### Skill: {excluded}" not in instructions
+
+    def test_primary_carries_compact_fallback_guidance(self):
+        instructions = runtime_skill_instructions("primary")
+        assert len(runtime_skill_names("primary")) == 7
+        assert len(instructions) < 6_000
+
+    def test_runtime_guidance_excludes_developer_procedures(self):
+        for purpose in (*LLM_ROLES, *FOUNDRY_AGENT_STAGES):
+            instructions = runtime_skill_instructions(purpose)
+            assert "python -m" not in instructions
+            assert "src/" not in instructions
+            assert "tests/" not in instructions
+            assert "apply_patch" not in instructions
 
 
 class TestRosterResolution:
@@ -205,23 +256,15 @@ class TestProvision:
         )
         assert update_call.kwargs["previous_definition"] is existing.versions.latest.definition
         assert {
-            tool.name
-            for tool in create_call.kwargs["managed_tools"]
-            if getattr(tool, "name", None)
-        } == (
-            ENRICHMENT_LOCAL_TOOL_NAMES["research"]
-        )
+            tool.name for tool in create_call.kwargs["managed_tools"] if getattr(tool, "name", None)
+        } == (ENRICHMENT_LOCAL_TOOL_NAMES["research"])
         assert _server_tool_key(create_call.kwargs["managed_tools"][0]) == (
             "mcp",
             "microsoft_learn",
         )
         assert {
-            tool.name
-            for tool in update_call.kwargs["managed_tools"]
-            if getattr(tool, "name", None)
-        } == (
-            ENRICHMENT_LOCAL_TOOL_NAMES["impact"]
-        )
+            tool.name for tool in update_call.kwargs["managed_tools"] if getattr(tool, "name", None)
+        } == (ENRICHMENT_LOCAL_TOOL_NAMES["impact"])
         assert create_call.kwargs["managed_text"].as_dict() == (
             build_stage_text_options("research").as_dict()
         )
@@ -452,6 +495,8 @@ class TestManagedServerTools:
         assert keys == [("mcp", "microsoft_learn"), ("web_search", "")]
 
     def test_impact_uses_configured_read_only_azure_mcp(self, monkeypatch):
+        monkeypatch.setenv("AZURE_TENANT_ID", "test-tenant")
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "test-subscription")
         monkeypatch.setenv("AZURE_MCP_SERVER_URL", "https://mcp.example.com")
         monkeypatch.setenv("AZURE_MCP_PROJECT_CONNECTION_NAME", "azure-mcp-read-only")
         get_settings.cache_clear()
@@ -460,10 +505,15 @@ class TestManagedServerTools:
 
         assert len(tools) == 1
         assert _server_tool_key(tools[0]) == ("mcp", "azure_read_only")
-        assert tools[0].allowed_tools == ["azure"]
+        assert tools[0].allowed_tools is None
         assert tools[0].require_approval == "never"
+        assert "tenant `test-tenant` and subscription `test-subscription`" in (
+            tools[0].server_description
+        )
 
     def test_impact_accepts_foundry_normalized_mcp_payload(self, monkeypatch):
+        monkeypatch.setenv("AZURE_TENANT_ID", "test-tenant")
+        monkeypatch.setenv("AZURE_SUBSCRIPTION_ID", "test-subscription")
         monkeypatch.setenv("AZURE_MCP_SERVER_URL", "https://mcp.example.com")
         monkeypatch.setenv("AZURE_MCP_PROJECT_CONNECTION_NAME", "azure-mcp-read-only")
         get_settings.cache_clear()
@@ -475,11 +525,12 @@ class TestManagedServerTools:
                 "server_label": "azure_read_only",
                 "server_url": "https://mcp.example.com/",
                 "project_connection_id": "azure-mcp-read-only",
-                "allowed_tools": {"tool_names": ["azure"]},
                 "require_approval": "never",
                 "server_description": (
-                    "Read-only Azure MCP Server. Use it as the primary source for live "
-                    "tenant resource evidence."
+                    "Read-only Azure MCP Server exposing direct resource-group, Resource Health, "
+                    "and Advisor tools. Use these tools as the primary source for live tenant "
+                    "evidence; there is no single `azure` proxy tool. Always pass tenant "
+                    "`test-tenant` and subscription `test-subscription`."
                 ),
             },
         )
@@ -515,10 +566,7 @@ class TestValidateRoster:
             "research",
             tools=[
                 *_managed_server_tools("research"),
-                *[
-                    SimpleNamespace(name=name)
-                    for name in ENRICHMENT_LOCAL_TOOL_NAMES["research"]
-                ],
+                *[SimpleNamespace(name=name) for name in ENRICHMENT_LOCAL_TOOL_NAMES["research"]],
             ],
         )
         client = MagicMock()

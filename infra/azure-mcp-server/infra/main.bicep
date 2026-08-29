@@ -22,6 +22,9 @@ param serviceManagementReference string = ''
 @secure()
 param appInsightsConnectionString string = ''
 
+@description('Pinned official Azure MCP Server image. Upgrade only after validating direct tool schemas and a live read-only inventory call.')
+param azureMcpImage string = 'mcr.microsoft.com/azure-sdk/azure-mcp:3.0.0-beta.38'
+
 param tags object = {
   application: 'azbrief-enterprise'
   environment: 'production'
@@ -58,6 +61,7 @@ module acaInfrastructure 'modules/aca-infrastructure.bicep' = {
     azureAdTenantId: tenant().tenantId
     azureAdClientId: entraApp.outputs.entraAppClientId
     targetSubscriptionId: targetSubscriptionId
+    azureMcpImage: azureMcpImage
     tags: tags
   }
 }

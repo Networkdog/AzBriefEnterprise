@@ -5,6 +5,19 @@ description: 'Evaluate and improve AzBrief report quality. Use when: report qual
 
 # AzBrief Report Quality Evaluation & Improvement
 
+## Foundry Runtime Guidance
+
+- Analyze every update before classification; never silently filter coverage. Keep
+     importance, tenant impact, and job relevance independent.
+- Match category framing: changes explain impact and inaction risk; capabilities explain
+     opportunity, named candidates, adoption cost, and owner.
+- Keep evidence, relevance, resource counts/reasons, and conclusions consistent. Actions name
+     what, where, why, completion criteria, precautions, rollback, and only real deadlines.
+- Optimize for a 3-second summary and 30-second scan. Never expose internal mechanics or
+     fabricate resources, work, dates, commands, or URLs.
+
+<!-- End Foundry Runtime Guidance -->
+
 > **Two-layer scoring.** This skill covers the fast **rule-based / mechanical** evaluator
 > (`ReportQualityEvaluator`, regex heuristics, 100-pt) used as a deterministic pre-filter.
 > For the **semantic G-Eval LLM-as-a-Judge** layer (five 1-5 dimensions, Chain-of-Thought,
