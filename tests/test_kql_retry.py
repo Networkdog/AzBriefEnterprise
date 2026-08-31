@@ -1,6 +1,7 @@
 """Tests for KQL retry logic, sanitize_kql, and ResourceGraphQueryFixer rule-based fallback."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -142,6 +143,35 @@ class TestResourceGraphQueryFixerRuleBased:
         )
         assert self.fixer._strip_markdown_fences("```\nResources\n```") == "Resources"
         assert self.fixer._strip_markdown_fences("Resources | take 5") == "Resources | take 5"
+
+    def test_extracts_kql_from_strict_specialist_envelope(self):
+        response = json.dumps(
+            {
+                "status": "ok",
+                "claims": [
+                    {
+                        "id": "resource_graph-1",
+                        "text": "Resources | where type =~ 'microsoft.storage/storageaccounts'",
+                        "evidence": ["query:corrected-kql"],
+                        "confidence": "high",
+                    }
+                ],
+                "gaps": [],
+            }
+        )
+
+        assert self.fixer._extract_kql_response(response).startswith("Resources | where")
+
+    def test_specialist_gap_is_never_executed_as_kql(self):
+        response = json.dumps(
+            {
+                "status": "partial",
+                "claims": [],
+                "gaps": ["The query intent is ambiguous"],
+            }
+        )
+
+        assert self.fixer._extract_kql_response(response) == ""
 
     def test_column_reference_error_fix(self):
         """Error about unresolved column triggers extend removal."""
@@ -401,42 +431,34 @@ class TestResultImprovementHelpers:
         assert _build_type_probe_query("Resources | project name") is None
 
 
-class TestLlmFallback:
-    """Tests for codex -> primary LLM fallback in the query fixer."""
+class TestResourceGraphSpecialistBoundary:
+    """The query fixer never crosses into another Prompt Agent specialty."""
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_primary_on_availability_error(self):
-        """A codex availability error (404 DeploymentNotFound) retries with primary."""
+    async def test_availability_error_is_not_sent_to_another_agent(self):
         from src.agent.tools import ResourceGraphQueryFixer
 
-        codex = MagicMock()
-        codex.ainvoke = AsyncMock(
+        specialist = MagicMock()
+        specialist.ainvoke = AsyncMock(
             side_effect=Exception("Error code: 404 - {'code': 'DeploymentNotFound'}")
         )
-        primary = MagicMock()
-        primary.ainvoke = AsyncMock(return_value=MagicMock(content="Resources | take 1"))
 
-        fixer = ResourceGraphQueryFixer(llm=codex, fallback_llm=primary)
-        result = await fixer._ainvoke_with_fallback(["msg"])
+        fixer = ResourceGraphQueryFixer(llm=specialist)
+        with pytest.raises(Exception, match="DeploymentNotFound"):
+            await fixer._ainvoke_specialist(["msg"])
 
-        assert result.content == "Resources | take 1"
-        codex.ainvoke.assert_called_once()
-        primary.ainvoke.assert_called_once()
+        specialist.ainvoke.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_no_fallback_on_transient_error(self):
-        """A transient (non-availability) error is not retried with the fallback."""
+    async def test_transient_error_is_propagated(self):
         from src.agent.tools import ResourceGraphQueryFixer
 
-        codex = MagicMock()
-        codex.ainvoke = AsyncMock(side_effect=Exception("429 rate limit exceeded"))
-        primary = MagicMock()
-        primary.ainvoke = AsyncMock()
+        specialist = MagicMock()
+        specialist.ainvoke = AsyncMock(side_effect=Exception("429 rate limit exceeded"))
 
-        fixer = ResourceGraphQueryFixer(llm=codex, fallback_llm=primary)
+        fixer = ResourceGraphQueryFixer(llm=specialist)
         with pytest.raises(Exception, match="429"):
-            await fixer._ainvoke_with_fallback(["msg"])
-        primary.ainvoke.assert_not_called()
+            await fixer._ainvoke_specialist(["msg"])
 
     def test_is_availability_error(self):
         from src.agent.tools import ResourceGraphQueryFixer

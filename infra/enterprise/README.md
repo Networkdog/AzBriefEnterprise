@@ -12,7 +12,7 @@
 |---|---|
 | Foundry | AI Services account, project, model deployment, VNet mode의 project capability host |
 | Control plane | 같은 image를 쓰는 Container App(API/Admin/MCP)과 Container Apps Job(schedule) |
-| State | Entra-only Storage account의 checkpoint container와 Key Vault secret reference |
+| State | Entra-only Storage account의 checkpoint container, private immutable archive container, Key Vault secret reference |
 | Delivery | Communication Services와 Email Services managed domain |
 | Observability | Log Analytics와 Application Insights |
 | Identity | App/Job용 user-assigned identity와 resource별 최소 범위 role assignment |
@@ -20,7 +20,9 @@
 
 Prompt Agent version과 Hosted Agent version은 data-plane 객체이므로 이 Bicep이 만들지 않습니다.
 인프라 배포 뒤 [`scripts/provision_foundry_agents.py`](../../scripts/provision_foundry_agents.py)와
-루트 [`azure.yaml`](../../azure.yaml)이 각각 별도 lifecycle을 담당합니다.
+루트 [`azure.yaml`](../../azure.yaml)이 각각 별도 lifecycle을 담당합니다. Bicep output은
+coordinator, Resource Graph, Azure MCP, Azure API, report writer, quality reviewer의 고유 이름과
+Hosted 배포용 `azd env set` 명령을 제공합니다.
 
 ## 사용 예시
 
@@ -41,6 +43,7 @@ Prompt Agent version과 Hosted Agent version은 data-plane 객체이므로 이 B
 - Foundry: `foundryLocation`, model 이름/SKU/capacity, `foundryHostedAgentName`
 - Network: `networkIsolationMode`, 기존 VNet 또는 세 subnet prefix, `internalIngressOnly`
 - Admin: Entra client ID/secret과 `adminAllowedPrincipals`가 모두 있어야 활성화
+- Archive: 같은 Entra app을 쓰며 `archiveAllowedPrincipals` 또는 Admin allow-list가 있어야 활성화
 - Delivery: `subscribers`, 기본 recipient, Communication Services data location
 
 ## 불변식
@@ -52,4 +55,6 @@ Prompt Agent version과 Hosted Agent version은 data-plane 객체이므로 이 B
 - `RUN_TIME_BUDGET_S`는 Job replica timeout보다 짧아야 미완료 항목을 다음 실행으로 넘길 수 있습니다.
 - Storage shared-key와 Foundry local auth를 켜서 편의상 우회하지 않습니다.
 - Admin은 Entra 설정과 allow-list가 모두 없으면 닫혀 있어야 합니다.
+- Archive container는 public access가 없고 App/Job UAMI만 REST data plane으로 읽고 씁니다.
+- Archive가 구성되면 저장 성공이 digest와 checkpoint보다 먼저여야 합니다.
 - control-plane identity에 Hosted Agent의 tenant evidence 권한을 대신 부여하지 않습니다.

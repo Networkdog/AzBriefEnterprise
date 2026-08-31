@@ -10,16 +10,17 @@ identity에서 실행됩니다.
 
 | 파일/디렉터리 | 실행 위치 | 책임 |
 |---|---|---|
-| [`main.py`](main.py) | Container App | FastAPI, `/api/*`, `/admin`, `/mcp`, service lifespan |
+| [`main.py`](main.py) | Container App | FastAPI, `/api/*`, `/admin`, `/archive`, `/mcp`, service lifespan |
 | [`scheduler.py`](scheduler.py) | Container Apps Job | 예약 digest 한 번을 시작하고 process exit code 반환 |
 | [`orchestrator.py`](orchestrator.py) | App/Job | RSS window, concurrency, digest, watermark/checkpoint |
 | [`hosted_agent.py`](hosted_agent.py) | Foundry Hosted Agent | v2 contract 처리와 `AzureUpdateAnalyzer` 소유 |
 | [`agent/`](agent/) | Hosted Agent 중심 | LangGraph, Prompt Agent adapter, tools, resilience, evaluation |
 | [`admin/`](admin/) | Container App | EasyAuth 기반 관리 콘솔과 run API |
+| [`archive/`](archive/) | Container App/Job | canonical 문서 계약, reader 인가, 검색 API와 browser shell |
 | [`email/`](email/) | App/Job | report/digest 렌더링과 ACS 전달 |
 | [`i18n/`](i18n/) | 공용 | 언어 registry와 fallback |
 | [`rss/`](rss/) | 공용 | Azure Update 수집·정규화 |
-| [`services/`](services/) | Hosted Agent/제어면 | Azure 및 공개 API data access, durable checkpoint |
+| [`services/`](services/) | Hosted Agent/제어면 | Azure 및 공개 API data access, durable checkpoint/archive |
 | [`config.py`](config.py) | 공용 | environment를 검증된 `Settings`로 변환 |
 | [`middleware.py`](middleware.py) | Container App | API key와 bounded in-memory rate limiter |
 | [`logging_config.py`](logging_config.py) | 모든 entry point | structlog/stdout/file/Azure Monitor logging 구성 |
@@ -29,14 +30,16 @@ identity에서 실행됩니다.
 ```text
 Container Apps Job -> scheduler -> orchestrator -> HostedAgentAnalyzer
                                               -> Foundry Hosted Agent
+                                              -> evidence specialists (parallel)
+                                              -> coordinator / writer / reviewer
                                               -> AzureUpdateAnalyzer
                                               -> AnalysisResult
-                   <- digest customization/email/checkpoint
+                   <- canonical archive -> digest customization/email -> checkpoint
 ```
 
-FastAPI lifespan도 같은 `HostedAgentAnalyzer`, `EmailService`, `AzureUpdateParser`를 만들어
-orchestrator와 MCP에 등록합니다. 제어면은 `AzureUpdateAnalyzer`를 직접 import해 fallback으로
-실행하지 않습니다.
+FastAPI lifespan도 같은 `HostedAgentAnalyzer`, `ArchiveService`, `EmailService`,
+`AzureUpdateParser`를 만들어 orchestrator와 MCP에 등록합니다. 제어면은
+`AzureUpdateAnalyzer`를 직접 import해 fallback으로 실행하지 않습니다.
 
 ## 사용 예시
 
@@ -64,7 +67,9 @@ fail closed합니다.
 - 환경 설정은 `get_settings()`를 통해 읽고 새 setting은 `src/config.py`와 문서/배포 설정을 함께
   연결합니다.
 - structlog를 사용하며 Container App/Job은 파일 대신 stdout logging을 기본으로 합니다.
-- `/api/*`는 `API_KEY`가 설정된 경우 인증하고, `/mcp`는 key가 없을 때도 열리지 않습니다.
+- machine-facing 분석 API는 `API_KEY`, `/admin`과 `/archive`는 EasyAuth allow-list를 사용하고,
+  `/mcp`는 key가 없을 때도 열리지 않습니다.
+- Archive가 구성된 run은 canonical 문서 저장 뒤에만 digest와 checkpoint를 진행합니다.
 - rate limiter의 proxy header 신뢰는 검증된 reverse proxy 뒤에서만 활성화합니다.
 - Python 3.10 문법 범위를 지키고 dependency를 `pyproject.toml`과 `requirements.txt`에 동시에
   반영합니다.

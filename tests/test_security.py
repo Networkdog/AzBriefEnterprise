@@ -94,6 +94,12 @@ class TestResourceGraphQueryBuilder:
         # ACNS (Advanced Container Networking Services) status must be queryable so
         # reports can confirm it instead of deferring to manual review.
         assert "advancedNetworking" in query
+        # Azure Files/Disk CSI drivers are storageProfile properties. The Key Vault
+        # secrets-provider add-on is a different CSI integration and cannot proxy them.
+        assert "properties.storageProfile.fileCSIDriver.enabled" in query
+        assert "azureFilesCSIDriver" in query
+        assert "properties.storageProfile.diskCSIDriver.enabled" in query
+        assert "azureDiskCSIDriver" in query
 
     def test_get_cosmos_accounts_detail(self):
         query = ResourceGraphQueryBuilder.get_cosmos_accounts()

@@ -7,12 +7,19 @@ description: 'Evaluate and improve AzBrief report quality. Use when: report qual
 
 ## Foundry Runtime Guidance
 
+- Create the reader-facing artifact only from validated evidence. Evaluate it independently
+     and request only the smallest grounded correction when the assigned task is review.
 - Analyze every update before classification; never silently filter coverage. Keep
      importance, tenant impact, and job relevance independent.
 - Match category framing: changes explain impact and inaction risk; capabilities explain
      opportunity, named candidates, adoption cost, and owner.
 - Keep evidence, relevance, resource counts/reasons, and conclusions consistent. Actions name
      what, where, why, completion criteria, precautions, rollback, and only real deadlines.
+- Distinguish non-mutating evaluation actions from executable changes. An `advisory_review`
+     does not require CLI or rollback; treat an incomplete go/no-go check as caution, not unsafe.
+     Its command must be empty or read-only; an evaluate/review task paired with `update`, `set`,
+     `enable`, or another mutation is a blocking contradiction. Commands and state-changing
+     Portal procedures remain fail-closed.
 - Optimize for a 3-second summary and 30-second scan. Never expose internal mechanics or
      fabricate resources, work, dates, commands, or URLs.
 
@@ -24,6 +31,9 @@ description: 'Evaluate and improve AzBrief report quality. Use when: report qual
 > logprob-normalized continuous scores, self-improvement loop), see the **`report-evaluation`**
 > skill. Both run together in `scripts/evaluate_report.py` — the rule check catches
 > mechanical defects, the judge catches faithfulness/insight gaps a regex cannot.
+> Pre-release campaigns add two non-compensating layers: trajectory/process quality and
+> action-item safety. `scripts/quality_campaign.py` combines all four layers over a frozen
+> diagnosis/holdout dataset; never let a high 100-point score hide a failed tool or blocked command.
 
 ## When to Use
 

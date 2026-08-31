@@ -12,33 +12,75 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import copy
-from dataclasses import dataclass, replace
-from typing import Any, Awaitable, Callable, Optional
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Iterator, Optional
 
 from langchain_core.messages import AIMessage
 from structlog import get_logger
 
-from src.config import Settings
+from src.config import EVIDENCE_SPECIALIST_ROLES, Settings
 
 logger = get_logger()
 
-ENRICHMENT_LOCAL_TOOL_NAMES: dict[str, frozenset[str]] = {
-    "research": frozenset(
+_CURRENT_TRACE_ID: ContextVar[str] = ContextVar("azbrief_foundry_trace_id", default="")
+_CURRENT_TASK_ID: ContextVar[str] = ContextVar("azbrief_foundry_task_id", default="")
+
+
+@contextmanager
+def foundry_invocation_context(trace_id: str, task_id: str) -> Iterator[None]:
+    """Bind one Prompt Agent call to an async-safe analysis trace."""
+    trace_token = _CURRENT_TRACE_ID.set(trace_id)
+    task_token = _CURRENT_TASK_ID.set(task_id)
+    try:
+        yield
+    finally:
+        _CURRENT_TASK_ID.reset(task_token)
+        _CURRENT_TRACE_ID.reset(trace_token)
+
+
+def current_foundry_invocation_context() -> tuple[str, str]:
+    """Return the trace and task bound to the current async context."""
+    return _CURRENT_TRACE_ID.get(), _CURRENT_TASK_ID.get()
+
+
+# Only evidence specialists receive app-owned FunctionTools. The coordinator uses
+# managed Learn/Web tools, Azure MCP uses its managed server connection, and the
+# report writer/quality reviewer consume evidence without calling local tools.
+SPECIALIST_LOCAL_TOOL_NAMES: dict[str, frozenset[str]] = {
+    "resource_graph": frozenset(
         {
-            "search_update_related_docs",
-            "search_azure_docs",
-            "get_service_documentation",
+            "query_azure_resources",
+            "get_resource_type_summary",
+            "find_related_resources",
+            "get_service_resource_details",
+            "get_security_posture",
+            "get_service_health",
+            "get_resource_configurations",
+            "get_resource_dependencies",
             "search_resource_graph_docs",
+            "explore_resource_schema",
             "query_tool_result",
         }
     ),
-    "impact": frozenset(
+    "azure_mcp": frozenset(),
+    "azure_api": frozenset(
         {
-            "query_azure_resources",
-            "find_related_resources",
-            "get_service_resource_details",
+            "get_advisor_recommendations",
+            "get_resource_health",
+            "get_policy_compliance",
+            "get_service_health_events",
+            "get_cost_by_resource_type",
+            "get_cost_by_service",
+            "list_billing_accounts",
+            "list_billing_profiles",
+            "get_activity_log_summary",
             "get_service_region_availability",
+            "call_azure_rest_api",
             "query_tool_result",
         }
     ),
@@ -143,11 +185,11 @@ def _tool_input_schema(tool: Any) -> dict[str, Any]:
     return {"type": "object", "properties": {}, "additionalProperties": False}
 
 
-def select_enrichment_tools(stage: str, tools: list[Any]) -> dict[str, Any]:
-    """Select the stage's read-only application tools in stable name order."""
+def select_specialist_tools(role: str, tools: list[Any]) -> dict[str, Any]:
+    """Select one specialist's read-only application tools in stable name order."""
     from src.agent.tools import WRITE_TOOL_NAMES
 
-    allowed = ENRICHMENT_LOCAL_TOOL_NAMES.get(stage, frozenset())
+    allowed = SPECIALIST_LOCAL_TOOL_NAMES.get(role, frozenset())
     selected = {
         tool.name: tool
         for tool in tools
@@ -172,40 +214,18 @@ def build_foundry_function_tools(tools: dict[str, Any]) -> list[Any]:
     ]
 
 
-def build_stage_text_options(stage: str) -> Any:
-    """Build the strict JSON response format for one enrichment stage."""
+def build_specialist_text_options(role: str) -> Any:
+    """Build the strict JSON response format for one evidence specialist."""
     from azure.ai.projects.models import (
         PromptAgentDefinitionTextOptions,
         TextResponseFormatJsonSchema,
     )
 
-    if stage == "review":
-        schema = {
-            "type": "object",
-            "properties": {
-                "verdict": {"type": "string", "enum": ["pass", "revise"]},
-                "rejected_claim_ids": {
-                    "type": "array",
-                    "maxItems": 24,
-                    "items": {
-                        "type": "string",
-                        "pattern": "^(research|impact|action)-[1-9][0-9]*$",
-                    },
-                },
-                "missing_facts": {
-                    "type": "array",
-                    "maxItems": 12,
-                    "items": {"type": "string"},
-                },
-            },
-            "required": ["verdict", "rejected_claim_ids", "missing_facts"],
-            "additionalProperties": False,
-        }
-    elif stage in ("research", "impact", "action"):
+    if role in EVIDENCE_SPECIALIST_ROLES:
         evidence_patterns = {
-            "research": "^https?://",
-            "impact": "^(/subscriptions/|resource:|tool:)",
-            "action": "^(research|impact)-[1-9][0-9]*$",
+            "resource_graph": "^(/subscriptions/|resource:|tool:|query:)",
+            "azure_mcp": "^(/subscriptions/|resource:|tool:)",
+            "azure_api": "^(/subscriptions/|resource:|tool:|cost:|billing:)",
         }
         schema = {
             "type": "object",
@@ -219,7 +239,7 @@ def build_stage_text_options(stage: str) -> Any:
                         "properties": {
                             "id": {
                                 "type": "string",
-                                "pattern": f"^{stage}-[1-9][0-9]*$",
+                                "pattern": f"^{role}-[1-9][0-9]*$",
                             },
                             "text": {"type": "string"},
                             "evidence": {
@@ -228,7 +248,7 @@ def build_stage_text_options(stage: str) -> Any:
                                 "maxItems": 12,
                                 "items": {
                                     "type": "string",
-                                    "pattern": evidence_patterns[stage],
+                                    "pattern": evidence_patterns[role],
                                 },
                             },
                             "confidence": {
@@ -254,9 +274,9 @@ def build_stage_text_options(stage: str) -> Any:
 
     return PromptAgentDefinitionTextOptions(
         format=TextResponseFormatJsonSchema(
-            name=f"azbrief_{stage}_output",
+            name=f"azbrief_{role}_output",
             schema=schema,
-            description=f"Strict AzBrief {stage} stage output contract",
+            description=f"Strict AzBrief {role} specialist output contract",
             strict=True,
         )
     )
@@ -303,24 +323,25 @@ class FoundryAgentChatModel:
 
     supports_logprobs = False
 
-    def __init__(self, settings: Settings, role: str = "primary") -> None:
+    def __init__(self, settings: Settings, role: str = "coordinator") -> None:
         """Initialize a role-specific Foundry agent adapter.
 
         Args:
             settings: Application settings containing the project and agent names.
-            role: Runtime role (primary, codex, or fast).
+            role: Explicit specialist role, or a legacy internal role during migration.
         """
         self.project_endpoint = settings.foundry_project_endpoint
         self.agent_name = settings.foundry_agent_for_role(role)
         self.role = role
         self.timeout_s = settings.foundry_agent_timeout_s
         self._bound_tools: dict[str, Any] = {}
+        self._disable_tools = False
 
         if not self.project_endpoint:
             raise FoundryAgentError("FOUNDRY_PROJECT_ENDPOINT is required")
         if not self.agent_name:
             raise FoundryAgentError(
-                "FOUNDRY_PRIMARY_AGENT_NAME is required for Foundry-only runtime calls"
+                f"A configured Prompt Agent is required for the '{role}' runtime role"
             )
         if not foundry_available():
             raise FoundryAgentError(
@@ -341,17 +362,34 @@ class FoundryAgentChatModel:
         )
         return bound
 
+    def without_tools(self) -> "FoundryAgentChatModel":
+        """Return an isolated adapter that forbids server-side tool calls."""
+        bound = copy(self)
+        bound._bound_tools = {}
+        bound._disable_tools = True
+        return bound
+
     async def ainvoke(self, messages: Any) -> AIMessage:
         """Invoke the configured Foundry agent and return a LangChain AIMessage."""
         prompt = _render_chat_messages(messages)
         if self._bound_tools:
             prompt = f"{_local_tool_contract(self._bound_tools)}\n\n{prompt}"
+        invocation_kwargs = {}
+        trace_id = _CURRENT_TRACE_ID.get()
+        task_id = _CURRENT_TASK_ID.get()
+        if trace_id:
+            invocation_kwargs["trace_id"] = trace_id
+        if task_id:
+            invocation_kwargs["task_id"] = task_id
+        if self._disable_tools:
+            invocation_kwargs["disable_tools"] = True
         invocation = _coerce_invocation(
             await _invoke_foundry_agent(
                 self.project_endpoint,
                 self.agent_name,
                 prompt,
                 self.timeout_s,
+                **invocation_kwargs,
             )
         )
         text = invocation.text
@@ -376,133 +414,123 @@ class FoundryAgentChatModel:
         )
 
 
-def create_foundry_chat_model(settings: Settings, role: str = "primary") -> FoundryAgentChatModel:
+def create_foundry_chat_model(
+    settings: Settings, role: str = "coordinator"
+) -> FoundryAgentChatModel:
     """Create the Foundry Agent Service chat adapter for a runtime role."""
     return FoundryAgentChatModel(settings, role)
 
 
 RUNTIME_AGENT_INSTRUCTIONS: dict[str, str] = {
-    "primary": (
-        "You are the primary reasoning agent for AzBrief, an Azure Update intelligence "
-        "application. Each user message contains a serialized conversation with SYSTEM, "
-        "USER, ASSISTANT, and TOOL sections. Follow the SYSTEM sections as the runtime "
-        "application contract, preserve evidence boundaries, and return only the requested "
-        "format. Never invent tenant resources, dates, commands, or documentation URLs."
+    "coordinator": (
+        "You are the coordination specialist inside the AzBrief Hosted Agent. Turn the "
+        "serialized SYSTEM and USER contract into the smallest evidence plan, reconcile "
+        "specialist findings, and revise tasks only when a named gap remains. Preserve source "
+        "boundaries and structured formats. Never claim a tool or specialist ran unless its "
+        "result is present, and never invent tenant facts, dates, commands, or URLs."
     ),
-    "planner": (
-        "You are the planning specialist for AzBrief. Convert the serialized SYSTEM and "
-        "USER contract into a minimal evidence-collection plan. Use application-managed "
-        "local tools only through the declared local_tool_calls JSON protocol. Prefer "
-        "independent, read-only tasks that can run in parallel. Never claim a tool ran until "
-        "its TOOL result is present, and return only the requested structured plan."
+    "resource_graph": (
+        "You are the Azure Resource Graph specialist for AzBrief. Write executable Resource "
+        "Graph KQL within its restricted dialect, inspect real result shapes, and explain which "
+        "resources and property values establish impact. Distinguish zero matches from an "
+        "incomplete query, cite exact resource IDs or tool-result handles, and never infer "
+        "tenant-wide absence from a truncated preview."
     ),
-    "evaluator": (
-        "You are the evidence-completeness evaluator for AzBrief. Independently compare the "
-        "analysis goal, executed task results, and evidence boundaries. Treat truncated or "
-        "missing evidence as incomplete, never as confirmed absence. Return only the requested "
-        "evaluation JSON and never mark evidence sufficient merely to end the loop."
+    "azure_mcp": (
+        "You are the Azure MCP specialist for AzBrief. Use only the authenticated read-only "
+        "Azure MCP Server to inspect the tenant, resource groups, Resource Health, and Advisor. "
+        "Pass the exact tenant and subscription GUIDs supplied at runtime, never `default`, and "
+        "preserve exact resource IDs. Missing permissions, unsupported tools, and incomplete "
+        "coverage are explicit gaps, never evidence of absence."
     ),
-    "reporter": (
-        "You are the final report specialist for AzBrief. Synthesize only claims grounded in "
-        "the supplied update, resource summary, and tool results. Preserve every requested "
-        "structured field and language rule. Never invent resources, dates, commands, URLs, "
-        "or certainty, and return only the requested report JSON."
+    "azure_api": (
+        "You are the Azure management and commercial API specialist for AzBrief. Use read-only "
+        "ARM, Resource Health, Policy, Advisor, Activity Log, Cost Management, and Billing "
+        "evidence to close facts that Resource Graph or Azure MCP cannot establish. Make only "
+        "the calls needed for a named gap, preserve scope and time windows, and never turn a "
+        "failed or partial response into a factual claim."
     ),
-    "codex": (
-        "You are the KQL specialist for AzBrief. Each user message contains a serialized "
-        "conversation whose SYSTEM sections define the exact task and output format. Produce "
-        "Azure Resource Graph or Log Analytics KQL that stays within the stated dialect "
-        "constraints. Preserve the query intent, never fabricate schema fields, and return "
-        "only the requested response."
+    "report_writer": (
+        "You are the report-writing specialist for AzBrief. Convert the supplied update and "
+        "validated tenant evidence into a concise report that a busy Azure administrator can "
+        "understand in a three-second summary and a thirty-second scan. Follow the requested "
+        "language, category frame, and JSON contract. Never expose internal mechanics or invent "
+        "resources, dates, commands, URLs, work, or certainty."
     ),
-    "fast": (
-        "You are the lightweight revision and localization agent for AzBrief. Each user "
-        "message contains a serialized conversation whose SYSTEM sections define the exact "
-        "task and output format. Make the smallest faithful transformation, preserve every "
-        "fact and structured field, and return only the requested response."
+    "quality_reviewer": (
+        "You are the independent quality specialist for AzBrief. Judge evidence completeness, "
+        "faithfulness, actionability, job relevance, structure, architectural depth, and action "
+        "safety before delivery. Faithfulness outranks polish. Identify the exact unsupported "
+        "claim or missing fact and request the smallest evidence-preserving correction. A judge "
+        "or parser failure is never a pass, and a rewrite must not add new facts."
     ),
 }
 
-# ── Prompt Agent enrichment pipeline ───────────────────────────
-# Each stage is a separate Foundry Prompt Agent so its tools, model and
-# guardrails stay governed in the Foundry project. 'research' and 'impact' are
-# independent; 'action' consumes both; 'review' audits the merged result.
-MULTI_AGENT_HEADER = "## Additional Context (Microsoft Foundry multi-agent)"
+# ── Evidence specialist collaboration ─────────────────────────
+SPECIALIST_CONTEXT_HEADER = "## Validated Specialist Evidence (Microsoft Foundry)"
+MULTI_AGENT_HEADER = SPECIALIST_CONTEXT_HEADER
 
-MULTI_AGENT_STAGE_LABELS = {
-    "research": "Research findings",
-    "impact": "Tenant impact assessment",
-    "action": "Proposed actions",
-    "review": "Review notes",
+SPECIALIST_ROLE_LABELS = {
+    "resource_graph": "Resource Graph KQL and result analysis",
+    "azure_mcp": "Azure MCP tenant analysis",
+    "azure_api": "ARM, Cost Management, and Billing analysis",
 }
+MULTI_AGENT_STAGE_LABELS = SPECIALIST_ROLE_LABELS
 
-STAGE_PROMPTS: dict[str, str] = {
-    "research": (
-        "You are the RESEARCH agent for an Azure Update analysis pipeline.\n"
-        "Establish what actually changed: the capability or change itself, its "
-        "release stage, effective dates and retirement deadlines, prerequisites, "
-        "and the official documentation that describes it. Always query the Microsoft "
-        "Learn MCP tool first. Use Web Search only when Learn does not establish a needed "
-        "fact or when a newer public announcement must be confirmed. Prefer Learn URLs in "
-        "the final evidence and clearly distinguish supplementary web evidence.\n"
+SPECIALIST_PROMPTS: dict[str, str] = {
+    "resource_graph": (
+        "You are the RESOURCE GRAPH specialist in the AzBrief Hosted Agent team.\n"
+        "Identify the ARM resource types and properties that can prove whether this update "
+        "affects the tenant. Write and execute focused Azure Resource Graph KQL, inspect the "
+        "returned rows, and explain the decisive property values. Use Resource Graph's "
+        "restricted dialect: no join, let, render, datatable, or toscalar; compare resource "
+        "types with =~; retain subscriptionId; project named fields rather than broad bags; "
+        "and order results stably. If a filtered query is empty, probe the type or schema "
+        "before claiming absence. Retrieve an over-budget result by its ref when the needed "
+        "row is outside the preview.\n"
         "Return only one JSON object with status, claims, and gaps. status is ok or partial. "
-        "claims is an array of at most 12 objects with id, text, evidence, and confidence. "
-        "Use research-1, research-2, ... as ids; evidence is an array of exact source URLs; "
-        "confidence is high, medium, or low. Put unconfirmed facts in gaps, not claims.\n\n"
+        "claims contains at most 12 objects with id, text, evidence, and confidence. Use "
+        "resource_graph-1, resource_graph-2, ... as ids. Every evidence value starts with an "
+        "exact /subscriptions/ resource ID, resource:, tool:, or query:. Put unsupported or "
+        "incomplete conclusions in gaps.\n\n"
         "Azure Update under analysis:\n{update_context}"
     ),
-    "impact": (
-        "You are the IMPACT agent for an Azure Update analysis pipeline.\n"
-        "Determine how this update touches the tenant's actual Azure estate: which "
-        "resource types and configurations are involved, whether the relevant "
-        "services and regions are in use, and what is demonstrably NOT affected.\n"
-        "Use the read-only Azure MCP tool first for live tenant evidence, then use declared "
-        "application function tools only to fill a specific evidence gap. Never use Web "
-        "Search as evidence of tenant state. Never guess a resource name - report an "
-        "absence as an absence. Pass the exact tenant and subscription IDs from the dynamic "
-        "Azure MCP scope to every Azure MCP call; never pass the literal value default.\n"
-        "Use the minimum tool calls needed. Stop once resource presence or absence, the "
-        "relevant configuration, and any stated regional condition are established; do not "
-        "exhaust the tool catalog. The downstream Plan-Execute loop performs deeper health, "
-        "policy, dependency, and configuration checks.\n"
+    "azure_mcp": (
+        "You are the AZURE MCP specialist in the AzBrief Hosted Agent team.\n"
+        "Use the authenticated read-only Azure MCP Server as your only tenant inspection "
+        "surface. Call its direct resource-group, Resource Health, and Advisor tools with the "
+        "exact tenant and subscription GUIDs supplied below; never pass the literal `default`. "
+        "Establish resource presence, health, and recommendations that materially affect this "
+        "update. Do not use Web Search as tenant evidence and do not silently replace an MCP "
+        "gap with guessed ARM state. Preserve exact resource IDs, scope, errors, and coverage.\n"
         "Return only one JSON object with status, claims, and gaps. status is ok or partial. "
-        "claims is an array of at most 12 objects with id, text, evidence, and confidence. "
-        "Use impact-1, impact-2, ... as ids; evidence is an array of exact resource IDs or "
-        "tool-result identifiers. Every evidence value must start with /subscriptions/, "
-        "resource:, or tool:. Never use a display name alone as evidence. confidence is "
-        "high, medium, or low. Put unverified facts in gaps, not claims.\n\n"
+        "claims contains at most 12 objects with id, text, evidence, and confidence. Use "
+        "azure_mcp-1, azure_mcp-2, ... as ids. Every evidence value starts with an exact "
+        "/subscriptions/ resource ID, resource:, or tool:. Put unsupported capabilities, "
+        "permission failures, and incomplete coverage in gaps.\n\n"
         "Azure Update under analysis:\n{update_context}"
     ),
-    "action": (
-        "You are the ACTION agent for an Azure Update analysis pipeline.\n"
-        "Using the research and impact findings below, propose concrete next steps "
-        "an Azure administrator can execute or verify themselves. Each step must "
-        "name what to check, where, and the criterion for done. Do not invent "
-        "deadlines. Read-only verification steps are preferred over mutations.\n"
+    "azure_api": (
+        "You are the AZURE API specialist in the AzBrief Hosted Agent team.\n"
+        "Close facts that Resource Graph and Azure MCP cannot establish by using the minimum "
+        "read-only ARM, Resource Health, Policy, Advisor, Activity Log, Cost Management, and "
+        "Billing calls. Analyze configuration, dependencies, regional availability, service "
+        "health, policy posture, and costs only when relevant to the update. State the exact "
+        "subscription or resource scope and cost time window. A failed call, partial page, or "
+        "missing permission is a gap, not a zero value. Never issue a mutation.\n"
         "Return only one JSON object with status, claims, and gaps. status is ok or partial. "
-        "claims is an array of at most 12 objects with id, text, evidence, and confidence. "
-        "Use action-1, action-2, ... as ids. Every evidence item must be a research-* or "
-        "impact-* claim id that justifies the action. confidence is high, medium, or low.\n\n"
-        "Azure Update under analysis:\n{update_context}\n\n"
-        "Findings so far:\n{prior_findings}"
-    ),
-    "review": (
-        "You are the REVIEW agent for an Azure Update analysis pipeline.\n"
-        "Audit the findings below against the update text. Flag any claim that is "
-        "not supported by the evidence, any named resource that was never returned "
-        "by a tool, and any missing critical fact. Be brief.\n"
-        "Return only one JSON object with verdict, rejected_claim_ids, and missing_facts. "
-        "verdict is pass or revise. rejected_claim_ids contains only exact ids from the "
-        "findings. Use an empty array when every claim is supported.\n\n"
-        "Azure Update under analysis:\n{update_context}\n\n"
-        "Findings so far:\n{prior_findings}"
+        "claims contains at most 12 objects with id, text, evidence, and confidence. Use "
+        "azure_api-1, azure_api-2, ... as ids. Every evidence value starts with an exact "
+        "/subscriptions/ resource ID, resource:, tool:, cost:, or billing:. Put unsupported "
+        "or incomplete conclusions in gaps.\n\n"
+        "Azure Update under analysis:\n{update_context}"
     ),
 }
 
 
 @dataclass(frozen=True)
-class EnrichmentClaim:
-    """One evidence-addressable finding produced by an enrichment agent."""
+class SpecialistClaim:
+    """One evidence-addressable finding produced by a specialist Prompt Agent."""
 
     claim_id: str
     text: str
@@ -511,22 +539,20 @@ class EnrichmentClaim:
 
 
 @dataclass(frozen=True)
-class EnrichmentStageResult:
-    """Validated output from a research, impact, action, or review stage."""
+class SpecialistEvidence:
+    """Validated evidence returned by one specialist Prompt Agent."""
 
-    stage: str
+    role: str
     status: str
-    claims: tuple[EnrichmentClaim, ...]
+    claims: tuple[SpecialistClaim, ...]
     gaps: tuple[str, ...]
 
 
-@dataclass(frozen=True)
-class EnrichmentReview:
-    """Validated review verdict over previously emitted claim identifiers."""
-
-    verdict: str
-    rejected_claim_ids: tuple[str, ...]
-    missing_facts: tuple[str, ...]
+_SPECIALIST_EVIDENCE_PREFIXES = {
+    "resource_graph": ("/subscriptions/", "resource:", "tool:", "query:"),
+    "azure_mcp": ("/subscriptions/", "resource:", "tool:"),
+    "azure_api": ("/subscriptions/", "resource:", "tool:", "cost:", "billing:"),
+}
 
 
 def _decode_json_object(text: str) -> Optional[dict[str, Any]]:
@@ -554,8 +580,10 @@ def _string_tuple(value: Any, *, limit: int, item_chars: int) -> Optional[tuple[
     return tuple(items)
 
 
-def _parse_stage_result(stage: str, text: str) -> tuple[Optional[EnrichmentStageResult], str]:
-    """Validate one evidence-producing stage response and return a reason code."""
+def _parse_specialist_result(role: str, text: str) -> tuple[Optional[SpecialistEvidence], str]:
+    """Validate one evidence specialist response and return a reason code."""
+    if role not in EVIDENCE_SPECIALIST_ROLES:
+        return None, "unknown_specialist_role"
     payload = _decode_json_object(text)
     if payload is None or set(payload) != {"status", "claims", "gaps"}:
         return None, "invalid_envelope"
@@ -583,7 +611,7 @@ def _parse_stage_result(stage: str, text: str) -> tuple[Optional[EnrichmentStage
         evidence = _string_tuple(raw_claim["evidence"], limit=12, item_chars=2000)
         if (
             not isinstance(claim_id, str)
-            or not claim_id.startswith(f"{stage}-")
+            or re.fullmatch(rf"{re.escape(role)}-[1-9][0-9]*", claim_id) is None
             or claim_id in seen_ids
         ):
             return None, "invalid_or_duplicate_claim_id"
@@ -591,21 +619,11 @@ def _parse_stage_result(stage: str, text: str) -> tuple[Optional[EnrichmentStage
             return None, "invalid_claim_text"
         if confidence not in ("high", "medium", "low") or not evidence:
             return None, "invalid_confidence_or_evidence"
-        if stage == "research" and any(
-            not source.startswith(("https://", "http://")) for source in evidence
-        ):
-            return None, "invalid_research_evidence_prefix"
-        if stage == "impact" and any(
-            not source.startswith(("/subscriptions/", "resource:", "tool:")) for source in evidence
-        ):
-            return None, "invalid_impact_evidence_prefix"
-        if stage == "action" and any(
-            not source.startswith(("research-", "impact-")) for source in evidence
-        ):
-            return None, "invalid_action_evidence_prefix"
+        if any(not source.startswith(_SPECIALIST_EVIDENCE_PREFIXES[role]) for source in evidence):
+            return None, f"invalid_{role}_evidence_prefix"
         seen_ids.add(claim_id)
         claims.append(
-            EnrichmentClaim(
+            SpecialistClaim(
                 claim_id=claim_id,
                 text=claim_text.strip(),
                 evidence=evidence,
@@ -615,25 +633,13 @@ def _parse_stage_result(stage: str, text: str) -> tuple[Optional[EnrichmentStage
     if not claims and not gaps:
         return None, "empty_claims_and_gaps"
     if status == "ok" and gaps:
-        return EnrichmentStageResult(stage, "partial", tuple(claims), gaps), (
-            "normalized_ok_with_gaps"
-        )
-    return EnrichmentStageResult(stage, status, tuple(claims), gaps), ""
+        return SpecialistEvidence(role, "partial", tuple(claims), gaps), ("normalized_ok_with_gaps")
+    return SpecialistEvidence(role, status, tuple(claims), gaps), ""
 
 
-def _parse_review(text: str) -> Optional[EnrichmentReview]:
-    """Validate a review-stage response."""
-    payload = _decode_json_object(text)
-    if payload is None or set(payload) != {"verdict", "rejected_claim_ids", "missing_facts"}:
-        return None
-    rejected = _string_tuple(payload["rejected_claim_ids"], limit=24, item_chars=100)
-    missing = _string_tuple(payload["missing_facts"], limit=12, item_chars=1000)
-    verdict = payload["verdict"]
-    if verdict not in ("pass", "revise") or rejected is None or missing is None:
-        return None
-    if verdict == "pass" and (rejected or missing):
-        return None
-    return EnrichmentReview(verdict, rejected, missing)
+def _parse_stage_result(role: str, text: str) -> tuple[Optional[SpecialistEvidence], str]:
+    """Compatibility alias for :func:`_parse_specialist_result`."""
+    return _parse_specialist_result(role, text)
 
 
 def foundry_available() -> bool:
@@ -659,6 +665,7 @@ def _run_foundry_agent_sync(
     local_tools: Optional[dict[str, Any]] = None,
     trace_id: str = "",
     task_id: str = "",
+    disable_tools: bool = False,
 ) -> FoundryAgentInvocation:
     """Invoke one current Foundry Prompt Agent through the Responses API.
 
@@ -680,6 +687,17 @@ def _run_foundry_agent_sync(
     from src.agent.context_store import store_and_handle
     from src.config import get_azure_credential
 
+    started_at = time.monotonic()
+    logger.info(
+        "foundry_prompt_agent_started",
+        trace_id=trace_id,
+        task_id=task_id,
+        agent=agent_name,
+        prompt_chars=len(prompt),
+        prompt_fingerprint=hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
+        local_tools=sorted(local_tools or {}),
+        tools_disabled=disable_tools,
+    )
     credential = get_azure_credential()
     project_client = AIProjectClient(
         endpoint=project_endpoint,
@@ -710,6 +728,8 @@ def _run_foundry_agent_sync(
                     }
                 },
             }
+            if disable_tools:
+                request["tool_choice"] = "none"
             if conversation_id:
                 request["conversation"] = conversation_id
                 if tool_round >= MAX_AGENT_TOOL_ROUNDS:
@@ -791,6 +811,8 @@ def _run_foundry_agent_sync(
                     )
                     logger.info(
                         "foundry_agent_local_tool_completed",
+                        trace_id=trace_id,
+                        task_id=task_id,
                         agent=agent_name,
                         tool=name,
                         args_keys=sorted(args),
@@ -818,6 +840,8 @@ def _run_foundry_agent_sync(
             if status != "completed" and not recoverable_partial:
                 logger.warning(
                     "foundry_agent_response_incomplete",
+                    trace_id=trace_id,
+                    task_id=task_id,
                     agent=agent_name,
                     status=status,
                     reason=incomplete_reason,
@@ -831,7 +855,7 @@ def _run_foundry_agent_sync(
                 raise FoundryAgentError(
                     f"Foundry agent '{agent_name}' returned no completed response text"
                 )
-            return FoundryAgentInvocation(
+            invocation = FoundryAgentInvocation(
                 text=text,
                 response_id=str(getattr(response, "id", "") or ""),
                 status=status,
@@ -839,6 +863,24 @@ def _run_foundry_agent_sync(
                 finish_reason="length" if recoverable_partial else "stop",
                 token_usage=total_usage,
             )
+            logger.info(
+                "foundry_prompt_agent_completed",
+                trace_id=trace_id,
+                task_id=task_id,
+                agent=agent_name,
+                response_id=invocation.response_id,
+                status=invocation.status,
+                model=invocation.model,
+                finish_reason=invocation.finish_reason,
+                prompt_tokens=total_usage["prompt_tokens"],
+                completion_tokens=total_usage["completion_tokens"],
+                total_tokens=total_usage["total_tokens"],
+                output_chars=len(invocation.text),
+                output_fingerprint=hashlib.sha256(invocation.text.encode("utf-8")).hexdigest()[:16],
+                tool_rounds=tool_round,
+                elapsed_s=round(time.monotonic() - started_at, 2),
+            )
+            return invocation
         raise FoundryAgentError(
             f"Foundry agent '{agent_name}' did not complete its local tool loop"
         )
@@ -849,6 +891,8 @@ def _run_foundry_agent_sync(
             except Exception as exc:
                 logger.warning(
                     "foundry_agent_conversation_cleanup_failed",
+                    trace_id=trace_id,
+                    task_id=task_id,
                     agent=agent_name,
                     conversation_id=conversation_id,
                     error=str(exc),
@@ -861,7 +905,7 @@ def _run_foundry_agent_sync(
 
 
 # ---------------------------------------------------------------------------
-# Prompt Agent enrichment pipeline (enterprise profile)
+# Evidence specialist collaboration inside the Hosted Agent
 # ---------------------------------------------------------------------------
 
 
@@ -873,6 +917,7 @@ async def _invoke_foundry_agent(
     local_tools: Optional[dict[str, Any]] = None,
     trace_id: str = "",
     task_id: str = "",
+    disable_tools: bool = False,
 ) -> FoundryAgentInvocation:
     """Run one Foundry Prompt Agent and preserve failures for caller recovery.
 
@@ -900,19 +945,26 @@ async def _invoke_foundry_agent(
                 local_tools,
                 trace_id,
                 task_id,
+                disable_tools,
             ),
             timeout=timeout_s,
         )
     except Exception as exc:  # pragma: no cover - requires live SDK
-        logger.warning("foundry_agent_failed", agent=agent_name, error=str(exc))
+        logger.warning(
+            "foundry_agent_failed",
+            trace_id=trace_id,
+            task_id=task_id,
+            agent=agent_name,
+            error=str(exc),
+        )
         raise
 
 
-def _render_findings(sections: list[EnrichmentStageResult]) -> str:
-    """Render validated claims with stable evidence identifiers."""
+def _render_findings(sections: list[SpecialistEvidence]) -> str:
+    """Render validated specialist claims with stable evidence identifiers."""
     blocks = []
     for section in sections:
-        label = MULTI_AGENT_STAGE_LABELS.get(section.stage, section.stage)
+        label = SPECIALIST_ROLE_LABELS.get(section.role, section.role)
         lines = [f"### {label} [{section.status}]"]
         for claim in section.claims:
             lines.append(f"- [{claim.claim_id}] ({claim.confidence}) {claim.text}")
@@ -923,46 +975,15 @@ def _render_findings(sections: list[EnrichmentStageResult]) -> str:
     return "\n\n".join(blocks)
 
 
-def _apply_review(
-    sections: list[EnrichmentStageResult], review: EnrichmentReview
-) -> list[EnrichmentStageResult]:
-    """Remove rejected claims and actions that depend on rejected evidence."""
-    rejected = set(review.rejected_claim_ids)
-    changed = True
-    while changed:
-        changed = False
-        for section in sections:
-            for claim in section.claims:
-                if claim.claim_id not in rejected and rejected.intersection(claim.evidence):
-                    rejected.add(claim.claim_id)
-                    changed = True
-
-    filtered = []
-    for section in sections:
-        claims = tuple(claim for claim in section.claims if claim.claim_id not in rejected)
-        if claims or section.gaps:
-            filtered.append(replace(section, claims=claims))
-    if review.missing_facts:
-        filtered.append(EnrichmentStageResult("review", "partial", (), review.missing_facts))
-    return filtered
-
-
-def build_multi_agent_node(
+def build_specialist_collaboration_node(
     settings: Settings,
     tools: Optional[list[Any]] = None,
 ) -> Optional[Callable[[dict], Awaitable[dict]]]:
-    """Build a LangGraph node that runs the Foundry Prompt Agent enrichment pipeline.
+    """Build the Hosted Agent node that runs all evidence specialists in parallel.
 
-    Stages run as separate Foundry Prompt Agents: ``research`` and ``impact``
-    concurrently, then ``action`` on their combined output, then ``review``.
-    Every stage is optional — ``FOUNDRY_ENRICHMENT_AGENTS`` decides which
-    ones exist, and a stage that errors or times out simply contributes
-    nothing. The merged text is appended to ``update_context``, so the
-    Plan-Execute-Evaluate loop downstream is unchanged.
-
-    Returns ``None`` when the pipeline is not usable (wrong backend, empty
-    roster, or SDK missing); the analyzer then falls back to the single
-    enrichment agent or to no enrichment at all.
+    Resource Graph, Azure MCP, and Azure API specialists are required as a complete
+    set. Each receives only its governed tool surface. Failures become explicit gaps
+    so downstream reasoning cannot interpret missing evidence as zero impact.
 
     Args:
         settings: Application settings.
@@ -974,182 +995,153 @@ def build_multi_agent_node(
     if not settings.use_foundry:
         return None
 
-    roster = settings.get_foundry_enrichment_agents()
-    if not roster:
+    roster = settings.get_foundry_specialist_agents()
+    by_role = {spec.role: spec for spec in roster if spec.role in EVIDENCE_SPECIALIST_ROLES}
+    missing_roles = sorted(set(EVIDENCE_SPECIALIST_ROLES) - set(by_role))
+    if missing_roles:
+        logger.warning(
+            "foundry_specialist_collaboration_disabled",
+            missing_roles=missing_roles,
+        )
         return None
 
     if not foundry_available():
         logger.warning(
-            "foundry_multi_agent_disabled",
+            "foundry_specialist_collaboration_disabled",
             reason="Foundry Agent Service SDK dependencies are unavailable",
         )
         return None
 
-    by_stage = {spec.stage: spec for spec in roster}
-    stage_tools = {
-        stage: select_enrichment_tools(stage, tools or []) for stage in ENRICHMENT_LOCAL_TOOL_NAMES
+    specialist_tools = {
+        role: select_specialist_tools(role, tools or []) for role in EVIDENCE_SPECIALIST_ROLES
     }
     project_endpoint = settings.foundry_project_endpoint
     timeout_s = settings.foundry_agent_timeout_s
 
-    def _prompt(stage: str, update_context: str, prior: str) -> str:
-        spec = by_stage[stage]
-        if stage == "impact":
+    def _prompt(role: str, update_context: str) -> str:
+        spec = by_role[role]
+        if role in ("azure_mcp", "azure_api"):
             scope_lines = [f"Azure tenant ID: {settings.azure_tenant_id}"]
             if settings.azure_subscription_id:
-                scope_lines.append(
-                    f"Azure subscription ID: {settings.azure_subscription_id}"
-                )
+                scope_lines.append(f"Azure subscription ID: {settings.azure_subscription_id}")
             update_context = (
                 f"{update_context}\n\nAzure MCP scope (use these exact GUIDs):\n"
                 + "\n".join(scope_lines)
             )
-        base = STAGE_PROMPTS[stage].format(
+        base = SPECIALIST_PROMPTS[role].format(
             update_context=update_context,
-            prior_findings=prior or "(none)",
         )
-        return f"{base}\n\n{spec.instructions}" if spec.instructions else base
+        return base
 
-    async def _run_stage(
-        stage: str,
+    async def _run_specialist(
+        role: str,
         update_context: str,
-        prior: str,
         trace_id: str,
     ) -> tuple[str, str]:
-        spec = by_stage[stage]
-        invoke_kwargs: dict[str, Any] = {}
-        if stage_tools.get(stage):
-            invoke_kwargs = {
-                "local_tools": stage_tools[stage],
-                "trace_id": trace_id,
-                "task_id": f"enrichment:{stage}",
-            }
+        spec = by_role[role]
+        invoke_kwargs: dict[str, Any] = {
+            "trace_id": trace_id,
+            "task_id": f"specialist:{role}",
+        }
+        if specialist_tools.get(role):
+            invoke_kwargs["local_tools"] = specialist_tools[role]
         invocation = _coerce_invocation(
             await _invoke_foundry_agent(
                 project_endpoint,
                 spec.name,
-                _prompt(stage, update_context, prior),
+                _prompt(role, update_context),
                 timeout_s,
                 **invoke_kwargs,
             )
         )
-        return stage, invocation.text
+        return role, invocation.text
 
-    async def multi_agent_node(state: dict) -> dict:
+    async def specialist_collaboration_node(state: dict) -> dict:
         import asyncio
         import time
 
         update_context = state.get("update_context", "")
         trace_id = state.get("trace_id", "")
         started = time.time()
-        sections: list[EnrichmentStageResult] = []
-
-        # Phase 1 — independent stages in parallel.
-        parallel = [s for s in ("research", "impact") if s in by_stage]
-        if parallel:
-            results = await asyncio.gather(
-                *[_run_stage(s, update_context, "", trace_id) for s in parallel],
-                return_exceptions=True,
-            )
-            for item in results:
-                if isinstance(item, BaseException):
-                    logger.warning("foundry_multi_agent_stage_error", error=str(item))
-                    continue
-                stage, text = item
-                parsed, validation_error = _parse_stage_result(stage, text)
-                if parsed is None:
-                    logger.warning(
-                        "foundry_multi_agent_invalid_output",
-                        stage=stage,
-                        output_chars=len(text),
-                        validation_error=validation_error,
+        sections: list[SpecialistEvidence] = []
+        results = await asyncio.gather(
+            *[
+                _run_specialist(role, update_context, trace_id)
+                for role in EVIDENCE_SPECIALIST_ROLES
+            ],
+            return_exceptions=True,
+        )
+        for role, item in zip(EVIDENCE_SPECIALIST_ROLES, results):
+            if isinstance(item, BaseException):
+                logger.warning(
+                    "foundry_specialist_error",
+                    trace_id=trace_id,
+                    role=role,
+                    error=type(item).__name__,
+                )
+                sections.append(
+                    SpecialistEvidence(
+                        role=role,
+                        status="partial",
+                        claims=(),
+                        gaps=(f"{role} specialist failed: {type(item).__name__}",),
                     )
-                    continue
-                if validation_error:
-                    logger.info(
-                        "foundry_multi_agent_output_normalized",
-                        stage=stage,
-                        normalization=validation_error,
-                    )
-                sections.append(parsed)
-
-        # Phase 2 — dependent stages, each seeing everything gathered so far.
-        for stage in ("action", "review"):
-            if stage not in by_stage:
-                continue
-            prior = _render_findings(sections)
-            try:
-                _, text = await _run_stage(stage, update_context, prior, trace_id)
-            except Exception as exc:  # pragma: no cover - requires live SDK
-                logger.warning("foundry_multi_agent_stage_error", stage=stage, error=str(exc))
-                continue
-            if stage == "review":
-                review = _parse_review(text)
-                if review is None:
-                    logger.warning(
-                        "foundry_multi_agent_invalid_output",
-                        stage=stage,
-                        output_chars=len(text),
-                    )
-                    continue
-                before_claim_ids = {
-                    claim.claim_id for section in sections for claim in section.claims
-                }
-                sections = _apply_review(sections, review)
-                after_claim_ids = {
-                    claim.claim_id for section in sections for claim in section.claims
-                }
-                removed_claim_ids = before_claim_ids - after_claim_ids
-                explicit_rejections = removed_claim_ids.intersection(review.rejected_claim_ids)
-                dependent_rejections = removed_claim_ids - explicit_rejections
-                logger.info(
-                    "foundry_multi_agent_review_applied",
-                    verdict=review.verdict,
-                    explicit_rejected_claim_ids=sorted(explicit_rejections),
-                    dependent_rejected_claim_ids=sorted(dependent_rejections),
-                    missing_facts=list(review.missing_facts),
                 )
                 continue
-            parsed, validation_error = _parse_stage_result(stage, text)
+            returned_role, text = item
+            parsed, validation_error = _parse_specialist_result(returned_role, text)
             if parsed is None:
                 logger.warning(
-                    "foundry_multi_agent_invalid_output",
-                    stage=stage,
+                    "foundry_specialist_invalid_output",
+                    trace_id=trace_id,
+                    role=returned_role,
                     output_chars=len(text),
                     validation_error=validation_error,
+                )
+                sections.append(
+                    SpecialistEvidence(
+                        role=returned_role,
+                        status="partial",
+                        claims=(),
+                        gaps=(f"{returned_role} specialist returned invalid output",),
+                    )
                 )
                 continue
             if validation_error:
                 logger.info(
-                    "foundry_multi_agent_output_normalized",
-                    stage=stage,
+                    "foundry_specialist_output_normalized",
+                    trace_id=trace_id,
+                    role=returned_role,
                     normalization=validation_error,
                 )
-            if stage == "action":
-                known_claim_ids = {
-                    claim.claim_id for section in sections for claim in section.claims
-                }
-                if any(
-                    evidence_id not in known_claim_ids
-                    for claim in parsed.claims
-                    for evidence_id in claim.evidence
-                ):
-                    logger.warning(
-                        "foundry_multi_agent_unknown_evidence",
-                        stage=stage,
-                    )
-                    continue
             sections.append(parsed)
 
-        if not sections:
-            logger.info("foundry_multi_agent_empty", stages=list(by_stage))
-            return {}
+        for section in sections:
+            logger.info(
+                "foundry_specialist_completed",
+                trace_id=trace_id,
+                role=section.role,
+                agent=by_role[section.role].name,
+                status=section.status,
+                claim_count=len(section.claims),
+                gap_count=len(section.gaps),
+                claims=[
+                    {
+                        "id": claim.claim_id,
+                        "confidence": claim.confidence,
+                        "evidence": list(claim.evidence),
+                    }
+                    for claim in section.claims
+                ],
+                gaps=list(section.gaps),
+            )
 
         merged_findings = _render_findings(sections)
-        merged = f"{update_context}\n\n{MULTI_AGENT_HEADER}\n{merged_findings}"
+        merged = f"{update_context}\n\n{SPECIALIST_CONTEXT_HEADER}\n{merged_findings}"
         logger.info(
-            "foundry_multi_agent_done",
-            stages=[section.stage for section in sections],
+            "foundry_specialist_collaboration_done",
+            trace_id=trace_id,
+            roles=[section.role for section in sections],
             claims=sum(len(section.claims) for section in sections),
             gaps=sum(len(section.gaps) for section in sections),
             added_chars=len(merged_findings),
@@ -1158,9 +1150,11 @@ def build_multi_agent_node(
         return {"update_context": merged}
 
     logger.info(
-        "foundry_multi_agent_ready",
-        stages=sorted(by_stage),
-        agents=[spec.name for spec in roster],
-        local_tools={stage: sorted(stage_tools.get(stage, {})) for stage in sorted(by_stage)},
+        "foundry_specialist_collaboration_ready",
+        roles=sorted(by_role),
+        agents=[by_role[role].name for role in EVIDENCE_SPECIALIST_ROLES],
+        local_tools={
+            role: sorted(specialist_tools.get(role, {})) for role in EVIDENCE_SPECIALIST_ROLES
+        },
     )
-    return multi_agent_node
+    return specialist_collaboration_node

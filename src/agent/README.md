@@ -3,16 +3,16 @@
 [프로젝트 README](../../README.md) > [`src`](../README.md) > `agent`
 
 Azure Update 한 건을 근거 기반 `AnalysisResult`로 바꾸는 핵심 계층입니다. Foundry Hosted Agent
-안에서 LangGraph를 실행하고, persisted Prompt Agent와 read-only tool을 호출하며, 결과의 품질과
-실행 안전성을 검증합니다.
+안에서 LangGraph를 실행하고, 여섯 specialist Prompt Agent와 role-scoped read-only tool을
+호출하며, 결과의 품질과 실행 안전성을 검증합니다.
 
 ## 구성 지도
 
 | 파일/디렉터리 | 책임 |
 |---|---|
 | [`analyzer.py`](analyzer.py) | Pydantic domain model과 Plan-Execute-Evaluate-Report LangGraph |
-| [`foundry_backend.py`](foundry_backend.py) | Prompt Agent Responses adapter와 optional enrichment pipeline |
-| [`hosted_contract.py`](hosted_contract.py) | 제어면과 Hosted Agent 사이의 strict v2 wire model |
+| [`foundry_backend.py`](foundry_backend.py) | Prompt Agent Responses adapter와 specialist collaboration |
+| [`hosted_contract.py`](hosted_contract.py) | 분석·맞춤화·출시 전 평가를 위한 strict v2 wire model |
 | [`hosted_client.py`](hosted_client.py) | Entra token으로 Hosted endpoint를 호출하는 control-plane proxy |
 | [`tools.py`](tools.py) | LangChain `BaseTool`, Pydantic input, KQL 실행·복구, tool registry |
 | [`context_store.py`](context_store.py) | budget 초과 tool result를 `[ref=Rn]`으로 검색 가능하게 보존 |
@@ -30,17 +30,19 @@ Azure Update 한 건을 근거 기반 `AnalysisResult`로 바꾸는 핵심 계�
 
 ```mermaid
 flowchart LR
-    I[Hosted v2 request] --> E[Optional enrich]
-    E --> P[Plan]
+  I[Hosted v2 analysis or evaluation request] --> E[Resource Graph + Azure MCP + Azure API]
+  E --> P[Coordinator plan]
     P --> X[Execute tools]
     X --> V[Evaluate evidence]
     V -->|partial| T[Revise tasks]
     T --> X
     V -->|insufficient| P
-    V -->|sufficient| R[Report]
-    R --> A[Action safety]
-    A --> Q[Trajectory and optional G-Eval]
-    Q --> O[AnalysisResult]
+    V -->|sufficient| R[Report writer]
+    R --> Q[Quality reviewer and bounded rewrite]
+    Q --> A[Action safety]
+    A --> TQ[Trajectory evaluation]
+    TQ --> O[AnalysisResult]
+    TQ --> D[Bounded evaluation diagnostics]
 ```
 
 각 continue node는 기존 `AgentState`를 in-place로 바꾸지 않고 새 partial state dict를 반환합니다.
@@ -57,6 +59,15 @@ safe한 연속 호출만 병렬 batch로 묶고, mutation 도구 또는 판정 �
 Evaluator는 preview만으로 부재를 결론 내리지 않고 `query_tool_result`의 full search를 task로
 요청할 수 있습니다. 한 entry는 최대 2M chars, store 전체는 16M chars이며 oldest-first로
 퇴출됩니다. entry가 자체 cap에 걸리면 검색 실패도 “부재 확정”으로 표현할 수 없습니다.
+
+Tool input 이름은 실행 계약입니다. `find_related_resources`는 `keyword` 배열을 받고,
+`query_azure_resources.query`는 실제 ARG table로 시작하는 KQL이어야 합니다. Revision이 자연어
+query와 `resource_type`을 함께 반환하면 analyzer가 rich builder query로 복구합니다.
+`query_tool_result.ref`는 `[ref=Rn]`의 `Rn`만 허용하며 specialist claim ID는 거부합니다.
+
+Resource Graph Prompt Agent는 strict evidence envelope를 사용하므로 repair 호출은 server-side
+tool을 `tool_choice=none`으로 끄고 claim의 `text`에서 KQL을 추출합니다. Gap-only JSON을 KQL로
+실행하거나 다른 specialist로 fallback하지 않습니다.
 
 ## 사용 예시
 
@@ -78,13 +89,20 @@ assert request.contract_version == "2"
 & .\.venv\Scripts\Activate.ps1; python -m pytest tests\test_analyzer.py tests\test_context_store.py tests\test_hosted_contract.py tests\test_action_verification.py -o "addopts=" -q
 ```
 
+`HostedEvaluationRequest`는 같은 분석을 실행한 뒤 report-quality, trajectory, action-safety 요약만
+반환합니다. 원시 evidence와 judge reasoning은 Hosted runtime 밖으로 내보내지 않습니다. 모든
+Prompt Agent lifecycle과 평가 결과 event는 campaign `trace_id`로 연결됩니다.
+
 ## 불변식
 
 - 제어면은 이 디렉터리의 analyzer를 직접 만들지 않습니다. `src.hosted_agent`만 graph를 소유합니다.
 - 외부 RSS/Web 결과는 untrusted input이며 tenant payload를 Web Search로 보내지 않습니다.
-- 필수 Prompt Agent 실패는 local chat model이나 direct OpenAI endpoint로 우회하지 않습니다.
-- KQL task는 codex role을 우선하고 availability 오류에서만 primary role로 낮춥니다. fast role로
-  보내지 않습니다.
+- 여섯 Prompt Agent 이름은 모두 고유해야 하며 누락이나 중복은 Hosted 시작 시 fail closed합니다.
+- specialist 실패는 다른 역할로 우회하지 않습니다. KQL은 Resource Graph specialist 뒤에서
+  deterministic sanitizer/builder 복구만 허용하며, 실패하면 gap으로 남깁니다.
 - action verification 실패 시 copy-paste 가능한 command를 그대로 노출하지 않습니다.
+- 비파괴 평가 action은 `advisory_review`로 분류합니다. CLI 부재만으로 실행 보류하지 않으며,
+  command 또는 상태를 바꾸는 Portal 절차는 기존대로 fail-closed 검증합니다.
 - 분석 완료 시 trace에 속한 context-store entry를 정리해 동시 분석의 근거가 섞이지 않게 합니다.
 - history/pattern 저장 실패는 완성된 분석 결과를 버리는 이유가 되지 않습니다.
+- 평가용 진단은 고객 report schema나 canonical archive document에 섞지 않습니다.

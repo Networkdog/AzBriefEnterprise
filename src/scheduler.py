@@ -42,15 +42,27 @@ async def run_scheduled_digest(dry_run: bool = False) -> int:
         0 when the run completed, 1 otherwise.
     """
     from src.agent.hosted_client import HostedAgentAnalyzer
+    from src.archive.models import ArchiveSource
+    from src.archive.service import ArchiveService
     from src.email.service import EmailService
     from src.orchestrator import RunRecord, execute_run
     from src.rss.parser import AzureUpdateParser
 
     analyzer = HostedAgentAnalyzer()
-    record = RunRecord(run_id=uuid.uuid4().hex, dry_run=dry_run)
+    record = RunRecord(
+        run_id=uuid.uuid4().hex,
+        source=ArchiveSource.SCHEDULED_DIGEST.value,
+        dry_run=dry_run,
+    )
 
     try:
-        await execute_run(record, analyzer, EmailService(), AzureUpdateParser())
+        await execute_run(
+            record,
+            analyzer,
+            EmailService(),
+            AzureUpdateParser(),
+            ArchiveService(),
+        )
     finally:
         await _close_analyzer(analyzer)
 

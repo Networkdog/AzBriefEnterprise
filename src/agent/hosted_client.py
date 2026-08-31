@@ -13,6 +13,8 @@ from src.agent.hosted_contract import (
     HostedAgentResponse,
     HostedAnalysisRequest,
     HostedCustomizationRequest,
+    HostedEvaluationRequest,
+    HostedEvaluationResult,
     HostedSubscriber,
     HostedUpdate,
 )
@@ -64,7 +66,7 @@ def extract_response_text(payload: dict[str, Any]) -> str:
 
 async def invoke_hosted_agent(
     settings: Settings,
-    request: Union[HostedAnalysisRequest, HostedCustomizationRequest],
+    request: Union[HostedAnalysisRequest, HostedEvaluationRequest, HostedCustomizationRequest],
 ) -> HostedAgentResponse:
     """Invoke the configured Hosted Agent and validate its wire response."""
     agent_name = settings.foundry_hosted_agent_name
@@ -177,7 +179,28 @@ class HostedAgentAnalyzer:
             trace_id=request.trace_id,
             update_id=update.id,
         )
-        return AnalysisResult.model_validate(response.result)
+        result = AnalysisResult.model_validate(response.result)
+        result._hosted_trace_id = request.trace_id
+        return result
+
+    async def evaluate_update(
+        self, update: AzureUpdate, trace_id: Optional[str] = None
+    ) -> HostedEvaluationResult:
+        """Run analysis in the Hosted Agent and return bounded quality diagnostics."""
+        request = HostedEvaluationRequest(
+            update=HostedUpdate.model_validate(update.to_dict()),
+            trace_id=trace_id or uuid.uuid4().hex[:12],
+        )
+        response = await invoke_hosted_agent(self.settings, request)
+        logger.info(
+            "foundry_hosted_evaluation_done",
+            trace_id=request.trace_id,
+            update_id=update.id,
+        )
+        result = HostedEvaluationResult.model_validate(response.result)
+        if result.trace_id != request.trace_id:
+            raise HostedAgentError("Hosted evaluation result trace_id does not match the request")
+        return result
 
     async def customize_for_subscriber(
         self,

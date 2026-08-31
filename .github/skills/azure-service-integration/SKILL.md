@@ -1,16 +1,21 @@
 ---
 name: azure-service-integration
-description: 'Add new Azure service integration to AzBrief. Use when: new service, add service, create service class, ResourceGraphService pattern, CostManagementService, LogAnalyticsService, MicrosoftLearnService, lazy initialization, _get_client pattern, Azure SDK integration.'
+description: 'Add new Azure service integration to AzBrief. Use when: new service, add service, create service class, ResourceGraphService pattern, CostManagementService, BillingService, Microsoft.Billing, LogAnalyticsService, MicrosoftLearnService, lazy initialization, _get_client pattern, Azure SDK integration.'
 ---
 
 # Azure Service Integration
 
 ## Foundry Runtime Guidance
 
+- Stay inside the assigned evidence specialty. Azure API owns ARM, Health, Policy,
+    Advisor, Activity Log, Cost Management, and Billing; Azure MCP never uses these local
+    FunctionTools as a fallback.
 - Treat services and FunctionTools as evidence providers, not decision makers. Accept a
     result as evidence only when its explicit success indicator is true.
 - Prefer live read-only evidence with exact tenant and subscription scope; never treat one
     subscription as the whole tenant.
+- Billing hierarchy is tenant-scoped and needs billing-scope read access. Preserve 403,
+    unsupported agreement types, and an empty visible-account set as distinct gaps.
 - Make the minimum calls needed to close a named gap. Execute serially when concurrency
     safety is undeclared.
 - Preserve service errors and lower confidence. Missing evidence never proves absence.
@@ -141,9 +146,18 @@ python -m scripts.test_local resources     # Integration test
 |---------|------|-------------|---------|
 | `ResourceGraphService` | `resource_graph.py` | `azure-mgmt-resourcegraph` | Query resources across tenant |
 | `CostManagementService` | `cost_management.py` | `azure-mgmt-costmanagement` | Cost data by service/period |
+| `BillingService` | `billing.py` | `httpx` via `AzureRestClient` | Accessible billing accounts/profiles through Microsoft.Billing `2024-04-01` |
 | `LogAnalyticsService` | `log_analytics.py` | `azure-monitor-query` | Log Analytics workspace queries |
 | `MicrosoftLearnService` | `microsoft_learn.py` | `httpx` (REST API) | Search Microsoft Learn docs |
 | `AzureRestService` | `azure_rest.py` | `httpx` (REST API) | Direct ARM REST calls (`call_api` for paginated `value` lists; `get_resource` for single-object endpoints like `providers/{namespace}`) |
+| `ArchiveStore` / `BlobArchiveStore` | `archive.py` | `httpx` (Blob REST) | Immutable canonical analysis versions plus metadata-only list projection; control-plane data access, not an Agent evidence tool |
+
+`AzureRestClient` resolves a subscription only when the path contains `{subscriptionId}`.
+Tenant-scope endpoints such as `/providers/Microsoft.Billing/billingAccounts` must not fail merely
+because `AZURE_SUBSCRIPTION_ID` is unset. Billing APIs return only scopes visible to the current
+identity; permission failures and empty visibility never prove that the tenant has no billing data.
+Subscription Reader is insufficient for billing hierarchy access: the Hosted Agent identity needs
+Billing Reader or equivalent read permission at the relevant billing account scope.
 
 ## Resilience Patterns for Services
 

@@ -9,6 +9,8 @@ from src.agent.hosted_contract import (
     HostedAgentResponse,
     HostedAnalysisRequest,
     HostedCustomizationRequest,
+    HostedEvaluationResult,
+    HostedRunDiagnostics,
     HostedSubscriber,
     HostedUpdate,
 )
@@ -22,7 +24,6 @@ def _settings(**overrides) -> Settings:
     values = {
         "azure_tenant_id": "00000000-0000-0000-0000-000000000000",
         "foundry_project_endpoint": _ENDPOINT,
-        "foundry_primary_agent_name": "azbrief-primary",
         "foundry_hosted_agent_name": "azbrief-analysis-hosted",
     }
     values.update(overrides)
@@ -279,6 +280,38 @@ async def test_proxy_returns_complete_hosted_analysis(monkeypatch):
 
     assert result.update_id == "update-1"
     assert result.one_line_summary == "Summary"
+    assert result._hosted_trace_id
+    assert "hosted_trace_id" not in result.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_proxy_returns_hosted_evaluation_diagnostics(monkeypatch):
+    async def fake_invoke(settings, request):
+        payload = HostedEvaluationResult(
+            trace_id=request.trace_id,
+            analysis=_result_payload(),
+            diagnostics=HostedRunDiagnostics(
+                report_quality={"weighted_score": 4.25},
+                trajectory={"score": 94.0},
+                action_verification={"blocked": 0},
+            ),
+        )
+        return HostedAgentResponse(
+            operation="evaluate_update",
+            status="completed",
+            result=payload.model_dump(mode="json"),
+            trace_id=request.trace_id,
+        )
+
+    monkeypatch.setattr(hosted_client, "invoke_hosted_agent", fake_invoke)
+    analyzer = hosted_client.HostedAgentAnalyzer(_settings())
+
+    evaluated = await analyzer.evaluate_update(_update(), trace_id="campaign-trace")
+
+    assert evaluated.trace_id == "campaign-trace"
+    assert evaluated.analysis["update_id"] == "update-1"
+    assert evaluated.diagnostics.report_quality["weighted_score"] == 4.25
+    assert evaluated.diagnostics.trajectory["score"] == 94.0
 
 
 @pytest.mark.asyncio

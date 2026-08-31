@@ -51,6 +51,17 @@ class HostedAnalysisRequest(BaseModel):
     trace_id: str = Field(min_length=1, max_length=128)
 
 
+class HostedEvaluationRequest(BaseModel):
+    """Request analysis plus bounded pre-release quality diagnostics."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    contract_version: Literal["2"] = HOSTED_ANALYSIS_CONTRACT_VERSION
+    operation: Literal["evaluate_update"] = "evaluate_update"
+    update: HostedUpdate
+    trace_id: str = Field(min_length=1, max_length=128)
+
+
 class HostedCustomizationRequest(BaseModel):
     """Request subscriber-specific rewriting inside the Hosted Agent runtime."""
 
@@ -65,10 +76,30 @@ class HostedCustomizationRequest(BaseModel):
 
 
 HostedAgentRequest = Annotated[
-    Union[HostedAnalysisRequest, HostedCustomizationRequest],
+    Union[HostedAnalysisRequest, HostedEvaluationRequest, HostedCustomizationRequest],
     Field(discriminator="operation"),
 ]
 HOSTED_AGENT_REQUEST_ADAPTER = TypeAdapter(HostedAgentRequest)
+
+
+class HostedRunDiagnostics(BaseModel):
+    """Bounded quality summaries without raw evidence or private reasoning."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    report_quality: Optional[dict[str, Any]] = None
+    trajectory: Optional[dict[str, Any]] = None
+    action_verification: Optional[dict[str, Any]] = None
+
+
+class HostedEvaluationResult(BaseModel):
+    """Analysis and diagnostics returned only for pre-release evaluation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    trace_id: str = Field(min_length=1, max_length=128)
+    analysis: dict[str, Any]
+    diagnostics: HostedRunDiagnostics
 
 
 class HostedAgentResponse(BaseModel):
@@ -77,7 +108,7 @@ class HostedAgentResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     contract_version: Literal["2"] = HOSTED_ANALYSIS_CONTRACT_VERSION
-    operation: Literal["analyze_update", "customize_for_subscriber"]
+    operation: Literal["analyze_update", "evaluate_update", "customize_for_subscriber"]
     status: Literal["completed", "failed"]
     result: Optional[dict[str, Any]] = None
     trace_id: str = Field(min_length=1, max_length=128)

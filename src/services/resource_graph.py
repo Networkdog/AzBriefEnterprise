@@ -518,6 +518,8 @@ class ResourceGraphQueryBuilder:
         | extend addonAppRouting = properties.addonProfiles.ingressApplicationGateway.enabled
         | extend addonDefender = properties.securityProfile.defender.securityMonitoring.enabled
         | extend addonWorkloadIdentity = properties.securityProfile.workloadIdentity.enabled
+        | extend azureFilesCSIDriver = properties.storageProfile.fileCSIDriver.enabled
+        | extend azureDiskCSIDriver = properties.storageProfile.diskCSIDriver.enabled
         | extend addonImageCleaner = properties.securityProfile.imageCleaner.enabled
         | extend privateFqdn = properties.privateFQDN
         | extend apiServerAccessProfile = properties.apiServerAccessProfile.authorizedIPRanges
@@ -531,7 +533,8 @@ class ResourceGraphQueryBuilder:
                   autoUpgradeChannel, nodeOsUpgradeChannel,
                   addonHttpRouting, addonMonitoring, addonPolicy,
                   addonKeyVaultCSI, addonAppRouting, addonDefender,
-                  addonWorkloadIdentity, addonImageCleaner,
+                  addonWorkloadIdentity, azureFilesCSIDriver, azureDiskCSIDriver,
+                  addonImageCleaner,
                   privateFqdn, skuTier
         """
 

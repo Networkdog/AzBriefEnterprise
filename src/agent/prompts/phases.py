@@ -72,32 +72,36 @@ Design specific analysis tasks based on the update context.
    - `get_resource_dependencies` -- Dependency mapping for blast radius analysis (RECOMMENDED for core infrastructure updates)
    - `query_azure_resources` -- Custom KQL query you write yourself (FLEXIBLE, for specific fields)
    - `get_security_posture` -- Security configuration analysis
-   - `find_related_resources` -- Keyword-based resource search
+   - `find_related_resources` -- Keyword-based resource search; args are exactly
+     `{"keyword": ["storage", "blob"]}` (never `query`)
    - `explore_resource_schema` -- Discover properties schema for a resource type
 2. **cost_api** (Cost Management API):
    - `get_cost_by_resource_type` -- Cost breakdown by resource type
    - `get_cost_by_service` -- Cost breakdown by service name
-3. **log_analytics** (Log Analytics):
+3. **billing_api** (Microsoft.Billing REST API):
+  - `list_billing_accounts` -- Accessible billing accounts, agreement types, and status
+  - `list_billing_profiles` -- Profiles under an exact account name returned above
+4. **log_analytics** (Log Analytics):
    - `query_log_analytics` -- Custom KQL query on logs
    - `get_recent_errors` -- Recent error summary
    - `get_activity_log_summary` -- Activity log summary
-4. **advisor** (Azure Advisor):
-   - `get_advisor_recommendations` -- Advisor recommendations by category. Set use_rest_api=True for detailed data including remediation actions, learn-more links, potential benefits, risk level, and solution text
-5. **service_health** (Service Health):
+5. **advisor** (Azure Advisor):
+  - `get_advisor_recommendations` -- Detailed Advisor REST evidence including remediation actions, learn-more links, potential benefits, risk level, and solution text. Errors remain explicit; there is no KQL fallback
+6. **service_health** (Service Health):
    - `get_service_health` -- Current service health status (KQL-based, fast)
    - `get_service_health_events` -- Detailed health events via REST API with affected services/regions, recommended actions, and FAQ links
-6. **resource_health** (Resource Health):
+7. **resource_health** (Resource Health):
    - `get_resource_health` -- Availability status (Available/Unavailable/Degraded) of resources. Essential for impact analysis
-7. **policy** (Azure Policy):
+8. **policy** (Azure Policy):
    - `get_policy_compliance` -- Policy compliance summary. Non-compliant resource counts by policy assignment
-8. **learn_search** (Microsoft Learn):
+9. **learn_search** (Microsoft Learn):
    - `search_update_related_docs` -- Comprehensive update-related doc search
    - `search_azure_docs` -- Azure documentation keyword search
    - `get_service_documentation` -- Service-specific documentation
    - `search_resource_graph_docs` -- Resource Graph KQL documentation
-7. **azure_rest** (Azure Management REST API):
+10. **azure_rest** (Azure Management REST API):
    - `call_azure_rest_api` -- Call any Azure ARM API for SKU/availability/capability checks
-9. **context** (already-collected results):
+11. **context** (already-collected results):
    - `query_tool_result` -- Search the full text of an earlier result shown to you truncated
 
 #### Impact Analysis Task Planning (RECOMMENDED)
@@ -233,7 +237,7 @@ Do NOT wrap in markdown code fences. Output raw JSON only.
     {
       "task_id": "task_1",
       "description": "What this task analyzes",
-      "method": "kql | cost_api | log_analytics | learn_search | advisor | service_health | resource_health | policy | azure_rest | context",
+      "method": "kql | cost_api | billing_api | log_analytics | learn_search | advisor | service_health | resource_health | policy | azure_rest | context",
       "tool_name": "exact_tool_name_from_list_above",
       "tool_args": {"arg_name": "arg_value"},
       "purpose": "Why this analysis is needed"
@@ -347,6 +351,10 @@ Based on the evaluation's `missing_aspects` and `suggestions`:
 5. When an existing result was TRUNCATED (`[ref=Rn]` in its preview) and the missing fact could
    be in the unshown rows, search it before querying Azure again:
    `{{"method": "context", "tool_name": "query_tool_result", "tool_args": {{"ref": "Rn", "pattern": "<resource name or property>"}}}}`
+6. For `query_azure_resources`, `tool_args.query` MUST be executable Azure Resource Graph KQL
+  beginning with a real table such as `Resources`; never put an English task description there.
+7. For `query_tool_result`, copy an actual `[ref=Rn]` handle from Existing Task Results. A specialist
+  claim ID such as `resource_graph-2` or `azure_mcp-2` is not a stored-result ref.
 
 ### Output Format
 Respond with ONLY a JSON array of NEW tasks (no markdown fences):
@@ -355,7 +363,7 @@ Respond with ONLY a JSON array of NEW tasks (no markdown fences):
   {{
     "task_id": "task_r1",
     "description": "What this task analyzes",
-    "method": "kql | cost_api | log_analytics | learn_search | advisor | service_health | resource_health | policy | azure_rest | context",
+    "method": "kql | cost_api | billing_api | log_analytics | learn_search | advisor | service_health | resource_health | policy | azure_rest | context",
     "tool_name": "exact_tool_name",
     "tool_args": {{"arg_name": "arg_value"}},
     "purpose": "Why this analysis is needed"

@@ -474,7 +474,7 @@ class GEvalJudge:
             settings: Optional settings override (mostly for tests).
         """
         self.settings = settings or get_settings()
-        self._deployment = self.settings.foundry_agent_for_role("primary") or ""
+        self._deployment = self.settings.foundry_agent_for_role("quality_reviewer") or ""
         self._is_reasoning = self._is_reasoning_model(self._deployment)
         self._llm = llm if llm is not None else self._create_judge_llm()
 
@@ -512,10 +512,10 @@ class GEvalJudge:
         )
 
     def _create_judge_llm(self) -> Any:
-        """Create the Foundry primary agent used as the report judge."""
+        """Create the Foundry quality-reviewer Prompt Agent."""
         from src.agent.foundry_backend import create_foundry_chat_model
 
-        return create_foundry_chat_model(self.settings, "primary")
+        return create_foundry_chat_model(self.settings, "quality_reviewer")
 
     # ------------------------------------------------------------------
     # Public API
@@ -564,8 +564,13 @@ class GEvalJudge:
         subscriber_text = self._render_subscriber(subscriber)
 
         trace = getattr(result, "update_id", "") or getattr(update, "id", "")
+        from src.agent.foundry_backend import current_foundry_invocation_context
+
+        trace_id, task_id = current_foundry_invocation_context()
         logger.info(
             "geval_started",
+            trace_id=trace_id,
+            task_id=task_id,
             update_id=trace,
             dimensions=len(DIMENSIONS),
             logprob_normalization=self.enable_logprob_normalization,
@@ -582,7 +587,13 @@ class GEvalJudge:
         report = GEvalReport(target_score=self.target_score)
         for dim, outcome in zip(DIMENSIONS, scores):
             if isinstance(outcome, Exception):
-                logger.warning("geval_dimension_error", dimension=dim.key, error=str(outcome)[:200])
+                logger.warning(
+                    "geval_dimension_error",
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    dimension=dim.key,
+                    error=str(outcome)[:200],
+                )
                 report.dimension_scores.append(
                     DimensionScore(
                         key=dim.key,
@@ -603,6 +614,8 @@ class GEvalJudge:
 
         logger.info(
             "geval_done",
+            trace_id=trace_id,
+            task_id=task_id,
             update_id=trace,
             weighted_score=round(report.weighted_score, 3),
             percentage=round(report.percentage, 1),
@@ -755,8 +768,9 @@ class GEvalJudge:
     # Rendering helpers
     # ------------------------------------------------------------------
 
+    @staticmethod
     def render_report_markdown(
-        self, result: "AnalysisResult", update: "AzureUpdate", language: str = "ko"
+        result: "AnalysisResult", update: "AzureUpdate", language: str = "ko"
     ) -> str:
         """Render an ``AnalysisResult`` into the Markdown report the judge scores.
 

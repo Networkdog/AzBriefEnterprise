@@ -13,6 +13,8 @@ architectural depth**를 평가하고 개선할 때 사용하는 skill입니다.
 | [`src/agent/geval.py`](../../../src/agent/geval.py) | 차원별 rubric, 병렬 judge, logprob 정규화, feedback 생성 |
 | [`scripts/evaluate_report.py`](../../../scripts/evaluate_report.py) | 단건 생성·채점·반복과 artifact 저장 |
 | [`scripts/evaluate_batch.py`](../../../scripts/evaluate_batch.py) | category를 층화한 fleet/holdout 측정 |
+| [`scripts/quality_campaign.py`](../../../scripts/quality_campaign.py) | 기간 snapshot, A/A, holdout, Hosted 진단, 다층 release gate |
+| [`references/quality-campaign-rubric.md`](references/quality-campaign-rubric.md) | 연구 근거, 이론적 5점, 출시 기준, trace 계약 |
 | [`eval_runs/`](../../../eval_runs/) | 로컬 생성 평가 결과; Git에서 제외됨 |
 
 ## 사용 예시
@@ -21,6 +23,14 @@ architectural depth**를 평가하고 개선할 때 사용하는 skill입니다.
 
 ```powershell
 & .\.venv\Scripts\Activate.ps1; python -m scripts.evaluate_batch --months 6 --sample 12 --seed 42 --tag baseline
+```
+
+출시 전 장기 개선은 기간과 holdout을 먼저 고정한 뒤 진행합니다.
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.quality_campaign prepare --from 2026-06-01 --to 2026-08-29 --sample 24 --seed 42 --output eval_runs/campaign-q3
+python -m scripts.quality_campaign run --campaign eval_runs/campaign-q3 --tag baseline-a --runtime local --split diagnosis --concurrency 1 --use-azd-env
 ```
 
 Judge 자체의 parsing과 집계는 Azure 호출 없이 집중 검증할 수 있습니다.
@@ -37,3 +47,5 @@ Judge 자체의 parsing과 집계는 Azure 호출 없이 집중 검증할 수 �
 - 단일 stochastic sample의 총점보다 report text diff와 목표 차원의 변화를 먼저 봅니다.
 - A/A noise와 holdout을 측정하지 않은 prompt 개선은 일반화됐다고 주장하지 않습니다.
 - critical faithfulness flaw는 평균 점수로 상쇄하지 않습니다.
+- blocked action, failed trajectory, generation error도 semantic 평균으로 상쇄하지 않습니다.
+- 실제 출시 판정은 전체 기간의 deployed Hosted run만 인정합니다.

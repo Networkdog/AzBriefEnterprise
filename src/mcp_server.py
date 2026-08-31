@@ -11,6 +11,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 from structlog import get_logger
 
+from src.archive.models import ArchiveSource
 from src.config import get_settings
 from src.middleware import rate_limiter
 from src.orchestrator import get_run_store
@@ -28,6 +29,7 @@ _ALLOWED_UPDATE_DOMAINS = frozenset(
 )
 
 _analyzer: Optional[Any] = None
+_archive_service: Optional[Any] = None
 _rss_parser: Optional[Any] = None
 
 mcp = MCPServer(
@@ -40,10 +42,11 @@ mcp = MCPServer(
 )
 
 
-def register_mcp_services(analyzer: Any, rss_parser: Any) -> None:
+def register_mcp_services(analyzer: Any, rss_parser: Any, archive_service: Any = None) -> None:
     """Register control-plane dependencies initialized by FastAPI lifespan."""
-    global _analyzer, _rss_parser
+    global _analyzer, _archive_service, _rss_parser
     _analyzer = analyzer
+    _archive_service = archive_service
     _rss_parser = rss_parser
 
 
@@ -99,6 +102,10 @@ async def analyze_azure_update(update_url: str) -> dict[str, Any]:
     analyzer, _ = _require_services()
     update = await _resolve_update(update_url)
     result = await analyzer.analyze_update(update)
+    if _archive_service is not None:
+        receipt = await _archive_service.archive_analysis(update, result, ArchiveSource.MCP)
+        if _archive_service.configured and not receipt.archived:
+            raise RuntimeError("configured archive did not persist the analysis")
     return result.model_dump(mode="json")
 
 

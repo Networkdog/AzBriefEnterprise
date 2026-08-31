@@ -10,6 +10,9 @@ from src.agent.hosted_contract import (
     HostedAgentResponse,
     HostedAnalysisRequest,
     HostedCustomizationRequest,
+    HostedEvaluationRequest,
+    HostedEvaluationResult,
+    HostedRunDiagnostics,
     HostedSubscriber,
     HostedUpdate,
 )
@@ -59,6 +62,28 @@ def test_customization_request_uses_discriminated_operation():
 
     assert isinstance(restored, HostedCustomizationRequest)
     assert restored.subscriber.email == "admin@example.com"
+
+
+def test_evaluation_request_and_result_are_strict():
+    request = HostedEvaluationRequest(update=_update(), trace_id="trace-eval")
+
+    restored = HOSTED_AGENT_REQUEST_ADAPTER.validate_json(request.model_dump_json())
+    result = HostedEvaluationResult(
+        trace_id="trace-eval",
+        analysis={"update_id": "update-1"},
+        diagnostics=HostedRunDiagnostics(
+            report_quality={"weighted_score": 4.25},
+            trajectory={"score": 92.0},
+            action_verification={"blocked": 0},
+        ),
+    )
+
+    assert isinstance(restored, HostedEvaluationRequest)
+    assert restored.operation == "evaluate_update"
+    assert result.trace_id == "trace-eval"
+    assert result.diagnostics.report_quality["weighted_score"] == 4.25
+    with pytest.raises(ValidationError):
+        HostedRunDiagnostics.model_validate({"raw_evidence": "must not cross the wire"})
 
 
 @pytest.mark.parametrize(

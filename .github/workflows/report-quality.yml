@@ -8,8 +8,10 @@ name: Report Quality Gate
 #
 # Required repository variables (workflow is skipped gracefully if absent):
 #   AZURE_CLIENT_ID, AZURE_TENANT_ID, AZURE_SUBSCRIPTION_ID,
-#   FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_PRIMARY_AGENT_NAME
-# Optional: FOUNDRY_CODEX_AGENT_NAME, FOUNDRY_FAST_AGENT_NAME.
+#   FOUNDRY_PROJECT_ENDPOINT, FOUNDRY_COORDINATOR_AGENT_NAME,
+#   FOUNDRY_RESOURCE_GRAPH_AGENT_NAME, FOUNDRY_AZURE_MCP_AGENT_NAME,
+#   FOUNDRY_AZURE_API_AGENT_NAME, FOUNDRY_REPORT_WRITER_AGENT_NAME,
+#   FOUNDRY_QUALITY_REVIEWER_AGENT_NAME.
 
 on:
   workflow_dispatch:
@@ -36,6 +38,8 @@ on:
     branches: [main]
     paths:
       - "src/agent/prompts/**"
+      - "src/agent/foundry_backend.py"
+      - "src/config.py"
       - "src/agent/geval.py"
       - "src/agent/trajectory.py"
       - "src/email/**"
@@ -53,16 +57,23 @@ jobs:
       - name: Check Foundry configuration
         id: check
         run: |
-          FOUNDRY_PROJECT_ENDPOINT=$(jq -r '.FOUNDRY_PROJECT_ENDPOINT // empty' <<< "$REPOSITORY_VARS")
-          FOUNDRY_PRIMARY_AGENT_NAME=$(jq -r '.FOUNDRY_PRIMARY_AGENT_NAME // empty' <<< "$REPOSITORY_VARS")
-          AZURE_CLIENT_ID=$(jq -r '.AZURE_CLIENT_ID // empty' <<< "$REPOSITORY_VARS")
-          AZURE_TENANT_ID=$(jq -r '.AZURE_TENANT_ID // empty' <<< "$REPOSITORY_VARS")
-          AZURE_SUBSCRIPTION_ID=$(jq -r '.AZURE_SUBSCRIPTION_ID // empty' <<< "$REPOSITORY_VARS")
-          if [ -n "$FOUNDRY_PROJECT_ENDPOINT" ] && \
-             [ -n "$FOUNDRY_PRIMARY_AGENT_NAME" ] && \
-             [ -n "$AZURE_CLIENT_ID" ] && \
-             [ -n "$AZURE_TENANT_ID" ] && \
-             [ -n "$AZURE_SUBSCRIPTION_ID" ]; then
+          missing=0
+          for key in \
+            AZURE_CLIENT_ID \
+            AZURE_TENANT_ID \
+            AZURE_SUBSCRIPTION_ID \
+            FOUNDRY_PROJECT_ENDPOINT \
+            FOUNDRY_COORDINATOR_AGENT_NAME \
+            FOUNDRY_RESOURCE_GRAPH_AGENT_NAME \
+            FOUNDRY_AZURE_MCP_AGENT_NAME \
+            FOUNDRY_AZURE_API_AGENT_NAME \
+            FOUNDRY_REPORT_WRITER_AGENT_NAME \
+            FOUNDRY_QUALITY_REVIEWER_AGENT_NAME; do
+            if [ -z "$(jq -r --arg key "$key" '.[$key] // empty' <<< "$REPOSITORY_VARS")" ]; then
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 0 ]; then
             echo "has_secrets=true" >> "$GITHUB_OUTPUT"
             echo "Foundry Agent Service configuration detected — quality gate will run."
           else
@@ -90,9 +101,12 @@ jobs:
             AZURE_TENANT_ID \
             AZURE_SUBSCRIPTION_ID \
             FOUNDRY_PROJECT_ENDPOINT \
-            FOUNDRY_PRIMARY_AGENT_NAME \
-            FOUNDRY_CODEX_AGENT_NAME \
-            FOUNDRY_FAST_AGENT_NAME; do
+            FOUNDRY_COORDINATOR_AGENT_NAME \
+            FOUNDRY_RESOURCE_GRAPH_AGENT_NAME \
+            FOUNDRY_AZURE_MCP_AGENT_NAME \
+            FOUNDRY_AZURE_API_AGENT_NAME \
+            FOUNDRY_REPORT_WRITER_AGENT_NAME \
+            FOUNDRY_QUALITY_REVIEWER_AGENT_NAME; do
             value=$(jq -r --arg key "$key" '.[$key] // empty' <<< "$REPOSITORY_VARS")
             output_name=$(tr '[:upper:]' '[:lower:]' <<< "$key")
             echo "::add-mask::$value"
@@ -126,9 +140,12 @@ jobs:
           AZURE_TENANT_ID: ${{ steps.config.outputs.azure_tenant_id }}
           AZURE_SUBSCRIPTION_ID: ${{ steps.config.outputs.azure_subscription_id }}
           FOUNDRY_PROJECT_ENDPOINT: ${{ steps.config.outputs.foundry_project_endpoint }}
-          FOUNDRY_PRIMARY_AGENT_NAME: ${{ steps.config.outputs.foundry_primary_agent_name }}
-          FOUNDRY_CODEX_AGENT_NAME: ${{ steps.config.outputs.foundry_codex_agent_name }}
-          FOUNDRY_FAST_AGENT_NAME: ${{ steps.config.outputs.foundry_fast_agent_name }}
+          FOUNDRY_COORDINATOR_AGENT_NAME: ${{ steps.config.outputs.foundry_coordinator_agent_name }}
+          FOUNDRY_RESOURCE_GRAPH_AGENT_NAME: ${{ steps.config.outputs.foundry_resource_graph_agent_name }}
+          FOUNDRY_AZURE_MCP_AGENT_NAME: ${{ steps.config.outputs.foundry_azure_mcp_agent_name }}
+          FOUNDRY_AZURE_API_AGENT_NAME: ${{ steps.config.outputs.foundry_azure_api_agent_name }}
+          FOUNDRY_REPORT_WRITER_AGENT_NAME: ${{ steps.config.outputs.foundry_report_writer_agent_name }}
+          FOUNDRY_QUALITY_REVIEWER_AGENT_NAME: ${{ steps.config.outputs.foundry_quality_reviewer_agent_name }}
           AZBRIEF_VERBOSE: "false"
           FAIL_UNDER: ${{ github.event.inputs.fail_under || '3.0' }}
           MIN_TRAJECTORY: ${{ github.event.inputs.min_trajectory || '60' }}

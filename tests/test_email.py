@@ -49,6 +49,68 @@ class TestEmailContentBuilding:
         content = service.build_email_content(sample_update, sample_analysis_result, language="ko")
         assert "LOW" in content["plain_content"]
 
+    def test_single_report_links_to_shared_archive_in_html_and_text(
+        self, sample_update, sample_analysis_result
+    ):
+        service = EmailService()
+        archive_url = "https://azbrief.example/archive/archive-id"
+        content = service.build_email_content(
+            sample_update,
+            sample_analysis_result,
+            language="ko",
+            archive_url=archive_url,
+        )
+        assert archive_url in content["html_content"]
+        assert "공용 분석 원본" in content["html_content"]
+        assert archive_url in content["plain_content"]
+
+    def test_digest_links_each_detail_to_its_shared_archive(
+        self, sample_update, sample_analysis_result
+    ):
+        service = EmailService()
+        archive_url = "https://azbrief.example/archive/archive-id"
+        content = service.build_digest_content(
+            [
+                {
+                    "update": sample_update,
+                    "result": sample_analysis_result,
+                    "skip_reason": "",
+                    "archive_url": archive_url,
+                }
+            ],
+            language="en",
+        )
+        assert archive_url in content["html_content"]
+        assert "Shared canonical analysis" in content["html_content"]
+        assert archive_url in content["plain_content"]
+
+    def test_unsafe_archive_url_is_omitted_from_html(self, sample_update, sample_analysis_result):
+        service = EmailService()
+        content = service.build_email_content(
+            sample_update,
+            sample_analysis_result,
+            archive_url="javascript:alert(1)",
+        )
+        assert "javascript:alert(1)" not in content["html_content"]
+        assert "javascript:alert(1)" not in content["plain_content"]
+
+    def test_digest_omits_unsafe_archive_url_from_plain_text(
+        self, sample_update, sample_analysis_result
+    ):
+        service = EmailService()
+        content = service.build_digest_content(
+            [
+                {
+                    "update": sample_update,
+                    "result": sample_analysis_result,
+                    "skip_reason": "",
+                    "archive_url": "javascript:alert(1)",
+                }
+            ]
+        )
+        assert "javascript:alert(1)" not in content["html_content"]
+        assert "javascript:alert(1)" not in content["plain_content"]
+
     def test_email_multi_language_ko(self, sample_update, sample_analysis_result):
         """Korean language labels are used for ko."""
         service = EmailService()
@@ -167,6 +229,7 @@ class TestEmailContentBuilding:
         )["html_content"]
         # 3 header cells + 3 body cells
         assert html.count("azb-col-metric") >= 6
+        assert get_labels("ko")["col_job_relevance"] in html
 
     def test_font_stacks_cover_every_platform(self):
         """Each stack names a preinstalled family for every target platform."""
@@ -217,8 +280,73 @@ class TestTemplateHelpers:
         assert "<strong" in html or "<b>" in html
 
     def test_markdown_to_html_link(self):
-        html = markdown_to_html("[test](https://example.com)")
-        assert "href" in html or "example.com" in html
+        html = markdown_to_html("[test](https://learn.microsoft.com/azure)")
+        assert '<a href="https://learn.microsoft.com/azure"' in html
+
+    def test_markdown_to_html_escapes_markup_and_drops_untrusted_links(self):
+        html = markdown_to_html(
+            '<img src=x onerror="alert(1)"> **safe** '
+            "[bad](https://attacker.example/phish) [script](javascript:alert(1))"
+        )
+        assert "<img" not in html
+        assert "&lt;img" in html
+        assert "<strong" in html
+        assert "attacker.example" not in html
+        assert "javascript:" not in html
+
+    def test_email_escapes_untrusted_update_and_analysis_fields(
+        self, sample_update, sample_analysis_result
+    ):
+        from src.agent.analyzer import ActionItem, ImpactSummary
+
+        service = EmailService()
+        sample_update.title = '<img src=x onerror="alert(1)">'
+        sample_update.azure_services = ["<script>alert(1)</script>"]
+        sample_analysis_result.one_line_summary = "<b>unsafe summary</b>"
+        sample_analysis_result.relevance_reason = '<svg onload="alert(1)">'
+        sample_analysis_result.impact_details = ImpactSummary(
+            security_impact="<iframe src=https://attacker.example></iframe>"
+        )
+        sample_analysis_result.affected_resources = [
+            {
+                "name": "<img src=x>",
+                "type": "Microsoft.Storage/<script>",
+                "reason": "<details open ontoggle=alert(1)>",
+            }
+        ]
+        sample_analysis_result.action_items = [
+            ActionItem(
+                task="<script>alert(1)</script>",
+                procedure="<img src=x onerror=alert(1)>",
+                cli_command="echo '<unsafe>'",
+                reference_url="https://attacker.example/phish",
+                verification_notes=["<svg onload=alert(1)>"],
+            )
+        ]
+        sample_analysis_result.additional_checks = ["<marquee>unsafe</marquee>"]
+        sample_analysis_result.reference_docs = [
+            {
+                "title": "<i>phish</i>",
+                "url": "https://attacker.example/phish",
+                "related_content": "<object data=evil>",
+            }
+        ]
+
+        content = service.build_email_content(sample_update, sample_analysis_result)
+        rendered = content["html_content"]
+
+        assert "<img" not in rendered
+        assert "<script>alert" not in rendered
+        assert "<b>unsafe" not in rendered
+        assert "<svg" not in rendered
+        assert "<i>phish" not in rendered
+        assert "<iframe" not in rendered
+        assert "<details" not in rendered
+        assert "<marquee" not in rendered
+        assert "<object" not in rendered
+        assert 'href="https://attacker.example' not in rendered
+        assert 'src="https://attacker.example' not in rendered
+        assert "&lt;img" in rendered
 
     def test_markdown_to_html_empty(self):
         assert markdown_to_html("") == ""

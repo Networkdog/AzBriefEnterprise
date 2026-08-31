@@ -19,6 +19,7 @@ from structlog import get_logger
 
 from src.admin.auth import AdminPrincipal, extract_principal, require_admin
 from src.admin.page import render_admin_page
+from src.archive.models import ArchiveSource
 from src.config import get_settings
 from src.orchestrator import get_run_store, parse_iso_utc, services_ready, start_run
 
@@ -77,6 +78,7 @@ async def admin_page(request: Request):
         nonce=nonce,
         profile=_backend_label(settings),
         user=principal.display,
+        archive_enabled=settings.archive_ui_enabled,
     )
     csp = (
         "default-src 'none'; "
@@ -117,6 +119,8 @@ async def admin_status(_: AdminPrincipal = Depends(require_admin)) -> dict:
         "동시 분석 수": settings.max_concurrent_analyses,
         "실행 시간 예산(초)": settings.run_time_budget_s,
         "오케스트레이터 준비": "예" if services_ready() else "아니오",
+        "분석 아카이브 저장": "설정됨" if settings.archive_enabled else "없음",
+        "분석 아카이브 UI": "켜짐" if settings.archive_ui_enabled else "꺼짐",
     }
 
 
@@ -203,7 +207,11 @@ async def admin_start_run(
         raise HTTPException(status_code=409, detail="이미 실행 중인 작업이 있습니다.")
 
     try:
-        record = start_run(since=_parse_since(request.since), dry_run=request.dry_run)
+        record = start_run(
+            since=_parse_since(request.since),
+            dry_run=request.dry_run,
+            source=ArchiveSource.ADMIN_RUN.value,
+        )
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc))
 

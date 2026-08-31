@@ -17,6 +17,7 @@ from structlog import get_logger
 from typing_extensions import TypedDict
 
 from src.agent.context_store import get_result_store, store_and_handle
+from src.agent.foundry_backend import foundry_invocation_context
 from src.agent.prompts import (
     ANALYSIS_PROMPT,
     EVALUATION_PROMPT,
@@ -120,12 +121,29 @@ def _extract_llm_meta(response) -> dict[str, Any]:
 
     # Model name
     meta["model"] = rm.get("model_name") or rm.get("model", "")
+    meta["agent"] = rm.get("agent_name", "")
+    meta["agent_role"] = rm.get("agent_role", "")
+    meta["response_id"] = rm.get("response_id", "")
+    meta["response_status"] = rm.get("response_status", "")
+    meta["finish_reason"] = rm.get("finish_reason", "")
 
     # Response length
     content = getattr(response, "content", "") or ""
     meta["response_chars"] = len(content)
 
     return meta
+
+
+async def _ainvoke_with_trace(
+    llm: Any,
+    messages: Any,
+    *,
+    trace_id: str,
+    task_id: str,
+) -> Any:
+    """Invoke one Prompt Agent with async-safe trace correlation."""
+    with foundry_invocation_context(trace_id, task_id):
+        return await llm.ainvoke(messages)
 
 
 def _msg_role(msg) -> str:
@@ -224,6 +242,7 @@ class AnalysisResult(BaseModel):
     _evidence_resource_summary: str = PrivateAttr(default="")
     _evidence_task_results: dict[str, str] = PrivateAttr(default_factory=dict)
     _evidence_update_context: str = PrivateAttr(default="")
+    _hosted_trace_id: str = PrivateAttr(default="")
 
 
 class AnalysisTask(BaseModel):
@@ -234,6 +253,7 @@ class AnalysisTask(BaseModel):
     method: Literal[
         "kql",
         "cost_api",
+        "billing_api",
         "log_analytics",
         "learn_search",
         "advisor",
@@ -318,23 +338,24 @@ class AzureUpdateAnalyzer:
             settings: Optional runtime settings override for Hosted Agent execution.
         """
         self.settings = settings or get_settings()
+        if not self.settings.has_complete_specialist_roster:
+            raise RuntimeError(
+                "AzureUpdateAnalyzer requires distinct coordinator, resource_graph, azure_mcp, "
+                "azure_api, report_writer, and quality_reviewer Prompt Agents"
+            )
         self.max_iterations = max_iterations
         self.tools = get_all_tools()
-        # Primary agent: judging, safety verification, and role fallback.
-        self.llm = self._create_llm(reasoning_effort="medium")
-        self.llm_planner = self._create_llm("planner", reasoning_effort="medium")
-        self.llm_evaluator = self._create_llm("evaluator", reasoning_effort="medium")
-        self.llm_reporter = self._create_llm("reporter", reasoning_effort="medium")
-        # Codex model: optimized for KQL query writing/fixing (Resource Graph + Log Analytics)
-        self.llm_codex = self._create_codex_llm()
-        # Fast model: low reasoning for task revision, subscriber customization.
-        # Never used for KQL — see _is_kql_task.
-        self.llm_fast = self._create_llm("fast", reasoning_effort="low")
+        # The Hosted Agent owns orchestration; persisted Prompt Agents provide
+        # specialist reasoning at each boundary.
+        self.llm_coordinator = self._create_llm("coordinator", reasoning_effort="medium")
+        self.llm_resource_graph = self._create_resource_graph_llm()
+        self.llm_report_writer = self._create_llm("report_writer", reasoning_effort="medium")
+        self.llm_quality_reviewer = self._create_llm("quality_reviewer", reasoning_effort="medium")
         self.graph = self._build_graph()
-        # Share codex LLM with the query fixer singleton to avoid duplicate instances
+        # Share the Resource Graph specialist with the query fixer singleton.
         from src.agent.tools import get_query_fixer
 
-        get_query_fixer(llm=self.llm_codex, fallback_llm=self.llm)
+        get_query_fixer(llm=self.llm_resource_graph)
         # Resilience: Circuit breaker for LLM calls (3 consecutive failures → open)
         self._llm_circuit_breaker = CircuitBreaker(failure_threshold=3, reset_timeout=120)
         # Evidence from the most recent analysis (resource summary + tool results).
@@ -377,9 +398,20 @@ class AzureUpdateAnalyzer:
         query = task.tool_args.get("query")
         return isinstance(query, str) and "|" in query
 
+    @classmethod
+    def _needs_resource_graph_repair(cls, task: AnalysisTask, error: str) -> bool:
+        """Route KQL content failures, but not input-schema failures, to Resource Graph."""
+        if not cls._is_kql_task(task):
+            return False
+        error_lower = error.lower()
+        return not any(
+            marker in error_lower
+            for marker in ("validation error", "field required", "input_type=", "missing")
+        )
+
     def _create_llm(
         self,
-        role: str = "primary",
+        role: str = "quality_reviewer",
         *,
         reasoning_effort: str = "medium",
         temperature: float = 0.1,
@@ -388,7 +420,7 @@ class AzureUpdateAnalyzer:
         """Create a Foundry Agent Service chat adapter for a runtime role.
 
         Args:
-            role: Runtime role whose Foundry agent should be used.
+            role: Specialist role whose Foundry Prompt Agent should be used.
             reasoning_effort: Retained for call-site compatibility; configured on the agent.
             temperature: Retained for call-site compatibility; configured on the agent.
             request_timeout: Retained for call-site compatibility; the Foundry timeout setting wins.
@@ -398,9 +430,9 @@ class AzureUpdateAnalyzer:
 
         return create_foundry_chat_model(self.settings, role)
 
-    def _create_codex_llm(self):
-        """Create the Foundry agent used for KQL generation and repair."""
-        return self._create_llm("codex", temperature=0, request_timeout=60)
+    def _create_resource_graph_llm(self):
+        """Create the Resource Graph specialist used for KQL generation and repair."""
+        return self._create_llm("resource_graph", temperature=0, request_timeout=60).without_tools()
 
     def _build_graph(self) -> StateGraph:
         """Build the Plan-Execute-Evaluate LangGraph workflow."""
@@ -413,20 +445,19 @@ class AzureUpdateAnalyzer:
         workflow.add_node("revise_tasks", self._revise_tasks_node)
         workflow.add_node("report", self._report_node)
 
-        # Optional Foundry multi-agent enrichment ahead of core planning. It runs
-        # in this process; the complete graph itself is already the Hosted Agent.
-        from src.agent.foundry_backend import build_multi_agent_node
+        # Evidence specialists run inside this Hosted Agent before core planning.
+        from src.agent.foundry_backend import build_specialist_collaboration_node
 
-        enrich_node = build_multi_agent_node(self.settings, self.tools)
+        specialist_node = build_specialist_collaboration_node(self.settings, self.tools)
 
-        if enrich_node is not None:
-            workflow.add_node("enrich", enrich_node)
-            workflow.set_entry_point("enrich")
-            workflow.add_edge("enrich", "plan")
+        if specialist_node is not None:
+            workflow.add_node("specialists", specialist_node)
+            workflow.set_entry_point("specialists")
+            workflow.add_edge("specialists", "plan")
             logger.info(
-                "foundry_enrichment_node_enabled",
+                "foundry_specialist_node_enabled",
                 mode="in_process",
-                agents=[spec.name for spec in self.settings.get_foundry_enrichment_agents()],
+                agents=[spec.name for spec in self.settings.get_foundry_specialist_agents()],
             )
         else:
             # Entry point
@@ -499,7 +530,7 @@ class AzureUpdateAnalyzer:
         # Use only doc-search tools during planning
         planning_tools = [t for t in self.tools if t.name in self.PLANNING_TOOL_NAMES]
         tools_by_name = {t.name: t for t in planning_tools}
-        llm_with_tools = self.llm_planner.bind_tools(planning_tools)
+        llm_with_tools = self.llm_coordinator.bind_tools(planning_tools)
 
         messages: list[Any] = [
             SystemMessage(content=system_prompt),
@@ -530,7 +561,12 @@ class AzureUpdateAnalyzer:
                 )
                 break
             try:
-                response = await llm_with_tools.ainvoke(messages)
+                response = await _ainvoke_with_trace(
+                    llm_with_tools,
+                    messages,
+                    trace_id=state.get("trace_id", ""),
+                    task_id="coordinator:plan",
+                )
                 self._llm_circuit_breaker.record_success()
             except Exception as llm_err:
                 # Retry with backoff for transient errors
@@ -555,6 +591,7 @@ class AzureUpdateAnalyzer:
             logger.info(
                 "llm_call",
                 phase="plan",
+                trace_id=state.get("trace_id", ""),
                 iteration=_iter + 1,
                 elapsed_s=round(_llm_elapsed, 2),
                 **llm_meta,
@@ -602,6 +639,7 @@ class AzureUpdateAnalyzer:
                     )
                     logger.info(
                         "planning_tool_call",
+                        trace_id=state.get("trace_id", ""),
                         tool=tc["name"],
                         args_keys=list(tc["args"].keys()),
                         elapsed_s=round(_tool_elapsed, 2),
@@ -609,7 +647,11 @@ class AzureUpdateAnalyzer:
                     )
                     messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
                 else:
-                    logger.warning("planning_tool_not_found", tool=tc["name"])
+                    logger.warning(
+                        "planning_tool_not_found",
+                        trace_id=state.get("trace_id", ""),
+                        tool=tc["name"],
+                    )
                     messages.append(
                         ToolMessage(
                             content=f"Unknown tool: {tc['name']}",
@@ -797,7 +839,7 @@ class AzureUpdateAnalyzer:
             for kw in ("upgrade", "migrate", "deprecated", "end of support", "end of life")
         )
         if "get_advisor_recommendations" not in existing_tools and is_advisor_relevant:
-            task_args = {"use_rest_api": True}
+            task_args = {}
             injected.append(
                 AnalysisTask(
                     task_id=f"enrich_{next_id}",
@@ -908,6 +950,7 @@ class AzureUpdateAnalyzer:
             plan.tasks.extend(injected)
             logger.info(
                 "enrichment_tasks_injected",
+                trace_id=state.get("trace_id", ""),
                 injected_count=len(injected),
                 injected_tools=[t.tool_name for t in injected],
                 update_type=update_type,
@@ -922,6 +965,58 @@ class AzureUpdateAnalyzer:
     @staticmethod
     def _fill_contextual_tool_args(task: AnalysisTask, tool: Any, state: AgentState) -> None:
         """Fill required tool arguments already known from immutable update context."""
+        if task.tool_name == "query_azure_resources":
+            raw_query = task.tool_args.get("query")
+            resource_type = task.tool_args.get("resource_type")
+            is_kql = isinstance(raw_query, str) and re.match(
+                r"^\s*(?:Resources|ResourceContainers|[A-Za-z][A-Za-z0-9_]*resources)\b",
+                raw_query,
+                re.IGNORECASE,
+            )
+            if not is_kql and isinstance(resource_type, str) and resource_type.strip():
+                from src.services.resource_graph import ResourceGraphQueryBuilder
+
+                normalized_type = resource_type.strip()
+                query = ResourceGraphQueryBuilder.get_query_for_resource_type(normalized_type)
+                if query is None:
+                    safe_type = normalized_type.replace("'", "''")
+                    query = (
+                        "Resources\n"
+                        f"| where type =~ '{safe_type}'\n"
+                        "| project name, type, resourceGroup, subscriptionId, location\n"
+                        "| order by name asc\n"
+                        "| limit 200"
+                    )
+                task.tool_args = {"query": query}
+                logger.info(
+                    "tool_args_normalized",
+                    trace_id=state.get("trace_id", ""),
+                    task_id=task.task_id,
+                    tool=task.tool_name,
+                    from_key="resource_type+natural_language",
+                    to_key="builder_query",
+                )
+
+        if task.tool_name == "find_related_resources":
+            has_keyword = bool(
+                task.tool_args.get("keyword") or task.tool_args.get("service_keywords")
+            )
+            query_value = task.tool_args.get("query")
+            if not has_keyword and isinstance(query_value, (str, list)) and query_value:
+                keywords = query_value if isinstance(query_value, list) else [query_value]
+                task.tool_args = {
+                    key: value for key, value in task.tool_args.items() if key != "query"
+                }
+                task.tool_args["keyword"] = keywords
+                logger.info(
+                    "tool_args_normalized",
+                    trace_id=state.get("trace_id", ""),
+                    task_id=task.task_id,
+                    tool=task.tool_name,
+                    from_key="query",
+                    to_key="keyword",
+                )
+
         args_schema = getattr(tool, "args_schema", None)
         fields = getattr(args_schema, "model_fields", {}) or {}
         service_field = fields.get("service_name")
@@ -941,6 +1036,7 @@ class AzureUpdateAnalyzer:
         task.tool_args = {**task.tool_args, "service_name": service_name}
         logger.info(
             "tool_args_filled_from_context",
+            trace_id=state.get("trace_id", ""),
             task_id=task.task_id,
             tool=task.tool_name,
             filled_keys=["service_name"],
@@ -988,7 +1084,12 @@ class AzureUpdateAnalyzer:
             if tool is None:
                 task.status = "failed"
                 task.error = f"Tool '{task.tool_name}' not found"
-                logger.warning("Tool not found", tool_name=task.tool_name)
+                logger.warning(
+                    "Tool not found",
+                    trace_id=state.get("trace_id", ""),
+                    task_id=task.task_id,
+                    tool_name=task.tool_name,
+                )
                 return
 
             self._fill_contextual_tool_args(task, tool, state)
@@ -1006,7 +1107,10 @@ class AzureUpdateAnalyzer:
                             "azbrief.attempt": attempt + 1,
                         },
                     ):
-                        result = await tool.ainvoke(task.tool_args)
+                        with foundry_invocation_context(
+                            state.get("trace_id", ""), f"tool:{task.task_id}"
+                        ):
+                            result = await tool.ainvoke(task.tool_args)
                     # Overflow stays reachable via query_tool_result instead of being cut
                     result_str = store_and_handle(
                         tool=task.tool_name,
@@ -1027,6 +1131,7 @@ class AzureUpdateAnalyzer:
                     logger.info(
                         "task_succeeded",
                         phase="execute",
+                        trace_id=state.get("trace_id", ""),
                         task_id=task.task_id,
                         tool=task.tool_name,
                         method=task.method,
@@ -1044,6 +1149,7 @@ class AzureUpdateAnalyzer:
                     logger.warning(
                         "task_failed",
                         phase="execute",
+                        trace_id=state.get("trace_id", ""),
                         task_id=task.task_id,
                         tool=task.tool_name,
                         method=task.method,
@@ -1055,7 +1161,11 @@ class AzureUpdateAnalyzer:
 
                     if attempt < task.max_retries:
                         _console(f"    🔧 {task.task_id} fixing tool args via LLM...")
-                        fixed_args = await self._fix_tool_args(task, str(exc))
+                        fixed_args = await self._fix_tool_args(
+                            task,
+                            str(exc),
+                            trace_id=state.get("trace_id", ""),
+                        )
                         if fixed_args:
                             task.tool_args = fixed_args
                             _console(f"    🔧 {task.task_id} fixed → {str(fixed_args)[:100]}")
@@ -1123,7 +1233,9 @@ class AzureUpdateAnalyzer:
             ],
         }
 
-    async def _fix_tool_args(self, task: AnalysisTask, error: str) -> Optional[dict[str, Any]]:
+    async def _fix_tool_args(
+        self, task: AnalysisTask, error: str, trace_id: str = ""
+    ) -> Optional[dict[str, Any]]:
         """Use LLM to fix tool_args after a failure.
 
         Args:
@@ -1156,9 +1268,8 @@ class AzureUpdateAnalyzer:
                 docs_context=docs_context,
             )
 
-            # KQL repair always uses the codex model (dedicated deployment and
-            # endpoint, temperature 0); every other method uses the fast model.
-            # Fall back to primary LLM if codex is misconfigured
+            # KQL repair stays with the Resource Graph specialist; every other
+            # method uses the coordinator. Cross-role LLM fallback is forbidden.
             # Check circuit breaker before attempting LLM fix
             if self._llm_circuit_breaker.is_open:
                 logger.warning(
@@ -1166,8 +1277,8 @@ class AzureUpdateAnalyzer:
                     task_id=task.task_id,
                 )
                 return None
-            is_kql = self._is_kql_task(task)
-            fix_llm = self.llm_codex if is_kql else self.llm_fast
+            is_kql = self._needs_resource_graph_repair(task, error)
+            fix_llm = self.llm_resource_graph if is_kql else self.llm_coordinator
             logger.debug(
                 "llm_prompt",
                 phase="fix_tool_args",
@@ -1175,28 +1286,21 @@ class AzureUpdateAnalyzer:
                 prompt=prompt_text,
             )
             _fix_t0 = time.time()
-            try:
-                response = await fix_llm.ainvoke([HumanMessage(content=prompt_text)])
-            except Exception as llm_err:
-                # Codex model may not support chatCompletion — fall back to primary LLM
-                if fix_llm is not self.llm:
-                    logger.debug(
-                        "fix_llm_fallback",
-                        error=str(llm_err),
-                        fallback="primary",
-                    )
-                    fix_llm = self.llm
-                    response = await fix_llm.ainvoke([HumanMessage(content=prompt_text)])
-                else:
-                    raise
+            response = await _ainvoke_with_trace(
+                fix_llm,
+                [HumanMessage(content=prompt_text)],
+                trace_id=trace_id,
+                task_id=f"{'resource_graph' if is_kql else 'coordinator'}:fix_tool_args",
+            )
             _fix_elapsed = time.time() - _fix_t0
             fix_meta = _extract_llm_meta(response)
             logger.info(
                 "llm_call",
                 phase="fix_tool_args",
+                trace_id=trace_id,
                 task_id=task.task_id,
                 tool=task.tool_name,
-                model_role="codex" if is_kql else "fast",
+                model_role="resource_graph" if is_kql else "coordinator",
                 elapsed_s=round(_fix_elapsed, 2),
                 **fix_meta,
             )
@@ -1281,7 +1385,12 @@ class AzureUpdateAnalyzer:
                 ],
             }
         try:
-            response = await self.llm_evaluator.ainvoke([HumanMessage(content=prompt_text)])
+            response = await _ainvoke_with_trace(
+                self.llm_quality_reviewer,
+                [HumanMessage(content=prompt_text)],
+                trace_id=state.get("trace_id", ""),
+                task_id="quality_reviewer:evidence_evaluation",
+            )
             self._llm_circuit_breaker.record_success()
         except Exception as llm_err:
             self._llm_circuit_breaker.record_failure()
@@ -1304,6 +1413,7 @@ class AzureUpdateAnalyzer:
         logger.info(
             "llm_call",
             phase="evaluate",
+            trace_id=state.get("trace_id", ""),
             elapsed_s=round(_llm_elapsed, 2),
             prompt_chars=len(prompt_text),
             **llm_meta,
@@ -1411,6 +1521,7 @@ class AzureUpdateAnalyzer:
         logger.info(
             "revise_tasks_started",
             phase="revise",
+            trace_id=state.get("trace_id", ""),
             task_revision=task_revision_count,
             current_task_count=len(plan.tasks),
             evaluation_verdict=evaluation_dict.get("verdict"),
@@ -1443,7 +1554,12 @@ class AzureUpdateAnalyzer:
                 ],
             }
         try:
-            response = await self.llm_fast.ainvoke([HumanMessage(content=prompt_text)])
+            response = await _ainvoke_with_trace(
+                self.llm_coordinator,
+                [HumanMessage(content=prompt_text)],
+                trace_id=state.get("trace_id", ""),
+                task_id="coordinator:revise",
+            )
             self._llm_circuit_breaker.record_success()
         except Exception as llm_err:
             self._llm_circuit_breaker.record_failure()
@@ -1460,6 +1576,7 @@ class AzureUpdateAnalyzer:
         logger.info(
             "llm_call",
             phase="revise",
+            trace_id=state.get("trace_id", ""),
             elapsed_s=round(_llm_elapsed, 2),
             prompt_chars=len(prompt_text),
             **llm_meta,
@@ -1573,11 +1690,14 @@ class AzureUpdateAnalyzer:
             content = '{"relevance": "unknown", "detailed_analysis": "LLM circuit breaker open. Unable to generate report."}'
         else:
             try:
-                response = await self.llm_reporter.ainvoke(
+                response = await _ainvoke_with_trace(
+                    self.llm_report_writer,
                     [
                         SystemMessage(content=report_system),
                         HumanMessage(content=prompt_text),
-                    ]
+                    ],
+                    trace_id=state.get("trace_id", ""),
+                    task_id="report_writer:report",
                 )
                 self._llm_circuit_breaker.record_success()
                 content = response.content if hasattr(response, "content") else str(response)
@@ -1596,13 +1716,16 @@ class AzureUpdateAnalyzer:
                             content_chars=len(content),
                         )
                         try:
-                            recovery_response = await self.llm_reporter.ainvoke(
+                            recovery_response = await _ainvoke_with_trace(
+                                self.llm_report_writer,
                                 [
                                     SystemMessage(content=report_system),
                                     HumanMessage(content=prompt_text),
                                     response,  # Include partial response
                                     HumanMessage(content=OUTPUT_RECOVERY_MESSAGE),
-                                ]
+                                ],
+                                trace_id=state.get("trace_id", ""),
+                                task_id="report_writer:output_recovery",
                             )
                             continuation = (
                                 recovery_response.content
@@ -1723,6 +1846,50 @@ class AzureUpdateAnalyzer:
             parts.append("\n".join(lines))
         return "\n\n".join(parts)
 
+    def get_last_run_diagnostics(self) -> dict[str, Optional[dict[str, Any]]]:
+        """Return bounded quality summaries for a pre-release evaluation request.
+
+        The semantic judge's private reasoning and raw tenant evidence stay inside
+        the Hosted Agent. Scores, actionable feedback, process metrics, and safety
+        findings are sufficient for campaign-level diagnosis.
+        """
+        report_quality = None
+        if self._last_geval is not None:
+            report_quality = {
+                "weighted_score": round(self._last_geval.weighted_score, 3),
+                "percentage": round(self._last_geval.percentage, 1),
+                "grade": self._last_geval.grade,
+                "passed": self._last_geval.passed,
+                "target_score": self._last_geval.target_score,
+                "dimensions": [
+                    {
+                        "key": dimension.key,
+                        "title": dimension.title,
+                        "integer_score": dimension.integer_score,
+                        "score": round(dimension.score, 3),
+                        "weight": dimension.weight,
+                        "normalized": dimension.normalized,
+                        "feedback": dimension.feedback,
+                        "error": dimension.error,
+                    }
+                    for dimension in self._last_geval.dimension_scores
+                ],
+                "critical_flaws": list(self._last_geval.critical_flaws),
+                "elapsed_s": round(self._last_geval.elapsed_s, 2),
+            }
+
+        return {
+            "report_quality": report_quality,
+            "trajectory": (
+                self._last_trajectory.to_dict() if self._last_trajectory is not None else None
+            ),
+            "action_verification": (
+                self._last_action_verification.as_dict()
+                if self._last_action_verification is not None
+                else None
+            ),
+        }
+
     async def _critic_pass(
         self,
         result: AnalysisResult,
@@ -1733,25 +1900,27 @@ class AzureUpdateAnalyzer:
 
         Bounded to a single rewrite regardless of geval_max_iterations: each
         extra pass costs two LLM calls against the run's wall-clock budget.
-        Any failure returns the original report — quality scoring never fails
-        an analysis.
+        A worse rewrite returns the original report. A reviewer failure propagates
+        because an unreviewed report must not be treated as quality-approved.
         """
         from src.agent.geval import GEvalJudge
 
-        judge = GEvalJudge(llm=self.llm, settings=self.settings)
+        judge = GEvalJudge(llm=self.llm_quality_reviewer, settings=self.settings)
         language = self.settings.report_language
         evidence = self.build_evidence_context(result)
         update_context = (
             getattr(result, "_evidence_update_context", "") or self._last_update_context
         )
 
-        report = await judge.evaluate(
-            result,
-            update,
-            language=language,
-            update_context=update_context or None,
-            evidence_context=evidence,
-        )
+        trace_id = final_state.get("trace_id", "")
+        with foundry_invocation_context(trace_id, "quality_reviewer:geval"):
+            report = await judge.evaluate(
+                result,
+                update,
+                language=language,
+                update_context=update_context or None,
+                evidence_context=evidence,
+            )
         self._last_geval = report
         if report.passed and not report.critical_flaws:
             return result
@@ -1771,13 +1940,14 @@ class AzureUpdateAnalyzer:
         revised = self._parse_analysis_result({**final_state, **rewritten_state}, update)
         self._copy_result_evidence(result, revised)
 
-        rescored = await judge.evaluate(
-            revised,
-            update,
-            language=language,
-            update_context=update_context or None,
-            evidence_context=evidence,
-        )
+        with foundry_invocation_context(trace_id, "quality_reviewer:geval_rescore"):
+            rescored = await judge.evaluate(
+                revised,
+                update,
+                language=language,
+                update_context=update_context or None,
+                evidence_context=evidence,
+            )
         improved = rescored.weighted_score > report.weighted_score
         logger.info(
             "critic_rewrite_done",
@@ -1929,6 +2099,7 @@ class AzureUpdateAnalyzer:
                 valid_methods = {
                     "kql",
                     "cost_api",
+                    "billing_api",
                     "log_analytics",
                     "learn_search",
                     "advisor",
@@ -1936,6 +2107,7 @@ class AzureUpdateAnalyzer:
                     "resource_health",
                     "policy",
                     "azure_rest",
+                    "context",
                 }
                 if method not in valid_methods:
                     method = "kql"
@@ -2076,6 +2248,7 @@ class AzureUpdateAnalyzer:
                     valid_methods = {
                         "kql",
                         "cost_api",
+                        "billing_api",
                         "log_analytics",
                         "learn_search",
                         "advisor",
@@ -2083,6 +2256,7 @@ class AzureUpdateAnalyzer:
                         "resource_health",
                         "policy",
                         "azure_rest",
+                        "context",
                     }
                     if method not in valid_methods:
                         method = "kql"
@@ -2733,10 +2907,7 @@ class AzureUpdateAnalyzer:
         # Runs before the action-item gate so verification sees the final text.
         self._last_geval = None
         if self.settings.geval_runtime_enabled and self.settings.geval_enabled:
-            try:
-                result = await self._critic_pass(result, update, final_state)
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.warning("critic_pass_skipped", error=str(exc)[:200])
+            result = await self._critic_pass(result, update, final_state)
 
         # Multi-layer safety gate on action items. Action items are the only
         # part of the report a reader may execute verbatim against a production
@@ -2748,13 +2919,16 @@ class AzureUpdateAnalyzer:
             try:
                 from src.agent.action_verification import ActionItemVerifier, build_evidence
 
-                verifier = ActionItemVerifier(llm=self.llm, settings=self.settings)
-                self._last_action_verification = await verifier.verify(
-                    result.action_items,
-                    update_context=final_state.get("update_context", ""),
-                    evidence=build_evidence(resource_summary, final_state.get("task_results", {})),
-                    language=self.settings.report_language,
-                )
+                verifier = ActionItemVerifier(llm=self.llm_quality_reviewer, settings=self.settings)
+                with foundry_invocation_context(trace_id, "quality_reviewer:action_verification"):
+                    self._last_action_verification = await verifier.verify(
+                        result.action_items,
+                        update_context=final_state.get("update_context", ""),
+                        evidence=build_evidence(
+                            resource_summary, final_state.get("task_results", {})
+                        ),
+                        language=self.settings.report_language,
+                    )
             except Exception as exc:  # pragma: no cover - defensive
                 logger.warning("action_verification_skipped", error=str(exc)[:200])
 
@@ -2819,6 +2993,7 @@ class AzureUpdateAnalyzer:
         # 최종 보고서 내용 기록
         logger.info(
             "report_content",
+            trace_id=trace_id,
             update_id=update.id,
             update_category=result.update_category,
             one_line_summary=result.one_line_summary,
@@ -2916,6 +3091,7 @@ class AzureUpdateAnalyzer:
         if total_tokens > 0:
             logger.info(
                 "token_usage_total",
+                trace_id=trace_id,
                 update_id=update.id,
                 total_tokens=total_tokens,
                 total_elapsed_s=round(_total_elapsed, 2),
@@ -3041,7 +3217,7 @@ class AzureUpdateAnalyzer:
         )
 
         try:
-            # Lightweight LLM call — no tools, just text rewriting
+            # Report-writer call: no tools, only evidence-preserving localization.
             # Background task: fail immediately on overload (no retry amplification)
             from langchain_core.messages import HumanMessage as HMsg
             from langchain_core.messages import SystemMessage as SMsg
@@ -3062,7 +3238,7 @@ class AzureUpdateAnalyzer:
                 )
                 return result
             try:
-                response = await self.llm_fast.ainvoke(
+                response = await self.llm_report_writer.ainvoke(
                     [
                         SMsg(
                             content="You are a report customization assistant. Respond only with valid JSON."

@@ -91,6 +91,45 @@ class TestAzureRestClientCallApi:
             assert result["value"] == []
 
     @pytest.mark.asyncio
+    async def test_tenant_scoped_api_does_not_require_subscription(self):
+        """Tenant-level Billing endpoints do not contain a subscription placeholder."""
+        with patch("src.services.azure_rest.get_settings") as mock_settings:
+            settings = MagicMock()
+            settings.azure_subscription_id = None
+            mock_settings.return_value = settings
+            client = AzureRestClient()
+            client._credential = MagicMock()
+            client._credential.get_token.return_value = MagicMock(token="fake-token")
+
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {
+                "value": [{"id": "/providers/Microsoft.Billing/billingAccounts/a"}]
+            }
+
+            with (
+                patch.object(
+                    client,
+                    "_get_subscription_id",
+                    side_effect=AssertionError("tenant scope must not discover a subscription"),
+                ),
+                patch("httpx.AsyncClient") as mock_async_client,
+            ):
+                http = AsyncMock()
+                http.request = AsyncMock(return_value=mock_response)
+                http.__aenter__ = AsyncMock(return_value=http)
+                http.__aexit__ = AsyncMock(return_value=False)
+                mock_async_client.return_value = http
+
+                result = await client.call_api(
+                    path="/providers/Microsoft.Billing/billingAccounts",
+                    api_version="2024-04-01",
+                )
+
+            assert result["count"] == 1
+            assert result["value"][0]["id"].endswith("/billingAccounts/a")
+
+    @pytest.mark.asyncio
     async def test_api_error_returns_status_code(self):
         """Non-200 response returns error with status code."""
         with patch("src.services.azure_rest.get_settings") as mock_settings:

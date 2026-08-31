@@ -16,7 +16,8 @@ TOOLS_PROMPT = """## Available Tools
 - `get_resource_configurations`: **Configuration profiling** — shows actual config values (K8s version, TLS version, SKU, feature flags) with distribution summary (e.g., "3/5 on 1.28, 2/5 on 1.30"). Use when you need to assess which resources are affected by a version/config change
 - `get_resource_dependencies`: **Dependency mapping** — traces VNet integrations, Private Endpoints, cross-service references. Use for blast radius analysis of core infrastructure updates (Storage, VNet, Key Vault, SQL)
 - `query_azure_resources`: Execute custom KQL queries
-- `find_related_resources`: Keyword-based resource search
+- `find_related_resources`: Keyword-based resource search. Use exactly
+  `{"keyword": ["storage", "blob"]}`; never pass a `query` key.
 - `get_security_posture`: Security posture analysis
 - `explore_resource_schema`: Discover properties schema for a resource type (use when predefined queries lack needed fields)
 
@@ -39,6 +40,17 @@ TOOLS_PROMPT = """## Available Tools
   - VM SKU availability: path="/subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus", filter_expression="location eq 'koreacentral'"
   - Available regions: path="/subscriptions/{subscriptionId}/locations"
   - Storage SKUs: path="/subscriptions/{subscriptionId}/providers/Microsoft.Storage/skus", api_version="2023-05-01"
+
+### Cost Management and Azure Billing
+- `get_cost_by_resource_type`: ActualCost totals grouped by ARM resource type for a bounded period.
+- `get_cost_by_service`: ActualCost totals grouped by Azure service for a bounded period.
+- `list_billing_accounts`: Billing accounts visible to the current identity via Microsoft.Billing `2024-04-01`.
+- `list_billing_profiles`: Billing profiles under an exact account name returned above. Supported for
+  Microsoft Customer Agreement and Microsoft Partner Agreement accounts.
+
+Cost Management values and Billing hierarchy answer different questions; do not substitute one for the
+other. Always state scope, time window, and currency. A 403, unsupported agreement type, or empty visible
+account list is an evidence gap, not proof of zero cost or no billing account.
 
 ### Truncated Tool Results — search them, never assume absence
 A large tool result is shown to you as a PREVIEW ending with
@@ -63,6 +75,7 @@ left unqueried — always query them when the update touches the relevant servic
 | Update topic | Do NOT defer — query this | KQL property path |
 |--------------|---------------------------|-------------------|
 | AKS advanced networking / ACNS / Cilium / container network logs/metrics | Whether ACNS/advanced networking is on, plus dataplane/policy | `microsoft.containerservice/managedclusters` -> `properties.networkProfile.networkDataplane`, `.networkPolicy`, `.advancedNetworking`, `properties.addonProfiles` |
+| AKS Azure Files / Azure Disk CSI | The actual storage CSI driver state | `properties.storageProfile.fileCSIDriver.enabled`, `.diskCSIDriver.enabled`. `properties.addonProfiles.azureKeyvaultSecretsProvider.enabled` is the **Key Vault secrets provider**, not evidence for either storage CSI driver; never substitute it. |
 | Point-to-Site VPN / Azure VPN Client retirement | Whether a P2S gateway / VPN server config actually exists | `microsoft.network/p2svpngateways`, `microsoft.network/vpnserverconfigurations`, `microsoft.network/virtualnetworkgateways` -> `properties.vpnClientConfiguration` |
 | Azure Site Recovery / DR | Whether a Recovery Services vault exists (and its items) | `microsoft.recoveryservices/vaults`; replication items via the `recoveryservicesresources` table |
 | Cosmos DB backup / Fabric mirroring prerequisites | The backup mode already answers "Continuous Backup?" | `microsoft.documentdb/databaseaccounts` -> `properties.backupPolicy.type` (`Periodic` vs `Continuous`), `properties.enableAnalyticalStorage` |

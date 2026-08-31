@@ -17,10 +17,12 @@ _ADMIN_ENV = (
     "ADMIN_ALLOWED_PRINCIPALS",
     "FOUNDRY_PROJECT_ENDPOINT",
     "FOUNDRY_HOSTED_AGENT_NAME",
-    "FOUNDRY_PRIMARY_AGENT_NAME",
-    "FOUNDRY_PLANNER_AGENT_NAME",
-    "FOUNDRY_EVALUATOR_AGENT_NAME",
-    "FOUNDRY_REPORTER_AGENT_NAME",
+    "FOUNDRY_COORDINATOR_AGENT_NAME",
+    "FOUNDRY_RESOURCE_GRAPH_AGENT_NAME",
+    "FOUNDRY_AZURE_MCP_AGENT_NAME",
+    "FOUNDRY_AZURE_API_AGENT_NAME",
+    "FOUNDRY_REPORT_WRITER_AGENT_NAME",
+    "FOUNDRY_QUALITY_REVIEWER_AGENT_NAME",
 )
 
 
@@ -167,6 +169,17 @@ class TestAdminPage:
         assert "http://" not in html
         assert "https://" not in html
 
+    def test_archive_link_is_rendered_only_when_enabled(self):
+        disabled = render_admin_page(nonce="n", profile="enterprise", user="a")
+        enabled = render_admin_page(
+            nonce="n",
+            profile="enterprise",
+            user="a",
+            archive_enabled=True,
+        )
+        assert 'href="/archive"' not in disabled
+        assert 'href="/archive"' in enabled
+
 
 class TestAdminRoutes:
     @pytest.fixture
@@ -248,6 +261,31 @@ class TestAdminRoutes:
         response = client.post("/api/admin/runs", json={"dry_run": True})
         # Without the app lifespan the orchestrator has no services registered.
         assert response.status_code in (202, 503)
+
+    def test_admin_run_sets_archive_source(self, client, monkeypatch):
+        import importlib
+
+        from src.orchestrator import RunRecord
+
+        captured = {}
+        router_module = importlib.import_module("src.admin.router")
+
+        def fake_start_run(since, dry_run, source):
+            captured["source"] = source
+            return RunRecord(run_id="admin-run", source=source, since=since, dry_run=dry_run)
+
+        _configure(monkeypatch, ADMIN_UI_ENABLED="true", ADMIN_REQUIRE_AUTH="false")
+        monkeypatch.setattr(router_module, "start_run", fake_start_run)
+        monkeypatch.setattr(
+            router_module,
+            "get_run_store",
+            lambda: type("Store", (), {"active_count": 0})(),
+        )
+
+        response = client.post("/api/admin/runs", json={"dry_run": True})
+
+        assert response.status_code == 202
+        assert captured["source"] == "admin_run"
 
     def test_security_headers_are_present(self, client):
         response = client.get("/health")

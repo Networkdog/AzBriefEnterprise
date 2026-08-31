@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "4830660800916451485"
+      "templateHash": "16339196694126905407"
     },
     "description": "AzBrief Enterprise — Microsoft Foundry Hosted Agent analysis runtime + Container Apps control plane and scheduler + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
@@ -83,13 +83,6 @@
       "maxValue": 1000,
       "metadata": {
         "description": "Model deployment capacity in thousands of tokens per minute (TPM). A single report prompt alone runs ~27K tokens, and the multi-agent stages, planning and execution share the same deployment, so 30 rate-limits every run."
-      }
-    },
-    "enableFoundryEnrichmentAgents": {
-      "type": "bool",
-      "defaultValue": false,
-      "metadata": {
-        "description": "Enable the optional research/impact/action/review Prompt Agent enrichment pipeline. Keep false until provision_foundry_agents publishes the app-owned FunctionTools and strict stage schemas and --check passes."
       }
     },
     "foundryHostedAgentName": {
@@ -284,6 +277,13 @@
         "description": "Comma-separated allow-list of admin principals (UPN/email or object ID). Required for the Admin Page to serve anything."
       }
     },
+    "archiveAllowedPrincipals": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Comma-separated allow-list of Archive Page readers (UPN/email, object ID, or group ID). Administrators are readers automatically."
+      }
+    },
     "emailDataLocation": {
       "type": "string",
       "defaultValue": "Korea",
@@ -404,6 +404,8 @@
     "perimeterProfileName": "azbrief",
     "stateContainerName": "azbrief-state",
     "checkpointBlobUrl": "[format('https://{0}.blob.{1}/{2}/checkpoint.json', variables('storageAccountName'), environment().suffixes.storage, variables('stateContainerName'))]",
+    "archiveContainerName": "azbrief-archive",
+    "archiveBlobContainerUrl": "[format('https://{0}.blob.{1}/{2}', variables('storageAccountName'), environment().suffixes.storage, variables('archiveContainerName'))]",
     "roleIds": {
       "keyVaultSecretsUser": "4633458b-17de-408a-b874-0445c86b69e6",
       "foundryUser": "53ca6127-db72-4b80-b1b0-d745d6d5456d",
@@ -435,29 +437,14 @@
     ],
     "adminAuthConfigured": "[and(not(empty(parameters('adminEntraClientId'))), not(empty(parameters('adminEntraClientSecret'))))]",
     "adminUiEnabled": "[and(variables('adminAuthConfigured'), not(empty(parameters('adminAllowedPrincipals'))))]",
+    "archiveUiEnabled": "[and(variables('adminAuthConfigured'), or(not(empty(parameters('archiveAllowedPrincipals'))), not(empty(parameters('adminAllowedPrincipals')))))]",
     "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', variables('foundryAccountName'), variables('foundryProjectName'))]",
-    "foundryPrimaryAgentName": "[format('{0}-primary', parameters('baseName'))]",
-    "foundryPlannerAgentName": "[format('{0}-planner', parameters('baseName'))]",
-    "foundryEvaluatorAgentName": "[format('{0}-evaluator', parameters('baseName'))]",
-    "foundryReporterAgentName": "[format('{0}-reporter', parameters('baseName'))]",
-    "foundryEnrichmentAgentRoster": [
-      {
-        "name": "[format('{0}-research', parameters('baseName'))]",
-        "stage": "research"
-      },
-      {
-        "name": "[format('{0}-impact', parameters('baseName'))]",
-        "stage": "impact"
-      },
-      {
-        "name": "[format('{0}-action', parameters('baseName'))]",
-        "stage": "action"
-      },
-      {
-        "name": "[format('{0}-review', parameters('baseName'))]",
-        "stage": "review"
-      }
-    ],
+    "foundryCoordinatorAgentName": "[format('{0}-coordinator', parameters('baseName'))]",
+    "foundryResourceGraphAgentName": "[format('{0}-resource-graph', parameters('baseName'))]",
+    "foundryAzureMcpAgentName": "[format('{0}-azure-mcp', parameters('baseName'))]",
+    "foundryAzureApiAgentName": "[format('{0}-azure-api', parameters('baseName'))]",
+    "foundryReportWriterAgentName": "[format('{0}-report-writer', parameters('baseName'))]",
+    "foundryQualityReviewerAgentName": "[format('{0}-quality-reviewer', parameters('baseName'))]",
     "runTimeBudgetSeconds": "[sub(parameters('jobReplicaTimeoutSeconds'), 3600)]"
   },
   "resources": [
@@ -968,6 +955,17 @@
       ]
     },
     {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', variables('archiveContainerName'))]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
       "type": "Microsoft.App/managedEnvironments",
       "apiVersion": "2024-03-01",
       "name": "[variables('containerEnvName')]",
@@ -1062,6 +1060,22 @@
                   "value": "[variables('checkpointBlobUrl')]"
                 },
                 {
+                  "name": "ARCHIVE_BLOB_CONTAINER_URL",
+                  "value": "[variables('archiveBlobContainerUrl')]"
+                },
+                {
+                  "name": "ARCHIVE_BASE_URL",
+                  "value": "[format('https://{0}.{1}', variables('containerAppName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('containerEnvName')), '2024-03-01').defaultDomain)]"
+                },
+                {
+                  "name": "ARCHIVE_UI_ENABLED",
+                  "value": "[string(variables('archiveUiEnabled'))]"
+                },
+                {
+                  "name": "ARCHIVE_ALLOWED_PRINCIPALS",
+                  "value": "[parameters('archiveAllowedPrincipals')]"
+                },
+                {
                   "name": "RUN_TIME_BUDGET_S",
                   "value": "[string(variables('runTimeBudgetSeconds'))]"
                 },
@@ -1151,7 +1165,8 @@
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'acs-connection-string')]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'admin-entra-client-secret')]",
-        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'orchestrator-api-key')]"
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'orchestrator-api-key')]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor))]"
       ]
     },
     {
@@ -1270,6 +1285,22 @@
                 {
                   "name": "CHECKPOINT_BLOB_URL",
                   "value": "[variables('checkpointBlobUrl')]"
+                },
+                {
+                  "name": "ARCHIVE_BLOB_CONTAINER_URL",
+                  "value": "[variables('archiveBlobContainerUrl')]"
+                },
+                {
+                  "name": "ARCHIVE_BASE_URL",
+                  "value": "[format('https://{0}.{1}', variables('containerAppName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('containerEnvName')), '2024-03-01').defaultDomain)]"
+                },
+                {
+                  "name": "ARCHIVE_UI_ENABLED",
+                  "value": "[string(variables('archiveUiEnabled'))]"
+                },
+                {
+                  "name": "ARCHIVE_ALLOWED_PRINCIPALS",
+                  "value": "[parameters('archiveAllowedPrincipals')]"
                 },
                 {
                   "name": "RUN_TIME_BUDGET_S",
@@ -1757,6 +1788,13 @@
       },
       "value": "[if(variables('adminUiEnabled'), format('{0}/admin', format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01').configuration.ingress.fqdn)), '(disabled — supply adminEntraClientId, adminEntraClientSecret and adminAllowedPrincipals)')]"
     },
+    "archivePageUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "Archive Page URL. Administrators and explicitly allowed archive readers can browse canonical analyses."
+      },
+      "value": "[if(variables('archiveUiEnabled'), format('{0}/archive', format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01').configuration.ingress.fqdn)), '(disabled — configure Entra sign-in and an archive or admin allow-list)')]"
+    },
     "foundryProjectEndpoint": {
       "type": "string",
       "metadata": {
@@ -1771,30 +1809,19 @@
       },
       "value": "[parameters('foundryHostedAgentName')]"
     },
-    "foundryPrimaryAgentName": {
-      "type": "string",
-      "metadata": {
-        "description": "Primary Prompt Agent name used inside the Hosted Agent runtime."
-      },
-      "value": "[variables('foundryPrimaryAgentName')]"
-    },
-    "foundryPhaseAgentNames": {
+    "foundrySpecialistAgentNames": {
       "type": "object",
       "metadata": {
-        "description": "Specialized Foundry agents used for planning, evaluation, and reporting."
+        "description": "Distinct specialist Prompt Agents orchestrated by the Hosted Agent."
       },
       "value": {
-        "planner": "[variables('foundryPlannerAgentName')]",
-        "evaluator": "[variables('foundryEvaluatorAgentName')]",
-        "reporter": "[variables('foundryReporterAgentName')]"
+        "coordinator": "[variables('foundryCoordinatorAgentName')]",
+        "resourceGraph": "[variables('foundryResourceGraphAgentName')]",
+        "azureMcp": "[variables('foundryAzureMcpAgentName')]",
+        "azureApi": "[variables('foundryAzureApiAgentName')]",
+        "reportWriter": "[variables('foundryReportWriterAgentName')]",
+        "qualityReviewer": "[variables('foundryQualityReviewerAgentName')]"
       }
-    },
-    "foundryEnrichmentAgentRoster": {
-      "type": "string",
-      "metadata": {
-        "description": "Optional enrichment roster value to set as AZBRIEF_ENRICHMENT_AGENT_ROSTER in the azd environment before deploying the Hosted Agent."
-      },
-      "value": "[if(parameters('enableFoundryEnrichmentAgents'), string(variables('foundryEnrichmentAgentRoster')), '')]"
     },
     "emailSenderDomain": {
       "type": "string",
@@ -1838,6 +1865,13 @@
       },
       "value": "[variables('checkpointBlobUrl')]"
     },
+    "archiveBlobContainerUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "Private Blob container holding immutable canonical analysis versions."
+      },
+      "value": "[variables('archiveBlobContainerUrl')]"
+    },
     "runNowCommand": {
       "type": "string",
       "metadata": {
@@ -1873,12 +1907,19 @@
       },
       "value": "[format('python -m scripts.provision_foundry_agents --model {0}', parameters('modelDeploymentName'))]"
     },
+    "configureHostedAgentCommand": {
+      "type": "string",
+      "metadata": {
+        "description": "Command that binds the six specialist Prompt Agents to the Hosted Agent deployment manifest."
+      },
+      "value": "[format('azd env set AZURE_SUBSCRIPTION_ID={0} AZBRIEF_PROMPT_COORDINATOR_AGENT_NAME={1} AZBRIEF_PROMPT_RESOURCE_GRAPH_AGENT_NAME={2} AZBRIEF_PROMPT_AZURE_MCP_AGENT_NAME={3} AZBRIEF_PROMPT_AZURE_API_AGENT_NAME={4} AZBRIEF_PROMPT_REPORT_WRITER_AGENT_NAME={5} AZBRIEF_PROMPT_QUALITY_REVIEWER_AGENT_NAME={6}', subscription().subscriptionId, variables('foundryCoordinatorAgentName'), variables('foundryResourceGraphAgentName'), variables('foundryAzureMcpAgentName'), variables('foundryAzureApiAgentName'), variables('foundryReportWriterAgentName'), variables('foundryQualityReviewerAgentName'))]"
+    },
     "nextSteps": {
       "type": "string",
       "metadata": {
         "description": "Post-deployment checklist."
       },
-      "value": "[format('1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd environment project endpoint plus AZBRIEF_PROMPT_PRIMARY_AGENT_NAME={0} and optional role/roster aliases, run provisionAgentsCommand and its --check, then deploy {1} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', variables('foundryPrimaryAgentName'), parameters('foundryHostedAgentName'))]"
+      "value": "[format('1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd project endpoint, run configureHostedAgentCommand, run provisionAgentsCommand and its --check, then deploy {0} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals and/or archiveAllowedPrincipals to enable the authenticated browser surfaces. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', parameters('foundryHostedAgentName'))]"
     }
   }
 }

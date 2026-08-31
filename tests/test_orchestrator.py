@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.archive.models import ArchiveReceipt
 from src.config import get_settings
 from src.orchestrator import (
     RunRecord,
@@ -140,6 +141,9 @@ class _FakeAnalyzer:
             raise RuntimeError("analysis exploded")
         return SimpleNamespace(should_notify=True, relevance=SimpleNamespace(value="action"))
 
+    async def customize_for_subscriber(self, result, _subscriber, _update):
+        return result
+
 
 class _FakeEmailService:
     def __init__(self, delivered: bool = True):
@@ -149,6 +153,29 @@ class _FakeEmailService:
     async def send_digest_report(self, items, date_range=None, recipient=None, language=None):
         self.calls.append({"items": len(items), "recipient": recipient})
         return self._delivered
+
+
+class _FakeArchiveService:
+    configured = True
+
+    def __init__(self, events=None, fail_ids=()):
+        self.events = events if events is not None else []
+        self.fail_ids = set(fail_ids)
+        self.seen: list[tuple[str, str, str]] = []
+
+    async def archive_analysis(self, update, _result, source, run_id=""):
+        self.events.append(f"archive:{update.id}")
+        self.seen.append((update.id, source.value, run_id))
+        if update.id in self.fail_ids:
+            raise RuntimeError("archive unavailable")
+        return ArchiveReceipt(
+            archived=True,
+            archive_id=f"8211694095999-{int(update.id[1:]) + 1:032x}",
+            object_name=f"entries/{update.id}.json",
+        )
+
+    def detail_url(self, archive_id):
+        return f"https://archive.example/{archive_id}"
 
 
 @pytest.fixture(autouse=True)
@@ -183,6 +210,64 @@ class TestExecuteRun:
         assert record.email_sent is True
         assert record.watermark == targets[-1].published_date
         assert email.calls == [{"items": 3, "recipient": None}]
+
+    @pytest.mark.asyncio
+    async def test_archive_is_committed_before_digest_and_cursor_completion(self):
+        events = []
+
+        class _OrderedEmailService(_FakeEmailService):
+            async def send_digest_report(self, items, **kwargs):
+                events.append("email")
+                assert all(item["archive_id"] for item in items)
+                return await super().send_digest_report(items, **kwargs)
+
+        targets = _targets(2)
+        record = RunRecord(
+            run_id="archive-order",
+            source="scheduled_digest",
+            since=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+        archive = _FakeArchiveService(events=events)
+
+        await execute_run(
+            record,
+            _FakeAnalyzer(),
+            _OrderedEmailService(),
+            _FakeParser(targets),
+            archive,
+        )
+
+        assert events == ["archive:u0", "archive:u1", "email"]
+        assert record.archived == 2
+        assert record.archive_failed == 0
+        assert archive.seen[0][1:] == ("scheduled_digest", "archive-order")
+
+    @pytest.mark.asyncio
+    async def test_subscriber_customization_does_not_archive_twice(self, monkeypatch):
+        import json
+
+        monkeypatch.setenv(
+            "SUBSCRIBERS",
+            json.dumps([{"email": "reader@co.com", "name": "Reader", "language": "ko"}]),
+        )
+        get_settings.cache_clear()
+        target = _targets(1)
+        record = RunRecord(
+            run_id="archive-once",
+            source="scheduled_digest",
+            since=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+        archive = _FakeArchiveService()
+
+        await execute_run(
+            record,
+            _FakeAnalyzer(),
+            _FakeEmailService(),
+            _FakeParser(target),
+            archive,
+        )
+
+        assert [item[0] for item in archive.seen] == ["u0"]
 
     @pytest.mark.asyncio
     async def test_a_rejected_digest_is_not_reported_as_sent(self):
@@ -329,3 +414,29 @@ class TestCheckpointIntegration:
 
         assert record.since is not None
         assert record.since > datetime.now(UTC) - timedelta(hours=25)
+
+    @pytest.mark.asyncio
+    async def test_archive_failure_blocks_email_and_checkpoint(self, store):
+        targets = _targets(2)
+        checkpoint = store(_RecordingCheckpointStore())
+        email = _FakeEmailService()
+        archive = _FakeArchiveService(fail_ids={"u0"})
+        record = RunRecord(
+            run_id="archive-failure",
+            source="scheduled_digest",
+            since=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+
+        await execute_run(
+            record,
+            _FakeAnalyzer(),
+            email,
+            _FakeParser(targets),
+            archive,
+        )
+
+        assert record.status == "failed"
+        assert record.archive_failed == 1
+        assert record.pending == 2
+        assert email.calls == []
+        assert checkpoint.advanced == []

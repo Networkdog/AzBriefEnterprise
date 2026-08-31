@@ -1,4 +1,4 @@
-"""Tests for the Microsoft Foundry Prompt Agent enrichment pipeline."""
+"""Tests for specialist Prompt Agent collaboration inside the Hosted Agent."""
 
 import json
 
@@ -6,57 +6,43 @@ import pytest
 from structlog.testing import capture_logs
 
 from src.agent import foundry_backend
-from src.config import Settings
+from src.config import EVIDENCE_SPECIALIST_ROLES, Settings
 
 _TENANT = "00000000-0000-0000-0000-000000000000"
+_SUBSCRIPTION = "11111111-1111-1111-1111-111111111111"
 _ENDPOINT = "https://demo.services.ai.azure.com/api/projects/azbrief"
 
-_ROSTER = json.dumps(
-    [
-        {"name": "azbrief-research", "stage": "research"},
-        {"name": "azbrief-impact", "stage": "impact"},
-        {"name": "azbrief-action", "stage": "action"},
-    ]
-)
 
-
-def _stage_result(
-    stage: str,
+def _specialist_result(
+    role: str,
     text: str,
     *,
     evidence: list[str] | None = None,
-    claim_id: str | None = None,
+    gaps: list[str] | None = None,
 ) -> str:
     if evidence is None:
         evidence = {
-            "research": ["https://learn.microsoft.com/example"],
-            "impact": ["resource:/subscriptions/sub/resourceGroups/rg/providers/type/name"],
-            "action": ["research-1"],
-        }[stage]
+            "resource_graph": [
+                "query:Resources | where type =~ 'microsoft.storage/storageaccounts'"
+            ],
+            "azure_mcp": [
+                "resource:/subscriptions/sub/resourceGroups/rg/providers/"
+                "Microsoft.Storage/storageAccounts/a"
+            ],
+            "azure_api": ["cost:subscription/sub/2026-08"],
+        }[role]
     return json.dumps(
         {
             "status": "ok",
             "claims": [
                 {
-                    "id": claim_id or f"{stage}-1",
+                    "id": f"{role}-1",
                     "text": text,
                     "evidence": evidence,
                     "confidence": "high",
                 }
             ],
-            "gaps": [],
-        }
-    )
-
-
-def _review_result(*, rejected: list[str] | None = None, missing: list[str] | None = None) -> str:
-    rejected = rejected or []
-    missing = missing or []
-    return json.dumps(
-        {
-            "verdict": "revise" if rejected or missing else "pass",
-            "rejected_claim_ids": rejected,
-            "missing_facts": missing,
+            "gaps": gaps or [],
         }
     )
 
@@ -65,8 +51,12 @@ def _settings(**overrides) -> Settings:
     base = {
         "azure_tenant_id": _TENANT,
         "foundry_project_endpoint": _ENDPOINT,
-        "foundry_primary_agent_name": "azbrief-primary",
-        "foundry_enrichment_agents": _ROSTER,
+        "foundry_coordinator_agent_name": "azbrief-coordinator",
+        "foundry_resource_graph_agent_name": "azbrief-resource-graph",
+        "foundry_azure_mcp_agent_name": "azbrief-azure-mcp",
+        "foundry_azure_api_agent_name": "azbrief-azure-api",
+        "foundry_report_writer_agent_name": "azbrief-report-writer",
+        "foundry_quality_reviewer_agent_name": "azbrief-quality-reviewer",
     }
     base.update(overrides)
     return Settings(_env_file=None, **base)
@@ -74,390 +64,234 @@ def _settings(**overrides) -> Settings:
 
 @pytest.fixture
 def sdk_present(monkeypatch):
-    """Pretend the optional 'foundry' extra is installed."""
     monkeypatch.setattr(foundry_backend, "foundry_available", lambda: True)
 
 
 @pytest.fixture
 def recorded_calls(monkeypatch):
-    """Capture hosted-agent invocations and return canned answers."""
     calls: list[dict] = []
-    answers: dict[str, str] = {
-        "azbrief-research": _stage_result(
-            "research", "GA on 2026-09-01", evidence=["https://learn.microsoft.com/example"]
+    answers = {
+        "azbrief-resource-graph": _specialist_result(
+            "resource_graph", "3 storage accounts match the retirement condition"
         ),
-        "azbrief-impact": _stage_result(
-            "impact",
-            "3 storage accounts affected",
-            evidence=[
-                "resource:/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Storage/storageAccounts/a"
-            ],
+        "azbrief-azure-mcp": _specialist_result(
+            "azure_mcp", "All matching storage accounts are available"
         ),
-        "azbrief-action": _stage_result(
-            "action", "Verify minimumTlsVersion", evidence=["impact-1"]
+        "azbrief-azure-api": _specialist_result(
+            "azure_api", "The matching service cost was measured over 30 days"
         ),
     }
 
-    async def fake_invoke(project_endpoint, agent_name, prompt, timeout_s):
+    async def fake_invoke(project_endpoint, agent_name, prompt, timeout_s, **kwargs):
         calls.append(
             {
                 "endpoint": project_endpoint,
                 "agent": agent_name,
                 "prompt": prompt,
                 "timeout": timeout_s,
+                **kwargs,
             }
         )
-        return answers.get(agent_name, "")
+        return answers[agent_name]
 
     monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-    return calls, answers
+    return calls
 
 
 class TestNodeConstruction:
-    def test_disabled_without_a_primary_agent(self, sdk_present):
-        assert (
-            foundry_backend.build_multi_agent_node(_settings(foundry_primary_agent_name=None))
-            is None
+    def test_disabled_without_a_coordinator(self, sdk_present):
+        settings = _settings(
+            foundry_coordinator_agent_name=None,
         )
+        assert foundry_backend.build_specialist_collaboration_node(settings) is None
 
     def test_disabled_without_a_project_endpoint(self, sdk_present):
         assert (
-            foundry_backend.build_multi_agent_node(_settings(foundry_project_endpoint=None)) is None
+            foundry_backend.build_specialist_collaboration_node(
+                _settings(foundry_project_endpoint=None)
+            )
+            is None
         )
 
-    def test_disabled_with_an_empty_roster(self, sdk_present):
+    def test_disabled_when_one_evidence_specialist_is_missing(self, sdk_present):
         assert (
-            foundry_backend.build_multi_agent_node(_settings(foundry_enrichment_agents=None))
+            foundry_backend.build_specialist_collaboration_node(
+                _settings(foundry_azure_api_agent_name=None)
+            )
             is None
         )
 
     def test_disabled_when_the_sdk_is_missing(self, monkeypatch):
-        # Missing optional extra must degrade, never raise.
         monkeypatch.setattr(foundry_backend, "foundry_available", lambda: False)
-        assert foundry_backend.build_multi_agent_node(_settings()) is None
+        assert foundry_backend.build_specialist_collaboration_node(_settings()) is None
 
-    def test_enabled_with_a_valid_roster(self, sdk_present):
-        assert foundry_backend.build_multi_agent_node(_settings()) is not None
+    def test_enabled_with_complete_specialist_roster(self, sdk_present):
+        assert foundry_backend.build_specialist_collaboration_node(_settings()) is not None
 
 
-class TestPipelineExecution:
+class TestSpecialistCollaboration:
     @pytest.mark.asyncio
-    async def test_stage_receives_only_its_allowlisted_local_tools(self, sdk_present, monkeypatch):
-        calls = []
+    async def test_each_specialist_contributes_labelled_evidence(self, sdk_present, recorded_calls):
+        node = foundry_backend.build_specialist_collaboration_node(_settings())
+        with capture_logs() as logs:
+            result = await node(
+                {"update_context": "Azure Update: TLS retirement", "trace_id": "trace-1"}
+            )
+
+        merged = result["update_context"]
+        assert merged.startswith("Azure Update: TLS retirement")
+        assert foundry_backend.SPECIALIST_CONTEXT_HEADER in merged
+        assert "Resource Graph KQL and result analysis" in merged
+        assert "Azure MCP tenant analysis" in merged
+        assert "ARM, Cost Management, and Billing analysis" in merged
+        assert {call["agent"] for call in recorded_calls} == {
+            "azbrief-resource-graph",
+            "azbrief-azure-mcp",
+            "azbrief-azure-api",
+        }
+        completed = [entry for entry in logs if entry["event"] == "foundry_specialist_completed"]
+        assert {entry["role"] for entry in completed} == set(EVIDENCE_SPECIALIST_ROLES)
+        assert all(entry["trace_id"] == "trace-1" for entry in completed)
+        assert all(entry["status"] == "ok" for entry in completed)
+        assert all(entry["claim_count"] == 1 for entry in completed)
+        assert all(entry["gap_count"] == 0 for entry in completed)
+
+    @pytest.mark.asyncio
+    async def test_specialists_receive_only_their_tool_surfaces(self, sdk_present, monkeypatch):
+        calls: dict[str, dict] = {}
 
         async def fake_invoke(endpoint, agent, prompt, timeout_s, **kwargs):
-            calls.append(kwargs)
-            return _stage_result("research", "grounded research")
+            role = agent.removeprefix("azbrief-").replace("-", "_")
+            calls[role] = kwargs
+            return _specialist_result(role, "grounded")
 
         tools = [
-            type("Tool", (), {"name": "search_azure_docs"})(),
             type("Tool", (), {"name": "query_azure_resources"})(),
+            type("Tool", (), {"name": "get_cost_by_service"})(),
             type("Tool", (), {"name": "dangerous_write"})(),
         ]
-        roster = json.dumps([{"name": "azbrief-research", "stage": "research"}])
         monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-        node = foundry_backend.build_multi_agent_node(
-            _settings(foundry_enrichment_agents=roster),
-            tools,
-        )
+        node = foundry_backend.build_specialist_collaboration_node(_settings(), tools)
 
         await node({"update_context": "ctx", "trace_id": "trace-1"})
 
-        assert len(calls) == 1
-        assert set(calls[0]["local_tools"]) == {"search_azure_docs"}
-        assert calls[0]["trace_id"] == "trace-1"
-        assert calls[0]["task_id"] == "enrichment:research"
+        assert set(calls["resource_graph"]["local_tools"]) == {"query_azure_resources"}
+        assert set(calls["azure_api"]["local_tools"]) == {"get_cost_by_service"}
+        assert "local_tools" not in calls["azure_mcp"]
+        assert calls["resource_graph"]["task_id"] == "specialist:resource_graph"
+        assert calls["azure_mcp"]["task_id"] == "specialist:azure_mcp"
+        assert calls["azure_api"]["task_id"] == "specialist:azure_api"
+        assert all(call["trace_id"] == "trace-1" for call in calls.values())
 
     @pytest.mark.asyncio
-    async def test_every_stage_contributes_a_labelled_section(self, sdk_present, recorded_calls):
-        calls, _ = recorded_calls
-        node = foundry_backend.build_multi_agent_node(_settings())
-        result = await node({"update_context": "Azure Update: TLS 1.0 retirement"})
-
-        merged = result["update_context"]
-        assert merged.startswith("Azure Update: TLS 1.0 retirement")
-        assert foundry_backend.MULTI_AGENT_HEADER in merged
-        assert "Research findings" in merged
-        assert "Tenant impact assessment" in merged
-        assert "Proposed actions" in merged
-        assert [c["agent"] for c in calls] == [
-            "azbrief-research",
-            "azbrief-impact",
-            "azbrief-action",
-        ]
-
-    @pytest.mark.asyncio
-    async def test_dependent_stage_sees_the_earlier_findings(self, sdk_present, recorded_calls):
-        calls, answers = recorded_calls
-        node = foundry_backend.build_multi_agent_node(_settings())
-        await node({"update_context": "ctx"})
-
-        action_prompt = calls[-1]["prompt"]
-        assert "GA on 2026-09-01" in action_prompt
-        assert "3 storage accounts affected" in action_prompt
-        assert "research-1" in action_prompt
-        assert "impact-1" in action_prompt
-
-    @pytest.mark.asyncio
-    async def test_impact_receives_exact_azure_mcp_scope(self, sdk_present, monkeypatch):
-        calls = []
-
-        async def fake_invoke(endpoint, agent, prompt, timeout_s):
-            calls.append(prompt)
-            return _stage_result("impact", "tenant evidence")
-
-        roster = json.dumps([{"name": "azbrief-impact", "stage": "impact"}])
-        monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-        node = foundry_backend.build_multi_agent_node(
-            _settings(
-                foundry_enrichment_agents=roster,
-                azure_subscription_id="11111111-1111-1111-1111-111111111111",
-            )
+    async def test_azure_specialists_receive_exact_scope(self, sdk_present, recorded_calls):
+        node = foundry_backend.build_specialist_collaboration_node(
+            _settings(azure_subscription_id=_SUBSCRIPTION)
         )
 
         await node({"update_context": "ctx"})
 
-        assert f"Azure tenant ID: {_TENANT}" in calls[0]
-        assert "Azure subscription ID: 11111111-1111-1111-1111-111111111111" in calls[0]
-        assert "never pass the literal value default" in calls[0]
+        prompts = {call["agent"]: call["prompt"] for call in recorded_calls}
+        for agent in ("azbrief-azure-mcp", "azbrief-azure-api"):
+            assert f"Azure tenant ID: {_TENANT}" in prompts[agent]
+            assert f"Azure subscription ID: {_SUBSCRIPTION}" in prompts[agent]
+        assert "never pass the literal `default`" in prompts["azbrief-azure-mcp"]
+        assert "Azure tenant ID:" not in prompts["azbrief-resource-graph"]
 
     @pytest.mark.asyncio
-    async def test_impact_does_not_invent_subscription_scope(self, sdk_present, monkeypatch):
-        calls = []
-
-        async def fake_invoke(endpoint, agent, prompt, timeout_s):
-            calls.append(prompt)
-            return _stage_result("impact", "tenant evidence")
-
-        roster = json.dumps([{"name": "azbrief-impact", "stage": "impact"}])
-        monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-        node = foundry_backend.build_multi_agent_node(
-            _settings(foundry_enrichment_agents=roster, azure_subscription_id=None)
+    async def test_scope_does_not_invent_a_subscription(self, sdk_present, recorded_calls):
+        node = foundry_backend.build_specialist_collaboration_node(
+            _settings(azure_subscription_id=None)
         )
-
         await node({"update_context": "ctx"})
 
-        assert f"Azure tenant ID: {_TENANT}" in calls[0]
-        assert "Azure subscription ID:" not in calls[0]
+        prompts = {call["agent"]: call["prompt"] for call in recorded_calls}
+        assert "Azure subscription ID:" not in prompts["azbrief-azure-mcp"]
+        assert "Azure subscription ID:" not in prompts["azbrief-azure-api"]
 
     @pytest.mark.asyncio
-    async def test_a_failing_stage_is_isolated(self, sdk_present, monkeypatch):
-        async def fake_invoke(endpoint, agent, prompt, timeout_s):
-            if agent == "azbrief-impact":
-                raise RuntimeError("agent unavailable")
-            stage = agent.rsplit("-", 1)[-1]
-            evidence = ["research-1"] if stage == "action" else None
-            return _stage_result(stage, f"output from {agent}", evidence=evidence)
+    async def test_failed_specialist_becomes_an_explicit_gap(self, sdk_present, monkeypatch):
+        async def fake_invoke(endpoint, agent, prompt, timeout_s, **kwargs):
+            role = agent.removeprefix("azbrief-").replace("-", "_")
+            if role == "azure_mcp":
+                raise RuntimeError("unavailable")
+            return _specialist_result(role, "grounded")
 
         monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-        node = foundry_backend.build_multi_agent_node(_settings())
+        node = foundry_backend.build_specialist_collaboration_node(_settings())
         merged = (await node({"update_context": "ctx"}))["update_context"]
 
-        assert "Research findings" in merged
-        assert "Tenant impact assessment" not in merged
-        assert "Proposed actions" in merged
+        assert "azure_mcp specialist failed: RuntimeError" in merged
+        assert "Azure MCP tenant analysis [partial]" in merged
+        assert "Resource Graph KQL and result analysis [ok]" in merged
 
     @pytest.mark.asyncio
-    async def test_all_stages_empty_leaves_state_untouched(self, sdk_present, monkeypatch):
-        async def fake_invoke(*args, **kwargs):
-            return ""
+    async def test_invalid_output_becomes_an_explicit_gap(self, sdk_present, monkeypatch):
+        async def fake_invoke(endpoint, agent, prompt, timeout_s, **kwargs):
+            role = agent.removeprefix("azbrief-").replace("-", "_")
+            if role == "azure_api":
+                return "- free text"
+            return _specialist_result(role, "grounded")
 
         monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-        node = foundry_backend.build_multi_agent_node(_settings())
-        assert await node({"update_context": "ctx"}) == {}
-
-    @pytest.mark.asyncio
-    async def test_clean_review_adds_no_noise(self, sdk_present, monkeypatch):
-        roster = json.dumps(
-            [
-                {"name": "azbrief-research", "stage": "research"},
-                {"name": "azbrief-review", "stage": "review"},
-            ]
-        )
-
-        async def fake_invoke(endpoint, agent, prompt, timeout_s):
-            return (
-                _review_result()
-                if agent == "azbrief-review"
-                else _stage_result("research", "a fact")
-            )
-
-        monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-        node = foundry_backend.build_multi_agent_node(_settings(foundry_enrichment_agents=roster))
+        node = foundry_backend.build_specialist_collaboration_node(_settings())
         merged = (await node({"update_context": "ctx"}))["update_context"]
 
-        assert "Research findings" in merged
-        assert "Review notes" not in merged
+        assert "azure_api specialist returned invalid output" in merged
+        assert "ARM, Cost Management, and Billing analysis [partial]" in merged
 
     @pytest.mark.asyncio
-    async def test_review_removes_rejected_claim_and_dependent_action(
-        self, sdk_present, monkeypatch
-    ):
-        roster = json.dumps(
-            [
-                {"name": "azbrief-research", "stage": "research"},
-                {"name": "azbrief-impact", "stage": "impact"},
-                {"name": "azbrief-action", "stage": "action"},
-                {"name": "azbrief-review", "stage": "review"},
-            ]
-        )
-
-        async def fake_invoke(endpoint, agent, prompt, timeout_s):
-            if agent == "azbrief-research":
-                return json.dumps(
-                    {
-                        "status": "ok",
-                        "claims": [
-                            {
-                                "id": "research-1",
-                                "text": "supported fact",
-                                "evidence": ["https://learn.microsoft.com/supported"],
-                                "confidence": "high",
-                            },
-                            {
-                                "id": "research-2",
-                                "text": "unsupported fact",
-                                "evidence": ["https://learn.microsoft.com/unsupported"],
-                                "confidence": "low",
-                            },
-                        ],
-                        "gaps": [],
-                    }
-                )
-            if agent == "azbrief-impact":
-                return _stage_result("impact", "tenant evidence")
-            if agent == "azbrief-action":
-                return _stage_result(
-                    "action", "action based on unsupported fact", evidence=["research-2"]
-                )
-            return _review_result(rejected=["research-2"], missing=["Confirm the effective date"])
+    async def test_ok_with_gaps_is_normalized_to_partial(self, sdk_present, monkeypatch):
+        async def fake_invoke(endpoint, agent, prompt, timeout_s, **kwargs):
+            role = agent.removeprefix("azbrief-").replace("-", "_")
+            gaps = ["Cost scope could not be confirmed"] if role == "azure_api" else []
+            return _specialist_result(role, "grounded", gaps=gaps)
 
         monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-        node = foundry_backend.build_multi_agent_node(_settings(foundry_enrichment_agents=roster))
+        node = foundry_backend.build_specialist_collaboration_node(_settings())
         with capture_logs() as logs:
             merged = (await node({"update_context": "ctx"}))["update_context"]
 
-        assert "supported fact" in merged
-        assert "unsupported fact" not in merged
-        assert "action based on unsupported fact" not in merged
-        assert "Confirm the effective date" in merged
-        review_log = next(
-            entry for entry in logs if entry["event"] == "foundry_multi_agent_review_applied"
+        assert "ARM, Cost Management, and Billing analysis [partial]" in merged
+        normalized = next(
+            entry for entry in logs if entry["event"] == "foundry_specialist_output_normalized"
         )
-        assert review_log["explicit_rejected_claim_ids"] == ["research-2"]
-        assert review_log["dependent_rejected_claim_ids"] == ["action-1"]
-        assert review_log["missing_facts"] == ["Confirm the effective date"]
+        assert normalized["role"] == "azure_api"
 
     @pytest.mark.asyncio
-    async def test_malformed_stage_output_is_excluded(self, sdk_present, monkeypatch):
-        async def fake_invoke(*args, **kwargs):
-            return "- legacy free text"
+    async def test_wrong_evidence_prefix_is_rejected(self, sdk_present, monkeypatch):
+        async def fake_invoke(endpoint, agent, prompt, timeout_s, **kwargs):
+            role = agent.removeprefix("azbrief-").replace("-", "_")
+            evidence = ["https://example.com/not-tenant-evidence"] if role == "azure_mcp" else None
+            return _specialist_result(role, "grounded", evidence=evidence)
 
         monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-        node = foundry_backend.build_multi_agent_node(_settings())
-
-        assert await node({"update_context": "ctx"}) == {}
-
-    @pytest.mark.asyncio
-    async def test_claim_without_evidence_is_excluded(self, sdk_present, monkeypatch):
-        async def fake_invoke(*args, **kwargs):
-            return json.dumps(
-                {
-                    "status": "ok",
-                    "claims": [
-                        {
-                            "id": "research-1",
-                            "text": "unsupported",
-                            "evidence": [],
-                            "confidence": "high",
-                        }
-                    ],
-                    "gaps": [],
-                }
-            )
-
-        monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-        roster = json.dumps([{"name": "azbrief-research", "stage": "research"}])
-        node = foundry_backend.build_multi_agent_node(_settings(foundry_enrichment_agents=roster))
-
-        assert await node({"update_context": "ctx"}) == {}
-
-    @pytest.mark.asyncio
-    async def test_action_with_unknown_claim_dependency_is_excluded(self, sdk_present, monkeypatch):
-        async def fake_invoke(endpoint, agent, prompt, timeout_s):
-            if agent == "azbrief-research":
-                return _stage_result("research", "supported")
-            return _stage_result("action", "orphan action", evidence=["impact-999"])
-
-        monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-        roster = json.dumps(
-            [
-                {"name": "azbrief-research", "stage": "research"},
-                {"name": "azbrief-action", "stage": "action"},
-            ]
-        )
-        node = foundry_backend.build_multi_agent_node(_settings(foundry_enrichment_agents=roster))
+        node = foundry_backend.build_specialist_collaboration_node(_settings())
         merged = (await node({"update_context": "ctx"}))["update_context"]
 
-        assert "supported" in merged
-        assert "orphan action" not in merged
-
-        @pytest.mark.asyncio
-        async def test_ok_status_with_gaps_is_downgraded_to_partial(self, sdk_present, monkeypatch):
-            async def fake_invoke(endpoint, agent, prompt, timeout_s):
-                if agent == "azbrief-research":
-                    return _stage_result("research", "supported")
-                return json.dumps(
-                    {
-                        "status": "ok",
-                        "claims": [
-                            {
-                                "id": "action-1",
-                                "text": "verify the feature",
-                                "evidence": ["research-1"],
-                                "confidence": "medium",
-                            }
-                        ],
-                        "gaps": ["Confirm the rollout date"],
-                    }
-                )
-
-            monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
-            roster = json.dumps(
-                [
-                    {"name": "azbrief-research", "stage": "research"},
-                    {"name": "azbrief-action", "stage": "action"},
-                ]
-            )
-            node = foundry_backend.build_multi_agent_node(
-                _settings(foundry_enrichment_agents=roster)
-            )
-
-            with capture_logs() as logs:
-                merged = (await node({"update_context": "ctx"}))["update_context"]
-
-            assert "Proposed actions [partial]" in merged
-            assert "verify the feature" in merged
-            assert "Confirm the rollout date" in merged
-            normalized = next(
-                entry for entry in logs if entry["event"] == "foundry_multi_agent_output_normalized"
-            )
-            assert normalized["stage"] == "action"
-            assert normalized["normalization"] == "normalized_ok_with_gaps"
+        assert "azure_mcp specialist returned invalid output" in merged
 
     @pytest.mark.asyncio
-    async def test_extra_instructions_are_appended(self, sdk_present, recorded_calls):
-        calls, _ = recorded_calls
-        roster = json.dumps(
-            [{"name": "azbrief-research", "stage": "research", "instructions": "Focus on Korea."}]
+    async def test_leading_zero_claim_id_is_rejected(self, sdk_present, monkeypatch):
+        async def fake_invoke(endpoint, agent, prompt, timeout_s, **kwargs):
+            role = agent.removeprefix("azbrief-").replace("-", "_")
+            payload = json.loads(_specialist_result(role, "grounded"))
+            if role == "resource_graph":
+                payload["claims"][0]["id"] = "resource_graph-01"
+            return json.dumps(payload)
+
+        monkeypatch.setattr(foundry_backend, "_invoke_foundry_agent", fake_invoke)
+        node = foundry_backend.build_specialist_collaboration_node(_settings())
+        merged = (await node({"update_context": "ctx"}))["update_context"]
+
+        assert "resource_graph specialist returned invalid output" in merged
+
+    @pytest.mark.asyncio
+    async def test_configured_timeout_reaches_every_specialist(self, sdk_present, recorded_calls):
+        node = foundry_backend.build_specialist_collaboration_node(
+            _settings(foundry_agent_timeout_s=42)
         )
-        node = foundry_backend.build_multi_agent_node(_settings(foundry_enrichment_agents=roster))
         await node({"update_context": "ctx"})
-        assert calls[0]["prompt"].endswith("Focus on Korea.")
 
-    @pytest.mark.asyncio
-    async def test_configured_timeout_reaches_the_agent_call(self, sdk_present, recorded_calls):
-        calls, _ = recorded_calls
-        node = foundry_backend.build_multi_agent_node(_settings(foundry_agent_timeout_s=42))
-        await node({"update_context": "ctx"})
-        assert all(call["timeout"] == 42 for call in calls)
+        assert len(recorded_calls) == len(EVIDENCE_SPECIALIST_ROLES)
+        assert all(call["timeout"] == 42 for call in recorded_calls)

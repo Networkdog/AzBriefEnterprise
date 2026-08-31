@@ -45,6 +45,8 @@ logger = logging.getLogger(__name__)
 _THIRD_PARTY_LOGGERS = (
     "httpx",
     "httpcore",
+    "httpx2",
+    "httpcore2",
     "azure",
     "openai",
     "urllib3",

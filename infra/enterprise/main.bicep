@@ -96,9 +96,6 @@ param modelSkuName string = 'GlobalStandard'
 @maxValue(1000)
 param modelCapacity int = 200
 
-@description('Enable the optional research/impact/action/review Prompt Agent enrichment pipeline. Keep false until provision_foundry_agents publishes the app-owned FunctionTools and strict stage schemas and --check passes.')
-param enableFoundryEnrichmentAgents bool = false
-
 @description('Name of the Foundry Hosted Agent that owns the complete analysis and subscriber-customization runtime. Deploy this name from azure.yaml before starting the Container App or scheduler.')
 param foundryHostedAgentName string = '${baseName}-analysis-hosted'
 
@@ -204,6 +201,9 @@ param adminEntraClientSecret string = ''
 @description('Comma-separated allow-list of admin principals (UPN/email or object ID). Required for the Admin Page to serve anything.')
 param adminAllowedPrincipals string = ''
 
+@description('Comma-separated allow-list of Archive Page readers (UPN/email, object ID, or group ID). Administrators are readers automatically.')
+param archiveAllowedPrincipals string = ''
+
 // ============================================================================
 // Email (Azure Communication Services)
 // ============================================================================
@@ -293,6 +293,8 @@ var perimeterProfileName = 'azbrief'
 
 var stateContainerName = 'azbrief-state'
 var checkpointBlobUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${stateContainerName}/checkpoint.json'
+var archiveContainerName = 'azbrief-archive'
+var archiveBlobContainerUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${archiveContainerName}'
 
 // Built-in role definition IDs.
 var roleIds = {
@@ -346,34 +348,17 @@ var privateDnsZoneNames = [
 // Missing either one keeps it switched off rather than silently open.
 var adminAuthConfigured = !empty(adminEntraClientId) && !empty(adminEntraClientSecret)
 var adminUiEnabled = adminAuthConfigured && !empty(adminAllowedPrincipals)
+var archiveUiEnabled = adminAuthConfigured && (!empty(archiveAllowedPrincipals) || !empty(adminAllowedPrincipals))
 
 var foundryProjectEndpoint = 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${foundryProjectName}'
-var foundryPrimaryAgentName = '${baseName}-primary'
-var foundryPlannerAgentName = '${baseName}-planner'
-var foundryEvaluatorAgentName = '${baseName}-evaluator'
-var foundryReporterAgentName = '${baseName}-reporter'
+var foundryCoordinatorAgentName = '${baseName}-coordinator'
+var foundryResourceGraphAgentName = '${baseName}-resource-graph'
+var foundryAzureMcpAgentName = '${baseName}-azure-mcp'
+var foundryAzureApiAgentName = '${baseName}-azure-api'
+var foundryReportWriterAgentName = '${baseName}-report-writer'
+var foundryQualityReviewerAgentName = '${baseName}-quality-reviewer'
 var containerAppUrl = 'https://${containerApp.properties.configuration.ingress.fqdn}'
-
-// Optional pre-analysis roster consumed by FOUNDRY_ENRICHMENT_AGENTS. Each
-// stage maps to a Foundry agent whose tools and guardrails are managed there.
-var foundryEnrichmentAgentRoster = [
-  {
-    name: '${baseName}-research'
-    stage: 'research'
-  }
-  {
-    name: '${baseName}-impact'
-    stage: 'impact'
-  }
-  {
-    name: '${baseName}-action'
-    stage: 'action'
-  }
-  {
-    name: '${baseName}-review'
-    stage: 'review'
-  }
-]
+var archiveBaseUrl = 'https://${containerAppName}.${containerEnv.properties.defaultDomain}'
 
 // An hour of headroom under the replica timeout: the run needs time to defer
 // what no longer fits and commit the checkpoint before the replica is killed.
@@ -398,6 +383,10 @@ var runtimeEnv = [
   { name: 'FOUNDRY_HOSTED_AGENT_NAME', value: foundryHostedAgentName }
   { name: 'FOUNDRY_HOSTED_AGENT_TIMEOUT_S', value: '1800' }
   { name: 'CHECKPOINT_BLOB_URL', value: checkpointBlobUrl }
+  { name: 'ARCHIVE_BLOB_CONTAINER_URL', value: archiveBlobContainerUrl }
+  { name: 'ARCHIVE_BASE_URL', value: archiveBaseUrl }
+  { name: 'ARCHIVE_UI_ENABLED', value: string(archiveUiEnabled) }
+  { name: 'ARCHIVE_ALLOWED_PRINCIPALS', value: archiveAllowedPrincipals }
   { name: 'RUN_TIME_BUDGET_S', value: string(runTimeBudgetSeconds) }
   { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: 'https://${communicationService.properties.hostName}' }
   { name: 'COMMUNICATION_SERVICES_CONNECTION_STRING', secretRef: 'acs-connection-string' }
@@ -918,6 +907,14 @@ resource stateContainer 'Microsoft.Storage/storageAccounts/blobServices/containe
   }
 }
 
+resource archiveContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: archiveContainerName
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
 // ============================================================================
 // Container Apps
 // ============================================================================
@@ -1059,6 +1056,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   }
   dependsOn: [
     keyVaultSecretsUserAssignment
+    storageBlobDataContributorAssignment
   ]
 }
 
@@ -1393,24 +1391,24 @@ output enforcePerimeterCommand string = perimeterMode
 @description('Admin Page URL. Serves content only when Entra sign-in and an allow-list are configured.')
 output adminPageUrl string = adminUiEnabled ? '${containerAppUrl}/admin' : '(disabled — supply adminEntraClientId, adminEntraClientSecret and adminAllowedPrincipals)'
 
+@description('Archive Page URL. Administrators and explicitly allowed archive readers can browse canonical analyses.')
+output archivePageUrl string = archiveUiEnabled ? '${containerAppUrl}/archive' : '(disabled — configure Entra sign-in and an archive or admin allow-list)'
+
 @description('Microsoft Foundry project endpoint used by the Hosted Agent and persisted Prompt Agents.')
 output foundryProjectEndpoint string = foundryProjectEndpoint
 
 @description('Foundry Hosted Agent name that owns the complete analysis runtime.')
 output foundryHostedAgentName string = foundryHostedAgentName
 
-@description('Primary Prompt Agent name used inside the Hosted Agent runtime.')
-output foundryPrimaryAgentName string = foundryPrimaryAgentName
-
-@description('Specialized Foundry agents used for planning, evaluation, and reporting.')
-output foundryPhaseAgentNames object = {
-  planner: foundryPlannerAgentName
-  evaluator: foundryEvaluatorAgentName
-  reporter: foundryReporterAgentName
+@description('Distinct specialist Prompt Agents orchestrated by the Hosted Agent.')
+output foundrySpecialistAgentNames object = {
+  coordinator: foundryCoordinatorAgentName
+  resourceGraph: foundryResourceGraphAgentName
+  azureMcp: foundryAzureMcpAgentName
+  azureApi: foundryAzureApiAgentName
+  reportWriter: foundryReportWriterAgentName
+  qualityReviewer: foundryQualityReviewerAgentName
 }
-
-@description('Optional enrichment roster value to set as AZBRIEF_ENRICHMENT_AGENT_ROSTER in the azd environment before deploying the Hosted Agent.')
-output foundryEnrichmentAgentRoster string = enableFoundryEnrichmentAgents ? string(foundryEnrichmentAgentRoster) : ''
 
 @description('Azure managed email sender domain.')
 output emailSenderDomain string = emailDomain.properties.fromSenderDomain
@@ -1430,6 +1428,9 @@ output scheduleCronExpression string = scheduleCronExpression
 @description('Blob holding the digest checkpoint. Delete it to re-analyse from the default window.')
 output checkpointBlobUrl string = checkpointBlobUrl
 
+@description('Private Blob container holding immutable canonical analysis versions.')
+output archiveBlobContainerUrl string = archiveBlobContainerUrl
+
 @description('Command that starts a digest run immediately instead of waiting for the schedule.')
 output runNowCommand string = 'az containerapp job start --name ${schedulerJobName} --resource-group ${resourceGroup().name}'
 
@@ -1447,5 +1448,8 @@ output deployContainerImageCommand string = 'az containerapp update --name ${con
 @description('Command that creates the Prompt Agent roster. ARM cannot: agents are data-plane objects, so the project stays empty until this runs.')
 output provisionAgentsCommand string = 'python -m scripts.provision_foundry_agents --model ${modelDeploymentName}'
 
+@description('Command that binds the six specialist Prompt Agents to the Hosted Agent deployment manifest.')
+output configureHostedAgentCommand string = 'azd env set AZURE_SUBSCRIPTION_ID=${subscription().subscriptionId} AZBRIEF_PROMPT_COORDINATOR_AGENT_NAME=${foundryCoordinatorAgentName} AZBRIEF_PROMPT_RESOURCE_GRAPH_AGENT_NAME=${foundryResourceGraphAgentName} AZBRIEF_PROMPT_AZURE_MCP_AGENT_NAME=${foundryAzureMcpAgentName} AZBRIEF_PROMPT_AZURE_API_AGENT_NAME=${foundryAzureApiAgentName} AZBRIEF_PROMPT_REPORT_WRITER_AGENT_NAME=${foundryReportWriterAgentName} AZBRIEF_PROMPT_QUALITY_REVIEWER_AGENT_NAME=${foundryQualityReviewerAgentName}'
+
 @description('Post-deployment checklist.')
-output nextSteps string = '1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd environment project endpoint plus AZBRIEF_PROMPT_PRIMARY_AGENT_NAME=${foundryPrimaryAgentName} and optional role/roster aliases, run provisionAgentsCommand and its --check, then deploy ${foundryHostedAgentName} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.'
+output nextSteps string = '1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd project endpoint, run configureHostedAgentCommand, run provisionAgentsCommand and its --check, then deploy ${foundryHostedAgentName} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals and/or archiveAllowedPrincipals to enable the authenticated browser surfaces. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.'

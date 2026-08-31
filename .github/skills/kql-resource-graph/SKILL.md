@@ -7,14 +7,20 @@ description: 'Write and debug KQL queries for Azure Resource Graph. Use when: KQ
 
 ## Foundry Runtime Guidance
 
+- As the Resource Graph specialist, own KQL authoring, schema probing, result
+  interpretation, and KQL repair. Do not hand this work to another specialist.
 - Use Resource Graph's restricted dialect: no `join`, `let`, `render`, `datatable`, or
   `toscalar()`; use `mv-expand` only on arrays.
 - Compare types with `=~`, retain `subscriptionId`, project named fields, and order stably.
   Never return broad raw `properties`, `tags`, or `sku` bags.
+- Keep similarly named AKS properties semantically distinct: Azure Files/Disk CSI state comes
+  from `storageProfile.fileCSIDriver` / `diskCSIDriver`; the Key Vault secrets provider under
+  `addonProfiles.azureKeyvaultSecretsProvider` is not a storage CSI signal.
 - Query tenant-wide accessible subscriptions and cite exact IDs. Query ARM resources and
   properties now; defer only data-plane, application, or in-cluster state.
 - An empty filtered result does not prove absence. Probe the type, correct filters against
-  observed values, and preserve uncertainty when completeness is unresolved.
+  observed values, and preserve uncertainty when completeness is unresolved. On failure,
+  prefer deterministic builder/rule recovery or emit a gap; never cross-fallback roles.
 
 <!-- End Foundry Runtime Guidance -->
 
@@ -64,6 +70,7 @@ it is queryable NOW — plan a query, do not defer it.* Commonly under-queried f
 | Update topic | Query this instead of deferring | Property path |
 |--------------|--------------------------------|---------------|
 | AKS advanced networking / ACNS / Cilium / container network logs/metrics | ACNS/advanced-networking on? dataplane/policy? | `microsoft.containerservice/managedclusters` → `properties.networkProfile.networkDataplane`, `.networkPolicy`, `.advancedNetworking`, `properties.addonProfiles` |
+| AKS Azure Files / Azure Disk CSI | Is the corresponding storage CSI driver enabled? | `properties.storageProfile.fileCSIDriver.enabled`, `.diskCSIDriver.enabled`; do not infer either from `properties.addonProfiles.azureKeyvaultSecretsProvider.enabled` |
 | Point-to-Site VPN / Azure VPN Client retirement | Does a P2S gateway / VPN server config exist? | `microsoft.network/p2svpngateways`, `microsoft.network/vpnserverconfigurations`, `microsoft.network/virtualnetworkgateways` → `properties.vpnClientConfiguration` |
 | Azure Site Recovery / DR | Does a Recovery Services vault exist? | `microsoft.recoveryservices/vaults`; items via `recoveryservicesresources` |
 | Cosmos DB backup / Fabric mirroring prerequisites | Backup mode already answers "Continuous Backup?" | `microsoft.documentdb/databaseaccounts` → `properties.backupPolicy.type` (`Periodic`/`Continuous`), `properties.enableAnalyticalStorage` |
@@ -85,6 +92,7 @@ Static methods in `src/services/resource_graph.py` that return KQL strings:
 - Each service-specific query projects relevant `properties.*` columns
 - Detail queries must project the properties that reports actually reason about, e.g. the AKS
   query projects **ACNS** (`properties.networkProfile.advancedNetworking.observability/.security.enabled`)
+  and storage CSI state (`properties.storageProfile.fileCSIDriver/.diskCSIDriver.enabled`)
   and the Cosmos query projects backup mode + analytical storage
   (`properties.backupPolicy.type`, `properties.enableAnalyticalStorage`, `properties.disableLocalAuth`) —
   missing fields force the report to hedge ("점검 필요") instead of answering definitively.
@@ -116,7 +124,16 @@ Located in `src/agent/tools.py`:
 - Re-executes corrected query automatically
 - Records successful patterns in `kql_knowledge_base.json` via `kql_knowledge.py`
 - **Circuit breaker**: After 3 consecutive LLM fix failures, falls back to rule-based fixes
-- **Agent routing**: Uses `FOUNDRY_CODEX_AGENT_NAME` for KQL fixes; when unset, the role resolves to `FOUNDRY_PRIMARY_AGENT_NAME`. The fast Agent is never used for KQL
+- **Agent routing**: Uses the required `FOUNDRY_RESOURCE_GRAPH_AGENT_NAME` for KQL fixes.
+  Another specialist never substitutes for it; an unavailable Agent falls through to the
+  deterministic rule/builder recovery path and otherwise remains an explicit evidence gap
+- **Strict output contract**: the persisted specialist always returns `{status, claims, gaps}`.
+  Repair calls set `tool_choice=none`; `_extract_kql_response()` accepts raw KQL for test/backward
+  compatibility or extracts an executable table query from a claim. A gap-only or malformed JSON
+  response falls through to deterministic recovery and is never prefixed with `Resources`.
+- **Task argument guard**: before execution, a legacy `find_related_resources.query` value is
+  normalized to `keyword`, and a natural-language `query_azure_resources.query` paired with
+  `resource_type` is replaced by that type's rich builder (or a bounded identity projection).
 
 ### sanitize/`_rule_based_fix` hardening — never emit a guaranteed-broken query
 
@@ -167,14 +184,12 @@ adds a bounded semantic layer (`MAX_RESULT_IMPROVEMENTS = 2`):
 4. A successful improvement is persisted (`record_successful_query`, purpose
    `"Result-improved query (was empty)"`) and reused via `build_context_for_prompt`.
 
-### codex → primary LLM fallback
+### Specialist failure boundary
 
-The codex deployment used for query fixing/improvement can be absent (404
-`DeploymentNotFound`) in some environments, which would silently disable ALL LLM-assisted
-fixing. `ResourceGraphQueryFixer._ainvoke_with_fallback` retries an availability error
-(`_is_availability_error`: 404/DeploymentNotFound/unsupported) on the **primary** LLM, so
-both error-driven and result-driven fixing keep working. The analyzer injects the fallback:
-`get_query_fixer(llm=self.llm_codex, fallback_llm=self.llm)`.
+The analyzer injects only the Resource Graph specialist into `ResourceGraphQueryFixer`.
+An availability error is not sent to the coordinator, report writer, or quality reviewer.
+The retry pipeline applies its deterministic sanitizer and registered builder fallback; if
+those cannot preserve the query intent, the failure remains an explicit evidence gap.
 
 ## Resilience Patterns for KQL
 
@@ -192,14 +207,14 @@ result = await retry_with_backoff(
 )
 ```
 
-### LLM-Assisted Repair with Fallback Chain
+### Specialist-Assisted Repair with Deterministic Fallback
 ```
 1. Sanitize KQL (common LLM errors: | top → | take, inline let, etc.)
 2. Execute against Resource Graph
 3. On failure:
-   a. Use codex LLM to fix query
-   b. If codex fails → fall back to primary LLM
-   c. If LLM fix fails → apply rule-based sanitization
+  a. Use the Resource Graph specialist to fix the query
+  b. If the specialist fails → apply rule-based sanitization and a registered builder query
+  c. If deterministic recovery fails → preserve the error as a gap
 4. Track consecutive failures (circuit breaker at threshold=3)
 5. Record successful queries to knowledge base
 ```

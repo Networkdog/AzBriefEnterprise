@@ -7,7 +7,7 @@ description: 'Edit HTML email templates for AzBrief reports. Use when: email tem
 
 ## Foundry Runtime Guidance
 
-- Return only the requested schema; the deterministic renderer owns HTML, CSS, labels,
+- As the report writer, return only the requested schema; the deterministic renderer owns HTML, CSS, labels,
     responsiveness, and client compatibility.
 - Layer the content for scanning: decisive summary, compact evidence, operational detail,
     then executable actions. Do not repeat conclusions across fields.
@@ -74,7 +74,9 @@ Main Jinja-style HTML string with `{placeholder}` variables. Uses **inline CSS o
 | `format_timeline_html()` | Key dates/milestones |
 | `format_digest_table_header_html()` | Table header row for digest summary (columns: title, importance, impact, job relevance) |
 | `format_digest_update_card_html()` | Digest summary table row with importance/impact/job-relevance badges (높음/보통/낮음) and anchor link |
-| `markdown_to_html()` | Markdown → inline-styled HTML for email (headings, lists, `>` concept boxes, **bold**, `code`, and safe `[text](url)` links). Links are linkified via `_inline_format()`/`_linkify_md()` — **only** `http(s)://` and in-page `#` anchors become `<a>` tags; other schemes (`javascript:`, `data:`) are stripped to their text (XSS guard) |
+| `format_archive_link_html()` | Optional HTTPS-only link to the authenticated shared canonical analysis; omitted when no archive URL is available |
+| `markdown_to_html()` | Markdown → inline-styled HTML for email (headings, lists, `>` concept boxes, **bold**, `code`, and safe `[text](url)` links). Text is HTML-escaped before formatting; only in-message anchors and allow-listed Microsoft/Azure/GitHub/Azure Weekly HTTPS URLs become `<a>` tags |
+| `escape_email_text()` / `safe_email_href()` | Escape every untrusted literal field and restrict clickable URLs to the email allow-list; unsupported URLs degrade to text or `#` without loading remote content |
 | `get_labels(lang)` | Get label dict for language |
 | `get_urgency_colors(urgency)` | Color scheme by urgency level |
 | `get_relevance_colors(relevance)` | Color scheme by relevance level |
@@ -97,6 +99,8 @@ Main Jinja-style HTML string with `{placeholder}` variables. Uses **inline CSS o
 9. **Image fallback** — always provide alt text
 10. **`{` braces escape** — literal `{` in HTML must use `_escape_braces()` to avoid `KeyError` in `str.format()`
 11. **Card width** — fluid `width="100%"` capped at `max-width: 640px`, never a hardcoded `width="640"`
+12. **Untrusted report values** — RSS text, tool output, and LLM fields must pass through `escape_email_text()` or a renderer that calls `_inline_format()`; never interpolate them directly into markup
+13. **Link allow-list** — call `safe_email_href()` before writing `href`. HTTP, credentials in URLs, non-approved hosts, `javascript:`, and `data:` never become links. Apply the same validation to HTML and plain-text archive links
 
 ## Type Scale
 
@@ -170,6 +174,7 @@ table — intended, since its reading pane is usually narrow.
 - Falls back to **console output** when `COMMUNICATION_SERVICES_CONNECTION_STRING` is not set
 - Builds plain text separately in `_build_plain_text()`
 - Supports multiple subscribers (configured via `SUBSCRIBERS` in settings)
+- Accepts an optional `archive_url` for single and digest HTML/plain-text output. The link always names the shared canonical analysis; subscriber-customized content is not archived
 
 ## Adding a New Section
 

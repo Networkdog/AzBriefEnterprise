@@ -32,6 +32,7 @@ h1 { margin: 0; font-size: 18px; letter-spacing: -0.2px; }
 .badge { padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600;
   background: #1e3a5f; color: var(--accent); }
 .who { margin-left: auto; color: var(--muted); font-size: 13px; }
+.nav { color: #b8ddff; font-size: 13px; font-weight: 600; text-decoration: none; }
 main { padding: 24px 28px 48px; max-width: 1180px; }
 section { margin-bottom: 28px; }
 h2 { font-size: 14px; text-transform: uppercase; letter-spacing: 0.6px;
@@ -63,6 +64,7 @@ a { color: var(--accent); }
 <header>
   <h1>AzBrief 관리 콘솔</h1>
   <span class="badge">__PROFILE__</span>
+  __ARCHIVE_LINK__
   <span class="who">__USER__</span>
 </header>
 <main>
@@ -204,7 +206,12 @@ async function refresh() {
 """
 
 
-def render_admin_page(nonce: str, profile: str, user: str) -> str:
+def render_admin_page(
+    nonce: str,
+    profile: str,
+    user: str,
+    archive_enabled: bool = False,
+) -> str:
     """Render the admin console HTML for one request.
 
     Args:
@@ -215,8 +222,10 @@ def render_admin_page(nonce: str, profile: str, user: str) -> str:
     Returns:
         A complete HTML document.
     """
+    archive_link = '<a class="nav" href="/archive">분석 아카이브</a>' if archive_enabled else ""
     return (
         _PAGE.replace("__NONCE__", escape(nonce, quote=True))
         .replace("__PROFILE__", escape(profile))
+        .replace("__ARCHIVE_LINK__", archive_link)
         .replace("__USER__", escape(user))
     )

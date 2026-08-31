@@ -2,15 +2,15 @@
 
 [프로젝트 README](../../../../README.md) > [Foundry architecture skill](../README.md) > `references`
 
-Foundry 아키텍처 판단의 **시점별 평가 결과와 검증 증거**를 보관합니다. 이 디렉터리는 런타임
-구성의 원본이 아니라, 특정 시점의 코드와 배포 상태를 어떤 근거로 평가했는지 추적하는 감사
-자료입니다.
+Foundry 아키텍처 판단의 **시점별 평가 결과, 검증 증거, 장문 설계 제안**을 보관합니다. 이
+디렉터리는 런타임 구성의 원본이 아니며, 제안 문서는 구현 상태를 명시해야 합니다.
 
 ## 문서
 
 | 파일 | 내용 |
 |---|---|
 | [`assessment.md`](assessment.md) | 책임 분리, roster, 도구, 보안, 운영 준비 상태에 대한 아키텍처 평가 |
+| [`feedback-learning-system.md`](feedback-learning-system.md) | 사용자 피드백, typed memory, 평가 기반 prompt release의 Proposed 설계 |
 
 ## 사용 예시
 
@@ -26,5 +26,5 @@ Hosted Agent 구조를 바꾸기 전에 평가의 미해결 항목과 live evide
 - 평가 날짜, 대상 commit/version, 검증 명령과 관찰 결과를 함께 남깁니다.
 - 과거의 pass 결과를 현재 배포의 보증으로 재사용하지 않습니다.
 - 비밀값, access token, 전체 tenant payload를 증거 문서에 넣지 않습니다.
-- 현재 설계 규칙은 부모 [`SKILL.md`](../SKILL.md)와 루트 README에 반영하고, 이곳에는 장문의
-  근거와 시점별 차이만 둡니다.
+- 현재 구현된 설계 규칙은 부모 [`SKILL.md`](../SKILL.md)와 루트 README에 반영하고, 이곳에는
+  장문의 근거, 시점별 차이, 구현 상태가 명확한 제안을 둡니다.

@@ -2,7 +2,7 @@
 
 [프로젝트 README](../../../README.md) > [skills](../README.md) > `foundry-agent-architecture`
 
-AzBrief의 **Foundry Hosted Agent, Prompt Agent, enrichment roster, FunctionTool, Azure MCP,
+AzBrief의 **Foundry Hosted Agent, specialist Prompt Agent roster, FunctionTool, Azure MCP,
 identity 경계**가 제품 아키텍처에 맞는지 감사하고 개선할 때 사용하는 skill입니다. 작업 규칙은
 [`SKILL.md`](SKILL.md), 현재 평가 근거는 [`references/`](references/README.md)에 있습니다.
 
@@ -14,7 +14,7 @@ Container App / Job
 Foundry Hosted Agent
   -> LangGraph Plan-Execute-Evaluate-Report
 Persisted Prompt Agents
-  -> role-specific model/instructions/tools
+  -> coordinator / Resource Graph / Azure MCP / Azure API / report writer / quality reviewer
 ```
 
 관련 구현은 [`src/hosted_agent.py`](../../../src/hosted_agent.py),
@@ -46,7 +46,8 @@ Persisted Prompt Agents
 - 공식 사실은 Microsoft Learn MCP를 먼저 사용하고 Web Search는 공개 보완 근거로만 씁니다.
 - tenant 상태는 Entra 인증된 read-only Azure MCP/FunctionTool로만 조회하며 Web Search에 보내지
   않습니다.
-- enrichment stage 실패는 격리할 수 있지만 필수 runtime role 실패는 fail closed입니다.
+- 세 evidence specialist의 실패는 명시적 partial gap으로 격리하지만, 역할 누락·이름 중복과
+  coordinator/report-writer/quality-reviewer 실패는 fail closed합니다.
 
 ## 집중 검증
 

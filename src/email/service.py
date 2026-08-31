@@ -19,9 +19,11 @@ from src.email.templates import (
     _RESPONSIVE_STYLE,
     FONT_STACK_SANS,
     HTML_EMAIL_TEMPLATE,
+    escape_email_text,
     format_action_items_html,
     format_additional_checks_html,
     format_affected_resources_html,
+    format_archive_link_html,
     format_batch_context_html,
     format_digest_table_header_html,
     format_digest_update_card_html,
@@ -36,6 +38,8 @@ from src.email.templates import (
     get_relevance_colors,
     get_urgency_colors,
     markdown_to_html,
+    safe_archive_url,
+    safe_email_href,
 )
 from src.i18n import get_language
 from src.rss.parser import AzureUpdate
@@ -129,6 +133,7 @@ class EmailService:
         result: AnalysisResult,
         language: str = "ko",
         batch_stats: Optional[dict] = None,
+        archive_url: str = "",
     ) -> dict:
         """Build email content from analysis result.
 
@@ -142,6 +147,7 @@ class EmailService:
             Email content dictionary
         """
         L = get_labels(language)
+        archive_url = safe_archive_url(archive_url)
 
         # Get urgency info
         urgency_value = (
@@ -184,7 +190,7 @@ class EmailService:
             relevance_border_color=relevance_colors["border_color"],
             relevance_label=relevance_colors["label"],
             # Summary
-            one_line_summary=one_line,
+            one_line_summary=escape_email_text(one_line),
             # Relevance evidence (why this update was selected)
             relevance_evidence_html=format_relevance_evidence_html(
                 getattr(result, "relevance_evidence", ""),
@@ -200,15 +206,16 @@ class EmailService:
                 if batch_stats
                 else ""
             ),
+            archive_link_html=format_archive_link_html(archive_url, language),
             # Quick decision card
             quick_decision_html=format_quick_decision_html(result, language),
             # Update info
-            title=update.title,
-            update_type=update.update_type or "Info",
+            title=escape_email_text(update.title),
+            update_type=escape_email_text(update.update_type or "Info"),
             published_date=(
                 update.published_date.strftime("%Y-%m-%d") if update.published_date else "-"
             ),
-            link=update.link,
+            link=safe_email_href(update.link) or "#",
             service_tags_html=self._build_service_tags_html(
                 update.azure_services if hasattr(update, "azure_services") else []
             ),
@@ -281,7 +288,7 @@ class EmailService:
         subject = f"{tag_part}{subject_text}"
 
         # Build plain text version
-        plain_content = self._build_plain_text(update, result, language)
+        plain_content = self._build_plain_text(update, result, language, archive_url)
 
         return {
             "subject": subject,
@@ -303,11 +310,12 @@ class EmailService:
             return ""
         tags = []
         for svc in services[:4]:
+            safe_service = escape_email_text(svc)
             tags.append(
                 f'<span style="display: inline-block; background-color: #1a2d47; '
                 f"color: #8db4d8; padding: 2px 8px; border-radius: 3px; "
                 f"font-size: 12px; font-weight: 600; margin-right: 4px; "
-                f'margin-top: 6px; letter-spacing: 0.2px;">{svc}</span>'
+                f'margin-top: 6px; letter-spacing: 0.2px;">{safe_service}</span>'
             )
         if len(services) > 4:
             tags.append(
@@ -317,10 +325,15 @@ class EmailService:
         return f'<div style="margin-top: 2px;">{"".join(tags)}</div>'
 
     def _build_plain_text(
-        self, update: AzureUpdate, result: AnalysisResult, language: str = "ko"
+        self,
+        update: AzureUpdate,
+        result: AnalysisResult,
+        language: str = "ko",
+        archive_url: str = "",
     ) -> str:
         """Build plain text version of the email."""
         L = get_labels(language)
+        archive_url = safe_archive_url(archive_url)
         urgency_value = (
             result.urgency.value.upper()
             if hasattr(result, "urgency") and result.urgency
@@ -356,6 +369,12 @@ class EmailService:
                 f"{L['urgency']}: {urgency_value} | {L['relevance']}: {relevance_value}",
                 f"{L['published_date']}: {published}",
                 f"{L['link']}: {update.link}",
+            ]
+        )
+        if archive_url:
+            lines.append(f"{L['archive_shared_original']}: {archive_url}")
+        lines.extend(
+            [
                 "",
                 "-" * 40,
                 L["analysis_summary"],
@@ -526,6 +545,7 @@ class EmailService:
         recipient: Optional[str] = None,
         language: str = "ko",
         batch_stats: Optional[dict] = None,
+        archive_url: str = "",
     ) -> bool:
         """Send analysis report via email or print to console.
 
@@ -543,7 +563,13 @@ class EmailService:
             logger.info("Skipping notification - not relevant", update_id=update.id)
             return False
 
-        email_content = self.build_email_content(update, result, language, batch_stats)
+        email_content = self.build_email_content(
+            update,
+            result,
+            language,
+            batch_stats,
+            archive_url,
+        )
 
         # Save HTML report to out/ for debugging
         safe_id = "".join(c if c.isalnum() or c in "-_" else "_" for c in update.id[:30])
@@ -639,6 +665,7 @@ class EmailService:
         base_result: AnalysisResult,
         analyzer: "AzureUpdateAnalyzer",
         subscribers: list[Subscriber],
+        archive_url: str = "",
     ) -> dict[str, bool]:
         """Send customized reports to multiple subscribers.
 
@@ -716,7 +743,11 @@ class EmailService:
                     return False
 
                 sent = await self.send_analysis_report(
-                    update, result, recipient=sub.email, language=sub.language
+                    update,
+                    result,
+                    recipient=sub.email,
+                    language=sub.language,
+                    archive_url=archive_url,
                 )
                 logger.info(
                     "Subscriber report sent", subscriber=sub.email, name=sub.name, sent=sent
@@ -847,7 +878,7 @@ class EmailService:
         rows_html = ""
         for item in countdowns[:8]:  # Limit to 8
             days = item.get("days_remaining")
-            title = item.get("title", "")[:60]
+            title = escape_email_text(item.get("title", "")[:60])
             count = item.get("affected_resource_count", 0)
             status = item.get("migration_status", "not_started")
             rd = item.get("retirement_date", "")
@@ -905,6 +936,7 @@ class EmailService:
         result: AnalysisResult,
         index: int,
         language: str = "ko",
+        archive_url: str = "",
     ) -> str:
         """Build the full analysis detail section for one update inside a digest.
 
@@ -936,6 +968,10 @@ class EmailService:
             if hasattr(result, "one_line_summary") and result.one_line_summary
             else update.title[:80]
         )
+        safe_title = escape_email_text(update.title)
+        safe_one_line = escape_email_text(one_line)
+        safe_update_type = escape_email_text(update.update_type or "Info")
+        safe_update_link = safe_email_href(update.link) or "#"
         published = update.published_date.strftime("%Y-%m-%d") if update.published_date else "-"
 
         # Build each section via existing helpers
@@ -982,12 +1018,13 @@ class EmailService:
                                                     <span style="display: inline-block; background-color: {urgency_colors['bg_color']}; color: #fff; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: 700; letter-spacing: 0.3px;">{urgency_colors['badge']}</span>
                                                     <span style="display: inline-block; background-color: {relevance_colors['bg_color']}; color: {relevance_colors['text_color']}; border: 1px solid {relevance_colors['border_color']}; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: 600; margin-left: 4px;">{relevance_colors['label']}</span>
                                                 </td>
-                                                <td align="right" class="azb-detail-subtitle azb-stack-tail" style="color: #9bb3cf; font-size: 12px;">{L['update_type']}: {update.update_type or 'Info'} &middot; {published}</td>
+                                                <td align="right" class="azb-detail-subtitle azb-stack-tail" style="color: #9bb3cf; font-size: 12px;">{L['update_type']}: {safe_update_type} &middot; {published}</td>
                                             </tr>
                                         </table>
-                                        <p style="margin: 8px 0 0 0; color: #ffffff; font-size: 18px; font-weight: 600; line-height: 1.4;">{update.title}</p>
-                                        <p class="azb-detail-subtitle" style="margin: 4px 0 0 0; color: #c0cfe0; font-size: 14px; line-height: 1.4;">{one_line}</p>
-                                        <p style="margin: 6px 0 0 0;"><a href="{update.link}" class="azb-link" style="color: #7db8e8; font-size: 12px; text-decoration: none;">{L['detail_link']}</a></p>
+                                        <p style="margin: 8px 0 0 0; color: #ffffff; font-size: 18px; font-weight: 600; line-height: 1.4;">{safe_title}</p>
+                                        <p class="azb-detail-subtitle" style="margin: 4px 0 0 0; color: #c0cfe0; font-size: 14px; line-height: 1.4;">{safe_one_line}</p>
+                                        <p style="margin: 6px 0 0 0;"><a href="{safe_update_link}" class="azb-link" style="color: #7db8e8; font-size: 12px; text-decoration: none;">{L['detail_link']}</a></p>
+                                        {format_archive_link_html(archive_url, language)}
                                     </td>
                                 </tr>
                                 <!-- Analysis body -->
@@ -1154,6 +1191,7 @@ class EmailService:
                 item["result"],
                 detail_idx,
                 language,
+                item.get("archive_url", ""),
             )
 
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1189,7 +1227,7 @@ class EmailService:
                                         <span style="color: #ffffff; font-size: 26px; font-weight: 700; letter-spacing: -0.3px;">AzBrief</span>
                                     </td>
                                     <td align="right" style="vertical-align: middle;">
-                                        <span class="azb-text-secondary" style="color: #7a8fa3; font-size: 14px;">{date_range}</span>
+                                        <span class="azb-text-secondary" style="color: #7a8fa3; font-size: 14px;">{escape_email_text(date_range)}</span>
                                     </td>
                                 </tr>
                             </table>
@@ -1282,6 +1320,9 @@ class EmailService:
             if evidence:
                 lines.append(f"     → {evidence}")
             lines.append(f"     {update.link}")
+            archive_url = safe_archive_url(item.get("archive_url", ""))
+            if archive_url:
+                lines.append(f"     {L['archive_shared_original']}: {archive_url}")
             lines.append("")
 
         # --- Detailed analysis per update ---

@@ -1,12 +1,14 @@
 # Microsoft Foundry Agent Architecture Assessment
 
-Date: 2026-08-27
+Date: 2026-08-30
 
 ## Classification
 
-AzBrief is now a Microsoft Foundry Hosted Agent application with a Container Apps control plane. `src/hosted_agent.py` owns the complete LangGraph Plan-Execute-Evaluate-Report harness and subscriber customization. The harness manages immutable Microsoft Foundry Prompt Agent versions with `azure-ai-projects` 2.5+ and invokes them through the project-scoped Responses API using `agent_reference`.
+AzBrief is a Microsoft Foundry Hosted Agent application with a Container Apps control plane. `src/hosted_agent.py` owns the complete LangGraph Plan-Execute-Evaluate-Report harness, bounded report-quality correction, and subscriber customization. The Hosted Agent is the only orchestrator. It invokes six distinct immutable Prompt Agent roles through the project-scoped Responses API: coordinator, Resource Graph, Azure MCP, Azure API, report writer, and quality reviewer.
 
-The Container App and scheduled Job no longer construct `AzureUpdateAnalyzer`. They own RSS selection, the durable checkpoint, email delivery, Admin/API, and an authenticated MCP Streamable HTTP surface, and delegate analysis through `HostedAgentAnalyzer` using a strict versioned request/response contract.
+Resource Graph, Azure MCP, and Azure API specialists run concurrently and return strict role-prefixed claims plus explicit gaps. Their tool surfaces are disjoint. The report writer runs after evidence completeness; the quality reviewer owns evidence evaluation, G-Eval, one bounded rewrite request, and action safety. Hosted startup rejects an incomplete or duplicate specialist roster.
+
+The Container App and scheduled Job no longer construct `AzureUpdateAnalyzer`. They own RSS selection, the immutable canonical analysis archive, the durable checkpoint, email delivery, Admin/Archive/API, and an authenticated MCP Streamable HTTP surface, and delegate analysis through `HostedAgentAnalyzer` using a strict versioned request/response contract.
 
 This is an intentional two-identity boundary. The Container Apps UAMI owns control-plane resources; the Hosted Agent's dedicated Entra identity owns Prompt Agent/model invocation and tenant evidence access. The code migration, local contracts, remote build, endpoint invocation, and one full analysis are verified in the `hosted-dev` environment.
 
@@ -25,16 +27,16 @@ The ceiling is intentionally unreachable while a known gap remains.
 | Dimension | Before | After | Evidence after improvement |
 |---|---:|---:|---|
 | Runtime/type fit and terminology | 2.0 | 4.6 | Complete graph runs behind a Hosted Agent contract; Container Apps is control-plane only |
-| Role specialization and instructions | 2.5 | 4.5 | Optional planner/evaluator/reporter/codex/fast roles, each with standing instructions and primary fallback |
-| Tool and skill utilization | 1.5 | 4.6 | Research/impact use Foundry native FunctionTools generated from Pydantic schemas; toolbox Skills remain optional preview |
-| Multi-agent contracts and provenance | 2.0 | 4.7 | Strict JSON schemas, stable evidence IDs, review cascades, normalization, and rejection audit events |
+| Role specialization and instructions | 2.5 | 4.7 | Six required roles with unique names, scoped standing instructions, and no cross-specialty fallback |
+| Tool and skill utilization | 1.5 | 4.7 | Resource Graph and Azure API use disjoint Pydantic-derived FunctionTools; Azure MCP receives only the managed read-only MCP connection |
+| Multi-agent contracts and provenance | 2.0 | 4.7 | Three parallel evidence contracts use role-prefixed IDs, evidence URIs, confidence, and explicit failure gaps |
 | Harness and loop correctness | 2.0 | 4.6 | Evaluator failures terminate with `model_error`; bounded tool loops force final synthesis; context fills remove repair churn |
 | Concurrency and evidence isolation | 2.0 | 4.5 | Diminishing-return history is in AgentState; evidence snapshots are attached privately to each AnalysisResult |
 | Retry, cleanup, and discovery resilience | 2.5 | 4.5 | Transient errors propagate; conversation/Responses/project/credential clients close; partial outputs enter recovery |
 | Observability and evaluation | 4.0 | 4.6 | Response usage/IDs, function fingerprints, stage normalization, review removals, trajectory, action verification, and G-Eval are logged |
-| Deployment/readiness | 2.0 | 4.7 | Bicep/manifest validate; Prompt roster check passes; Hosted v6 and control-plane v8 completed a remote full analysis |
+| Deployment/readiness | 2.0 | 4.7 | Six-role roster is live and exact-check clean; Hosted v10 completed a grounded analysis; obsolete Agents were removed |
 | Current-platform upgrade path | 2.0 | 4.6 | Classic Agents removed; Prompt and Hosted immutable versions use current Responses contracts |
-| **Weighted mean** | **2.30/5 (46%)** | **4.54/5 (90.8%)** | Remote-verified Hosted Agent, control-plane, and read-only Azure MCP evidence path |
+| **Weighted mean** | **2.30/5 (46%)** | **4.55/5 (91.0%)** | Locally verified specialist code; previous Hosted/control-plane/Azure MCP path was remote-verified |
 
 ## Improvement Iterations
 
@@ -59,10 +61,32 @@ The ceiling is intentionally unreachable while a known gap remains.
 19. Moved history and pattern optimizations from read-only `/app/data` to session-persistent `$HOME/.azbrief`; directory creation failures are non-fatal.
 20. Replaced Azure MCP `single` proxy routing with direct leaf tools in `all` mode, server-filtered to the `group`, `resourcehealth`, and `advisor` namespaces under `--read-only`.
 21. Injected the exact tenant GUID and configured subscription GUID into every impact request and forbade the literal tenant value `default`, which remote Azure MCP otherwise resolves as a nonexistent tenant display name.
+22. Replaced the broad research/impact/action/review enrichment roster with three parallel evidence specialists: Resource Graph, Azure MCP, and Azure API.
+23. Split report writing from quality review. Runtime G-Eval is on by default; the reviewer may request one grounded rewrite, retained only when its score improves.
+24. Added coordinator, report-writer, and quality-reviewer routing for every internal LangGraph call site and removed cross-specialty KQL fallback.
+25. Made all six Prompt Agent names required and unique at Hosted startup; provisioning, `azure.yaml`, Bicep outputs, tests, and docs use the same role contract.
 
 Every iteration has focused unit tests. The Bicep source compiles into `infra/azbrief-enterprise-deploy.json` without warnings.
 
-## Live Deployment Verification
+## Current Live Verification
+
+- `azbrief-analysis-hosted` version 10 is active and its deployed definition contains exactly the
+	coordinator, Resource Graph, Azure MCP, Azure API, report-writer, and quality-reviewer aliases.
+- The six Prompt Agent versions are coordinator v1, Resource Graph v2, Azure MCP v1, Azure API v1,
+	report writer v3, and quality reviewer v3. The exact read-only roster check passes.
+- Azure Update `570120` completed through Hosted v10 in 80.59 seconds with environment-grounded
+	AKS evidence, one verified non-mutating evaluation action, two Learn references, and no open gap.
+- Project inventory was reduced from 15 to the required seven logical Agents. The superseded
+	`action`, `evaluator`, `impact`, `planner`, `primary`, `reporter`, `research`, and `review`
+	Agents were unreferenced by source, IaC, `azure.yaml`, and the live Hosted v10 definition; all
+	28 immutable versions were deleted. The corresponding stale local azd aliases were emptied.
+
+## Previous Live Deployment Baseline
+
+The facts below describe the 2026-08-27 deployment **before** the six-specialist refactor. They
+remain historical evidence that the Hosted endpoint, identity, Responses API, and Azure MCP path
+worked, but the superseded Agents described here were deleted on 2026-08-30 and must not be used
+as the current architecture baseline.
 
 A deployment and repeated Responses API smoke test on 2026-08-27 established:
 
@@ -81,10 +105,8 @@ A deployment and repeated Responses API smoke test on 2026-08-27 established:
 - Contextual argument filling removed both observed `service_name` validation failures and
 	their LLM repair calls.
 
-The Prompt Agent roster is deployed, callable, and passes `python -m scripts.provision_foundry_agents
---check`: primary v1, research v5, impact v10, action v2, and review v2. Research has five
-app-owned functions plus Microsoft Learn MCP and Web Search. Impact has five app-owned
-read-only functions plus the Entra-authenticated `azure_read_only` MCP server tool.
+The previous Prompt Agent roster was deployed and callable as primary v1, research v5, impact
+v10, action v2, and review v2. It no longer matches the repository contract.
 
 ## Hosted Migration Verification
 
@@ -99,6 +121,13 @@ read-only functions plus the Entra-authenticated `azure_read_only` MCP server to
 - `infra/enterprise/main.bicep` compiles without warnings to the tracked ARM JSON.
 
 ## Remaining Gaps
+
+### Archive Deployment
+
+The canonical Archive implementation, private container IaC, deterministic 10,000-version
+evaluation, and desktop/mobile browser checks are locally verified. The updated control-plane
+image and Bicep have not yet been deployed to Azure, so Blob data-plane access, EasyAuth reader
+sign-in, private DNS, and email deep links still require a staging deployment smoke test.
 
 ### Foundry Skills
 
@@ -129,5 +158,6 @@ az bicep build --file infra\enterprise\main.bicep --outfile infra\azbrief-enterp
 $env:AZURE_DEV_USER_AGENT='microsoft_foundry_skill'
 azd show
 python -m scripts.provision_foundry_agents --dry-run
+python -m scripts.provision_foundry_agents --roles resource_graph azure_mcp azure_api report_writer quality_reviewer coordinator
 python -m scripts.provision_foundry_agents --check
 ```

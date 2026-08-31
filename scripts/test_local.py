@@ -44,7 +44,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.agent.analyzer import AnalysisResult, AzureUpdateAnalyzer
-from src.config import get_settings
+from src.config import SPECIALIST_AGENT_ROLES, get_settings
 from src.email.service import EmailService
 from src.rss.parser import AzureUpdate, AzureUpdateParser
 from src.services.resource_graph import ResourceGraphService
@@ -823,13 +823,22 @@ async def check_config() -> None:
     print(f"Azure Subscription ID: {settings.azure_subscription_id}")
     print(f"Azure Client ID: {settings.azure_client_id or '(not set - using az login)'}")
     print(f"Foundry Project Endpoint: {settings.foundry_project_endpoint or '(not set)'}")
-    print(f"Foundry Primary Agent: {settings.foundry_primary_agent_name or '(not set)'}")
-    print(f"Foundry Planner Agent: {settings.foundry_agent_for_role('planner') or '(not set)'}")
-    print(f"Foundry Evaluator Agent: {settings.foundry_agent_for_role('evaluator') or '(not set)'}")
-    print(f"Foundry Reporter Agent: {settings.foundry_agent_for_role('reporter') or '(not set)'}")
-    print(f"Foundry Codex Agent: {settings.foundry_agent_for_role('codex') or '(not set)'}")
-    print(f"Foundry Fast Agent: {settings.foundry_agent_for_role('fast') or '(not set)'}")
+    role_labels = {
+        "coordinator": "Coordinator",
+        "resource_graph": "Resource Graph",
+        "azure_mcp": "Azure MCP",
+        "azure_api": "Azure API",
+        "report_writer": "Report Writer",
+        "quality_reviewer": "Quality Reviewer",
+    }
+    for role in SPECIALIST_AGENT_ROLES:
+        label = role_labels[role]
+        print(f"Foundry {label} Agent: {settings.foundry_agent_for_role(role) or '(not set)'}")
     print(f"Foundry Ready: {'Yes' if settings.use_foundry else 'No'}")
+    print(
+        "Specialist Roster Complete: "
+        f"{'Yes' if settings.has_complete_specialist_roster else 'No'}"
+    )
     print(f"Use Email: {'Yes' if settings.use_email else 'No (console output mode)'}")
     print(f"Log Level: {settings.log_level}")
 

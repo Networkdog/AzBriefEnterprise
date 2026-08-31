@@ -6,8 +6,10 @@ import json
 # This is needed because DefaultAzureCredential reads from os.environ directly
 # Use override=False so platform-set env vars (Container Apps) take precedence
 import os as _os
+import re
 from functools import lru_cache
 from typing import Optional
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -17,9 +19,51 @@ from src.i18n import DEFAULT_LANGUAGE, is_supported, normalize_language, support
 
 load_dotenv(override=not _os.environ.get("CONTAINER_APP_NAME"))
 
-# Runtime agent roles. Optional role-specific agents fall back to the primary
-# Foundry agent so a single-agent deployment remains a valid configuration.
-LLM_ROLES = ("primary", "planner", "evaluator", "reporter", "codex", "fast")
+SPECIALIST_AGENT_ROLES = (
+    "coordinator",
+    "resource_graph",
+    "azure_mcp",
+    "azure_api",
+    "report_writer",
+    "quality_reviewer",
+)
+EVIDENCE_SPECIALIST_ROLES = ("resource_graph", "azure_mcp", "azure_api")
+
+_AZURE_BLOB_HOST_SUFFIXES = (
+    ".blob.core.windows.net",
+    ".blob.core.usgovcloudapi.net",
+    ".blob.core.chinacloudapi.cn",
+    ".blob.core.cloudapi.de",
+)
+_STORAGE_ACCOUNT_RE = re.compile(r"^[a-z0-9]{3,24}$")
+_BLOB_CONTAINER_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,61}[a-z0-9])?$")
+
+
+def normalize_archive_blob_container_url(value: str) -> str:
+    """Validate one Azure Blob container URL before a Storage token can use it."""
+    normalized = value.strip().rstrip("/")
+    parsed = urlparse(normalized)
+    hostname = (parsed.hostname or "").lower()
+    suffix = next(
+        (candidate for candidate in _AZURE_BLOB_HOST_SUFFIXES if hostname.endswith(candidate)),
+        "",
+    )
+    account = hostname[: -len(suffix)] if suffix else ""
+    container = parsed.path.lstrip("/")
+    if (
+        parsed.scheme != "https"
+        or not suffix
+        or not _STORAGE_ACCOUNT_RE.fullmatch(account)
+        or not _BLOB_CONTAINER_RE.fullmatch(container)
+        or "/" in container
+        or parsed.username
+        or parsed.password
+        or parsed.port
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ValueError("archive Blob URL must identify one Azure Storage HTTPS container")
+    return normalized
 
 
 class Subscriber(BaseModel):
@@ -56,39 +100,28 @@ class Subscriber(BaseModel):
         return normalize_language(v)
 
 
-# Stages of the Foundry Prompt Agent enrichment pipeline, in execution order.
-# 'research' and 'impact' are independent and run concurrently; 'action'
-# consumes both; 'review' audits the merged context.
-FOUNDRY_AGENT_STAGES = ("research", "impact", "action", "review")
-
-
 class FoundryAgentSpec(BaseModel):
-    """One Foundry Prompt Agent participating in the enrichment pipeline.
+    """One Foundry Prompt Agent participating in specialist collaboration.
 
     Each entry names an agent that already exists in the Foundry project, so
     its tools, model and guardrails stay governed in Foundry rather than
     hard-coded here.
 
-    Example JSON::
-
-        [{"name": "azbrief-research", "stage": "research"},
-         {"name": "azbrief-impact",   "stage": "impact"},
-         {"name": "azbrief-action",   "stage": "action"}]
+    Names and roles are resolved from explicit Settings fields.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     name: str
-    stage: str = "research"
-    instructions: str = ""  # appended to the stage prompt when set
+    role: str
 
-    @field_validator("stage")
+    @field_validator("role", mode="before")
     @classmethod
-    def validate_stage(cls, v: str) -> str:
-        """Restrict the stage to the known pipeline positions."""
+    def validate_role(cls, v: str) -> str:
+        """Restrict the role to the explicit specialist team."""
         v_lower = v.strip().lower()
-        if v_lower not in FOUNDRY_AGENT_STAGES:
-            raise ValueError(f"stage must be one of {FOUNDRY_AGENT_STAGES}, got '{v}'")
+        if v_lower not in SPECIALIST_AGENT_ROLES:
+            raise ValueError(f"role must be one of {SPECIALIST_AGENT_ROLES}, got '{v}'")
         return v_lower
 
 
@@ -311,12 +344,11 @@ class Settings(BaseSettings):
         description="Maximum generate→evaluate→improve iterations in the quality loop",
     )
     geval_runtime_enabled: bool = Field(
-        default=False,
+        default=True,
         description=(
-            "Run the G-Eval judge inside analyze_update and let it drive one report "
-            "rewrite when the score misses geval_target_score. Off by default: it adds "
-            "roughly two LLM calls per update, which matters against the Automation "
-            "3-hour fair-share limit. Requires geval_enabled."
+            "Run the quality-reviewer Prompt Agent inside analyze_update and let it drive "
+            "one report-writer revision when the score misses geval_target_score. "
+            "Requires geval_enabled."
         ),
     )
 
@@ -371,13 +403,6 @@ class Settings(BaseSettings):
             "https://<resource>.services.ai.azure.com/api/projects/<project>"
         ),
     )
-    foundry_primary_agent_name: Optional[str] = Field(
-        default=None,
-        description=(
-            "Foundry Agent Service agent used for planning, evaluation, report generation, "
-            "and other primary reasoning calls."
-        ),
-    )
     foundry_hosted_agent_name: Optional[str] = Field(
         default=None,
         description=(
@@ -389,40 +414,31 @@ class Settings(BaseSettings):
         default=1800,
         description="Wall-clock timeout for one complete Hosted Agent analysis request.",
     )
-    foundry_planner_agent_name: Optional[str] = Field(
+    foundry_coordinator_agent_name: Optional[str] = Field(
+        default=None,
+        description="Prompt Agent that coordinates evidence planning and task revision.",
+    )
+    foundry_resource_graph_agent_name: Optional[str] = Field(
         default=None,
         description=(
-            "Foundry Agent Service agent used for analysis planning. "
-            "Falls back to foundry_primary_agent_name when unset."
+            "Prompt Agent specialized in Resource Graph KQL authoring and result analysis."
         ),
     )
-    foundry_evaluator_agent_name: Optional[str] = Field(
+    foundry_azure_mcp_agent_name: Optional[str] = Field(
         default=None,
-        description=(
-            "Foundry Agent Service agent used to evaluate evidence completeness. "
-            "Falls back to foundry_primary_agent_name when unset."
-        ),
+        description="Prompt Agent specialized in read-only Azure MCP tenant analysis.",
     )
-    foundry_reporter_agent_name: Optional[str] = Field(
+    foundry_azure_api_agent_name: Optional[str] = Field(
         default=None,
-        description=(
-            "Foundry Agent Service agent used for final report generation and recovery. "
-            "Falls back to foundry_primary_agent_name when unset."
-        ),
+        description="Prompt Agent specialized in ARM, Cost Management, and Billing evidence.",
     )
-    foundry_codex_agent_name: Optional[str] = Field(
+    foundry_report_writer_agent_name: Optional[str] = Field(
         default=None,
-        description=(
-            "Foundry Agent Service agent used for KQL generation and repair. "
-            "Falls back to foundry_primary_agent_name when unset."
-        ),
+        description="Prompt Agent specialized in clear, evidence-grounded report writing.",
     )
-    foundry_fast_agent_name: Optional[str] = Field(
+    foundry_quality_reviewer_agent_name: Optional[str] = Field(
         default=None,
-        description=(
-            "Foundry Agent Service agent used for lightweight revisions and subscriber "
-            "customization. Falls back to foundry_primary_agent_name when unset."
-        ),
+        description="Prompt Agent that judges report quality and supplies bounded corrections.",
     )
     foundry_model_deployment: Optional[str] = Field(
         default=None,
@@ -431,20 +447,10 @@ class Settings(BaseSettings):
             "creating or updating agent definitions. The running app does not call it directly."
         ),
     )
-    foundry_enrichment_agents: Optional[str] = Field(
-        default=None,
-        description=(
-            "Optional Foundry agents that enrich context before the core analysis — JSON array, "
-            'e.g. [{"name":"azbrief-research","stage":"research"},'
-            '{"name":"azbrief-impact","stage":"impact"},'
-            '{"name":"azbrief-action","stage":"action"}]. Tools and guardrails are '
-            "configured on each agent in Foundry."
-        ),
-    )
-    foundry_research_web_search_enabled: bool = Field(
+    foundry_coordinator_web_search_enabled: bool = Field(
         default=False,
         description=(
-            "Provision Web Search on the research Prompt Agent. Microsoft Learn remains "
+            "Provision Web Search on the coordinator Prompt Agent. Microsoft Learn remains "
             "the primary source and Web Search may only supplement missing or current facts."
         ),
     )
@@ -455,7 +461,7 @@ class Settings(BaseSettings):
     azure_mcp_project_connection_name: Optional[str] = Field(
         default=None,
         description=(
-            "Foundry project connection name that authenticates the impact Prompt Agent "
+            "Foundry project connection name that authenticates the Azure MCP Prompt Agent "
             "to the Azure MCP Server."
         ),
     )
@@ -464,20 +470,37 @@ class Settings(BaseSettings):
         description="Per-Prompt-Agent timeout inside the analysis runtime, in seconds.",
     )
 
-    def foundry_agent_for_role(self, role: str = "primary") -> Optional[str]:
-        """Resolve the Foundry agent name for a runtime role.
+    @field_validator(
+        "foundry_coordinator_agent_name",
+        "foundry_resource_graph_agent_name",
+        "foundry_azure_mcp_agent_name",
+        "foundry_azure_api_agent_name",
+        "foundry_report_writer_agent_name",
+        "foundry_quality_reviewer_agent_name",
+        mode="before",
+    )
+    @classmethod
+    def normalize_specialist_agent_name(cls, value):
+        """Trim specialist names and treat blank values as unconfigured."""
+        if value is None:
+            return None
+        normalized = str(value).strip()
+        return normalized or None
+
+    def foundry_agent_for_role(self, role: str = "coordinator") -> Optional[str]:
+        """Resolve one explicit specialist role to its Prompt Agent name.
 
         Args:
-            role: One of LLM_ROLES.
+            role: One of ``SPECIALIST_AGENT_ROLES``.
 
         Returns:
-            Configured role-specific agent name, or the primary agent name.
+            Configured specialist Agent name.
         """
-        if role not in LLM_ROLES:
-            raise ValueError(f"Unknown LLM role '{role}'. Expected one of {LLM_ROLES}.")
-        if role == "primary":
-            return self.foundry_primary_agent_name
-        return getattr(self, f"foundry_{role}_agent_name") or self.foundry_primary_agent_name
+        if role not in SPECIALIST_AGENT_ROLES:
+            raise ValueError(
+                f"Unknown specialist role '{role}'. Expected one of {SPECIALIST_AGENT_ROLES}."
+            )
+        return getattr(self, f"foundry_{role}_agent_name")
 
     # ── Scheduling & durable state ──────────────────────────────
     # A Container Apps Job runs the scheduled digest and the Container App
@@ -496,6 +519,24 @@ class Settings(BaseSettings):
             "Local file holding the digest checkpoint. Development fallback used "
             "only when checkpoint_blob_url is unset."
         ),
+    )
+    archive_blob_container_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "HTTPS URL of the private container holding immutable canonical analysis "
+            "documents. Read and written with the control-plane managed identity."
+        ),
+    )
+    archive_file_path: Optional[str] = Field(
+        default=None,
+        description=(
+            "Local directory holding immutable analysis documents. Development fallback "
+            "used only when archive_blob_container_url is unset."
+        ),
+    )
+    archive_base_url: Optional[str] = Field(
+        default=None,
+        description="Public or VNet-local HTTPS base URL used for authenticated archive links.",
     )
     orchestrator_endpoint: Optional[str] = Field(
         default=None,
@@ -544,6 +585,53 @@ class Settings(BaseSettings):
         ),
     )
 
+    # ── Analysis archive (enterprise profile) ──────────────────
+    archive_ui_enabled: bool = Field(
+        default=False,
+        description=(
+            "Serve /archive and /api/archive endpoints. The ARM template enables this "
+            "only when archive storage and Entra sign-in are configured."
+        ),
+    )
+    archive_require_auth: bool = Field(
+        default=True,
+        description="Require an EasyAuth principal for archive routes. Local development only.",
+    )
+    archive_allowed_principals: Optional[str] = Field(
+        default=None,
+        description=(
+            "Comma-separated archive-reader UPNs, object IDs, or group IDs. Admin "
+            "principals are readers automatically; an empty combined list denies everyone."
+        ),
+    )
+
+    @field_validator("archive_blob_container_url")
+    @classmethod
+    def validate_archive_blob_url(cls, value: Optional[str]) -> Optional[str]:
+        """Restrict Storage bearer tokens to Azure Blob container endpoints."""
+        if value is None or not value.strip():
+            return None
+        return normalize_archive_blob_container_url(value)
+
+    @field_validator("archive_base_url")
+    @classmethod
+    def validate_archive_base_url(cls, value: Optional[str]) -> Optional[str]:
+        """Keep browser deep links on a plain HTTPS origin."""
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("archive URLs must be plain https URLs without query or fragment")
+        return normalized
+
     @field_validator("geval_target_score")
     @classmethod
     def validate_geval_target_score(cls, v: float) -> float:
@@ -554,37 +642,45 @@ class Settings(BaseSettings):
 
     @property
     def use_foundry(self) -> bool:
-        """Return True when the required Foundry runtime settings are present."""
-        return bool(self.foundry_project_endpoint and self.foundry_primary_agent_name)
+        """Return True when the endpoint and complete specialist roster are configured."""
+        return bool(self.foundry_project_endpoint and self.has_complete_specialist_roster)
 
     @property
     def use_hosted_agent(self) -> bool:
         """Return True when the external Hosted Agent runtime is configured."""
         return bool(self.foundry_project_endpoint and self.foundry_hosted_agent_name)
 
-    def get_foundry_enrichment_agents(self) -> list[FoundryAgentSpec]:
-        """Parse FOUNDRY_ENRICHMENT_AGENTS into FoundryAgentSpec entries.
+    def get_foundry_specialist_agents(self) -> list[FoundryAgentSpec]:
+        """Return configured specialists in canonical execution order."""
+        configured_names = {
+            "coordinator": self.foundry_coordinator_agent_name,
+            "resource_graph": self.foundry_resource_graph_agent_name,
+            "azure_mcp": self.foundry_azure_mcp_agent_name,
+            "azure_api": self.foundry_azure_api_agent_name,
+            "report_writer": self.foundry_report_writer_agent_name,
+            "quality_reviewer": self.foundry_quality_reviewer_agent_name,
+        }
+        return [
+            FoundryAgentSpec(name=configured_names[role], role=role)
+            for role in SPECIALIST_AGENT_ROLES
+            if configured_names[role]
+        ]
 
-        Returns an empty list on missing or malformed input so a bad roster
-        degrades to the single-agent (or plain LLM) path instead of failing
-        the run. Entries are de-duplicated by stage, last one winning.
-        """
-        if not self.foundry_enrichment_agents:
-            return []
-        try:
-            raw = json.loads(self.foundry_enrichment_agents)
-            if not isinstance(raw, list):
-                return []
-            parsed: dict[str, FoundryAgentSpec] = {}
-            for item in raw:
-                try:
-                    spec = FoundryAgentSpec(**item)
-                except (TypeError, ValueError):
-                    continue
-                parsed[spec.stage] = spec
-            return list(parsed.values())
-        except (json.JSONDecodeError, TypeError, ValueError):
-            return []
+    @property
+    def has_complete_specialist_roster(self) -> bool:
+        """Return whether all explicit specialist fields hold distinct Agent names."""
+        names = [
+            self.foundry_coordinator_agent_name,
+            self.foundry_resource_graph_agent_name,
+            self.foundry_azure_mcp_agent_name,
+            self.foundry_azure_api_agent_name,
+            self.foundry_report_writer_agent_name,
+            self.foundry_quality_reviewer_agent_name,
+        ]
+        return bool(
+            all(names)
+            and len({name.casefold() for name in names if name}) == len(SPECIALIST_AGENT_ROLES)
+        )
 
     def get_admin_allowed_principals(self) -> set[str]:
         """Parse ADMIN_ALLOWED_PRINCIPALS into a lowercase set.
@@ -599,6 +695,20 @@ class Settings(BaseSettings):
             for part in self.admin_allowed_principals.split(",")
             if part.strip()
         }
+
+    @property
+    def archive_enabled(self) -> bool:
+        """Return whether a durable archive backend is configured."""
+        return bool(self.archive_blob_container_url or self.archive_file_path)
+
+    def get_archive_allowed_principals(self) -> set[str]:
+        """Return explicit archive readers plus every configured administrator."""
+        readers = {
+            part.strip().lower()
+            for part in (self.archive_allowed_principals or "").split(",")
+            if part.strip()
+        }
+        return readers | self.get_admin_allowed_principals()
 
     @property
     def use_email(self) -> bool:

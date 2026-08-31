@@ -16,7 +16,7 @@ Do not claim success — it is only success if you actually verified it.
 
 ## Project Overview
 
-AzBrief Enterprise is the enterprise edition of AzBrief and shares the same product identity, analysis core, and mission. It is an **Azure Update Intelligence Agent** for Azure administrators. Its complete custom LangGraph harness and subscriber customization run as a Microsoft Foundry **Hosted Agent**. Container Apps is the control plane: FastAPI/Admin/MCP, RSS selection, digest checkpointing, scheduling, and email delivery. It invokes the Hosted Agent through a strict versioned Responses contract and never constructs the analyzer locally.
+AzBrief Enterprise is the enterprise edition of AzBrief and shares the same product identity, analysis core, and mission. It is an **Azure Update Intelligence Agent** for Azure administrators. One Microsoft Foundry **Hosted Agent** owns the complete custom LangGraph harness, tool execution, report-quality loop, and subscriber customization. Six distinct persisted Prompt Agents provide coordination, Resource Graph, Azure MCP, Azure API, report-writing, and quality-review expertise. Container Apps is the control plane: FastAPI/Admin/Archive/MCP, RSS selection, canonical analysis archiving, digest checkpointing, scheduling, and email delivery. It invokes the Hosted Agent through a strict versioned Responses contract and never constructs the analyzer locally.
 It analyzes Azure Update RSS feeds, queries the administrator's actual Azure resources via Resource Graph to assess relevance, evaluates each update on three independent axes — importance (update's inherent significance), impact (effect on the admin's resource environment), and job relevance (fit to the subscriber's role) — generates impact analysis and action items via AI Agent (LangChain/LangGraph), and delivers a consolidated daily digest email. All updates are analyzed without pre-filtering — the email summary displays a compact table with columns for 중요성, 영향도, and 직무연관성 (높음/보통/낮음 badges), and each title links to its detailed analysis below. It aims to provide practical help to Azure administrators who manage diverse roles.
 
 ### Product Identity and Direction
@@ -34,6 +34,9 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 > Code (variable names, function names, class names, docstrings) is written in **English**. Prompts are written in **English** to save tokens, but final user-facing output must be in **Korean**.
 > When code is added or changed, project documentation must also be updated.
 > Specifically: `README.md`, `.github/copilot-instructions.md`, and relevant `.github/skills/*/SKILL.md` files must reflect the current code state.
+> The top-level `README.md` is the canonical English document, and `README.ko.md` is its synchronized Korean translation.
+> Do not add other top-level localized README variants unless explicitly requested.
+> Code changes that affect the documentation must update both top-level README files.
 
 ---
 
@@ -69,10 +72,10 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 - **Circuit breaker**: Track consecutive failures; after 3 consecutive failures, fall back to alternative model or abort gracefully. Auto-reset after timeout (half-open state)
 - **Model fallback**: After `MAX_CONSECUTIVE_OVERLOAD_ERRORS` (3) consecutive 529 errors, raise `ModelFallbackError` to trigger model switch. Cleanly separates retry exhaustion from model switching logic
 - **Stale connection detection**: Detect ECONNRESET/EPIPE for targeted recovery (disable keep-alive pooling + reconnect) instead of generic retry
-- **LLM-assisted tool repair**: On tool failure, use LLM (codex model for KQL, fast model for others) to fix tool arguments and retry up to `max_retries`. Circuit breaker on fixer to avoid infinite loops
+- **LLM-assisted tool repair**: On tool failure, the Resource Graph specialist repairs KQL and the coordinator repairs other tool arguments, with bounded retries and a circuit breaker. Never fall back across specialist roles; use deterministic builder/rule recovery or preserve a gap instead
 - **Multi-turn output recovery**: If LLM hits output token limit, inject meta-message ("Resume directly — no apology, no recap") and retry up to 3 times
 - **Error withholding**: Recoverable errors (prompt-too-long, max-output-tokens) are not surfaced to callers until recovery is attempted. Surface only if recovery fails
-- **Graceful degradation**: If Resource Graph query fails, continue analysis with reduced confidence (set `relevance=UNKNOWN`); if codex model fails, fall back to primary LLM
+- **Graceful degradation**: If Resource Graph, Azure MCP, or Azure API evidence fails, preserve an explicit `partial` gap and reduce confidence. Missing specialist evidence never becomes confirmed absence and never falls back to a general-purpose Prompt Agent
 - **Wall-clock run budget**: `RunDeadline` (`run_time_budget_s`, default 39600s = 11h) stays an hour under the Container Apps Job `replicaTimeout`, so the control-plane run stops dispatching new Hosted Agent requests, defers leftover updates, and commits only the contiguous completed watermark. Set to `0` to disable
 - **Incremental checkpoint**: analyses complete out of order under concurrency, so only the **contiguous prefix** of finished updates may be committed (`_WatermarkCursor` in `src/orchestrator.py`) — committing the newest finished update would permanently skip the unfinished gaps behind it. The watermark is persisted to a blob (`src/services/checkpoint.py`) once the run completes
 
@@ -91,6 +94,7 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 - **Prompt injection defense**: Tool results from external sources are treated as untrusted; system prompt instructs the agent to flag suspicious patterns
 - **API key validation**: Optional compatibility behavior for `/api/*`; `/mcp` always fails closed when `API_KEY` is unset and validates it before parsing MCP payloads
 - **Rate limiting**: Per-IP rate limiting middleware to prevent abuse
+- **Action verification modes**: `ActionItemVerifier` marks non-mutating evaluation work as `advisory_review`; missing CLI/rollback may warrant caution but is not an execution risk. Commands and state-changing Portal procedures remain fail-closed and an unsafe command is withheld
 
 ### Tool System Design & Concurrency
 
@@ -103,18 +107,18 @@ Tools follow a self-contained module pattern:
 - Tool concurrency: `partition_tool_calls()` groups consecutive safe tools into parallel batches, unsafe tools into serial batches. If `isConcurrencySafe()` throws → fail-closed (serial)
 - Tool concurrency: planning-phase tools run independently; execution-phase tools run via `asyncio.gather` with error isolation per task
 
-### Multi-Model Strategy
+### Specialist Prompt Agent Team
 
 | Agent Role | Purpose | Used In |
 |------------|---------|---------|
-| **Primary** (`llm`) | Judging, action verification, optional-role fallback | G-Eval, `ActionItemVerifier`, query-fixer fallback |
-| **Planner** (`llm_planner`) | Evidence-plan generation + local planning-tool requests | `_planning_node` |
-| **Evaluator** (`llm_evaluator`) | Independent evidence-completeness verdict | `_evaluation_node` |
-| **Reporter** (`llm_reporter`) | Final report generation + output recovery | `_report_node` |
-| **Codex** (`llm_codex`) | KQL query generation/fixing | `_fix_tool_args` (KQL), `ResourceGraphQueryFixer` |
-| **Fast** (`llm_fast`) | Task revision, subscriber customization | `_revise_tasks_node`, `customize_for_subscriber` |
+| **Coordinator** | Microsoft Learn-first planning, specialist reconciliation, bounded task revision | `_planning_node`, `_revise_tasks_node` |
+| **Resource Graph** | Restricted-dialect KQL authoring, schema probing, result interpretation, KQL repair | parallel specialist pass, `_fix_tool_args`, `ResourceGraphQueryFixer` |
+| **Azure MCP** | Read-only tenant inventory, Resource Health, and Advisor through the managed MCP connection | parallel specialist pass |
+| **Azure API** | ARM, Policy, Health, Advisor, Activity Log, Cost Management, and Billing evidence | parallel specialist pass |
+| **Report Writer** | Final structured report, output recovery, subscriber language/role customization | `_report_node`, `customize_for_subscriber` |
+| **Quality Reviewer** | Evidence-completeness verdict, G-Eval, bounded correction feedback, action safety | `_evaluation_node`, `GEvalJudge`, `ActionItemVerifier` |
 
-Each role resolves to a Foundry Agent Service name through `Settings.foundry_agent_for_role(role)` (`LLM_ROLES = ("primary", "planner", "evaluator", "reporter", "codex", "fast")`). `FOUNDRY_PRIMARY_AGENT_NAME` is required; every unset optional role falls back to it. Agent definitions use `AIProjectClient.agents`; runtime invocation uses the project-scoped Responses API. The app never constructs a direct Azure OpenAI/OpenAI chat-completions client.
+`Settings.foundry_agent_for_role()` accepts only explicit specialist names. Production Hosted execution requires all six specialist roles to resolve to **distinct** Agent names (`has_complete_specialist_roster`); unknown former settings are ignored and do not satisfy readiness. Agent definitions use `AIProjectClient.agents`; runtime invocation uses the project-scoped Responses API. The app never constructs a direct Azure OpenAI/OpenAI chat-completions client.
 
 ### Memory & Caching
 
@@ -158,7 +162,7 @@ AzBrief/
 │   ├── agent/                    # LangGraph agent, tools, prompts
 │   │   ├── analyzer.py           # Plan-Execute-Evaluate state machine
 │   │   ├── hosted_client.py      # Container Apps → Hosted Agent proxy
-│   │   ├── hosted_contract.py    # Strict versioned analysis/customization contract
+│   │   ├── hosted_contract.py    # Strict versioned analysis/customization/evaluation contract
 │   │   ├── tools.py              # Tool definitions (LangChain BaseTool)
 │   │   ├── context_store.py      # Addressable store for oversized tool results
 │   │   ├── prompts/              # Phase-specific prompt assembly package
@@ -182,10 +186,13 @@ AzBrief/
 │   │   ├── auth.py               # EasyAuth principal parsing + allow-list (fail-closed)
 │   │   ├── page.py               # Server-rendered console HTML (nonce CSP)
 │   │   └── router.py             # /admin + /api/admin/* routes
+│   ├── archive/                  # Immutable analysis contract + reader auth/API/browser
 │   ├── orchestrator.py           # Orchestrated digest runs
 │   ├── services/                 # Azure SDK service classes (data access only)
 │   │   └── checkpoint.py         # Durable digest checkpoint (blob / file / inert)
+│   │   └── archive.py            # Immutable archive backends (blob / file / inert)
 ├── scripts/                      # Local test CLI + Foundry agent provisioning
+│   ├── quality_campaign.py       # Frozen period, A/A, holdout, layered release gates
 ├── infra/                        # IaC
 │   ├── azbrief-enterprise-deploy.json # ARM template (Deploy button) — compiled output
 │   ├── enterprise/main.bicep          # Source of truth — edit here, then compile
@@ -222,10 +229,12 @@ Container Apps Job (cron)  ──  python -m src.scheduler
     -> Azure Communication Services
 Foundry Hosted Agent  ──  python hosted_agent_main.py → src/hosted_agent.py
   -> LangGraph Plan-Execute-Evaluate-Report
-  -> persisted Prompt Agents
-    -> Microsoft Learn MCP first, Web Search only as supplementary research
+  -> six persisted specialist Prompt Agents
+    -> Resource Graph + Azure MCP + Azure API evidence in parallel
+    -> Coordinator planning, Report Writer, Quality Reviewer + bounded correction
+    -> Microsoft Learn MCP first; Web Search only as coordinator supplementary research
     -> read-only Azure MCP Server on a separate Container App for tenant evidence
-Container App  ──  uvicorn src.main:app  (orchestrator API + /admin + /mcp)
+Container App  ──  uvicorn src.main:app  (orchestrator API + /admin + /archive + /mcp)
 ```
 
 Template: `infra/azbrief-enterprise-deploy.json`, **compiled from**
@@ -256,6 +265,19 @@ Blob access goes through the REST API over httpx with an Entra token rather than
 `azure-storage-blob` — the store touches the blob twice per run, which does not justify the
 SDK and its transitive dependencies.
 
+Canonical analysis versions live in the separate private `azbrief-archive` container. One
+analysis version is one create-only Block Blob plus search metadata in the same PUT. Container
+Apps stores the pre-subscriber `AnalysisResult` after the Hosted response and before digest/email
+or checkpoint progress. If a configured archive write fails, the run fails closed and does not
+send or advance. Subscriber names, email addresses, customized reports, Blob URLs and credentials
+never enter the archive document or API response. Schema v1 freezes nested update, report, resource,
+action, and reference contracts, so new runtime fields require an explicit schema-version decision.
+Job relevance is subscriber-personalized delivery context and is deliberately excluded from Archive
+documents, metadata, query filters, list rows, and detail views; it remains available in email output.
+Metadata truncation is marked and falls back to the full document during listing; Storage bearer
+tokens are sent only to validated Azure Blob container endpoints. The Hosted Agent's bounded local JSONL history
+is planning memory, not the browser archive source of truth.
+
 #### Network isolation (`networkIsolationMode`)
 
 | Mode | What it does |
@@ -280,17 +302,19 @@ The Container App and scheduler use `Settings.use_hosted_agent`, which is true o
 `FOUNDRY_PROJECT_ENDPOINT` and `FOUNDRY_HOSTED_AGENT_NAME` are set. Missing configuration,
 an inactive Hosted Agent version, an invalid contract, or an endpoint failure fails closed;
 the control plane never imports a local analysis fallback. Inside `src/hosted_agent.py`,
-non-reserved `AZBRIEF_PROMPT_*` aliases populate the Prompt Agent roles and explicitly clear
-`foundry_hosted_agent_name` to prevent recursive self-invocation.
+non-reserved `AZBRIEF_PROMPT_*` aliases populate the six specialist Prompt Agent roles and
+explicitly clear `foundry_hosted_agent_name` to prevent recursive self-invocation. All six
+roles must resolve to distinct Agent names; an incomplete or duplicate roster fails closed.
 
 The Foundry project endpoint does not serve chat completions. Never point an inference client
 at it and never add an `.openai.azure.com` endpoint to the application settings. Persisted
 models, standing instructions, strict output formats, FunctionTool declarations, optional
 managed tools, guardrails, and memory belong to Prompt Agent definitions. The Plan-Execute-
 Evaluate state machine and FunctionTool implementations are application-owned **inside the
-Hosted Agent sandbox**. Planning tools use an allow-listed JSON request bridge; enrichment
-tools use the native Responses function-call loop. Client-side `bind_tools()` alone is not a
-Prompt Agent tool attachment.
+Hosted Agent sandbox**. Planning tools use an allow-listed JSON request bridge; Resource Graph
+and Azure API specialist FunctionTools use the native Responses function-call loop. The Azure
+MCP specialist has only the managed read-only MCP connection and no local ARM fallback.
+Client-side `bind_tools()` alone is not a Prompt Agent tool attachment.
 
 Prompt Agent definitions use immutable Agent versions (`AIProjectClient.agents.create_version`),
 and runtime calls use the project-scoped OpenAI client (`get_openai_client()` →
@@ -302,12 +326,14 @@ LangChain `AIMessage`, and `max_output_tokens` partial responses enter the exist
 Never reintroduce `azure-ai-agents`, threads/runs, mutable `create_agent`/`update_agent`,
 `langchain-azure-ai`, or a direct Azure OpenAI/OpenAI endpoint fallback.
 
-Research and impact have explicit evidence precedence. Research must query Microsoft Learn
-MCP first and may use Web Search only when Learn cannot establish a needed fact or a newer
-public announcement must be confirmed. Never send tenant resource payloads, secrets, or
-personal data to Web Search. Impact must query the Entra-authenticated Azure MCP Server first
-for live tenant state; it may use app-owned FunctionTools only to fill a specific gap and must
-never use Web Search as tenant evidence.
+Evidence responsibilities are disjoint. The Coordinator must query Microsoft Learn first and
+may use Web Search only when Learn cannot establish a needed public fact; never send tenant
+payloads, secrets, or personal data to Web Search. The Resource Graph specialist owns KQL,
+schema probes, empty-filter correction, and result interpretation. The Azure MCP specialist
+uses only the Entra-authenticated read-only Azure MCP Server for its supported live tenant
+state. The Azure API specialist owns read-only ARM, Policy, Health, Advisor, Activity Log,
+Cost Management, and Billing calls. Failures remain explicit gaps and never cross-fallback to
+another specialist.
 
 The Azure MCP Server is a separate Container App defined under `infra/azure-mcp-server`.
 It pins the verified official `3.0.0-beta.38` image through the `azureMcpImage` Bicep
@@ -317,9 +343,9 @@ restricted to the `group`, `resourcehealth`, and
 `advisor` namespaces with `--read-only`, keeps incoming Entra authentication enabled, and
 uses its own managed identity with subscription `Reader` only. This exposes direct namespace
 tools instead of the dynamic `azure` proxy. The Hosted Agent injects the exact tenant GUID and
-configured target subscription GUID into every impact request, and the standing instruction
-forbids the literal value `default`; remote leaf tools otherwise treat it as a tenant display
-name and reject the call.
+configured target subscription GUID into every Azure MCP and Azure API specialist request, and
+the Azure MCP standing instruction forbids the literal value `default`; remote leaf tools
+otherwise treat it as a tenant display name and reject the call.
 Never add a dangerous authentication or elicitation bypass, Contributor, Key Vault secret,
 or storage data-plane role to this server. The Foundry project managed identity receives only
 the MCP Entra application role needed to call it.
@@ -329,6 +355,10 @@ Hosted Agent source deploys separately through `azure.yaml` with `codeConfigurat
 an immutable version. ARM/Bicep creates the account, project, model, and Container Apps control
 plane but cannot create these data-plane versions. The Hosted Agent has its own Entra identity;
 grant tenant/subscription evidence permissions to that principal, not the Container Apps UAMI.
+Subscription Reader does not grant Azure Billing hierarchy access. Assign Billing Reader (or an
+equivalent read-only billing role) to the Hosted Agent identity at the relevant billing account
+scope when `list_billing_accounts` or `list_billing_profiles` is required. A 403 or an unsupported
+agreement type remains an explicit Azure API specialist gap.
 
 The Container App mounts an MCP Python SDK v2 stateless Streamable HTTP server at `/mcp`.
 It exposes only recent-update listing, full Hosted Agent analysis, and recent digest status.
@@ -396,15 +426,16 @@ python -m scripts.test_local resources               # View resource summary
 
 ### Foundry agent provisioning
 
-The ARM template configures the primary and phase Agent names but cannot create the Agents —
-they live in the project's data plane. Enrichment defaults off until app-owned FunctionTools,
-strict stage schemas, and instructions pass the read-only roster check.
+The ARM template outputs the six specialist Agent names but cannot create the Agents — they
+live in the project's data plane. Hosted execution stays unavailable until role-scoped
+FunctionTools, managed MCP tools, strict evidence schemas, and instructions pass the read-only
+roster check.
 `scripts/provision_foundry_agents.py` closes that gap:
 
 ```bash
 python -m scripts.provision_foundry_agents --dry-run   # print instructions, no project needed
-python -m scripts.provision_foundry_agents             # create/update runtime + enrichment agents
-python -m scripts.provision_foundry_agents --runtime-roles primary codex
+python -m scripts.provision_foundry_agents             # create/update all six specialists
+python -m scripts.provision_foundry_agents --roles resource_graph azure_api
 python -m scripts.provision_foundry_agents --check      # names + instructions + required tools
 python -m scripts.provision_foundry_agents --delete    # tear the roster down
 ```
@@ -414,28 +445,30 @@ server URL and serializing `allowed_tools` as `{"tool_names": [...]}`. Roster
 drift checks canonicalize those service representations before comparing them;
 do not replace that semantic comparison with raw payload equality.
 
-Base runtime instructions live in `RUNTIME_AGENT_INSTRUCTIONS`; enrichment instructions are
-derived from `STAGE_PROMPTS` by cutting at the runtime context marker. Every domain document
+Base runtime instructions live in `RUNTIME_AGENT_INSTRUCTIONS`; evidence-specialist instructions
+are derived from `SPECIALIST_PROMPTS` by cutting at the runtime context marker. Every domain document
 under `.github/skills/*/SKILL.md` that contributes runtime behavior has one bounded
 `Foundry Runtime Guidance` section. `scripts/provision_foundry_agents.py` loads only those
 sections and appends a role-scoped set to each immutable Prompt Agent definition; never inject
 the full developer-oriented Skill body. A runtime-section change is instruction drift and must
-be published as a new Agent version. Research and impact FunctionTools are generated from the
-live LangChain Pydantic schemas and executed locally through a bounded Responses function-call
-loop; strict JSON response schemas are stored on all four stage versions. `--check` verifies
-exact functions, rejects retired app functions, and detects instruction/schema drift.
-Non-app-owned Foundry tools are preserved. Review rejection removes rejected claims and
-dependent actions. A missing enrichment stage is isolated, but required runtime Agents fail
-closed.
+be published as a new Agent version. Resource Graph and Azure API FunctionTools are generated
+from live LangChain Pydantic schemas and executed through a bounded Responses function-call
+loop; the Azure MCP specialist receives only the managed MCP server tool. Strict JSON evidence
+schemas are stored on the three evidence-specialist versions. `--check` verifies unique names,
+exact functions, managed server tools, instructions, and schemas. Non-app-owned Foundry tools
+are preserved only when they do not violate the app-owned role boundary.
 
 
 ### Required Environment Variables
 Copy `.env.example` to `.env` and fill in:
 - `AZURE_TENANT_ID` (required)
 - `FOUNDRY_PROJECT_ENDPOINT` (required)
-- `FOUNDRY_PRIMARY_AGENT_NAME` (required)
-- `FOUNDRY_PLANNER_AGENT_NAME` / `FOUNDRY_EVALUATOR_AGENT_NAME` / `FOUNDRY_REPORTER_AGENT_NAME` (optional; primary fallback)
-- `FOUNDRY_CODEX_AGENT_NAME` / `FOUNDRY_FAST_AGENT_NAME` (optional; primary fallback)
+- `FOUNDRY_COORDINATOR_AGENT_NAME` (required)
+- `FOUNDRY_RESOURCE_GRAPH_AGENT_NAME` (required)
+- `FOUNDRY_AZURE_MCP_AGENT_NAME` (required)
+- `FOUNDRY_AZURE_API_AGENT_NAME` (required)
+- `FOUNDRY_REPORT_WRITER_AGENT_NAME` (required)
+- `FOUNDRY_QUALITY_REVIEWER_AGENT_NAME` (required)
 - `FOUNDRY_MODEL_DEPLOYMENT` (provisioning only)
 - `AZURE_SUBSCRIPTION_ID` (optional — omit for tenant-wide query)
 
@@ -473,7 +506,7 @@ Common error patterns in AzBrief logs and their root causes:
 | Log Pattern | Root Cause | Fix Location |
 |-------------|-----------|--------------|
 | `kql_query_failed` + `ParserFailure` | LLM generated invalid KQL (join, let, unsupported syntax) | `src/agent/prompts/tools.py` KQL tips, `src/agent/tools.py` rule-based fix |
-| `kql_fix_llm_failed` repeated N times | Codex model returns 400 but error not cached → retries forever | `src/agent/tools.py` `_llm_unavailable` cache conditions |
+| `kql_fix_llm_failed` repeated N times | Resource Graph specialist is unavailable but the error is not cached | `src/agent/tools.py` `_llm_unavailable` conditions and deterministic fallback |
 | `task_failed` after max retries | Tool execution failure not recoverable | Check tool args in plan, add fallback in `_rule_based_fix` |
 | `llm_circuit_breaker_open` | 3+ consecutive LLM failures | Check model deployment, API key, rate limits |
 | `output_recovery_attempt` | Report hit output token limit | Consider reducing prompt size or raising `max_output_tokens` |
@@ -582,6 +615,17 @@ Do **NOT** modify these files unless explicitly asked:
 10. **Never commit `.env`** — only `.env.example` with empty values.
 11. **Update docs on every code change** — `README.md`, `.github/copilot-instructions.md`, and relevant `.github/skills/*/SKILL.md` must reflect the current code (new/changed functions, labels, features, deployment modes).
 12. **MCP stays a control-plane surface** — expose only bounded tools through the official MCP SDK, require `X-API-Key`, and delegate model-mediated analysis to `HostedAgentAnalyzer`.
+13. **Archive before progress** — when archive storage is configured, persist the canonical pre-subscriber result before digest delivery and `cursor.finish()`/checkpoint advancement. Never treat Hosted Agent local JSONL as the browser archive, and never copy subscriber-only job relevance into the shared Archive.
+14. **Evaluation diagnostics stay separate** — `HostedEvaluationRequest` may return the canonical
+  analysis plus bounded G-Eval, trajectory, and action-verification summaries for pre-release
+  campaigns. Never return raw tenant evidence or private judge reasoning, and never store these
+  diagnostics in the customer report or canonical archive schema.
+15. **A quality score cannot compensate for a blocker** — release campaigns require zero critical
+  flaws, failed trajectories, generation errors, blocked/unverified actions, and G-Eval dimension
+  errors. Transient case failures are retried once after the first pass with every attempt retained;
+  an exhausted final error stays blocking. Freeze the period and
+  holdout before edits, establish A/A noise, compare paired cases, and finish with a full-period
+  deployed Hosted run. `5` remains a theoretical ideal, not an automated stop condition.
 
 ---
 
@@ -606,6 +650,8 @@ Do **NOT** modify these files unless explicitly asked:
 - ✅ Run `python -c "import src"` before committing
 - ✅ Run `python -m pytest tests/ -o "addopts=" -x` to verify no regressions
 - ✅ Update `README.md`, `copilot-instructions.md`, and relevant `SKILL.md` after code changes
+- ✅ Keep all six specialist Prompt Agent names distinct and run the roster `--check` before Hosted deployment
+- ✅ Keep Resource Graph, Azure MCP, and Azure API tool surfaces disjoint; failures become explicit gaps, never cross-role fallbacks
 - ✅ Add new UI label keys to `src/i18n/labels/ko.py` (the canonical key set), then translate in the other bundles
 - ✅ Use `structlog` for all logging (never `print()` or stdlib `logging`)
 - ✅ Keep `pyproject.toml` and `requirements.txt` in sync
@@ -652,7 +698,20 @@ When implementing a feature or fixing a bug:
 
 ## Learnings
 
+- **An analysis archive is a control-plane durability boundary, not Hosted Agent memory (2026-08).** The Hosted Agent runs under a separate identity/filesystem and its `$HOME/.azbrief` JSONL is bounded best-effort planning memory, so the Container App cannot use it as a browser source of truth. The canonical archive therefore lives in a private Blob container owned by the App/Job UAMI. One immutable JSON document and its metadata projection commit in the same create-only PUT; `ArchiveService` runs after the Hosted response but before digest/email/checkpoint. A configured archive failure fails the run before delivery or watermark advancement, while subscriber customization, job relevance, and PII stay out of storage. The deterministic 10,000-version evaluator observed 10,000/10,000 records, zero duplicate/order/filter errors, 100% schema integrity, zero personalized keys, PII keys, or email-like values, 762.322 ms local listing P95, and a 28,140-byte maximum page. Browser checks at 1440×900 and 390×844 found zero horizontal overflow; mobile collapses advanced filters so results remain in the first viewport.
+- **Foundry roster cleanup must use the deployed Hosted definition, not stale azd aliases (2026-08).** The live Hosted v10 definition referenced only coordinator, Resource Graph, Azure MCP, Azure API, report writer, and quality reviewer. Eight superseded Prompt Agents (`action`, `evaluator`, `impact`, `planner`, `primary`, `reporter`, `research`, `review`) had no source/IaC/manifest or live definition reference and were removed with all 28 versions. Old local `AZBRIEF_PROMPT_{CODEX,EVALUATOR,FAST,PLANNER,PRIMARY,REPORTER}_AGENT_NAME` values were then emptied. Always list the project, inspect the active Hosted version's environment variables, pass the six-role `--check`, and guard both required and unexpected names before a destructive cleanup.
+
 Past mistakes and workarounds discovered during development.
+
+- **Hosted Agent is the orchestrator; Prompt Agents are the specialists (2026-08).** Using a
+  Hosted Agent does not make persisted Prompt Agents redundant: the Hosted Agent owns Python,
+  LangGraph state, retries, tool execution, and the wire contract, while named Prompt Agents own
+  reusable model/instruction/tool policy. AzBrief therefore requires six distinct roles:
+  coordinator, Resource Graph, Azure MCP, Azure API, report writer, and quality reviewer. The
+  three evidence specialists run in parallel and return role-prefixed claims plus explicit gaps;
+  report writing starts only after evidence completeness, and the reviewer may request one
+  evidence-preserving rewrite that is kept only when it scores better. Never collapse missing
+  roles into one primary Agent or let a specialist failure cross-fallback to another specialty.
 
 - **A single-file commit with an auto-generated message is how a stale-buffer clobber looks in `git log` (found during the Enterprise split, 2026-08).** `tests/test_email.py` had been uncollectable for weeks (`ImportError: _split_procedure`), which hid 17 further failures. Bisecting by symbol (`git log -S "<symbol>" -- <path>`) pinned commit `b8deccb` "Implement code changes to enhance functionality and improve performance": **377 insertions, 516 deletions, `src/email/templates.py` alone, no test touched**. It silently deleted the markdown pipe-table renderer, the action-item `reference_url` link, the safety-gate verification badge and findings block, and the affected-resource table layout fixes (uniform-type header, `unknown_scope` placeholder, middle-aligned reason cell) — every one of which still had passing-by-design tests, live i18n labels (`verify_*`, `unknown_scope`, `action_reference`) and live `ActionItem` model fields. Four later commits kept improving the same file without noticing. Recovery was **not** a revert (that would have dropped the responsive layout and type-scale work): extract `git show <parent>:<path>`, diff function-by-function with `ast`, and re-apply only the lost blocks on top of the current version with an assertion-guarded script. Detection rule: **a test file that cannot even be collected is not "one broken import" — it is an unknown number of unverified behaviours.** Prevention: never let a collection error sit; CI's `pytest -x` masks it because collection failure looks like a single error.
 - **A test can outlive the feature it tests, and only a green suite reveals it.** `TestDigestServiceImpact` asserted on `EmailService._build_service_impact_html`, which `0c91370` had removed **together with its 43 lines of tests** in a deliberate refactor. `a6de0ef` then reintroduced the test class alone. Because the file was uncollectable, it never failed. When restoring lost work, check whether the *test* is the stale side: `git log -S "<TestClass>" -- tests/...` against `git log -S "<symbol>" -- src/...` tells you which one moved last and why.
@@ -667,7 +726,7 @@ Past mistakes and workarounds discovered during development.
 - `str.format()` on HTML templates fails on any literal `{` or `}` — every brace in the template HTML must be doubled or escaped via `_escape_braces()`.
 - Background subscriber customization must fail-fast on 429/529 errors. Retrying amplifies the overload and causes cascading failures across all subscribers.
 - `get_settings()` is cached with `@lru_cache`. In tests, use `get_settings.cache_clear()` to reset.
-- Azure Advisor REST API (`2023-01-01`) provides richer data than the KQL `advisorresources` table: remediation actions, learn-more links, potential benefits, risk level, and solution text. The `GetAdvisorRecommendationsTool` supports both modes — set `use_rest_api=True` for detailed data. REST API is subscription-scoped (not tenant-scoped like Resource Graph), so multi-subscription environments require iterating subscriptions. On REST API failure, the tool automatically falls back to the KQL mode.
+- Azure Advisor REST API (`2023-01-01`) provides richer data than the KQL `advisorresources` table: remediation actions, learn-more links, potential benefits, risk level, and solution text. REST API is subscription-scoped (not tenant-scoped like Resource Graph), so multi-subscription environments require iterating subscriptions. **Superseded 2026-08-29:** `GetAdvisorRecommendationsTool` is now REST-only under the Azure API specialist; failures remain explicit gaps and never cross-fallback to the Resource Graph specialist.
 - Resource Health REST API (`2023-07-01-preview`) provides availability statuses (Available/Unavailable/Degraded) for resources. The `GetResourceHealthTool` calls `/providers/Microsoft.ResourceHealth/availabilityStatuses`. Essential for impact analysis of retirement/breaking-change updates.
 - Policy Insights REST API (`2024-10-01`) provides compliance summary via `GetPolicyComplianceTool`. Uses POST to `/providers/Microsoft.PolicyInsights/policyStates/latest/summarize`. Shows non-compliant resource counts by policy assignment.
 - Service Health Events REST API (`2024-02-01`) provides detailed health events via `GetServiceHealthEventsTool`. Richer than the KQL `servicehealthresources` table — includes affected services/regions, recommended actions, and FAQ links.
@@ -691,11 +750,11 @@ Past mistakes and workarounds discovered during development.
   - **`let` dangling reference**: `sanitize_kql` step 5 stripped `let NAME = VALUE;` but left downstream `== NAME` references → unresolved identifier → the re-query failed forever. Fixed by **inlining** each let value into `\bNAME\b` references *before* removing the declaration (new `_RE_LET_DECL`), so `let minTls='TLS1_0'; … == minTls` becomes `… == 'TLS1_0'`.
   - **`extend` orphaning**: the project-inline mover rewrites `project name, kind=tostring(kind)` into `| extend kindValue=tostring(kind) | project name, kindValue`, but the unidentifiable-ParserFailure fallback then ran a blunt `_RE_EXTEND_BLOCK.sub("", query)` that stripped the just-added extend, leaving `project name, kindValue` with `kindValue` undefined. Fixed with `_strip_unreferenced_extends()` — it drops computed extends **only when their alias is not referenced downstream**, preserving intent (the `kindValue` extend survives because the projection still uses it).
   - **Missing pipe before `project`/`extend`**: `_RE_MISSING_PIPE` only covered `order by|summarize|limit|take`, so `… 'storageaccounts' project name` kept `project` with no leading pipe. Extended the alternation to include `project|extend|mv-expand|distinct` (small, accepted risk of a false positive if an operator keyword sits inside a string literal — net-positive vs. a guaranteed-broken query).
-  - **Builder-query coverage gaps** (`src/services/resource_graph.py`): the AKS detail query was missing **ACNS** (`properties.networkProfile.advancedNetworking.observability/.security.enabled`) — the root cause of reports repeatedly hedging "ACNS 활성화 여부 점검"; the Cosmos detail query was missing `properties.backupPolicy.type`, `properties.enableAnalyticalStorage`, and `properties.disableLocalAuth` — the root cause of reports unable to confirm Continuous Backup / Synapse Link prerequisites. Both queries now project these fields.
+  - **Builder-query coverage gaps** (`src/services/resource_graph.py`): the AKS detail query was missing **ACNS** (`properties.networkProfile.advancedNetworking.observability/.security.enabled`) and storage CSI state (`properties.storageProfile.fileCSIDriver/.diskCSIDriver.enabled`) — without the latter, a live report incorrectly used `addonKeyVaultCSI: False` as proof that Azure Files CSI was disabled even though the real `fileCSIDriver` value was `true`; the Cosmos detail query was missing `properties.backupPolicy.type`, `properties.enableAnalyticalStorage`, and `properties.disableLocalAuth` — the root cause of reports unable to confirm Continuous Backup / Synapse Link prerequisites. The builders now project these fields, and specialist guidance forbids treating the Key Vault secrets-provider add-on as an Azure Files/Disk CSI signal.
   - Verification: re-ran the harness after each fix to *directly observe* the corrected sanitize output (`== 'TLS1_0'`; `extend kindValue … | project name, kindValue`; `| project name | order by name`), plus 6 new regression tests (`test_kql_sanitize.py`, `test_kql_retry.py`, `test_security.py`) — **419 tests pass**. Live-Azure query *execution* still can't be tested without credentials, but the deterministic sanitize/rule-based-fix pipeline and the builder queries were exercised end-to-end and verified.
 - **KQL degradation — the dominant defect, found only by auditing ALL 3 months of real processing (2026-07).** A throwaway audit harness cross-referenced the entire `kql_knowledge_base.json` (56 recorded queries) with all 231 analysis records in `results_2026-0{3,4,6}.jsonl`. Key finding that synthetic scenarios completely missed: **32 of 56 recorded queries (57%) had degraded to intent-lost raw-properties dumps** (`| project name, type, resourceGroup, subscriptionId, location, sku, properties | limit 100`) — the fixer's last-resort fallback. The correlation was the smoking gun: `private endpoint` (deferred 9×), `public network access` (3×), and `TLS` hedges in reports lined up with **degraded** storage/keyvault queries even though the schema had those paths. i.e. the degradation *directly caused* reports to hedge on facts that were queryable. Root cause: `_rule_based_fix`'s `attempt<=6/<=10` branches degraded to a generic dump even for resource types that have a hand-written **builder** query. Fix: added `ResourceGraphQueryBuilder.get_query_for_resource_type(type)` (a type→builder map for storage, VM, AKS, Cosmos, KeyVault, LogAnalytics, VNet, NSG, publicIP, ACR, SQL, CognitiveServices, ContainerApps) and rewrote the fixer's post-attempt-3 cascade to **prefer the builder query** (which preserves domain projections) before falling back to a raw dump; only types with *no* builder degrade. Directly observed via the harness: all **6 degraded-with-builder types (storage/VM/AKS/KeyVault/VNet/LogAnalytics) now recover a rich query** (storage → `minimumTlsVersion`+`publicNetworkAccess`+`privateEndpoints`; AKS → `advancedNetworking`+`kubernetesVersion`). Also added the missing `publicNetworkAccess` projection to the storage builder (deferred 3× in reports). 3 new regression tests; **422 tests pass**. Separately, the audit's #1 deferral by far was **region availability (hedged 111×** vs. 9× for the runner-up) — but that is a *tool-orchestration/prompt* issue (feature-level regional rollout genuinely isn't in the ARM providers API), not a KQL-pipeline defect, so it's the top remaining opportunity for a live-verified prompt/tool change, not fixed here.
 - **Run-to-run non-determinism of "affected resources" — root-caused live from logs, not guessed (2026-07).** A live G-Eval re-evaluation of the same storage-retirement update sometimes reported **1 affected account and sometimes 0**. Cross-referencing the run logs (free, no re-run) located the cause precisely: the affected account name appeared in the tool results of the "found-1" run but was **absent entirely** from the "found-0" run — and *both runs executed the identical KQL queries*. So the variance was **not** LLM report temperature (the usual suspect) and **not** query generation; it was **tool-result truncation**. `truncate_tool_result` hard-cut results at `TOOL_RESULT_BUDGET_CHARS = 3000` (`result[:budget]`), and the environment has 26 storage accounts whose full enumeration exceeds 3000 chars — so the specific affected account (`config…871`) landed before or after the cutoff depending on result ordering (the LLM's custom query lacked a stable `order by`), non-deterministically dropping the needle. Confirmed by `result_chars=3016` (exactly the budget + the "… (truncated)" marker) on the storage tasks in *both* logs. Fix: raised `TOOL_RESULT_BUDGET_CHARS` to **8000** so a typical single-type enumeration fits. Live-verified by running the same update **twice** post-fix: both runs now consistently include the account (`acctHits=1`, `result_chars=8016`) and both reports return `affected=[config…871]` (was `[1]` vs `[0]`). Honest residual limit: 8000 still truncates very large environments (>~30 resources of one type); the deeper fix (row-aware truncation preserving complete rows + a stable `order by`, or server-side filtering to the affected subset) is a larger change. Lesson: when a multi-step agent gives inconsistent results, **diff the run logs to find where the evidence diverges before touching temperature/seed** — the culprit was a silent character-budget cut, not model sampling.
-- **Result-driven (semantic) query improvement + codex→primary LLM fallback (2026-07).** The KQL retry loop only fixed *syntactic* failures (ParserFailure/InvalidQuery); a query that ran successfully but returned an **empty** result from an over-strict / wrong filter (e.g. `kind =~ 'Storage'` when the real value is `BlobStorage`) was accepted as-is, so the report saw nothing. Added a **semantic** improvement layer in `execute_kql_with_retry`: on an empty result from a *property-filtered* query (`_query_has_property_filter`), a cheap type-only probe (`_build_type_probe_query`) checks whether the resource type actually has resources; if it does, the fixer's new `improve_query_for_empty_result` sends the query + a sample of the REAL data to the LLM, which corrects the filter against the actual property values, and the improved query is re-executed (bounded by `MAX_RESULT_IMPROVEMENTS=2`). Successful improvements are persisted via `record_successful_query` (purpose `"Result-improved query (was empty)"`) and reused through `build_context_for_prompt`. **Live-verified**: an intentionally over-strict query (`kind =~ 'NoSuchKindXYZ'`, 0 rows) was probed, the LLM rewrote the filter to `kind =~ 'StorageV2'` (a real value from the probe sample), and re-execution returned 21 rows. Also added a **codex→primary LLM fallback** (`_ainvoke_with_fallback` + `_is_availability_error`): the codex deployment can be absent (404 `DeploymentNotFound`) in some environments, which silently disabled ALL LLM-assisted query fixing; the fixer now falls back to the already-working primary LLM on an availability error, keeping both error-driven and result-driven fixing functional. The analyzer injects the primary as fallback via `get_query_fixer(llm=self.llm_codex, fallback_llm=self.llm)`. (Discovered live: this environment's codex deployment returns 404, so without the fallback the semantic improvement could not run.)
+- **Result-driven (semantic) query improvement + codex→primary LLM fallback (2026-07).** The KQL retry loop only fixed *syntactic* failures (ParserFailure/InvalidQuery); a query that ran successfully but returned an **empty** result from an over-strict / wrong filter (e.g. `kind =~ 'Storage'` when the real value is `BlobStorage`) was accepted as-is, so the report saw nothing. Added a **semantic** improvement layer in `execute_kql_with_retry`: on an empty result from a *property-filtered* query (`_query_has_property_filter`), a cheap type-only probe (`_build_type_probe_query`) checks whether the resource type actually has resources; if it does, the fixer's new `improve_query_for_empty_result` sends the query + a sample of the REAL data to the LLM, which corrects the filter against the actual property values, and the improved query is re-executed (bounded by `MAX_RESULT_IMPROVEMENTS=2`). Successful improvements are persisted via `record_successful_query` (purpose `"Result-improved query (was empty)"`) and reused through `build_context_for_prompt`. **Live-verified**: an intentionally over-strict query (`kind =~ 'NoSuchKindXYZ'`, 0 rows) was probed, the LLM rewrote the filter to `kind =~ 'StorageV2'` (a real value from the probe sample), and re-execution returned 21 rows. Also added a **codex→primary LLM fallback** (`_ainvoke_with_fallback` + `_is_availability_error`): the codex deployment can be absent (404 `DeploymentNotFound`) in some environments, which silently disabled ALL LLM-assisted query fixing; the fixer then fell back to the already-working primary LLM on an availability error. **Superseded 2026-08-29:** the six-specialist architecture removed that cross-role fallback; the analyzer now injects only the Resource Graph specialist and relies on deterministic sanitizer/builder recovery before preserving a gap.
 - **Autonomous report-improvement loop — 3 verified source fixes + the single-sample-noise lesson (2026-07).** A self-improvement session (`self-improve-reports` prompt) driven by an enterprise-email research brief produced three generalizable source fixes, each import- + `pytest`- (433 passing) + live-verified:
   - **Enterprise email client rendering hardening** (`src/email/templates.py`): the body `font-family` had macOS Korean (`Apple SD Gothic Neo`) but **no Windows Korean system font**, and there were **no Outlook cell-spacing resets** — a rendering defect for the primary audience (Korean **Windows Outlook**). Added `'Malgun Gothic'` to the stack and a new `_CLIENT_COMPAT_STYLE` head `<style>` (`table { mso-table-lspace/rspace: 0pt }`, `img` resets, `word-break` for `.azb-cli`/`.azb-code`). Windows Outlook honors `<head>` styles (Gmail strips them but needs no `mso-*`). Locked in by `test_email_enterprise_client_rendering_hardening`.
   - **`ko.py` anti-hedge self-contradiction** (`src/agent/prompts/languages/ko.py` §7): the monotony-avoidance section told the model *"instead of 'CSA 검토를 권장합니다', use … 'CSA 사전 검토가 필요합니다'"* — legitimizing and re-suggesting the exact hedge that `core.py`/`writing.py`/`base.py` **ban**. Contradictory instructions make the LLM inconsistent, which explained persistent Korean-output hedging. Replaced with guidance that bans the CSA hand-off (reader is often the CSA) and points to self-serviceable phrasing, aligning ko with en/ja (which never had the bug). **Live-confirmed** the current output is already hedge-free & self-serviceable — the alarming JSONL hedge counts (`csa_review` 165×, `region_verify` 114× across `results_2026-0{3,4,6}.jsonl`) were **stale** (produced before the 2026-07 anti-hedge fixes), a reminder to validate audit-file signals against *current* live output before acting.
@@ -777,6 +836,42 @@ Past mistakes and workarounds discovered during development.
   - Honest limit: `az deployment group validate` could not be run in this environment (the subscription requires interactive MFA), so the template is **statically** validated only. Run a preflight before the first real deployment.
 - **Fail-closed beats a configurable default for an admin surface (2026-08).** `/admin` returns **404**, not 403, whenever `ADMIN_UI_ENABLED` is false — a disabled console should not advertise that it exists. Turning it on requires *two* independent things in the template (`adminEntraClientId` + secret **and** `adminAllowedPrincipals`); satisfying only one leaves it off, because an Entra-authenticated stranger is still not an administrator and an allow-list without sign-in is decoration. Identity comes from the Container Apps EasyAuth sidecar (`X-MS-CLIENT-PRINCIPAL*`), which strips inbound copies of those headers — that guarantee holds only while ingress is the sole path to the container, which is why `ADMIN_REQUIRE_AUTH=false` is documented as local-development-only. The page itself is server-rendered with **zero external references** so it works behind a locked-down egress policy, and its inline `<style>`/`<script>` are bound to a per-request CSP nonce rather than `unsafe-inline`.
 
+- **A pre-release quality loop needs immutable experiment lineage and non-compensating gates
+  (2026-08).** A live one-case campaign showed why report score alone is unsafe: the artifact scored
+  97/100 mechanically while its execution trajectory scored 40/100 after a failed tool and seven
+  iterations. `scripts/quality_campaign.py` now freezes period payloads, diagnosis/holdout splits,
+  dataset hash, source/worktree hash, Agent roster, and trace IDs; runs semantic, deterministic,
+  trajectory, and action-safety gates; and compares paired runs against an A/A noise floor. On
+  Windows, hash the exact UTF-8 bytes written to `updates.jsonl` -- `write_text()` translated LF to
+  CRLF and made a freshly prepared dataset fail its own hash check. Local `.env` loading uses
+  `override=True`, so the campaign must reset both `AZBRIEF_VERBOSE=false` and the analyzer's cached
+  `_VERBOSE` flag after imports to avoid cp949 crashes on console emoji. On the same live smoke case,
+  the targeted tool fixes changed failed tasks **1→0**, retries **4→0**, trajectory **40→74**, and
+  elapsed time **361→149 seconds**. Semantic G-Eval moved 3.583→3.704, but the +0.121 delta was below
+  the declared 0.15 noise floor, so it remains `inconclusive` rather than a claimed report-quality win.
+  A 19-case baseline was later terminated externally after two completions with no traceback; because
+  the original harness wrote `summary.json` only after `asyncio.gather()` returned, both expensive
+  diagnostics were unusable. Campaign runs now write each completed case atomically to `records/`,
+  freeze ordered cases/source/Agent versions in `run.json`, track progress separately, and resume only
+  missing cases when every lineage value still matches. Start/end source or Agent drift makes the run
+  invalid for A/A, candidate comparison, and release. The first lineage implementation hashed only
+  `git diff HEAD`, so the untracked campaign runner, tests, rubric, and Korean README were invisible;
+  a source change there could pass as A/A. The worktree digest now includes every non-ignored untracked
+  path and byte, and the loader rejects schema/rubric/threshold/Hosted-contract drift. Campaign
+  concurrency is also immutable run lineage: concurrency 2 overlaps two analyses, each of which fans
+  out three evidence specialists; a live baseline produced two 384-second connection failures plus
+  rate-limit errors. The default is therefore 1 until measured capacity supports a higher value, and
+  A/A rejects different concurrency values.
+- **A strict evidence Prompt Agent response is not raw KQL (2026-08).** The Resource Graph Agent's
+  immutable output schema returned `{status, claims, gaps}`, but the old fixer treated the whole JSON
+  as a query and retried `Resources\n{...}`. Repair calls now set `tool_choice=none` and extract only an
+  executable table query from a claim; a gap falls through to deterministic builder/rule recovery.
+  The same smoke caught two task-contract errors: `find_related_resources` received `query` instead
+  of `keyword`, and a revision put English prose in `query_azure_resources.query`. Exact prompt
+  examples plus pre-execution normalization now map the former and replace the latter from
+  `resource_type` with a rich builder query. Tests cover strict envelopes, gap rejection, server-side
+  tool disabling, exact refs, aliases, and natural-language KQL recovery.
+
 | Problem | Cause | Fix |
 |---------|-------|-----|
 | `ImportError` after adding dependency | Not in `requirements.txt` | Add to both `pyproject.toml` and `requirements.txt` |
@@ -802,6 +897,10 @@ When implementing changes, verify against this checklist:
   □ Each loop iteration produces new state (immutable transitions)
   □ Agent loop has termination guardrails (max_iterations, revision limits)
   □ Diminishing returns detection prevents wasteful iterations
+  □ One Hosted Agent is the only orchestrator
+  □ Coordinator, Resource Graph, Azure MCP, Azure API, Report Writer, and Quality Reviewer names are distinct
+  □ Evidence specialists run in parallel with role-scoped read-only tools
+  □ Quality Reviewer can request at most one evidence-preserving Report Writer rewrite
 
 □ Resilience
   □ Transient API errors use exponential backoff + jitter
@@ -826,10 +925,20 @@ When implementing changes, verify against this checklist:
   □ Prompt injection warnings in system prompt
 
 □ Observability
-  □ Every LLM call logged with phase, elapsed_s, token counts, model
+  □ Every Prompt Agent call logs trace/task, Agent/response IDs, fingerprints, elapsed_s, tokens, model/status
   □ Every tool execution logged with tool name, attempt, elapsed_s, result_chars
+  □ Specialist logs preserve validated claim IDs/evidence references/gaps without chain-of-thought
+  □ G-Eval, action verification, trajectory, report, and Hosted request events share trace_id
   □ State transitions logged with trace_id
   □ Total analysis time and token usage tracked
+
+□ Quality Campaign
+  □ Period payloads and dataset hash are frozen before source changes
+  □ Diagnosis A/A and holdout baseline exist before the first edit
+  □ Candidate paired delta clears measured noise with no blocker regression
+  □ Transient attempt history is preserved; final case and dimension errors remain blocking
+  □ Untouched holdout, import, and full pytest pass before keeping the change
+  □ Full-period deployed Hosted run has release_eligible=true before customer release
 
 □ Tool Concurrency
   □ Tool calls partitioned into safe (parallel) and unsafe (serial) batches

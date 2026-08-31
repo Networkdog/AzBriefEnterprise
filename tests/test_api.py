@@ -130,9 +130,11 @@ class TestAnalyzeEndpoint:
         mock_analyzer.analyze_update = AsyncMock(return_value=mock_analysis_result)
 
         original_analyzer = main_module.analyzer
+        original_archive = main_module.archive_service
         original_rss = main_module.rss_parser
         try:
             main_module.analyzer = mock_analyzer
+            main_module.archive_service = None
             main_module.rss_parser = mock_rss
 
             response = client.post(
@@ -148,7 +150,86 @@ class TestAnalyzeEndpoint:
             assert data["is_relevant"] is True
         finally:
             main_module.analyzer = original_analyzer
+            main_module.archive_service = original_archive
             main_module.rss_parser = original_rss
+
+    def test_analyze_archives_before_returning(self, client, mock_update, mock_analysis_result):
+        import src.main as main_module
+
+        class Archive:
+            configured = True
+
+            def __init__(self):
+                self.sources = []
+
+            async def archive_analysis(self, _update, _result, source):
+                from src.archive.models import ArchiveReceipt
+
+                self.sources.append(source.value)
+                return ArchiveReceipt(
+                    archived=True,
+                    archive_id="8211694095999-0123456789abcdef0123456789abcdef",
+                    object_name="entries/item.json",
+                )
+
+            def detail_url(self, archive_id):
+                return f"https://archive.example/archive/{archive_id}"
+
+        archive = Archive()
+        mock_rss = AsyncMock()
+        mock_rss.get_update_by_url = AsyncMock(return_value=mock_update)
+        mock_analyzer = AsyncMock()
+        mock_analyzer.analyze_update = AsyncMock(return_value=mock_analysis_result)
+        originals = (main_module.analyzer, main_module.archive_service, main_module.rss_parser)
+        try:
+            main_module.analyzer = mock_analyzer
+            main_module.archive_service = archive
+            main_module.rss_parser = mock_rss
+            response = client.post(
+                "/api/analyze",
+                json={
+                    "update_url": "https://azure.microsoft.com/updates?id=123",
+                    "send_email": False,
+                },
+            )
+        finally:
+            main_module.analyzer, main_module.archive_service, main_module.rss_parser = originals
+
+        assert response.status_code == 200
+        assert response.json()["archive_id"].endswith("0123456789abcdef")
+        assert archive.sources == ["api_analyze"]
+
+    def test_analyze_returns_503_when_required_archive_fails(
+        self, client, mock_update, mock_analysis_result
+    ):
+        import src.main as main_module
+
+        class Archive:
+            configured = True
+
+            async def archive_analysis(self, *_args, **_kwargs):
+                raise RuntimeError("blob unavailable")
+
+        mock_rss = AsyncMock()
+        mock_rss.get_update_by_url = AsyncMock(return_value=mock_update)
+        mock_analyzer = AsyncMock()
+        mock_analyzer.analyze_update = AsyncMock(return_value=mock_analysis_result)
+        originals = (main_module.analyzer, main_module.archive_service, main_module.rss_parser)
+        try:
+            main_module.analyzer = mock_analyzer
+            main_module.archive_service = Archive()
+            main_module.rss_parser = mock_rss
+            response = client.post(
+                "/api/analyze",
+                json={
+                    "update_url": "https://azure.microsoft.com/updates?id=123",
+                    "send_email": False,
+                },
+            )
+        finally:
+            main_module.analyzer, main_module.archive_service, main_module.rss_parser = originals
+
+        assert response.status_code == 503
 
     def test_analyze_returns_500_when_not_initialized(self, client):
         """Analyze returns 500 when services not initialized."""
@@ -189,6 +270,83 @@ class TestBatchAnalyzeEndpoint:
         response = client.post("/api/batch/analyze", json=urls)
         assert response.status_code == 400
         assert "evil.com" in response.json()["detail"]
+
+    def test_batch_archives_each_result_with_batch_source(
+        self, client, mock_update, mock_analysis_result
+    ):
+        import src.main as main_module
+
+        class Archive:
+            configured = True
+
+            def __init__(self):
+                self.sources = []
+
+            async def archive_analysis(self, _update, _result, source):
+                from src.archive.models import ArchiveReceipt
+
+                self.sources.append(source.value)
+                return ArchiveReceipt(
+                    archived=True,
+                    archive_id="8211694095999-0123456789abcdef0123456789abcdef",
+                    object_name="entries/item.json",
+                )
+
+            def detail_url(self, _archive_id):
+                return ""
+
+        archive = Archive()
+        mock_rss = AsyncMock()
+        mock_rss.get_update_by_url = AsyncMock(return_value=mock_update)
+        mock_analyzer = AsyncMock()
+        mock_analyzer.analyze_update = AsyncMock(return_value=mock_analysis_result)
+        originals = (
+            main_module.analyzer,
+            main_module.archive_service,
+            main_module.email_service,
+            main_module.rss_parser,
+        )
+        try:
+            main_module.analyzer = mock_analyzer
+            main_module.archive_service = archive
+            main_module.email_service = None
+            main_module.rss_parser = mock_rss
+            response = client.post(
+                "/api/batch/analyze",
+                json=[
+                    "https://azure.microsoft.com/updates?id=1",
+                    "https://azure.microsoft.com/updates?id=2",
+                ],
+            )
+        finally:
+            (
+                main_module.analyzer,
+                main_module.archive_service,
+                main_module.email_service,
+                main_module.rss_parser,
+            ) = originals
+
+        assert response.status_code == 200
+        assert archive.sources == ["api_batch", "api_batch"]
+
+
+class TestOrchestrateEndpoint:
+    def test_api_orchestrate_sets_archive_source(self, client, monkeypatch):
+        from src.orchestrator import RunRecord
+
+        captured = {}
+
+        def fake_start_run(since, dry_run, source):
+            captured["source"] = source
+            return RunRecord(run_id="api-run", source=source, since=since, dry_run=dry_run)
+
+        monkeypatch.setattr("src.main.start_run", fake_start_run)
+        monkeypatch.setattr("src.main.get_run_store", lambda: MagicMock(active_count=0))
+
+        response = client.post("/api/orchestrate/run", json={"dry_run": True})
+
+        assert response.status_code == 202
+        assert captured["source"] == "api_orchestrate"
 
 
 class TestRSSCheckEndpoint:

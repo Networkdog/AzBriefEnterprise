@@ -27,8 +27,10 @@ budget=8 target=4.5 period=2026-06
 budget=3 target=4.5 url=https://azure.microsoft.com/updates?id=<update-id>
 ```
 
-이 프롬프트는 내부적으로 import 검사, 테스트, 라이브 G-Eval 또는 자격증명이 없을 때의
-degraded 평가 경로를 선택합니다. 평가 산출물은 Git에서 제외된 `eval_runs/`에 남습니다.
+이 프롬프트는 `scripts/quality_campaign.py`로 기간 payload와 diagnosis/holdout을 고정하고,
+변경 전 A/A noise와 holdout baseline을 만든 뒤 한 번에 하나의 source-level 가설을 검증합니다.
+평가 산출물은 Git에서 제외된 `eval_runs/`에 남고 source/worktree, dataset, Agent roster,
+`trace_id` lineage를 보존합니다. 자격증명이 없으면 degraded 평가 경로를 선택합니다.
 
 ## 주의사항
 
@@ -36,4 +38,6 @@ degraded 평가 경로를 선택합니다. 평가 산출물은 Git에서 제외�
 - 한 업데이트의 점수만 올리는 하드코딩, 평가 기준 완화, verbosity 증가를 개선으로 인정하지
   않습니다.
 - 라이브 평가에는 Azure/Foundry 호출 비용과 권한이 필요합니다.
+- Prompt Agent provisioning 또는 Hosted Agent 배포는 사용자 승인 뒤 수행하며, 배포 후보는 같은
+  campaign을 `--runtime hosted`로 다시 통과해야 합니다.
 - `.env`, 토큰, 구독자 개인정보를 프롬프트 파일이나 평가 산출물에 기록하지 않습니다.

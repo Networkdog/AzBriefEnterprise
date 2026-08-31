@@ -7,6 +7,8 @@ description: 'Audit and improve per-language naturalness of AzBrief report text 
 
 ## Foundry Runtime Guidance
 
+- When writing, improve readability without changing or adding evidence. When reviewing,
+  point to the exact field and smallest required language correction.
 - Write as a native senior engineer in the requested language while preserving facts,
   release stage, names, IDs, commands, dates, and uncertainty.
 - State what changed directly. Avoid announcement framing, subject-predicate category

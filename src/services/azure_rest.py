@@ -75,12 +75,12 @@ class AzureRestClient:
         """
         import time as _time
 
-        subscription_id = self._get_subscription_id()
-        if not subscription_id:
-            return {"error": "No subscription ID available", "value": []}
-
-        # Replace placeholder
-        resolved_path = path.replace("{subscriptionId}", subscription_id)
+        resolved_path = path
+        if "{subscriptionId}" in path:
+            subscription_id = self._get_subscription_id()
+            if not subscription_id:
+                return {"error": "No subscription ID available", "value": []}
+            resolved_path = path.replace("{subscriptionId}", subscription_id)
 
         # Build URL
         url = f"{self.BASE_URL}{resolved_path}"
@@ -197,11 +197,12 @@ class AzureRestClient:
         """
         import time as _time
 
-        subscription_id = self._get_subscription_id()
-        if not subscription_id:
-            return {"error": "No subscription ID available"}
-
-        resolved_path = path.replace("{subscriptionId}", subscription_id)
+        resolved_path = path
+        if "{subscriptionId}" in path:
+            subscription_id = self._get_subscription_id()
+            if not subscription_id:
+                return {"error": "No subscription ID available"}
+            resolved_path = path.replace("{subscriptionId}", subscription_id)
         url = f"{self.BASE_URL}{resolved_path}"
 
         query_params = {"api-version": api_version}

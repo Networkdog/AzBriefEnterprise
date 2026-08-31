@@ -21,7 +21,7 @@ def _analyzer(**attrs) -> AzureUpdateAnalyzer:
     analyzer._last_update_context = ""
     analyzer._last_geval = None
     analyzer.settings = SimpleNamespace(report_language="ko")
-    analyzer.llm = object()
+    analyzer.llm_quality_reviewer = object()
     for key, value in attrs.items():
         setattr(analyzer, key, value)
     return analyzer
@@ -191,3 +191,18 @@ class TestCriticPass:
 
         assert out is original
         analyzer._report_node.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_reviewer_failure_is_not_treated_as_a_pass(self, sample_update):
+        analyzer = _analyzer()
+        judge = SimpleNamespace(
+            evaluate=AsyncMock(side_effect=RuntimeError("review unavailable")),
+        )
+
+        with patch("src.agent.geval.GEvalJudge", return_value=judge):
+            with pytest.raises(RuntimeError, match="review unavailable"):
+                await analyzer._critic_pass(
+                    SimpleNamespace(name="unreviewed"),
+                    sample_update,
+                    {"trace_id": "t"},
+                )

@@ -5,7 +5,7 @@ import os
 
 import pytest
 
-from src.config import LLM_ROLES, Settings, Subscriber
+from src.config import SPECIALIST_AGENT_ROLES, Settings, Subscriber
 
 
 class TestFoundryAgentRoles:
@@ -14,37 +14,34 @@ class TestFoundryAgentRoles:
     def _settings(self, **overrides) -> Settings:
         base = {
             "azure_tenant_id": "00000000-0000-0000-0000-000000000000",
-            "foundry_primary_agent_name": "azbrief-primary",
+            "foundry_coordinator_agent_name": "azbrief-coordinator",
+            "foundry_resource_graph_agent_name": "azbrief-resource-graph",
+            "foundry_azure_mcp_agent_name": "azbrief-azure-mcp",
+            "foundry_azure_api_agent_name": "azbrief-azure-api",
+            "foundry_report_writer_agent_name": "azbrief-report-writer",
+            "foundry_quality_reviewer_agent_name": "azbrief-quality-reviewer",
         }
         base.update(overrides)
         return Settings(_env_file=None, **base)
 
-    def test_primary_agent_is_used_for_every_unset_role(self):
+    def test_every_specialist_resolves_to_its_explicit_agent(self):
         settings = self._settings()
-        assert settings.foundry_agent_for_role("primary") == "azbrief-primary"
-        assert settings.foundry_agent_for_role("planner") == "azbrief-primary"
-        assert settings.foundry_agent_for_role("evaluator") == "azbrief-primary"
-        assert settings.foundry_agent_for_role("reporter") == "azbrief-primary"
-        assert settings.foundry_agent_for_role("codex") == "azbrief-primary"
-        assert settings.foundry_agent_for_role("fast") == "azbrief-primary"
-
-    def test_role_specific_agent_overrides_primary(self):
-        settings = self._settings(
-            foundry_planner_agent_name="azbrief-planner",
-            foundry_evaluator_agent_name="azbrief-evaluator",
-            foundry_reporter_agent_name="azbrief-reporter",
-            foundry_codex_agent_name="azbrief-codex",
-            foundry_fast_agent_name="azbrief-fast",
-        )
-        assert settings.foundry_agent_for_role("planner") == "azbrief-planner"
-        assert settings.foundry_agent_for_role("evaluator") == "azbrief-evaluator"
-        assert settings.foundry_agent_for_role("reporter") == "azbrief-reporter"
-        assert settings.foundry_agent_for_role("codex") == "azbrief-codex"
-        assert settings.foundry_agent_for_role("fast") == "azbrief-fast"
+        assert settings.foundry_agent_for_role("coordinator") == "azbrief-coordinator"
+        assert settings.foundry_agent_for_role("resource_graph") == "azbrief-resource-graph"
+        assert settings.foundry_agent_for_role("azure_mcp") == "azbrief-azure-mcp"
+        assert settings.foundry_agent_for_role("azure_api") == "azbrief-azure-api"
+        assert settings.foundry_agent_for_role("report_writer") == "azbrief-report-writer"
+        assert settings.foundry_agent_for_role("quality_reviewer") == ("azbrief-quality-reviewer")
 
     def test_unknown_role_is_rejected(self):
-        with pytest.raises(ValueError, match="Unknown LLM role"):
+        with pytest.raises(ValueError, match="Unknown specialist role"):
             self._settings().foundry_agent_for_role("writer")
+
+    def test_specialist_roster_contains_all_explicit_roles(self):
+        settings = self._settings()
+        assert {spec.role for spec in settings.get_foundry_specialist_agents()} == set(
+            SPECIALIST_AGENT_ROLES
+        )
 
 
 class TestSubscriberModel:
@@ -71,8 +68,6 @@ class TestSettingsSubscribers:
 
     def _make_settings_with_subscribers(self, subscribers_json):
         """Create a minimal Settings instance for subscriber testing."""
-        import os
-
         old_env = os.environ.copy()
         try:
             os.environ["AZURE_TENANT_ID"] = "test-tenant-id"

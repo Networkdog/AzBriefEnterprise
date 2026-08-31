@@ -194,6 +194,7 @@ class TrajectoryEvaluator:
         plan_revisions: int = 0,
         task_revisions: int = 0,
         enrichment_injected: int = 0,
+        trace_id: str = "",
     ) -> TrajectoryReport:
         """Evaluate one analysis trajectory.
 
@@ -222,7 +223,7 @@ class TrajectoryEvaluator:
             score=score,
             grade=self._grade(score),
         )
-        logger.info("trajectory_evaluated", **report.to_dict())
+        logger.info("trajectory_evaluated", trace_id=trace_id, **report.to_dict())
         return report
 
     def evaluate_from_state(self, final_state: dict[str, Any]) -> Optional[TrajectoryReport]:
@@ -248,6 +249,7 @@ class TrajectoryEvaluator:
             iterations=int(final_state.get("iteration", 0) or 0),
             plan_revisions=int(final_state.get("plan_revision_count", 0) or 0),
             task_revisions=int(final_state.get("task_revision_count", 0) or 0),
+            trace_id=str(final_state.get("trace_id", "") or ""),
         )
 
     # ------------------------------------------------------------------

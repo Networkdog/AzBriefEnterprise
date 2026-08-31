@@ -23,9 +23,6 @@
     "modelCapacity": {
       "value": 200
     },
-    "enableFoundryEnrichmentAgents": {
-      "value": false
-    },
     "foundryHostedAgentName": {
       "value": "azbrief-analysis-hosted"
     },
@@ -90,6 +87,9 @@
       "value": ""
     },
     "adminAllowedPrincipals": {
+      "value": ""
+    },
+    "archiveAllowedPrincipals": {
       "value": ""
     },
     "enableKeyVaultPurgeProtection": {

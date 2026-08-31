@@ -8,10 +8,11 @@ import pytest
 from mcp import Client
 from starlette.applications import Starlette
 from starlette.responses import PlainTextResponse
-from starlette.testclient import TestClient
 from starlette.routing import Mount, Route
+from starlette.testclient import TestClient
 
 from src.agent.analyzer import AnalysisResult, RelevanceStatus
+from src.archive.models import ArchiveReceipt
 from src.mcp_server import MCPApiKeyMiddleware, mcp, mcp_http_app, register_mcp_services
 from src.rss.parser import AzureUpdate
 
@@ -60,7 +61,24 @@ async def test_mcp_tools_delegate_analysis_to_registered_hosted_proxy():
         return _update()
 
     parser.get_update_by_url = get_update_by_url
-    register_mcp_services(Analyzer(), parser)
+
+    class Archive:
+        configured = True
+
+        def __init__(self):
+            self.sources = []
+
+        async def archive_analysis(self, update, result, source):
+            assert update.id == result.update_id
+            self.sources.append(source.value)
+            return ArchiveReceipt(
+                archived=True,
+                archive_id="8211694095999-0123456789abcdef0123456789abcdef",
+                object_name="entries/item.json",
+            )
+
+    archive = Archive()
+    register_mcp_services(Analyzer(), parser, archive)
 
     async with Client(mcp, raise_exceptions=True) as client:
         tools = (await client.list_tools()).tools
@@ -75,6 +93,35 @@ async def test_mcp_tools_delegate_analysis_to_registered_hosted_proxy():
         "list_recent_azure_updates",
     }
     assert result.structured_content["update_id"] == "update-1"
+    assert archive.sources == ["mcp"]
+
+
+@pytest.mark.anyio
+async def test_mcp_analysis_returns_tool_error_when_archive_fails():
+    class Analyzer:
+        async def analyze_update(self, _update):
+            return _result()
+
+    class Archive:
+        configured = True
+
+        async def archive_analysis(self, *_args):
+            raise RuntimeError("archive unavailable")
+
+    async def get_update_by_url(_url):
+        return _update()
+
+    parser = SimpleNamespace(get_update_by_url=get_update_by_url)
+    register_mcp_services(Analyzer(), parser, Archive())
+
+    async with Client(mcp, raise_exceptions=False) as client:
+        result = await client.call_tool(
+            "analyze_azure_update",
+            {"update_url": "https://azure.microsoft.com/updates/update-1"},
+        )
+
+    assert result.is_error is True
+    assert "archive unavailable" in str(result.content)
 
 
 def _wrapped_app(monkeypatch, expected_key):

@@ -110,11 +110,9 @@ class TestAdvisorInput:
         inp = GetAdvisorRecommendationsInput()
         assert inp.category is None
         assert inp.impact is None
-        assert inp.use_rest_api is False
 
-    def test_rest_api_flag(self):
-        inp = GetAdvisorRecommendationsInput(use_rest_api=True, category="Cost")
-        assert inp.use_rest_api is True
+    def test_category_filter(self):
+        inp = GetAdvisorRecommendationsInput(category="Cost")
         assert inp.category == "Cost"
 
 
@@ -193,28 +191,6 @@ class TestAdvisorRestFormat:
         assert "Detailed (0)" in result
 
 
-class TestAdvisorKqlFormat:
-    """Test KQL result formatting."""
-
-    def test_format_kql_results(self):
-        data = [
-            {
-                "category": "Cost",
-                "impact": "High",
-                "shortDescription": "Shutdown underused VMs",
-                "impactedResource": "vm-01",
-                "resourceType": "Microsoft.Compute/virtualMachines",
-            },
-        ]
-        tool = GetAdvisorRecommendationsTool.__new__(GetAdvisorRecommendationsTool)
-        result = tool._format_kql_results(data)
-
-        assert "## Azure Advisor Recommendations (1)" in result
-        assert "Cost (1)" in result
-        assert "🔴" in result
-        assert "Shutdown underused VMs" in result
-
-
 class TestAdvisorRestApiMode:
     """Test REST API mode invocation."""
 
@@ -231,7 +207,7 @@ class TestAdvisorRestApiMode:
             "src.services.azure_rest.AzureRestClient",
             return_value=MagicMock(call_api=AsyncMock(return_value=mock_result)),
         ) as mock_cls:
-            result = asyncio.run(tool._arun(use_rest_api=True))
+            result = asyncio.run(tool._arun())
 
             mock_cls.return_value.call_api.assert_called_once()
             call_kwargs = mock_cls.return_value.call_api.call_args
@@ -253,78 +229,38 @@ class TestAdvisorRestApiMode:
             "src.services.azure_rest.AzureRestClient",
             return_value=MagicMock(call_api=AsyncMock(return_value=mock_result)),
         ) as mock_cls:
-            asyncio.run(tool._arun(category="Cost", use_rest_api=True))
+            asyncio.run(tool._arun(category="Cost"))
 
             call_kwargs = mock_cls.return_value.call_api.call_args
             params = call_kwargs.kwargs.get("params", {})
             assert params is not None
             assert "Category eq 'Cost'" in params.get("$filter", "")
 
-    def test_rest_api_fallback_to_kql_on_error(self):
-        """When REST API fails, should fallback to KQL mode."""
+    def test_rest_api_error_is_preserved(self):
+        """A REST permission failure remains an explicit Azure API evidence gap."""
         mock_rest_result = {"error": "API returned 403", "value": []}
 
         tool = GetAdvisorRecommendationsTool()
 
-        with (
-            patch(
-                "src.services.azure_rest.AzureRestClient",
-                return_value=MagicMock(call_api=AsyncMock(return_value=mock_rest_result)),
-            ),
-            patch(
-                "src.agent.tools.execute_kql_with_retry",
-                new_callable=AsyncMock,
-                return_value={"data": []},
-            ),
-        ):
-            result = asyncio.run(tool._arun(use_rest_api=True))
-
-        assert "No active Advisor recommendations found." in result
-
-    def test_rest_api_exception_fallback_to_kql(self):
-        """When REST API raises an exception, should fallback to KQL mode."""
-        tool = GetAdvisorRecommendationsTool()
-
-        with (
-            patch(
-                "src.services.azure_rest.AzureRestClient",
-                return_value=MagicMock(
-                    call_api=AsyncMock(side_effect=Exception("Connection refused"))
-                ),
-            ),
-            patch(
-                "src.agent.tools.execute_kql_with_retry",
-                new_callable=AsyncMock,
-                return_value={"data": []},
-            ),
-        ):
-            result = asyncio.run(tool._arun(use_rest_api=True))
-
-        assert "No active Advisor recommendations found." in result
-
-    def test_kql_mode_default(self):
-        """Default mode (use_rest_api=False) should use KQL."""
-        tool = GetAdvisorRecommendationsTool()
-
         with patch(
-            "src.agent.tools.execute_kql_with_retry",
-            new_callable=AsyncMock,
-            return_value={
-                "data": [
-                    {
-                        "category": "Security",
-                        "impact": "High",
-                        "shortDescription": "Enable MFA",
-                        "impactedResource": "tenant",
-                        "resourceType": "identity",
-                    }
-                ]
-            },
+            "src.services.azure_rest.AzureRestClient",
+            return_value=MagicMock(call_api=AsyncMock(return_value=mock_rest_result)),
         ):
             result = asyncio.run(tool._arun())
 
-        assert "## Azure Advisor Recommendations (1)" in result
-        assert "Enable MFA" in result
+        assert result == "Advisor REST API error: API returned 403"
+
+    def test_rest_api_exception_is_preserved(self):
+        """A REST transport failure remains explicit instead of crossing roles."""
+        tool = GetAdvisorRecommendationsTool()
+
+        with patch(
+            "src.services.azure_rest.AzureRestClient",
+            return_value=MagicMock(call_api=AsyncMock(side_effect=Exception("Connection refused"))),
+        ):
+            result = asyncio.run(tool._arun())
+
+        assert result == "Advisor REST API error: Connection refused"
 
     def test_rest_api_empty_results(self):
         """REST API returning empty should say no recommendations."""
@@ -334,6 +270,6 @@ class TestAdvisorRestApiMode:
             "src.services.azure_rest.AzureRestClient",
             return_value=MagicMock(call_api=AsyncMock(return_value={"value": [], "count": 0})),
         ):
-            result = asyncio.run(tool._arun(use_rest_api=True))
+            result = asyncio.run(tool._arun())
 
         assert "No active Advisor recommendations found." in result

@@ -1,28 +1,28 @@
-"""Provision the Foundry Prompt Agents used by the AzBrief runtime.
+"""Provision the specialist Prompt Agents used by the AzBrief Hosted Agent.
 
-The running app calls a required primary agent, optional role-specific codex
-and fast agents, and an optional four-stage enrichment roster. Agent definitions
-live in the Foundry project's data plane and cannot be created by ARM.
+One Hosted Agent owns orchestration. Six persisted Prompt Agents provide
+coordination, Resource Graph, Azure MCP, Azure API, report writing, and quality
+review expertise. Agent definitions live in the Foundry project's data plane
+and cannot be created by ARM.
 
 Base instructions are derived from
 :data:`src.agent.foundry_backend.RUNTIME_AGENT_INSTRUCTIONS` and
-:data:`src.agent.foundry_backend.STAGE_PROMPTS`. Role-scoped operational rules
+:data:`src.agent.foundry_backend.SPECIALIST_PROMPTS`. Role-scoped operational rules
 are compiled from the bounded ``Foundry Runtime Guidance`` section in each
 ``.github/skills/*/SKILL.md``. The detailed developer workflow is never sent to
 the model, while ``--check`` detects any change to the runtime section as Agent
 instruction drift.
 
 The script derives app-owned FunctionTool definitions from the live LangChain
-Pydantic schemas, publishes strict stage JSON response formats, and preserves
+Pydantic schemas, publishes strict specialist JSON response formats, and preserves
 non-app-owned Foundry tools when creating a new immutable Agent version.
 Optional managed tools (Web Search, MCP, memory) can still be attached in
-Foundry. Enrichment is ready only when ``--check`` passes.
+Foundry. Hosted execution is ready only when ``--check`` passes.
 
 Usage:
     python -m scripts.provision_foundry_agents --dry-run
     python -m scripts.provision_foundry_agents
-    python -m scripts.provision_foundry_agents --model gpt-4o --stages research impact
-    python -m scripts.provision_foundry_agents --runtime-roles primary codex
+    python -m scripts.provision_foundry_agents --model gpt-4o --roles resource_graph azure_api
     python -m scripts.provision_foundry_agents --check
     python -m scripts.provision_foundry_agents --delete
 """
@@ -42,16 +42,15 @@ if hasattr(sys.stdout, "reconfigure"):
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from src.agent.foundry_backend import (  # noqa: E402
-    ENRICHMENT_LOCAL_TOOL_NAMES,
     RUNTIME_AGENT_INSTRUCTIONS,
-    STAGE_PROMPTS,
+    SPECIALIST_LOCAL_TOOL_NAMES,
+    SPECIALIST_PROMPTS,
     build_foundry_function_tools,
-    build_stage_text_options,
-    select_enrichment_tools,
+    build_specialist_text_options,
+    select_specialist_tools,
 )
 from src.config import (  # noqa: E402
-    FOUNDRY_AGENT_STAGES,
-    LLM_ROLES,
+    SPECIALIST_AGENT_ROLES,
     get_azure_credential,
     get_settings,
 )
@@ -63,44 +62,25 @@ _RUNTIME_GUIDANCE_HEADING = "## Foundry Runtime Guidance"
 _RUNTIME_GUIDANCE_END = "<!-- End Foundry Runtime Guidance -->"
 _SKILL_ROOT = Path(__file__).resolve().parent.parent / ".github" / "skills"
 _RUNTIME_SKILLS_BY_PURPOSE: dict[str, tuple[str, ...]] = {
-    # The current deployment reuses primary for unset runtime roles, so primary
-    # carries the complete compact set. Distinct role agents receive narrower sets.
-    "primary": (
+    "coordinator": ("foundry-agent-architecture",),
+    "resource_graph": (
+        "kql-resource-graph",
+        "azure-service-integration",
+    ),
+    "azure_mcp": (
         "foundry-agent-architecture",
         "azure-service-integration",
-        "kql-resource-graph",
+    ),
+    "azure_api": (
+        "azure-service-integration",
+        "foundry-agent-architecture",
+    ),
+    "report_writer": (
         "report-quality",
-        "report-evaluation",
         "language-naturalness",
         "email-template",
     ),
-    "planner": (
-        "foundry-agent-architecture",
-        "azure-service-integration",
-        "kql-resource-graph",
-    ),
-    "evaluator": (
-        "foundry-agent-architecture",
-        "report-evaluation",
-        "report-quality",
-    ),
-    "reporter": (
-        "report-quality",
-        "report-evaluation",
-        "language-naturalness",
-        "email-template",
-    ),
-    "codex": ("kql-resource-graph", "azure-service-integration"),
-    "fast": ("language-naturalness", "report-quality"),
-    "research": ("foundry-agent-architecture",),
-    "impact": (
-        "foundry-agent-architecture",
-        "azure-service-integration",
-        "kql-resource-graph",
-    ),
-    "action": ("report-quality",),
-    "review": (
-        "foundry-agent-architecture",
+    "quality_reviewer": (
         "report-evaluation",
         "report-quality",
         "language-naturalness",
@@ -108,22 +88,22 @@ _RUNTIME_SKILLS_BY_PURPOSE: dict[str, tuple[str, ...]] = {
 }
 _RETIRED_APP_FUNCTION_NAMES = frozenset(
     {
-        "get_resource_type_summary",
-        "get_resource_configurations",
-        "get_resource_dependencies",
-        "get_resource_health",
-        "get_policy_compliance",
-        "get_service_health_events",
+        "search_update_related_docs",
+        "search_azure_docs",
+        "get_service_documentation",
     }
 )
 _APP_OWNED_FUNCTION_NAMES = (
-    frozenset().union(*ENRICHMENT_LOCAL_TOOL_NAMES.values()) | _RETIRED_APP_FUNCTION_NAMES
+    frozenset().union(*SPECIALIST_LOCAL_TOOL_NAMES.values()) | _RETIRED_APP_FUNCTION_NAMES
 )
+_PRESERVE_DEFINITION_VALUE = object()
 
 
-def stage_instructions(stage: str) -> str:
-    """Standing instructions for a stage, derived from its runtime prompt."""
-    return STAGE_PROMPTS[stage].split(_CONTEXT_MARKER)[0].strip()
+def specialist_instructions(role: str) -> str:
+    """Return standing instructions derived from the runtime specialist contract."""
+    if role in SPECIALIST_PROMPTS:
+        return SPECIALIST_PROMPTS[role].split(_CONTEXT_MARKER)[0].strip()
+    return RUNTIME_AGENT_INSTRUCTIONS[role]
 
 
 @lru_cache(maxsize=None)
@@ -158,40 +138,25 @@ def runtime_skill_instructions(purpose: str) -> str:
 
 
 def agent_instructions(purpose: str) -> str:
-    """Return standing instructions for a runtime role or enrichment stage."""
-    if purpose in RUNTIME_AGENT_INSTRUCTIONS:
-        base = RUNTIME_AGENT_INSTRUCTIONS[purpose]
-    else:
-        base = stage_instructions(purpose)
+    """Return standing instructions for one specialist Prompt Agent."""
+    base = specialist_instructions(purpose)
     skill_guidance = runtime_skill_instructions(purpose)
     return f"{base}\n\n{skill_guidance}" if skill_guidance else base
 
 
-def resolve_runtime_roster(roles: list[str] | None) -> list[tuple[str, str]]:
-    """Return unique ``(agent_name, role)`` pairs for runtime agents."""
+def resolve_specialist_roster(roles: list[str] | None) -> list[tuple[str, str]]:
+    """Return ``(agent_name, role)`` pairs for the complete specialist team."""
     settings = get_settings()
-    wanted = roles or list(LLM_ROLES)
-    roster: list[tuple[str, str]] = []
-    seen: set[str] = set()
-    for role in wanted:
-        name = settings.foundry_agent_for_role(role)
-        if not name or name in seen:
-            continue
-        roster.append((name, role))
-        seen.add(name)
-    return roster
-
-
-def resolve_roster(stages: list[str] | None) -> list[tuple[str, str]]:
-    """Return ``(agent_name, stage)`` pairs to provision.
-
-    Prefers ``FOUNDRY_ENRICHMENT_AGENTS`` so provisioned names match what the
-    running app looks up. Falls back to ``azbrief-<stage>``.
-    """
-    settings = get_settings()
-    configured = {spec.stage: spec.name for spec in settings.get_foundry_enrichment_agents()}
-    wanted = stages or list(FOUNDRY_AGENT_STAGES)
-    return [(configured.get(stage, f"azbrief-{stage}"), stage) for stage in wanted]
+    configured = {
+        "coordinator": settings.foundry_coordinator_agent_name,
+        "resource_graph": settings.foundry_resource_graph_agent_name,
+        "azure_mcp": settings.foundry_azure_mcp_agent_name,
+        "azure_api": settings.foundry_azure_api_agent_name,
+        "report_writer": settings.foundry_report_writer_agent_name,
+        "quality_reviewer": settings.foundry_quality_reviewer_agent_name,
+    }
+    wanted = roles or list(SPECIALIST_AGENT_ROLES)
+    return [(configured.get(role) or f"azbrief-{role.replace('_', '-')}", role) for role in wanted]
 
 
 def _tool_type(tool: Any) -> str:
@@ -210,12 +175,34 @@ def _server_tool_key(tool: Any) -> Optional[tuple[str, str]]:
     return None
 
 
+_APP_OWNED_SERVER_TOOL_KEYS = frozenset(
+    {
+        ("mcp", "microsoft_learn"),
+        ("mcp", "azure_read_only"),
+        ("web_search", ""),
+    }
+)
+
+
+def _server_tool_configuration_error(purpose: str) -> str:
+    """Return a message when a required managed server tool is not configured."""
+    if purpose != "azure_mcp":
+        return ""
+    settings = get_settings()
+    missing = []
+    if not settings.azure_mcp_server_url:
+        missing.append("AZURE_MCP_SERVER_URL")
+    if not settings.azure_mcp_project_connection_name:
+        missing.append("AZURE_MCP_PROJECT_CONNECTION_NAME")
+    return f"azure_mcp requires {', '.join(missing)}" if missing else ""
+
+
 def _managed_server_tools(purpose: str) -> tuple[Any, ...]:
-    """Build server-side tools required by one enrichment Agent."""
+    """Build server-side tools required by one specialist Prompt Agent."""
     from azure.ai.projects.models import MCPTool, WebSearchTool
 
     settings = get_settings()
-    if purpose == "research":
+    if purpose == "coordinator":
         tools: list[Any] = [
             MCPTool(
                 server_label="microsoft_learn",
@@ -227,12 +214,12 @@ def _managed_server_tools(purpose: str) -> tuple[Any, ...]:
                 ),
             )
         ]
-        if settings.foundry_research_web_search_enabled:
+        if settings.foundry_coordinator_web_search_enabled:
             tools.append(WebSearchTool(search_context_size="medium"))
         return tuple(tools)
 
     if (
-        purpose == "impact"
+        purpose == "azure_mcp"
         and settings.azure_mcp_server_url
         and settings.azure_mcp_project_connection_name
     ):
@@ -245,8 +232,8 @@ def _managed_server_tools(purpose: str) -> tuple[Any, ...]:
                 require_approval="never",
                 server_description=(
                     "Read-only Azure MCP Server exposing direct resource-group, Resource Health, "
-                    "and Advisor tools. Use these tools as the primary source for live tenant "
-                    "evidence; there is no single `azure` proxy tool. Always pass tenant "
+                    "and Advisor tools. This is the specialist's only tenant inspection surface; "
+                    "there is no single `azure` proxy tool. Always pass tenant "
                     f"`{settings.azure_tenant_id}` and subscription `{subscription_hint}`."
                 ),
             ),
@@ -274,7 +261,7 @@ class _FoundryAdminClient:
         instructions: str,
         previous_definition: Any = None,
         managed_tools: Optional[list[Any]] = None,
-        managed_text: Any = None,
+        managed_text: Any = _PRESERVE_DEFINITION_VALUE,
     ):
         """Create an immutable Prompt Agent version, preserving prior configuration."""
         from azure.ai.projects.models import PromptAgentDefinition
@@ -286,7 +273,9 @@ class _FoundryAdminClient:
         preserved_tools = [
             tool
             for tool in previous_tools
-            if getattr(tool, "name", None) not in _APP_OWNED_FUNCTION_NAMES
+            if _tool_type(tool) != "function"
+            and getattr(tool, "name", None) not in _APP_OWNED_FUNCTION_NAMES
+            and _server_tool_key(tool) not in _APP_OWNED_SERVER_TOOL_KEYS
             and _server_tool_key(tool) not in managed_server_keys
         ]
         definition = PromptAgentDefinition(
@@ -298,9 +287,9 @@ class _FoundryAdminClient:
             tools=[*(managed_tools or []), *preserved_tools],
             tool_choice=getattr(previous_definition, "tool_choice", None),
             text=(
-                managed_text
-                if managed_text is not None
-                else getattr(previous_definition, "text", None)
+                getattr(previous_definition, "text", None)
+                if managed_text is _PRESERVE_DEFINITION_VALUE
+                else managed_text
             ),
             structured_inputs=getattr(previous_definition, "structured_inputs", None),
         )
@@ -348,31 +337,37 @@ def _definition_matches(version: Any, model: str, instructions: str) -> bool:
 
 @lru_cache(maxsize=1)
 def _managed_function_tools() -> dict[str, tuple[Any, ...]]:
-    """Build app-owned Foundry FunctionTools once from the live LangChain schemas."""
+    """Build specialist FunctionTools once from the live LangChain schemas."""
     from src.agent.tools import get_all_tools
 
     tools = get_all_tools()
     return {
-        stage: tuple(build_foundry_function_tools(select_enrichment_tools(stage, tools)))
-        for stage in ENRICHMENT_LOCAL_TOOL_NAMES
+        role: tuple(build_foundry_function_tools(select_specialist_tools(role, tools)))
+        for role in SPECIALIST_LOCAL_TOOL_NAMES
     }
 
 
 def _managed_tool_names(purpose: str) -> frozenset[str]:
-    """Return the exact app-owned function names required by one Agent purpose."""
-    return ENRICHMENT_LOCAL_TOOL_NAMES.get(purpose, frozenset())
+    """Return the exact app-owned function names required by one specialist."""
+    return SPECIALIST_LOCAL_TOOL_NAMES.get(purpose, frozenset())
+
+
+def _function_tool_names(tools: list[Any]) -> set[str]:
+    """Return every deployed FunctionTool name, including retired app definitions."""
+    names = set()
+    for tool in tools:
+        name = str(getattr(tool, "name", "") or "")
+        if name and (_tool_type(tool) == "function" or name in _APP_OWNED_FUNCTION_NAMES):
+            names.add(name)
+    return names
 
 
 def _has_managed_tools(version: Any, purpose: str) -> bool:
     """Return whether the latest Agent version has the exact required functions."""
     required = _managed_tool_names(purpose)
-    if not required:
-        return True
     definition = getattr(version, "definition", None)
-    deployed = {
-        str(getattr(tool, "name", "") or "") for tool in (getattr(definition, "tools", None) or [])
-    }
-    return deployed.intersection(_APP_OWNED_FUNCTION_NAMES) == required
+    deployed = _function_tool_names(list(getattr(definition, "tools", None) or []))
+    return deployed == required
 
 
 def _server_tool_payload(tool: Any) -> dict[str, Any]:
@@ -396,7 +391,7 @@ def _server_tool_payload(tool: Any) -> dict[str, Any]:
 
 
 def _server_tool_drift(version: Any, purpose: str) -> set[tuple[str, str]]:
-    """Return required server-side tools that are absent or stale."""
+    """Return app-managed server tools that are absent, stale, or assigned elsewhere."""
     required = {
         key: _server_tool_payload(tool)
         for tool in _managed_server_tools(purpose)
@@ -406,18 +401,19 @@ def _server_tool_drift(version: Any, purpose: str) -> set[tuple[str, str]]:
     deployed = {
         key: _server_tool_payload(tool)
         for tool in (getattr(definition, "tools", None) or [])
-        if (key := _server_tool_key(tool)) is not None
+        if (key := _server_tool_key(tool)) in _APP_OWNED_SERVER_TOOL_KEYS
     }
-    return {key for key, payload in required.items() if deployed.get(key) != payload}
+    drift = {key for key, payload in required.items() if deployed.get(key) != payload}
+    return drift | (set(deployed) - set(required))
 
 
 def _has_managed_text(version: Any, purpose: str) -> bool:
-    """Return whether the latest Agent version has the exact stage output schema."""
-    expected = build_stage_text_options(purpose)
-    if expected is None:
-        return True
+    """Return whether the latest Agent version has the exact specialist output schema."""
+    expected = build_specialist_text_options(purpose)
     definition = getattr(version, "definition", None)
     actual = getattr(definition, "text", None)
+    if expected is None:
+        return actual is None
     if actual is None:
         return False
     return actual.as_dict() == expected.as_dict()
@@ -426,9 +422,16 @@ def _has_managed_text(version: Any, purpose: str) -> bool:
 def _roster_conflicts(roster: list[tuple[str, str]]) -> dict[str, set[str]]:
     """Return Agent names assigned to more than one distinct purpose."""
     purposes: dict[str, set[str]] = {}
+    display_names: dict[str, set[str]] = {}
     for name, purpose in roster:
-        purposes.setdefault(name, set()).add(purpose)
-    return {name: values for name, values in purposes.items() if len(values) > 1}
+        canonical = name.strip().casefold()
+        purposes.setdefault(canonical, set()).add(purpose)
+        display_names.setdefault(canonical, set()).add(name.strip())
+    return {
+        "/".join(sorted(display_names[canonical])): values
+        for canonical, values in purposes.items()
+        if len(values) > 1
+    }
 
 
 def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: bool) -> int:
@@ -452,16 +455,27 @@ def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: 
     print(f"Agents  : {', '.join(f'{n} ({s})' for n, s in roster)}\n")
 
     if dry_run:
-        for name, stage in roster:
-            print(f"--- {name} [{stage}]\n{agent_instructions(stage)}\n")
+        for name, role in roster:
+            print(f"--- {name} [{role}]\n{agent_instructions(role)}\n")
         print("Dry run - nothing was created.")
         return 0
+
+    if not delete:
+        configuration_errors = [
+            (name, role, error)
+            for name, role in roster
+            if (error := _server_tool_configuration_error(role))
+        ]
+        if configuration_errors:
+            for name, role, error in configuration_errors:
+                print(f"CONFIG  {name} ({role}) {error}")
+            return 1
 
     client = _client(endpoint)
     failures = 0
     try:
         deployed = {agent.name: agent for agent in client.list_agents()}
-        for name, stage in roster:
+        for name, role in roster:
             try:
                 existing = deployed.get(name)
                 if delete:
@@ -473,12 +487,12 @@ def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: 
                     print(f"deleted {name} ({deleted_versions} version(s))")
                     continue
 
-                instructions = agent_instructions(stage)
+                instructions = agent_instructions(role)
                 managed_tools = [
-                    *_managed_server_tools(stage),
-                    *_managed_function_tools().get(stage, ()),
+                    *_managed_server_tools(role),
+                    *_managed_function_tools().get(role, ()),
                 ]
-                managed_text = build_stage_text_options(stage)
+                managed_text = build_specialist_text_options(role)
                 latest = _latest_version(existing) if existing is not None else None
                 if existing is None:
                     created = client.create_version(
@@ -491,9 +505,9 @@ def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: 
                     print(f"created {name} (version {created.version})")
                 elif (
                     _definition_matches(latest, model, instructions)
-                    and _has_managed_tools(latest, stage)
-                    and not _server_tool_drift(latest, stage)
-                    and _has_managed_text(latest, stage)
+                    and _has_managed_tools(latest, role)
+                    and not _server_tool_drift(latest, role)
+                    and _has_managed_text(latest, role)
                 ):
                     print(f"current {name} (version {latest.version})")
                 else:
@@ -506,9 +520,9 @@ def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: 
                         managed_text=managed_text,
                     )
                     print(f"updated {name} (version {created.version})")
-            except Exception as exc:  # one bad stage must not abort the rest
+            except Exception as exc:  # one bad role must not abort the rest
                 failures += 1
-                print(f"FAILED  {name}: {exc}")
+                print(f"FAILED  {name} ({role}): {exc}")
     finally:
         client.close()
 
@@ -536,6 +550,7 @@ def validate_roster(roster: list[tuple[str, str]]) -> int:
     try:
         deployed = {agent.name: agent for agent in client.list_agents()}
         for name, purpose in roster:
+            issues_before = failures
             agent = deployed.get(name)
             if agent is None:
                 failures += 1
@@ -548,6 +563,11 @@ def validate_roster(roster: list[tuple[str, str]]) -> int:
                 print(f"NO-VERSION {name} ({purpose})")
                 continue
             definition = getattr(latest, "definition", None)
+            configuration_error = _server_tool_configuration_error(purpose)
+            if configuration_error:
+                failures += 1
+                print(f"CONFIG  {name} ({purpose}) {configuration_error}")
+                continue
             expected_instructions = agent_instructions(purpose).strip()
             actual_instructions = str(getattr(definition, "instructions", "") or "").strip()
             if actual_instructions != expected_instructions:
@@ -556,15 +576,12 @@ def validate_roster(roster: list[tuple[str, str]]) -> int:
 
             if not _has_managed_text(latest, purpose):
                 failures += 1
-                print(f"NO-FORMAT {name} ({purpose}) stage JSON schema is missing or stale")
+                print(f"NO-FORMAT {name} ({purpose}) specialist JSON schema is missing or stale")
 
             tools = list(getattr(definition, "tools", None) or [])
-            deployed_tool_names = {str(getattr(tool, "name", "") or "") for tool in tools}
+            deployed_tool_names = _function_tool_names(tools)
             missing_tools = sorted(_managed_tool_names(purpose) - deployed_tool_names)
-            extra_tools = sorted(
-                deployed_tool_names.intersection(_APP_OWNED_FUNCTION_NAMES)
-                - _managed_tool_names(purpose)
-            )
+            extra_tools = sorted(deployed_tool_names - _managed_tool_names(purpose))
             if missing_tools:
                 failures += 1
                 print(
@@ -588,7 +605,7 @@ def validate_roster(roster: list[tuple[str, str]]) -> int:
                     f"STALE-SERVER-TOOL {name} ({purpose}) missing or stale: "
                     f"{', '.join(labels)}"
                 )
-            elif actual_instructions == expected_instructions:
+            if failures == issues_before:
                 print(f"OK      {name} ({purpose}, version={latest.version}, tools={len(tools)})")
     finally:
         client.close()
@@ -608,16 +625,10 @@ def main() -> None:
         help="Model deployment name (default: FOUNDRY_MODEL_DEPLOYMENT)",
     )
     parser.add_argument(
-        "--runtime-roles",
+        "--roles",
         nargs="+",
-        choices=list(LLM_ROLES),
-        help="Runtime roles to provision (default: configured unique agents)",
-    )
-    parser.add_argument(
-        "--stages",
-        nargs="+",
-        choices=list(FOUNDRY_AGENT_STAGES),
-        help="Subset of stages to provision (default: all four)",
+        choices=list(SPECIALIST_AGENT_ROLES),
+        help="Subset of specialist roles to provision (default: complete team)",
     )
     parser.add_argument(
         "--dry-run", action="store_true", help="Print the instructions without calling Foundry"
@@ -631,7 +642,7 @@ def main() -> None:
     model = args.model or settings.foundry_model_deployment
     if not model and not args.delete and not args.check:
         parser.error("--model or FOUNDRY_MODEL_DEPLOYMENT is required")
-    roster = resolve_runtime_roster(args.runtime_roles) + resolve_roster(args.stages)
+    roster = resolve_specialist_roster(args.roles)
     if args.check:
         sys.exit(validate_roster(roster))
     sys.exit(provision(roster, model or "(not used)", args.dry_run, args.delete))

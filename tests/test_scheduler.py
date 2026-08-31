@@ -30,18 +30,21 @@ class _FakeAnalyzer:
 def wired(monkeypatch):
     """Replace the heavy services and capture the record execute_run receives."""
     analyzer = _FakeAnalyzer()
+    archive = object()
     captured = {}
 
     monkeypatch.setattr("src.agent.hosted_client.HostedAgentAnalyzer", lambda: analyzer)
     monkeypatch.setattr("src.email.service.EmailService", lambda: object())
+    monkeypatch.setattr("src.archive.service.ArchiveService", lambda: archive)
     monkeypatch.setattr("src.rss.parser.AzureUpdateParser", lambda: object())
 
     def _install(status: str, watermark=None):
-        async def _fake_execute(record, *_args, **_kwargs):
+        async def _fake_execute(record, *args, **_kwargs):
             record.status = status
             record.watermark = watermark
             record.finished_at = datetime.now(UTC)
             captured["record"] = record
+            captured["archive"] = args[3]
             return record
 
         monkeypatch.setattr("src.orchestrator.execute_run", _fake_execute)
@@ -56,6 +59,8 @@ class TestRunScheduledDigest:
         captured, _ = wired("completed", datetime(2026, 8, 24, 2, 0, tzinfo=UTC))
         assert await scheduler.run_scheduled_digest() == 0
         assert captured["record"].dry_run is False
+        assert captured["record"].source == "scheduled_digest"
+        assert captured["archive"] is not None
 
     @pytest.mark.asyncio
     async def test_failed_run_exits_non_zero(self, wired):

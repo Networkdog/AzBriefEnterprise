@@ -12,7 +12,7 @@ AzBrief Enterprise의 Azure 인프라를 두 배포 단위로 나눠 보관합�
 | [`enterprise/`](enterprise/README.md) | Foundry, Container App/Job, network, state, email, monitoring의 원본 Bicep |
 | [`azbrief-enterprise-deploy.json`](azbrief-enterprise-deploy.json) | Deploy to Azure 버튼이 사용하는 compiled ARM template |
 | [`azbrief-enterprise.parameters.example.json`](azbrief-enterprise.parameters.example.json) | 비밀값 없는 deployment parameter 예시 |
-| [`azure-mcp-server/`](azure-mcp-server/README.md) | Impact Agent가 호출하는 별도 Entra 인증 Azure MCP Container App |
+| [`azure-mcp-server/`](azure-mcp-server/README.md) | Azure MCP specialist가 호출하는 별도 Entra 인증 read-only Container App |
 
 ## 사용 예시
 
@@ -30,7 +30,8 @@ Azure MCP template은 별도로 정적 compile할 수 있습니다.
 
 ## Source of truth
 
-- `enterprise/main.bicep`이 제품 topology의 원본입니다. compiled JSON을 손으로 수정하지 않습니다.
+- `enterprise/main.bicep`이 제품 topology의 원본입니다. checkpoint와 immutable analysis archive
+  container도 여기서 함께 정의하며 compiled JSON을 손으로 수정하지 않습니다.
 - Azure MCP는 `azure-mcp-server/infra/main.bicep`과 그 module이 원본입니다.
 - `enterprise/main.json`은 현재 CI나 Deploy 버튼이 참조하지 않는 별도 snapshot입니다. 배포
   산출물로 사용하지 말고, 필요성이 확인될 때 원본/생성 경로를 정리해야 합니다.

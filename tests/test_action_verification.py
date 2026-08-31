@@ -206,6 +206,25 @@ class TestStaticGate:
         )
         assert "missing_rollback" in _codes(verify_static(item, EVIDENCE))
 
+    def test_advisory_task_with_mutating_command_is_blocked(self):
+        item = ActionItem(
+            task="Evaluate workload identity adoption",
+            cli_command="az storage account update -n stgprod -g rg-prod --set x=1",
+            rollback="Restore the previous value",
+        )
+        findings = verify_static(item, EVIDENCE)
+
+        assert "advisory_mutation" in _codes(findings)
+        assert any(f.severity == "blocking" for f in findings)
+
+    def test_advisory_task_may_use_read_only_command(self):
+        item = ActionItem(
+            task="Evaluate workload identity adoption",
+            cli_command="az storage account show -n stgprod -g rg-prod",
+        )
+
+        assert "advisory_mutation" not in _codes(verify_static(item, EVIDENCE))
+
     def test_no_evidence_skips_grounding_checks(self):
         """Without evidence there is nothing to ground against — do not guess."""
         item = ActionItem(
@@ -300,6 +319,61 @@ class TestVerifier:
 
         assert item.verification_status == STATUS_CAUTION
         assert item.cli_command == "az storage account list"
+
+    async def test_advisory_review_without_cli_cannot_be_blocked_for_non_executability(self):
+        item = ActionItem(
+            step=1,
+            task="Evaluate Azure Files workload identity",
+            target_resources=["stgprod"],
+            procedure="Review the current identity settings and record the go/no-go decision.",
+        )
+        llm = FakeLLM(
+            {
+                "reviews": [
+                    {
+                        "step": 1,
+                        "verdict": "unsafe",
+                        "defect": "No Azure CLI command was supplied.",
+                        "correction": "Add a command before execution.",
+                    }
+                ]
+            }
+        )
+
+        summary = await ActionItemVerifier(llm=llm).verify([item], evidence=EVIDENCE)
+
+        assert item.verification_status == STATUS_CAUTION
+        assert summary.blocked == 0
+        assert summary.caution == 1
+        prompt = llm.calls[0][1].content
+        assert "execution_mode: advisory_review" in prompt
+
+    async def test_commandless_portal_mutation_remains_blocked_when_unsafe(self):
+        item = ActionItem(
+            step=1,
+            task="Enable workload identity",
+            target_resources=["stgprod"],
+            procedure="Azure Portal > set Workload identity to Enabled > Save",
+        )
+        llm = FakeLLM(
+            {
+                "reviews": [
+                    {
+                        "step": 1,
+                        "verdict": "unsafe",
+                        "defect": "The evidence does not support changing this setting.",
+                        "correction": "Collect the current configuration first.",
+                    }
+                ]
+            }
+        )
+
+        summary = await ActionItemVerifier(llm=llm).verify([item], evidence=EVIDENCE)
+
+        assert item.verification_status == STATUS_BLOCKED
+        assert summary.blocked == 1
+        prompt = llm.calls[0][1].content
+        assert "execution_mode: portal_mutation" in prompt
 
     async def test_missing_llm_marks_unverified_not_verified(self):
         """A cross-check that never ran must not look like a passed one."""

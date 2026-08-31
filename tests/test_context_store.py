@@ -21,6 +21,7 @@ from src.agent.resilience import TOOL_RESULT_BUDGET_CHARS
 from src.agent.tools import (
     FindRelatedResourcesTool,
     GetServiceRegionAvailabilityTool,
+    QueryToolResultInput,
     QueryToolResultTool,
     format_rg_result,
 )
@@ -151,6 +152,11 @@ def isolated_store(monkeypatch):
 
 
 class TestQueryToolResultTool:
+    def test_ref_must_be_a_stored_result_handle(self):
+        assert QueryToolResultInput(ref="R7").ref == "R7"
+        with pytest.raises(ValueError):
+            QueryToolResultInput(ref="azure_mcp-2")
+
     def _stored(self, store, n=2000, needle="needle-resource-9999"):
         body = "\n".join(f"row-{i:05d}" for i in range(n)) + f"\n{needle}"
         return store.put(tool="query_azure_resources", result=body)

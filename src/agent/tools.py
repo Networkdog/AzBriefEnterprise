@@ -23,6 +23,7 @@ from src.agent.resilience import (
     calculate_backoff,
     truncate_tool_result,
 )
+from src.services.billing import BillingService
 from src.services.cost_management import CostManagementService
 from src.services.log_analytics import LogAnalyticsService
 from src.services.microsoft_learn import MicrosoftLearnService
@@ -48,9 +49,8 @@ WRITE_TOOL_NAMES: frozenset[str] = frozenset()
 # KQL routing registry
 # ---------------------------------------------------------------------------
 # Names of tools whose arguments carry a KQL query (Resource Graph or Log
-# Analytics). LLM-assisted repair of these arguments MUST use the Foundry
-# codex agent — never the fast agent. When no dedicated codex agent is named,
-# the role resolves to the primary agent. See ``AzureUpdateAnalyzer._is_kql_task``.
+# Analytics). LLM-assisted repair of these arguments MUST use the Resource
+# Graph specialist, never the coordinator or quality reviewer.
 KQL_TOOL_NAMES: frozenset[str] = frozenset(
     {
         "query_azure_resources",
@@ -430,7 +430,10 @@ class ResourceGraphQueryFixer:
 Your job is to fix invalid KQL queries that failed against Azure Resource Graph.
 
 Rules:
-- Output ONLY the corrected KQL query, no explanation, no markdown fences.
+- Return the specialist JSON envelope required by your standing output schema.
+- On success, return exactly one claim whose `text` is ONLY the corrected KQL query,
+  whose evidence contains `query:corrected-kql`, and whose confidence is high.
+- On failure, return no claims and one concrete gap. Never place JSON inside KQL text.
 - Use only tables and columns that exist in Azure Resource Graph (Resources, advisorresources, servicehealthresources, etc.).
 - Always use `extend` before referencing a nested property in `project`.
 - Use `=~` for case-insensitive type comparisons.
@@ -448,11 +451,9 @@ Rules:
         self,
         llm=None,
         learn_service: Optional[MicrosoftLearnService] = None,
-        fallback_llm=None,
     ):
-        self._llm = llm  # Codex LLM (reused to avoid duplicate instances)
-        self._fallback_llm = fallback_llm  # Primary LLM, used if codex is unavailable
-        self._llm_unavailable = False  # Cache: both codex AND fallback unavailable
+        self._llm = llm  # Resource Graph specialist, reused to avoid duplicate instances
+        self._llm_unavailable = False
         self.learn_service = learn_service or MicrosoftLearnService()
 
     @staticmethod
@@ -469,26 +470,30 @@ Rules:
             )
         )
 
-    async def _ainvoke_with_fallback(self, messages):
-        """Invoke the codex LLM; on an availability error, retry with the primary LLM.
+    async def _ainvoke_specialist(self, messages):
+        """Invoke only the Resource Graph specialist."""
+        return await self._get_llm().ainvoke(messages)
 
-        The codex deployment can be misconfigured/absent (e.g. 404 DeploymentNotFound)
-        in some environments. Falling back to the already-working primary LLM keeps
-        LLM-assisted query fixing/improvement functional instead of silently degrading
-        to rule-based-only.
-        """
-        llm = self._get_llm()
+    @staticmethod
+    def _extract_kql_response(text: str) -> str:
+        """Extract KQL from a raw response or the specialist evidence envelope."""
+        candidate = ResourceGraphQueryFixer._strip_markdown_fences(text)
+        query_pattern = r"^\s*(?:Resources|ResourceContainers|[A-Za-z][A-Za-z0-9_]*resources)\b"
+        if re.match(query_pattern, candidate, re.IGNORECASE):
+            return candidate
         try:
-            return await llm.ainvoke(messages)
-        except Exception as e:
-            if (
-                self._fallback_llm is not None
-                and self._fallback_llm is not llm
-                and self._is_availability_error(str(e))
-            ):
-                logger.info("kql_llm_fallback_to_primary", error=str(e)[:120])
-                return await self._fallback_llm.ainvoke(messages)
-            raise
+            payload = json.loads(candidate)
+        except (json.JSONDecodeError, TypeError):
+            return ""
+        if not isinstance(payload, dict):
+            return ""
+        for claim in payload.get("claims") or []:
+            if not isinstance(claim, dict):
+                continue
+            query = ResourceGraphQueryFixer._strip_markdown_fences(str(claim.get("text") or ""))
+            if re.match(query_pattern, query, re.IGNORECASE):
+                return query
+        return ""
 
     def _get_llm(self):
         """Get the Foundry agent used for query fixing."""
@@ -498,7 +503,7 @@ Rules:
             settings = get_settings()
             from src.agent.foundry_backend import create_foundry_chat_model
 
-            self._llm = create_foundry_chat_model(settings, "codex")
+            self._llm = create_foundry_chat_model(settings, "resource_graph")
         return self._llm
 
     async def fix_query(
@@ -630,17 +635,19 @@ Rules:
 - For ParserFailure errors, simplify the query: use `extend` for computed columns before `project`, or remove complex inline expressions from `project`.
 - NEVER use `| top N` without a `by` clause. Use `| take N` or `| limit N` instead.
 - Preserve the original intent of the query.
-- Output ONLY the corrected KQL query, nothing else.
+- Return the required specialist JSON envelope. Put ONLY the corrected KQL query in the
+    single claim's `text`; use `query:corrected-kql` as its evidence value. If you cannot
+    correct it, return a concrete gap and no claim.
 """
 
-        response = await self._ainvoke_with_fallback(
+        response = await self._ainvoke_specialist(
             [
                 SystemMessage(content=self.SYSTEM_PROMPT),
                 HumanMessage(content=user_prompt),
             ]
         )
 
-        return response.content
+        return self._extract_kql_response(response.content or "")
 
     async def improve_query_for_empty_result(self, query: str, probe_sample: str) -> Optional[str]:
         """Improve a valid query that returned zero rows, using real sample data.
@@ -677,13 +684,13 @@ The query's WHERE filter is therefore too strict or uses a wrong property path /
 Rewrite the query so its filter correctly matches the intended resources AGAINST THE REAL PROPERTY VALUES shown in the sample. Keep the same projected columns. Output ONLY the corrected KQL query.
 """
         try:
-            response = await self._ainvoke_with_fallback(
+            response = await self._ainvoke_specialist(
                 [
                     SystemMessage(content=self.SYSTEM_PROMPT),
                     HumanMessage(content=user_prompt),
                 ]
             )
-            improved = self._strip_markdown_fences(response.content or "")
+            improved = self._extract_kql_response(response.content or "")
             if improved and improved.strip():
                 return sanitize_kql(improved.strip())
         except asyncio.CancelledError:
@@ -695,7 +702,8 @@ Rewrite the query so its filter correctly matches the intended resources AGAINST
             logger.warning("kql_result_improve_llm_failed", error=error_str[:200])
         return None
 
-    def _strip_markdown_fences(self, text: str) -> str:
+    @staticmethod
+    def _strip_markdown_fences(text: str) -> str:
         """Strip markdown code fences from LLM output."""
         text = text.strip()
         text = _RE_MARKDOWN_FENCE_START.sub("", text)
@@ -860,23 +868,19 @@ Rewrite the query so its filter correctly matches the intended resources AGAINST
 _query_fixer: Optional[ResourceGraphQueryFixer] = None
 
 
-def get_query_fixer(llm=None, fallback_llm=None) -> ResourceGraphQueryFixer:
+def get_query_fixer(llm=None) -> ResourceGraphQueryFixer:
     """Get or create the singleton query fixer.
 
     Args:
-        llm: Optional codex LLM instance to inject (avoids creating a duplicate).
+           llm: Optional Resource Graph specialist instance to inject.
              Only used on first call when creating the singleton.
-        fallback_llm: Optional primary LLM used when the codex deployment is
-             unavailable (e.g. 404 DeploymentNotFound).
     """
     global _query_fixer
     if _query_fixer is None:
-        _query_fixer = ResourceGraphQueryFixer(llm=llm, fallback_llm=fallback_llm)
+        _query_fixer = ResourceGraphQueryFixer(llm=llm)
     else:
         if llm is not None and _query_fixer._llm is None:
             _query_fixer._llm = llm
-        if fallback_llm is not None and _query_fixer._fallback_llm is None:
-            _query_fixer._fallback_llm = fallback_llm
     return _query_fixer
 
 
@@ -1853,7 +1857,7 @@ class ExploreResourceSchemaTool(BaseTool):
 
 
 # ============================================================================
-# Azure Advisor & Service Health Tools (via Resource Graph)
+# Azure Advisor & Service Health Tools
 # ============================================================================
 
 
@@ -1867,18 +1871,10 @@ class GetAdvisorRecommendationsInput(BaseModel):
     impact: Optional[str] = Field(
         default=None, description="Impact filter: 'High', 'Medium', 'Low' (optional)"
     )
-    use_rest_api: bool = Field(
-        default=False,
-        description=(
-            "Set True for detailed recommendations with remediation actions, "
-            "learn-more links, potential benefits, risk level, and solution text. "
-            "Default False uses KQL (faster, less detail)."
-        ),
-    )
 
 
 class GetAdvisorRecommendationsTool(BaseTool):
-    """Tool to get Azure Advisor recommendations via Resource Graph or REST API."""
+    """Tool to get Azure Advisor recommendations through the read-only REST API."""
 
     name: str = "get_advisor_recommendations"
     description: str = """Retrieves Azure Advisor recommendations.
@@ -1890,27 +1886,18 @@ class GetAdvisorRecommendationsTool(BaseTool):
     - OperationalExcellence: Operational excellence recommendations
     - Performance: Performance improvement recommendations
     
-    Two modes:
-    - Default (use_rest_api=False): Fast KQL query via Resource Graph. Returns basic info.
-    - Detailed (use_rest_api=True): REST API call. Returns remediation actions, learn-more links,
-      potential benefits, risk level, and solution text. Use this when detailed action items are needed.
+        Uses the read-only Microsoft.Advisor 2023-01-01 REST API. Returns remediation actions,
+        learn-more links, potential benefits, risk level, and solution text. API failures remain
+        explicit and never fall back to another specialist's Resource Graph surface.
     
     When analyzing Azure Updates, check Advisor recommendations for affected resources.
     """
     args_schema: Type[BaseModel] = GetAdvisorRecommendationsInput
 
-    _service: Optional[ResourceGraphService] = None
-
-    def __init__(self, service: Optional[ResourceGraphService] = None, **kwargs):
-        """Initialize with optional service."""
-        super().__init__(**kwargs)
-        self._service = service or ResourceGraphService()
-
     def _run(
         self,
         category: Optional[str] = None,
         impact: Optional[str] = None,
-        use_rest_api: bool = False,
     ) -> str:
         """Sync execution not supported."""
         raise NotImplementedError("Use async version")
@@ -1919,62 +1906,9 @@ class GetAdvisorRecommendationsTool(BaseTool):
         self,
         category: Optional[str] = None,
         impact: Optional[str] = None,
-        use_rest_api: bool = False,
     ) -> str:
-        """Get Advisor recommendations asynchronously.
-
-        When use_rest_api=True, calls the Azure Advisor REST API for detailed data.
-        Otherwise, uses the KQL advisorresources table (faster, less detail).
-        """
-        if use_rest_api:
-            return await self._fetch_via_rest_api(category, impact)
-        return await self._fetch_via_kql(category, impact)
-
-    async def _fetch_via_kql(
-        self, category: Optional[str] = None, impact: Optional[str] = None
-    ) -> str:
-        """Fetch Advisor recommendations via Resource Graph KQL (fast, basic info)."""
-        filters = []
-        if category:
-            filters.append(f"properties.category == '{category}'")
-        if impact:
-            filters.append(f"properties.impact == '{impact}'")
-
-        where_clause = " and ".join(filters) if filters else ""
-
-        query = f"""
-advisorresources
-| where type == 'microsoft.advisor/recommendations'
-{"| where " + where_clause if where_clause else ""}
-| extend 
-    category = tostring(properties.category),
-    impact = tostring(properties.impact),
-    shortDescription = tostring(properties.shortDescription.problem),
-    impactedResource = tostring(properties.impactedValue),
-    resourceType = tostring(properties.impactedType),
-    lastUpdated = todatetime(properties.lastUpdated)
-| project 
-    name, 
-    category, 
-    impact, 
-    shortDescription, 
-    impactedResource,
-    resourceType,
-    lastUpdated
-| order by impact asc, category asc
-| limit 100
-"""
-
-        try:
-            result = await execute_kql_with_retry(self._service, query, enrich_subscriptions=False)
-        except RuntimeError as e:
-            return f"Advisor recommendations query error: {e}"
-
-        data = result.get("data", [])
-        if not data:
-            return "No active Advisor recommendations found."
-
-        return self._format_kql_results(data)
+        """Get detailed Advisor recommendations asynchronously through REST."""
+        return await self._fetch_via_rest_api(category, impact)
 
     async def _fetch_via_rest_api(
         self, category: Optional[str] = None, impact: Optional[str] = None
@@ -2008,9 +1942,8 @@ advisorresources
                 logger.warning(
                     "advisor_rest_api_failed",
                     error=result["error"],
-                    fallback="kql",
                 )
-                return await self._fetch_via_kql(category, impact)
+                return f"Advisor REST API error: {result['error']}"
 
             values = result.get("value", [])
             if not values:
@@ -2022,35 +1955,8 @@ advisorresources
             logger.warning(
                 "advisor_rest_api_error",
                 error=str(e),
-                fallback="kql",
             )
-            return await self._fetch_via_kql(category, impact)
-
-    def _format_kql_results(self, data: list[dict]) -> str:
-        """Format KQL results into markdown."""
-        by_category: dict[str, list] = {}
-        for rec in data:
-            cat = rec.get("category", "Unknown")
-            if cat not in by_category:
-                by_category[cat] = []
-            by_category[cat].append(rec)
-
-        output_lines = [f"## Azure Advisor Recommendations ({len(data)})\n"]
-
-        for cat, recs in by_category.items():
-            output_lines.append(f"### {cat} ({len(recs)})")
-            for i, rec in enumerate(recs[:10], 1):
-                impact_emoji = {"High": "🔴", "Medium": "🟡", "Low": "🟢"}.get(
-                    rec.get("impact"), "⚪"
-                )
-                output_lines.append(
-                    f"{i}. {impact_emoji} **{rec.get('shortDescription', 'N/A')}**\n"
-                    f"   - Affected resource: {rec.get('impactedResource', 'N/A')}\n"
-                    f"   - Resource type: {rec.get('resourceType', 'N/A')}"
-                )
-            output_lines.append("")
-
-        return "\n".join(output_lines)
+            return f"Advisor REST API error: {str(e)}"
 
     def _format_rest_results(self, values: list[dict]) -> str:
         """Format REST API results into detailed markdown."""
@@ -2823,6 +2729,147 @@ class GetCostByServiceTool(BaseTool):
         except Exception as e:
             logger.error("Cost by service query failed", error=str(e))
             return f"Service cost query error: {str(e)}"
+
+
+# ============================================================================
+# Azure Billing Tools
+# ============================================================================
+
+
+class ListBillingAccountsInput(BaseModel):
+    """Input for listing accessible Azure Billing accounts."""
+
+    top: int = Field(
+        default=20,
+        ge=1,
+        le=50,
+        description="Maximum billing accounts to return (1-50, default: 20)",
+    )
+
+
+class ListBillingAccountsTool(BaseTool):
+    """List Azure Billing accounts visible to the Hosted Agent identity."""
+
+    name: str = "list_billing_accounts"
+    description: str = (
+        "Lists Azure Billing accounts available to the current identity through the "
+        "Microsoft.Billing 2024-04-01 REST API. Use for pricing, agreement, invoice, or "
+        "billing-scope updates before requesting a specific billing profile."
+    )
+    args_schema: Type[BaseModel] = ListBillingAccountsInput
+
+    _service: Optional[BillingService] = None
+
+    def __init__(self, service: Optional[BillingService] = None, **kwargs):
+        """Initialize with an optional Billing service."""
+        super().__init__(**kwargs)
+        self._service = service or BillingService()
+
+    def _run(self, top: int = 20) -> str:
+        """Sync execution is not supported."""
+        raise NotImplementedError("Use async version")
+
+    async def _arun(self, top: int = 20) -> str:
+        """List and format accessible billing accounts."""
+        result = await self._service.list_billing_accounts(top=top)
+        if not result["success"]:
+            return f"Billing API error: {result['error']}"
+        accounts = result["accounts"]
+        if not accounts:
+            return (
+                "No billing accounts are visible to this identity. This does not prove that "
+                "the tenant has no billing account."
+            )
+
+        lines = [
+            f"## Azure Billing accounts ({result['api_version']})",
+            f"Visible accounts: {result['count']}",
+        ]
+        for account in accounts:
+            lines.extend(
+                [
+                    f"- {account['display_name'] or account['name']}",
+                    f"  Evidence: billing:{account['id']}",
+                    f"  Name: {account['name']}",
+                    f"  Status: {account['status'] or 'unknown'}",
+                    f"  Account type: {account['account_type'] or 'unknown'}",
+                    f"  Agreement type: {account['agreement_type'] or 'unknown'}",
+                    f"  Read access: {account['has_read_access']}",
+                ]
+            )
+        return "\n".join(lines)
+
+
+class ListBillingProfilesInput(BaseModel):
+    """Input for listing profiles under one Azure Billing account."""
+
+    billing_account_name: str = Field(
+        min_length=1,
+        description="Billing account name returned by list_billing_accounts",
+    )
+    top: int = Field(
+        default=50,
+        ge=1,
+        le=50,
+        description="Maximum billing profiles to return (1-50, default: 50)",
+    )
+
+
+class ListBillingProfilesTool(BaseTool):
+    """List profiles under one accessible Azure Billing account."""
+
+    name: str = "list_billing_profiles"
+    description: str = (
+        "Lists billing profiles for one account through the Microsoft.Billing 2024-04-01 "
+        "REST API. Call list_billing_accounts first and pass its exact account name. This "
+        "operation is supported for Microsoft Customer Agreement and Microsoft Partner "
+        "Agreement accounts; preserve errors for other account types as evidence gaps."
+    )
+    args_schema: Type[BaseModel] = ListBillingProfilesInput
+
+    _service: Optional[BillingService] = None
+
+    def __init__(self, service: Optional[BillingService] = None, **kwargs):
+        """Initialize with an optional Billing service."""
+        super().__init__(**kwargs)
+        self._service = service or BillingService()
+
+    def _run(self, billing_account_name: str, top: int = 50) -> str:
+        """Sync execution is not supported."""
+        raise NotImplementedError("Use async version")
+
+    async def _arun(self, billing_account_name: str, top: int = 50) -> str:
+        """List and format billing profiles."""
+        result = await self._service.list_billing_profiles(
+            billing_account_name=billing_account_name,
+            top=top,
+        )
+        if not result["success"]:
+            return f"Billing profile API error: {result['error']}"
+        profiles = result["profiles"]
+        if not profiles:
+            return (
+                f"No billing profiles are visible under {billing_account_name}. The account "
+                "type may not support profiles or the identity may lack billing-scope access."
+            )
+
+        lines = [
+            f"## Billing profiles ({result['api_version']})",
+            f"Billing account: {billing_account_name}",
+            f"Visible profiles: {result['count']}",
+        ]
+        for profile in profiles:
+            lines.extend(
+                [
+                    f"- {profile['display_name'] or profile['name']}",
+                    f"  Evidence: billing:{profile['id']}",
+                    f"  Status: {profile['status'] or 'unknown'}",
+                    f"  Currency: {profile['currency'] or 'unknown'}",
+                    f"  Invoice day: {profile['invoice_day']}",
+                    f"  Purchase order: {profile['purchase_order_number'] or '(none)'}",
+                ]
+            )
+        return "\n".join(lines)
 
 
 # ============================================================================
@@ -3984,7 +4031,8 @@ class QueryToolResultInput(BaseModel):
     """Input for searching a previously truncated tool result."""
 
     ref: str = Field(
-        description="Ref shown as [ref=R7] at the end of a truncated tool result preview."
+        pattern=r"^R[1-9][0-9]*$",
+        description="Ref shown as [ref=R7] at the end of a truncated tool result preview.",
     )
     pattern: str = Field(
         default="",
@@ -4147,6 +4195,7 @@ def get_all_tools() -> list[BaseTool]:
     rg_service = ResourceGraphService()
     learn_service = MicrosoftLearnService()
     cost_service = CostManagementService()
+    billing_service = BillingService()
     log_service = LogAnalyticsService()
 
     return [
@@ -4163,7 +4212,7 @@ def get_all_tools() -> list[BaseTool]:
         GetResourceConfigurationsTool(service=rg_service),
         GetResourceDependenciesTool(service=rg_service),
         # Azure Advisor & Service Health (via Resource Graph)
-        GetAdvisorRecommendationsTool(service=rg_service),
+        GetAdvisorRecommendationsTool(),
         GetServiceHealthTool(service=rg_service),
         # Impact analysis tools (via REST API)
         GetResourceHealthTool(),
@@ -4173,6 +4222,9 @@ def get_all_tools() -> list[BaseTool]:
         # Cost Management tools
         GetCostByResourceTypeTool(service=cost_service),
         GetCostByServiceTool(service=cost_service),
+        # Azure Billing tools
+        ListBillingAccountsTool(service=billing_service),
+        ListBillingProfilesTool(service=billing_service),
         # Log Analytics tools
         QueryLogAnalyticsTool(service=log_service),
         GetRecentErrorsTool(service=log_service),

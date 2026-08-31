@@ -128,6 +128,37 @@ class TestParsePlanJson:
         plan = analyzer._parse_plan_json(raw, revision=0)
         assert plan.tasks[0].method == "kql"
 
+    @pytest.mark.parametrize(
+        ("method", "tool_name"),
+        [
+            ("billing_api", "list_billing_accounts"),
+            ("context", "query_tool_result"),
+        ],
+    )
+    def test_parse_plan_preserves_specialist_methods(self, method, tool_name):
+        raw = json.dumps(
+            {
+                "plan_id": "p1",
+                "update_summary": "Pricing update",
+                "analysis_goal": "Collect scoped evidence",
+                "tasks": [
+                    {
+                        "task_id": "t1",
+                        "description": "Collect evidence",
+                        "method": method,
+                        "tool_name": tool_name,
+                        "tool_args": {},
+                        "purpose": "Close a named gap",
+                    }
+                ],
+            }
+        )
+
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        plan = analyzer._parse_plan_json(raw, revision=0)
+
+        assert plan.tasks[0].method == method
+
 
 class TestParseEvaluationJson:
     """Test EvaluationResult JSON parsing."""
@@ -210,8 +241,8 @@ class TestParseEvaluationJson:
     @pytest.mark.asyncio
     async def test_malformed_evaluator_response_records_terminal_model_error(self):
         analyzer = object.__new__(AzureUpdateAnalyzer)
-        analyzer.llm_evaluator = type("Evaluator", (), {})()
-        analyzer.llm_evaluator.ainvoke = AsyncMock(
+        analyzer.llm_quality_reviewer = type("QualityReviewer", (), {})()
+        analyzer.llm_quality_reviewer.ainvoke = AsyncMock(
             return_value=type("Response", (), {"content": "not json", "response_metadata": {}})()
         )
         analyzer._llm_circuit_breaker = CircuitBreaker(
@@ -473,10 +504,10 @@ class TestLanguageIsolation:
 
 
 class TestKqlTaskRouting:
-    """Test that KQL-bearing tasks are routed to the codex model.
+    """Test that KQL-bearing tasks are routed to the Resource Graph specialist.
 
-    KQL repair must use the dedicated codex deployment/endpoint
-    (FOUNDRY_CODEX_AGENT_NAME), never the fast agent.
+    KQL repair must use the dedicated Resource Graph Prompt Agent, never the
+    coordinator or quality reviewer.
     """
 
     @staticmethod
@@ -519,6 +550,76 @@ class TestKqlTaskRouting:
 
 
 class TestContextualToolArguments:
+    def test_find_related_resources_query_alias_is_normalized_before_validation(self):
+        from src.agent.tools import FindRelatedResourcesInput
+
+        tool = type("Tool", (), {"args_schema": FindRelatedResourcesInput})()
+        task = AnalysisTask(
+            task_id="t1",
+            description="find apphost resources",
+            method="kql",
+            tool_name="find_related_resources",
+            tool_args={"query": "apphost"},
+            purpose="find related resources",
+        )
+
+        AzureUpdateAnalyzer._fill_contextual_tool_args(
+            task,
+            tool,
+            {"trace_id": "trace-1", "update": {"azure_services": ["Announcement"]}},
+        )
+
+        assert task.tool_args == {"keyword": ["apphost"]}
+        assert FindRelatedResourcesInput.model_validate(task.tool_args)
+
+    def test_input_schema_failure_uses_coordinator_instead_of_kql_fixer(self):
+        task = AnalysisTask(
+            task_id="t1",
+            description="find apphost resources",
+            method="kql",
+            tool_name="find_related_resources",
+            tool_args={"query": "apphost"},
+            purpose="find related resources",
+        )
+
+        assert (
+            AzureUpdateAnalyzer._needs_resource_graph_repair(
+                task,
+                "1 validation error: keyword Field required [type=missing]",
+            )
+            is False
+        )
+        assert (
+            AzureUpdateAnalyzer._needs_resource_graph_repair(task, "ParserFailure InvalidQuery")
+            is True
+        )
+
+    def test_natural_language_kql_is_replaced_by_resource_type_builder(self):
+        from src.agent.tools import ResourceGraphQueryInput
+
+        tool = type("Tool", (), {"args_schema": ResourceGraphQueryInput})()
+        task = AnalysisTask(
+            task_id="t1",
+            description="inspect managed clusters",
+            method="kql",
+            tool_name="query_azure_resources",
+            tool_args={
+                "resource_type": "microsoft.containerservice/managedclusters",
+                "query": "evaluate the effect across clusters",
+            },
+            purpose="find related resources",
+        )
+
+        AzureUpdateAnalyzer._fill_contextual_tool_args(
+            task,
+            tool,
+            {"trace_id": "trace-1", "update": {"azure_services": []}},
+        )
+
+        assert set(task.tool_args) == {"query"}
+        assert task.tool_args["query"].lstrip().startswith("Resources")
+        assert "advancedNetworking" in task.tool_args["query"]
+
     def test_required_service_name_is_filled_from_update(self):
         from pydantic import BaseModel
 
@@ -604,8 +705,8 @@ class TestReportOutputRecovery:
             failure_threshold=3,
             reset_timeout=120,
         )
-        analyzer.llm_reporter = type("Reporter", (), {})()
-        analyzer.llm_reporter.ainvoke = AsyncMock(
+        analyzer.llm_report_writer = type("ReportWriter", (), {})()
+        analyzer.llm_report_writer.ainvoke = AsyncMock(
             side_effect=[
                 AIMessage(
                     content='{"relevance":"not_relevant",',
@@ -637,10 +738,9 @@ class TestReportOutputRecovery:
 
         result = await analyzer._report_node(state)
 
-        assert analyzer.llm_reporter.ainvoke.await_count == 2
+        assert analyzer.llm_report_writer.ainvoke.await_count == 2
         assert result["analysis_result"]["raw_analysis"] == (
-            '{"relevance":"not_relevant",'
-            '"detailed_analysis":"complete"}'
+            '{"relevance":"not_relevant",' '"detailed_analysis":"complete"}'
         )
-        recovery_messages = analyzer.llm_reporter.ainvoke.await_args_list[1].args[0]
+        recovery_messages = analyzer.llm_report_writer.ainvoke.await_args_list[1].args[0]
         assert recovery_messages[-1].content == analyzer_module.OUTPUT_RECOVERY_MESSAGE

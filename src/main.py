@@ -10,6 +10,9 @@ from structlog import get_logger
 
 from src.admin.router import router as admin_router
 from src.agent.hosted_client import HostedAgentAnalyzer
+from src.archive.models import ArchiveReceipt, ArchiveSource
+from src.archive.router import router as archive_router
+from src.archive.service import ArchiveService
 from src.config import get_settings
 from src.email.service import EmailService
 from src.logging_config import setup_logging
@@ -40,12 +43,13 @@ logger = get_logger()
 analyzer: Optional[HostedAgentAnalyzer] = None
 email_service: Optional[EmailService] = None
 rss_parser: Optional[AzureUpdateParser] = None
+archive_service: Optional[ArchiveService] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global analyzer, email_service, rss_parser
+    global analyzer, archive_service, email_service, rss_parser
 
     logger.info("Initializing AzBrief application")
 
@@ -55,10 +59,11 @@ async def lifespan(app: FastAPI):
     analyzer = HostedAgentAnalyzer(settings)
     email_service = EmailService()
     rss_parser = AzureUpdateParser()
+    archive_service = ArchiveService(settings=settings)
 
     # Expose them to orchestrated runs and the admin console.
-    register_services(analyzer, email_service, rss_parser)
-    register_mcp_services(analyzer, rss_parser)
+    register_services(analyzer, email_service, rss_parser, archive_service)
+    register_mcp_services(analyzer, rss_parser, archive_service)
 
     logger.info(
         "AzBrief application started",
@@ -87,6 +92,7 @@ app = FastAPI(
 )
 
 app.include_router(admin_router)
+app.include_router(archive_router)
 app.mount("/mcp", mcp_http_app, name="mcp")
 
 
@@ -143,6 +149,8 @@ class AnalyzeResponse(BaseModel):
     affected_resources_count: int
     recommendations_count: int
     email_sent: bool
+    archive_id: str = ""
+    archive_url: str = ""
 
 
 class HealthResponse(BaseModel):
@@ -216,6 +224,15 @@ async def analyze_update(
     background_tasks: BackgroundTasks,
     _api_key: str = Depends(verify_api_key),
 ):
+    """Analyze through the public API and persist the canonical result."""
+    return await _analyze_update(request, background_tasks, ArchiveSource.API_ANALYZE)
+
+
+async def _analyze_update(
+    request: AnalyzeRequest,
+    background_tasks: BackgroundTasks,
+    source: ArchiveSource,
+) -> AnalyzeResponse:
     """Analyze an Azure Update and optionally send email notification.
 
     Args:
@@ -225,7 +242,7 @@ async def analyze_update(
     Returns:
         Analysis result summary
     """
-    global analyzer, email_service, rss_parser
+    global analyzer, archive_service, email_service, rss_parser
 
     if not analyzer or not rss_parser:
         raise HTTPException(status_code=500, detail="Services not initialized")
@@ -253,9 +270,31 @@ async def analyze_update(
 
         # Analyze the update
         result = await analyzer.analyze_update(update)
+        receipt = ArchiveReceipt(archived=False)
+        if archive_service is not None:
+            try:
+                receipt = await archive_service.archive_analysis(update, result, source)
+                if archive_service.configured and not receipt.archived:
+                    raise RuntimeError("configured archive did not persist the analysis")
+            except Exception as exc:
+                logger.error(
+                    "analysis_archive_failed",
+                    update_id=update.id,
+                    source=source.value,
+                    error=str(exc),
+                )
+                raise HTTPException(
+                    status_code=503,
+                    detail="Analysis completed but archive persistence failed.",
+                )
 
         # Send email in background if requested
         email_sent = False
+        archive_url = (
+            archive_service.detail_url(receipt.archive_id)
+            if archive_service is not None and receipt.archived
+            else ""
+        )
         if (
             request.send_email
             and (result.should_notify or not get_settings().report_filtering_enabled)
@@ -270,6 +309,7 @@ async def analyze_update(
                     result,
                     analyzer,
                     subscribers,
+                    archive_url,
                 )
             else:
                 # Single recipient (explicitly specified or existing default)
@@ -278,6 +318,7 @@ async def analyze_update(
                     update,
                     result,
                     request.recipient_email,
+                    archive_url=archive_url,
                 )
             email_sent = True
 
@@ -291,8 +332,12 @@ async def analyze_update(
             affected_resources_count=len(result.affected_resources),
             recommendations_count=len(result.recommendations),
             email_sent=email_sent,
+            archive_id=receipt.archive_id,
+            archive_url=archive_url,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Analysis failed", error=str(e), update_url=request.update_url)
         raise HTTPException(
@@ -380,7 +425,7 @@ async def batch_analyze(
             async with semaphore:
                 try:
                     req = AnalyzeRequest(update_url=url)
-                    await analyze_update(req, background_tasks)
+                    await _analyze_update(req, background_tasks, ArchiveSource.API_BATCH)
                 except Exception as e:
                     logger.error("Batch item failed", url=url, error=str(e))
 
@@ -446,7 +491,11 @@ async def orchestrate_run(
         )
 
     try:
-        record = start_run(since=since, dry_run=request.dry_run)
+        record = start_run(
+            since=since,
+            dry_run=request.dry_run,
+            source=ArchiveSource.API_ORCHESTRATE.value,
+        )
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
 

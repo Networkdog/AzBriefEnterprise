@@ -3,7 +3,8 @@
 [프로젝트 README](../../README.md) > [`src`](../README.md) > `admin`
 
 Container Apps의 EasyAuth가 검증한 Entra principal을 인가하고, 외부 asset 없이 server-rendered
-관리 콘솔과 제한된 운영 API를 제공합니다.
+관리 콘솔과 제한된 운영 API를 제공합니다. Archive UI가 활성화되면 header에서 `/archive`로
+이동할 수 있지만, reader 인가는 `src/archive/auth.py`의 별도 allow-list 계약을 따릅니다.
 
 ## 파일
 
@@ -50,3 +51,4 @@ Container Apps의 EasyAuth가 검증한 Entra principal을 인가하고, 외부 
 - 사용자 입력을 inline script/style에 삽입하지 않으며 CSP nonce와 `frame-ancestors 'none'`을
   유지합니다.
 - run 기록은 메모리 관측 정보입니다. 처리 완료의 내구성 source of truth는 checkpoint입니다.
+- Archive 상태 카드는 backend/UI 설정 여부만 보여 주며 Blob URL이나 credential은 노출하지 않습니다.

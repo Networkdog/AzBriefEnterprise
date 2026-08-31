@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "17446584893512979106"
+      "templateHash": "12673387830141632901"
     },
     "description": "AzBrief Enterprise — Microsoft Foundry Hosted Agent analysis runtime + Container Apps control plane and scheduler + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
@@ -83,13 +83,6 @@
       "maxValue": 1000,
       "metadata": {
         "description": "Model deployment capacity in thousands of tokens per minute (TPM). A single report prompt alone runs ~27K tokens, and the multi-agent stages, planning and execution share the same deployment, so 30 rate-limits every run."
-      }
-    },
-    "enableFoundryEnrichmentAgents": {
-      "type": "bool",
-      "defaultValue": false,
-      "metadata": {
-        "description": "Enable the optional research/impact/action/review Prompt Agent enrichment pipeline. Keep false until provision_foundry_agents publishes the app-owned FunctionTools and strict stage schemas and --check passes."
       }
     },
     "foundryHostedAgentName": {
@@ -436,28 +429,12 @@
     "adminAuthConfigured": "[and(not(empty(parameters('adminEntraClientId'))), not(empty(parameters('adminEntraClientSecret'))))]",
     "adminUiEnabled": "[and(variables('adminAuthConfigured'), not(empty(parameters('adminAllowedPrincipals'))))]",
     "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', variables('foundryAccountName'), variables('foundryProjectName'))]",
-    "foundryPrimaryAgentName": "[format('{0}-primary', parameters('baseName'))]",
-    "foundryPlannerAgentName": "[format('{0}-planner', parameters('baseName'))]",
-    "foundryEvaluatorAgentName": "[format('{0}-evaluator', parameters('baseName'))]",
-    "foundryReporterAgentName": "[format('{0}-reporter', parameters('baseName'))]",
-    "foundryEnrichmentAgentRoster": [
-      {
-        "name": "[format('{0}-research', parameters('baseName'))]",
-        "stage": "research"
-      },
-      {
-        "name": "[format('{0}-impact', parameters('baseName'))]",
-        "stage": "impact"
-      },
-      {
-        "name": "[format('{0}-action', parameters('baseName'))]",
-        "stage": "action"
-      },
-      {
-        "name": "[format('{0}-review', parameters('baseName'))]",
-        "stage": "review"
-      }
-    ],
+    "foundryCoordinatorAgentName": "[format('{0}-coordinator', parameters('baseName'))]",
+    "foundryResourceGraphAgentName": "[format('{0}-resource-graph', parameters('baseName'))]",
+    "foundryAzureMcpAgentName": "[format('{0}-azure-mcp', parameters('baseName'))]",
+    "foundryAzureApiAgentName": "[format('{0}-azure-api', parameters('baseName'))]",
+    "foundryReportWriterAgentName": "[format('{0}-report-writer', parameters('baseName'))]",
+    "foundryQualityReviewerAgentName": "[format('{0}-quality-reviewer', parameters('baseName'))]",
     "runTimeBudgetSeconds": "[sub(parameters('jobReplicaTimeoutSeconds'), 3600)]"
   },
   "resources": [
@@ -1771,30 +1748,19 @@
       },
       "value": "[parameters('foundryHostedAgentName')]"
     },
-    "foundryPrimaryAgentName": {
-      "type": "string",
-      "metadata": {
-        "description": "Primary Prompt Agent name used inside the Hosted Agent runtime."
-      },
-      "value": "[variables('foundryPrimaryAgentName')]"
-    },
-    "foundryPhaseAgentNames": {
+    "foundrySpecialistAgentNames": {
       "type": "object",
       "metadata": {
-        "description": "Specialized Foundry agents used for planning, evaluation, and reporting."
+        "description": "Distinct specialist Prompt Agents orchestrated by the Hosted Agent."
       },
       "value": {
-        "planner": "[variables('foundryPlannerAgentName')]",
-        "evaluator": "[variables('foundryEvaluatorAgentName')]",
-        "reporter": "[variables('foundryReporterAgentName')]"
+        "coordinator": "[variables('foundryCoordinatorAgentName')]",
+        "resourceGraph": "[variables('foundryResourceGraphAgentName')]",
+        "azureMcp": "[variables('foundryAzureMcpAgentName')]",
+        "azureApi": "[variables('foundryAzureApiAgentName')]",
+        "reportWriter": "[variables('foundryReportWriterAgentName')]",
+        "qualityReviewer": "[variables('foundryQualityReviewerAgentName')]"
       }
-    },
-    "foundryEnrichmentAgentRoster": {
-      "type": "string",
-      "metadata": {
-        "description": "Optional enrichment roster value to set as AZBRIEF_ENRICHMENT_AGENT_ROSTER in the azd environment before deploying the Hosted Agent."
-      },
-      "value": "[if(parameters('enableFoundryEnrichmentAgents'), string(variables('foundryEnrichmentAgentRoster')), '')]"
     },
     "emailSenderDomain": {
       "type": "string",
@@ -1873,12 +1839,19 @@
       },
       "value": "[format('python -m scripts.provision_foundry_agents --model {0}', parameters('modelDeploymentName'))]"
     },
+    "configureHostedAgentCommand": {
+      "type": "string",
+      "metadata": {
+        "description": "Command that binds the six specialist Prompt Agents to the Hosted Agent deployment manifest."
+      },
+      "value": "[format('azd env set AZURE_SUBSCRIPTION_ID={0} AZBRIEF_PROMPT_COORDINATOR_AGENT_NAME={1} AZBRIEF_PROMPT_RESOURCE_GRAPH_AGENT_NAME={2} AZBRIEF_PROMPT_AZURE_MCP_AGENT_NAME={3} AZBRIEF_PROMPT_AZURE_API_AGENT_NAME={4} AZBRIEF_PROMPT_REPORT_WRITER_AGENT_NAME={5} AZBRIEF_PROMPT_QUALITY_REVIEWER_AGENT_NAME={6}', subscription().subscriptionId, variables('foundryCoordinatorAgentName'), variables('foundryResourceGraphAgentName'), variables('foundryAzureMcpAgentName'), variables('foundryAzureApiAgentName'), variables('foundryReportWriterAgentName'), variables('foundryQualityReviewerAgentName'))]"
+    },
     "nextSteps": {
       "type": "string",
       "metadata": {
         "description": "Post-deployment checklist."
       },
-      "value": "[format('1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd environment project endpoint plus AZBRIEF_PROMPT_PRIMARY_AGENT_NAME={0} and optional role/roster aliases, run provisionAgentsCommand and its --check, then deploy {1} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', variables('foundryPrimaryAgentName'), parameters('foundryHostedAgentName'))]"
+      "value": "[format('1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd project endpoint, run configureHostedAgentCommand, run provisionAgentsCommand and its --check, then deploy {0} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', parameters('foundryHostedAgentName'))]"
     }
   }
 }

@@ -7,12 +7,15 @@ description: 'G-Eval LLM-as-a-Judge methodology for scoring and autonomously imp
 
 ## Foundry Runtime Guidance
 
+- As the quality reviewer, use the same evidence snapshot that grounded the report and remain
+  independent from the report writer.
 - Evaluate independently across actionability, faithfulness, job relevance, structure, and
   architectural depth. Faithfulness outranks polish.
 - Treat any fabricated resource, date, command, or URL as critical. Reward concise evidence,
   honest zero-impact findings, and explicit limits rather than verbosity.
 - Return evidence-addressed corrections that name the unsupported claim or missing fact and
-  the smallest required change; never rewrite merely to raise a score.
+  the smallest required change; never rewrite merely to raise a score. Request at most one
+  evidence-preserving rewrite and keep it only when the score improves.
 - Judge or parser failure is not a pass. Preserve the error and fail closed.
 
 <!-- End Foundry Runtime Guidance -->
@@ -32,6 +35,21 @@ description: 'G-Eval LLM-as-a-Judge methodology for scoring and autonomously imp
 ## Quick Reference
 
 ```bash
+# Freeze a reproducible period, including an untouched holdout split
+python -m scripts.quality_campaign prepare --from 2026-06-01 --to 2026-08-29 \
+  --sample 24 --seed 42 --holdout-ratio 0.25 --output eval_runs/campaign-q3
+
+# Run unchanged A/A baselines through the current source + live Prompt Agent roster
+python -m scripts.quality_campaign run --campaign eval_runs/campaign-q3 \
+  --tag baseline-a --runtime local --split diagnosis --concurrency 1 --use-azd-env
+python -m scripts.quality_campaign run --campaign eval_runs/campaign-q3 \
+  --tag baseline-b --runtime local --split diagnosis --concurrency 1 --use-azd-env
+
+# Resume only missing cases from an interrupted run; all lineage must match
+python -m scripts.quality_campaign run --campaign eval_runs/campaign-q3 \
+  --tag baseline-a --runtime local --split diagnosis --concurrency 1 --use-azd-env \
+  --resume-run eval_runs/campaign-q3/runs/<interrupted-baseline-a>
+
 # Generate a real-data report, score it with G-Eval, iterate to the target (3 rounds)
 python -m scripts.evaluate_report --latest --with-html --iterate 3
 
@@ -58,6 +76,8 @@ Override the location with `--out-dir DIR` or the `AZBRIEF_EVAL_DIR` environment
 |------|------|
 | `src/agent/geval.py` | `GEvalJudge`, `GEvalReport`, `DimensionScore`, `DIMENSIONS` — the judge |
 | `scripts/evaluate_report.py` | CLI loop: generate → rule pre-check → G-Eval → feedback → repeat |
+| `scripts/quality_campaign.py` | Frozen period/splits, Hosted or local-harness runs, layered gates, paired comparison |
+| `references/quality-campaign-rubric.md` | Research basis, impossible-perfect anchors, release gates, trace contract |
 | `src/config.py` | `geval_*` settings (enabled, target, logprob, max_iterations) |
 | `tests/test_geval.py` | Judge unit tests (fake LLM, logprob math, aggregation, edge cases) |
 | `src/agent/prompts/` | Report prompts — the lever that G-Eval feedback improves |
@@ -169,6 +189,21 @@ a defense against reward hacking (padding text to inflate scores).
 
 ## The Self-Improvement Loop
 
+The single-report loop below is a diagnostic rewrite loop, not evidence that a source change
+generalizes. Persistent improvement uses `scripts/quality_campaign.py`: freeze the dataset, run A/A
+and holdout baselines before editing, change one source-level cause, compare paired diagnosis runs
+outside the noise floor, then test the untouched holdout. The final release gate runs the full period
+through the deployed Hosted Agent's `evaluate_update` operation. See
+[`references/quality-campaign-rubric.md`](references/quality-campaign-rubric.md).
+Completed cases are atomically stored under the run's `records/` directory. Resume requires the
+same dataset, ordered case set, runtime, source/worktree hash, and immutable Agent versions; a run
+whose source or Agent lineage changes before completion is invalid for comparison.
+
+Runtime analysis always uses the bounded form: report writer → quality reviewer → at most one
+evidence-preserving report-writer revision → rescore → keep only when improved. The CLI loop below
+can run more iterations for offline evaluation, but it must not be confused with delivery-time
+behavior.
+
 ```
 Generate report (real Azure data)
         │
@@ -201,9 +236,11 @@ production-excellent band within 2 revisions.
 | `geval_target_score` | `4.5` | Passing threshold on the 1-5 scale (loop stop point) |
 | `geval_logprob_normalization` | `True` | Continuous scoring via logprobs (auto-off for o-series) |
 | `geval_max_iterations` | `3` | Max generate→evaluate→improve rounds |
+| `geval_runtime_enabled` | `True` | Run quality review and at most one rewrite before delivery |
 
-The judge model is a **deterministic** (temperature=0, seed=42) instance of the primary
-deployment, built by `GEvalJudge._create_judge_llm()`.
+`GEvalJudge._create_judge_llm()` invokes the persisted quality-reviewer Prompt Agent. Model
+sampling parameters are governed by that immutable Agent definition rather than application-side
+chat-completions settings.
 
 ## Extending the Judge
 
@@ -267,6 +304,14 @@ un-evidenced resource) can drop the aggregate even when your change was correct.
   diminishing returns (see the guardrails in `.github/prompts/self-improve-reports.prompt.md`).
 
 ### Fleet measurement — and the A/A test you must run first
+
+`evaluate_batch.py` remains useful for exploratory fleet measurements. Use `quality_campaign.py` for
+release work because it freezes source/Agent/dataset lineage, keeps diagnosis and holdout separate,
+collects deterministic, semantic, trajectory, and action-safety results, and rejects safety regressions
+that a mean score would hide. It preserves each case attempt, retries transient connection/rate-limit
+failures and generation placeholders once after the first pass, and keeps only the final outcome in
+the canonical record. Exhausted case errors and per-dimension judge errors remain blockers; never
+translate a failed dimension to a neutral score and average it away.
 
 `scripts/evaluate_batch.py` scores N updates across a date range and aggregates per dimension:
 

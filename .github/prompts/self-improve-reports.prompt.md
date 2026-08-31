@@ -22,6 +22,8 @@ tools: ["codebase", "search", "editFiles", "runCommands", "runTests", "problems"
 
 `scripts/evaluate_report.py --iterate`는 피드백을 **런타임 system prompt에 임시 주입**할 뿐,
 보고서 하나를 그 순간만 개선하고 프로세스가 끝나면 사라진다. **이것은 목적이 아니라 진단 도구다.**
+기간·표본·holdout·소스/Agent 버전·trace를 고정하는 제어면은
+`scripts/quality_campaign.py`다. 모든 장기 개선은 이 campaign artifact에서 시작하고 끝낸다.
 
 당신의 진짜 임무는 여러 업데이트에서 **반복적으로 나타나는 결함 패턴**을 찾아,
 그 **근본 원인을 소스(프롬프트·코드)에 영구 반영**하여 *모든* 향후 보고서가 좋아지게 하는 것이다.
@@ -34,14 +36,23 @@ tools: ["codebase", "search", "editFiles", "runCommands", "runTests", "problems"
 
 ## ✅ 성공 기준 (정량)
 
-각 반복이 끝날 때 다음을 향해 전진해야 한다:
+`5`는 알려진 결함과 미검증 경계가 전혀 없는 **이론적 이상**이며 자동 종료 조건이 아니다.
+모든 항목을 억지로 5로 만드는 목표는 verbosity, overfitting, rubric 완화라는 reward hacking을
+유발한다. 출시 gate와 지속 개선의 북극성을 구분한다.
+
+각 반복은 다음 **출시 gate**를 향해 전진해야 한다:
 
 - **G-Eval 가중 점수 ≥ 4.5/5.0** (기본 목표; `argument-hint`로 재지정 가능) **이고 critical flaw 0개**
-  - 5.0은 의도적으로 도달 불가능한 이상치다. 실무 천장은 4.x 밴드이므로 4.5를 노린다.
+  - 각 semantic dimension 평균은 **4.0 이상**이어야 한다. 높은 평균이 약한 한 차원을 가리면 실패다.
+  - 개별 report semantic score가 3.0 미만이면 fleet 평균과 관계없이 실패다.
   - `faithfulness`(가중치 1.3)가 최우선 — 사실 조작 1건은 즉시 릴리스 차단 사유다.
-- **규칙기반 점수 ≥ 90% (A 등급 이상)**
-- **회귀 0**: `python -c "import src"` 성공, `pytest` 전부 통과, 이전에 좋던 샘플의 점수가 떨어지지 않음.
-- 개선이 **홀드아웃 샘플**(수정에 사용하지 않은 다른 업데이트)에서도 재현되어야 한다.
+- **규칙기반 평균 ≥ 90%**, 개별 report 80% 미만 0건
+- **Trajectory 평균 ≥ 90**, 개별 70 미만 0건, critical trajectory 0, 실행/생성 실패 0
+- **Action safety**: blocked/unverified action 0, action이 있으면 verification 누락 0
+- **회귀 0**: `python -c "import src"` 성공, `pytest` 전부 통과, 다른 차원·안전 gate가 떨어지지 않음
+- 개선이 변경 전에 고정한 **홀드아웃 샘플**에서도 A/A noise floor보다 크게 재현되어야 한다.
+- 표본 campaign은 진단용이다. 고객 출시 판정은 같은 기간 전체(`--sample 0`, `--split all`)를
+  실제 Hosted Agent에서 통과해야 `release_eligible=true`다.
 
 ---
 
@@ -59,14 +70,44 @@ tools: ["codebase", "search", "editFiles", "runCommands", "runTests", "problems"
    python -m pytest tests/ -o "addopts=" -q
    ```
    실패하면 **먼저 고치고** 나서 개선 루프를 시작한다 (깨진 위에 쌓지 않는다).
-3. **자격증명 확인** (`.env`): `FOUNDRY_PROJECT_ENDPOINT`, `FOUNDRY_PRIMARY_AGENT_NAME`,
-   `AZURE_TENANT_ID`. 로컬에서는 `az login` 토큰까지 유효하면 **라이브 경로**, 없으면 **degrade 경로**.
-   - **라이브 경로**: `scripts/evaluate_report.py`로 실제 Azure 데이터 + G-Eval 사용 (1반복 ≈ 2분).
+3. **자격증명 확인**: `.env`를 읽거나 수정하지 않는다. `azure.yaml`이 있는 이 저장소에서는
+  `--use-azd-env`가 현재 azd environment의 project endpoint, Hosted Agent 이름, 여섯 Prompt Agent
+  alias를 프로세스 메모리에서만 매핑한다. 값은 출력하거나 artifact에 저장하지 않는다. 여섯 Agent
+  이름은 모두 달라야 한다. `az login`/`azd auth`가 유효하면 **라이브 경로**, 없으면 **degrade 경로**.
+   - **라이브 inner-loop**: `quality_campaign run --runtime local --use-azd-env`로 현재 소스의
+     Hosted harness + 실제 여섯 Prompt Agent를 평가한다.
+   - **Hosted release 검증**: 사용자 승인 후 후보 Hosted version을 배포하고
+     `quality_campaign run --runtime hosted --use-azd-env`로 배포 artifact를 평가한다.
    - **degrade 경로**: 자격증명이 없으면 `python -m scripts.run_quality_loop`(mock)와 규칙기반 채점,
      그리고 과거 감사 데이터(`results_2026-03.jsonl`·`results_2026-04.jsonl`·`results_2026-06.jsonl`)의
      결함 패턴 분석으로 대체한다. 이 경우 사용자에게 "라이브 G-Eval 없이 진행 중"임을 명확히 알린다.
-4. **예산 설정**: `argument-hint`에서 `budget`(반복 횟수, 기본 8), `target`(G-Eval 목표, 기본 4.5),
-   `period`/`url`(대상 업데이트) 파싱. 진행 상황을 `eval_runs/`에 남겨 체크포인트로 삼는다.
+4. **Campaign 고정**: argument에 기간이 없으면 1차 기준 기간은 `2026-06-01..2026-08-29`,
+   표본 24, seed 42, holdout 25%를 쓴다. 기존 campaign이 있으면 hash를 확인하고 재사용한다.
+   ```powershell
+   python -m scripts.quality_campaign prepare --from 2026-06-01 --to 2026-08-29 `
+     --sample 24 --seed 42 --holdout-ratio 0.25 `
+     --output eval_runs/campaign_20260601_20260829_seed42
+   ```
+5. **변경 전 세 run을 먼저 완료**한다. 동일 diagnosis A/A 두 번과 holdout baseline 한 번이다.
+   소스를 한 줄이라도 고친 뒤 만든 결과는 baseline으로 인정하지 않는다.
+   ```powershell
+   python -m scripts.quality_campaign run --campaign <campaign> --tag baseline-a `
+     --runtime local --split diagnosis --concurrency 1 --use-azd-env
+   python -m scripts.quality_campaign run --campaign <campaign> --tag baseline-b `
+     --runtime local --split diagnosis --concurrency 1 --use-azd-env
+   python -m scripts.quality_campaign compare --baseline <baseline-a-run> `
+     --candidate <baseline-b-run> --mode aa --output <campaign>/aa-noise.json
+   python -m scripts.quality_campaign run --campaign <campaign> --tag baseline-holdout `
+     --runtime local --split holdout --concurrency 1 --use-azd-env
+   ```
+   중단된 run에 `run.json`과 `records/`가 있으면 같은 명령에
+   `--resume-run <interrupted-run-dir>`를 추가한다. 완료 record만 재사용하고 in-flight case는
+   다시 실행한다. Source/worktree 또는 Agent version이 달라졌다면 재개하지 말고 해당 run을
+   무효로 남긴 뒤 현재 lineage에서 A/A를 처음부터 다시 만든다.
+  Source fingerprint에는 tracked diff와 Git이 ignore하지 않은 untracked source가 모두 포함된다.
+  Schema/rubric/threshold/Hosted contract drift 오류가 나면 기존 manifest를 수정하지 말고 같은
+  기간·seed로 새 campaign을 `prepare`한다.
+6. **예산 설정**: `budget` 기본 8. 최근 3회가 A/A noise보다 작은 변화만 내면 종료한다.
 
 ---
 
@@ -74,11 +115,11 @@ tools: ["codebase", "search", "editFiles", "runCommands", "runTests", "problems"
 
 아래 6단계를 **한 반복**으로 하여 예산·종료 조건까지 반복한다. 한 반복은 **하나의 논리적 개선**에 집중한다.
 
-### 1. TEST — 다양한 샘플로 보고서 생성 & 점수 수집
+### 1. TEST — 고정 campaign으로 보고서 생성 & 점수 수집
 
 한 업데이트에만 오버피팅하지 않도록 **여러 유형**(retirement / GA·preview / breaking change / 신규 서비스 / region expansion)을 섞어 테스트한다.
 
-- 단일 업데이트 정밀 진단 (라이브):
+- 단일 업데이트 정밀 진단에는 기존 CLI를 사용할 수 있지만, 채택 판단에는 쓰지 않는다:
   ```powershell
   python -m scripts.evaluate_report --latest --with-html --iterate 3
   # 또는 특정 업데이트
@@ -86,24 +127,34 @@ tools: ["codebase", "search", "editFiles", "runCommands", "runTests", "problems"
   # 목표 상향
   python -m scripts.evaluate_report --latest --iterate 4 --target 4.7
   ```
-- 대규모 회귀 세트 생성 (이메일 발송 없이 배치 분석 → JSONL):
-  ```powershell
-  python -m scripts.test_local analyze --from 2026-06-01 --to 2026-06-30 --jsonl eval_runs/batch_baseline.jsonl
-  ```
-- 산출물은 `eval_runs/run_<timestamp>/`(gitignore됨)에 `report_iter{N}.md/.html`, `geval_iter{N}.json`로 저장된다.
-  각 반복의 G-Eval 5차원 점수와 규칙기반 카테고리 점수를 **기록**한다.
+- 반복 측정은 반드시 고정 campaign의 `diagnosis` split을 사용한다. 각 run은
+  `run.json`, `progress.json`, `attempts/*.json`, `records/*.json`, `summary.json`, `report_*.md`,
+  `analysis_*.json`, `trace_ids.jsonl`, `improvement_plan.md`, `logs/`를 남긴다. A/A에서는
+  source/worktree, Agent version, runtime, concurrency가 하나라도 다르거나 start/end lineage가 불안정하면 비교를
+  중단한다. Candidate 비교는 변경 축을 기록하며 source·Agent·runtime·concurrency 중 둘 이상이 동시에 바뀌면
+  귀속이 혼입된 것으로 보고 한 축씩 다시 실험한다.
 
 ### 2. EVALUATE — 약점 진단
 
 - **G-Eval 5차원**: `actionability`(1.2) · `faithfulness`(1.3) · `job_relevance`(1.0) · `structure`(0.9) · `architectural_depth`(1.0).
   가중치가 큰 차원의 결함을 우선 처리한다. `geval_iter{N}.json`의 `feedback_for_improvement`와 `aggregated_feedback`(약한 차원 우선)을 읽는다.
-- **규칙기반 5카테고리**: Content Accuracy(30) · Structural Completeness(25) · Language Quality(20) · Actionability(20) · Scannability(15).
+- **규칙기반 5카테고리**: Content Accuracy(30) · Structural Completeness(25) · Language Quality(20) · Actionability(15) · Scannability(10), 총 100점.
+- **Process/Safety gate**: trajectory score와 issue code, action verification의 blocked/unverified,
+  generation/error count, G-Eval dimension error를 별도로 본다. semantic 평균으로 이 실패를
+  상쇄하지 않는다. Transient case는 첫 pass 뒤 한 번 자동 재시도되며 최종 오류만 blocker지만,
+  retry/recovery 수는 reliability 신호로 계속 기록한다.
 - **여러 샘플에 걸쳐 공통으로 낮은 차원/항목**을 찾는다. 단발성 노이즈가 아니라 **반복 패턴**이 개선 대상이다.
 - edge case 면제를 존중한다: 영향 리소스 0개를 정직하게 밝힌 보고서, "수집된 데이터로 확인 불가"라는 정직한 한계 표명 등은 **감점 대상이 아니다**. 이런 것을 "고치려" 하지 마라.
 
 ### 3. DIAGNOSE — 근본 원인 추적
 
-- **로그 우선**: `logs/*.log`에서 결함의 발생 지점을 찾는다.
+- **로그 우선**: run의 `trace_ids.jsonl`에서 사례 trace를 고른 뒤 로컬 `logs/`와 Application
+  Insights를 같은 `trace_id`로 조회한다. `hosted_request_*`, `foundry_prompt_agent_*`,
+  `foundry_specialist_completed`, phase `llm_call`, `geval_done`, `action_verification_done`,
+  `trajectory_evaluated`를 시간순으로 재구성한다.
+  - 로깅 대상은 역할, Agent/response ID, input/output fingerprint·크기, tool·argument fingerprint,
+    검증된 claim/evidence/gap, token, latency, status다.
+  - 비공개 chain-of-thought 원문을 요구하거나 저장하지 않는다.
   [copilot-instructions.md](../copilot-instructions.md)의 "Log-Based Troubleshooting" 표(로그 패턴 → 근본 원인 → 수정 위치)를 활용한다.
   대표 패턴: `kql_query_failed`/`ParserFailure`(KQL 구문), `task_failed`, `output_recovery_attempt`(출력 토큰 한계), `529`/`ECONNRESET`.
 - **보고서 텍스트 감사**: 생성된 `report_iter{N}.md`와 과거 `results_2026-0*.jsonl`을 교차 분석하여 반복되는 상투적 결함을 찾는다
@@ -124,11 +175,16 @@ tools: ["codebase", "search", "editFiles", "runCommands", "runTests", "problems"
 
 [copilot-instructions.md](../copilot-instructions.md)의 **MANDATORY** 규칙이다. 이 게이트를 통과하지 못한 변경은 되돌린다.
 
-1. `python -c "import src"` — import 성공 필수.
-2. `python -m pytest tests/ -o "addopts=" -x` — 전부 통과. 프롬프트 조립·라벨·sanitize 회귀를 잡는다.
-3. **동일 샘플 재평가**: 수정 전 대비 목표 차원 점수가 **올랐고**, 다른 차원/샘플이 **떨어지지 않았는지** 확인한다.
-4. **홀드아웃 검증**: 수정에 쓰지 않은 다른 업데이트로도 개선이 재현되는지 확인한다 (오버피팅 차단).
-   - 점수가 떨어지거나 테스트가 깨지면 **이 반복의 변경을 롤백**하고 다른 가설로 재시도한다.
+1. 좁은 단위 테스트 → `python -c "import src"` → `python -m pytest tests/ -o "addopts=" -x`.
+2. **동일 diagnosis 재평가** 후 baseline과 paired compare한다. `aa-noise.json`의
+  `estimated_aa_noise_floor`를 `--noise-floor`로 넘긴다.
+3. verdict가 `improved`가 아니면 채택하지 않는다. 목표 결함의 report text diff도 직접 확인한다.
+4. diagnosis를 통과한 뒤에만 candidate holdout을 처음 실행하고, 변경 전 `baseline-holdout`과 비교한다.
+5. 점수 상승이어도 critical flaw, blocked action, generation failure, trajectory failure가 하나라도 늘면 실패다.
+6. 실패 시 `git checkout/reset`을 사용하지 않는다. **이번 반복에서 자신이 만든 정확한 patch만** 현재
+  작업 트리 위에서 되돌리고, 사용자의 기존 변경과 다른 session의 변경을 보존한다.
+7. Prompt Agent standing instruction/tool/schema 변경은 새 immutable Agent version이 필요하다.
+  사용자 승인 없이 provision/deploy하지 않는다. 최종 후보는 승인된 배포 뒤 actual Hosted run으로 재검증한다.
 
 ### 6. RECORD — 검증된 교훈만 기록
 
@@ -179,9 +235,9 @@ tools: ["codebase", "search", "editFiles", "runCommands", "runTests", "problems"
 
 다음 중 하나를 만족하면 루프를 멈추고 최종 보고한다:
 
-1. **목표 달성**: G-Eval 가중 점수 ≥ target **이고** critical flaw 0개 **이고** 여러 샘플에서 안정적.
+1. **출시 gate 달성**: 전체 기간 actual Hosted run이 `release_eligible=true`. 5점은 종료 조건이 아니다.
 2. **예산 소진**: 지정된 반복 횟수(`budget`)에 도달.
-3. **수익 체감(diminishing returns)**: 최근 3회 반복이 각각 유의미한 개선(예: G-Eval +0.05 미만)을 내지 못함.
+3. **수익 체감(diminishing returns)**: 최근 3회가 A/A noise floor를 넘는 개선을 내지 못함.
 4. **막힘**: 같은 접근이 반복 실패 — 무리하게 밀어붙이지 말고 대안 가설을 제시하며 사용자에게 판단을 요청.
 
 ---
@@ -191,10 +247,11 @@ tools: ["codebase", "search", "editFiles", "runCommands", "runTests", "problems"
 각 반복이 끝날 때 아래를 간결히 출력한다 (한국어):
 
 ```
-[반복 N/예산]  G-Eval: 이전 → 현재 (Δ)  |  규칙기반: 이전% → 현재%
+[반복 N/예산] campaign=<id> run=<id> verdict=<improved|inconclusive|regression>
+G-Eval: 이전 → 현재 (paired Δ, 95% CI) | 규칙기반: 이전% → 현재% | trajectory: 이전 → 현재
 진단한 근본 원인: <한 문장>
 수정한 파일: <파일 경로>
-검증: import ✅ | pytest ✅(통과/전체) | 재평가 ✅(차원 점수 변화) | 홀드아웃 ✅/⚠️
+검증: import ✅ | pytest ✅(통과/전체) | A/A noise=<값> | diagnosis ✅/⚠️ | holdout ✅/⚠️ | safety ✅/❌
 다음 가설: <한 문장>
 ```
 

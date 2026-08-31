@@ -131,6 +131,11 @@ _FINDING_MESSAGES: dict[str, dict[str, str]] = {
         "en": "Configuration-changing action with an empty rollback procedure.",
         "ja": "設定を変更する作業ですが、ロールバック手順が空です。",
     },
+    "advisory_mutation": {
+        "ko": "평가·검토 작업에 상태를 변경하는 명령이 포함되어 있습니다({detail}). 읽기 전용 확인으로 바꾸거나 별도 변경 단계로 분리하세요.",
+        "en": "An evaluation or review action contains a state-changing command ({detail}). Replace it with a read-only check or split it into a separate change step.",
+        "ja": "評価・確認作業に状態変更コマンドが含まれています({detail})。読み取り専用の確認に置き換えるか、別の変更手順に分けてください。",
+    },
     "cross_check_unsafe": {
         "ko": "교차 검증에서 실행 위험이 확인되었습니다: {detail}",
         "en": "The cross-check found an execution risk: {detail}",
@@ -359,6 +364,12 @@ _GENERIC_TARGETS = {
     "tenant",
 }
 
+_RE_ADVISORY_ACTION = re.compile(
+    r"\b(evaluate|assess|review|verify|check|inspect|compare|inventory|plan)\b|"
+    r"평가|검토|확인|점검|조사|비교|계획|評価|検討|確認|点検|比較|計画",
+    re.IGNORECASE,
+)
+
 
 def build_evidence(resource_summary: str, task_results: dict[str, str] | None = None) -> str:
     """Assemble the *environment* corpus a resource claim must be checkable against.
@@ -417,6 +428,17 @@ def _mutates_configuration(command: str, procedure: str) -> bool:
         )
         or re.search(r"\b(Set|New|Update|Remove|Restart)-Az[\w]*", text)
     )
+
+
+def _review_execution_mode(item: "ActionItem") -> str:
+    """Classify how directly an administrator can execute an action item."""
+    if (item.cli_command or "").strip():
+        return "command"
+    if _mutates_configuration("", f"{item.task} {item.procedure or ''}"):
+        return "portal_mutation"
+    if _RE_ADVISORY_ACTION.search(item.task or ""):
+        return "advisory_review"
+    return "procedure"
 
 
 def _find_placeholders(command: str) -> list[str]:
@@ -506,6 +528,11 @@ def verify_static(
     date_evidence = source_evidence or evidence
 
     if command:
+        if _RE_ADVISORY_ACTION.search(item.task or "") and _mutates_configuration(command, ""):
+            findings.append(
+                VerificationFinding(1, "advisory_mutation", SEVERITY_BLOCKING, command[:120])
+            )
+
         irreversible = _RE_IRREVERSIBLE.search(command) or _RE_RAW_DESTRUCTIVE.search(command)
         if irreversible:
             verb = irreversible.group(0)
@@ -599,6 +626,12 @@ Approval rules:
 - Every resource name in a command must appear in the evidence. If it does not, the item is unsafe.
 - The command must actually accomplish the stated task, with valid Azure CLI / PowerShell
   syntax and correct argument names. A command that errors out or silently no-ops is a defect.
+- Items marked `advisory_review` are non-mutating evaluation work. They do not require a CLI
+    command or rollback. Missing go/no-go criteria may be `caution`, but missing CLI alone is
+    never `unsafe`. Do not require an item to list every resource found in the evidence; only
+    verify that the targets it does list are grounded.
+- Items marked `portal_mutation` or `command` remain executable changes and must satisfy the
+    same production-safety standard.
 - Flag unstated destructive side effects: downtime, dropped connections, data loss,
   certificate/key invalidation, or changes that apply tenant-wide instead of to one resource.
 - Flag any deadline, price, limit, or version that the evidence does not state.
@@ -640,7 +673,11 @@ def _render_items_for_review(items: Iterable["ActionItem"]) -> str:
     """Serialize action items into the compact block the reviewer reads."""
     blocks: list[str] = []
     for idx, item in enumerate(items, 1):
-        lines = [f"### Item {idx} (step {item.step}, urgency {item.urgency})", f"task: {item.task}"]
+        lines = [
+            f"### Item {idx} (step {item.step}, urgency {item.urgency})",
+            f"execution_mode: {_review_execution_mode(item)}",
+            f"task: {item.task}",
+        ]
         if item.why:
             lines.append(f"why: {item.why}")
         if item.target_resources:
@@ -738,11 +775,18 @@ class ActionItemVerifier:
                 correction = str(review.get("correction", "")).strip()
                 detail = " ".join(p for p in (defect, correction) if p).strip()
                 if verdict == "unsafe":
-                    per_item[idx].append(
-                        VerificationFinding(
-                            2, "cross_check_unsafe", SEVERITY_BLOCKING, detail or verdict
+                    if _review_execution_mode(item) == "advisory_review":
+                        per_item[idx].append(
+                            VerificationFinding(
+                                2, "cross_check_caution", SEVERITY_WARNING, detail or verdict
+                            )
                         )
-                    )
+                    else:
+                        per_item[idx].append(
+                            VerificationFinding(
+                                2, "cross_check_unsafe", SEVERITY_BLOCKING, detail or verdict
+                            )
+                        )
                 elif verdict == "caution" and detail:
                     per_item[idx].append(
                         VerificationFinding(2, "cross_check_caution", SEVERITY_WARNING, detail)
@@ -775,10 +819,20 @@ class ActionItemVerifier:
             setattr(summary, status, getattr(summary, status) + 1)
 
         summary.elapsed_s = time.time() - _t0
-        logger.info("action_verification_done", **summary.as_dict())
+        from src.agent.foundry_backend import current_foundry_invocation_context
+
+        trace_id, task_id = current_foundry_invocation_context()
+        logger.info(
+            "action_verification_done",
+            trace_id=trace_id,
+            task_id=task_id,
+            **summary.as_dict(),
+        )
         if summary.blocked:
             logger.warning(
                 "action_items_blocked",
+                trace_id=trace_id,
+                task_id=task_id,
                 blocked=summary.blocked,
                 withheld_commands=summary.withheld_commands,
                 codes=sorted({f.code for f in summary.findings if f.severity == SEVERITY_BLOCKING}),
@@ -899,5 +953,13 @@ def apply_static_verification(
         setattr(summary, status, getattr(summary, status) + 1)
 
     summary.elapsed_s = time.time() - _t0
-    logger.info("action_verification_static_done", **summary.as_dict())
+    from src.agent.foundry_backend import current_foundry_invocation_context
+
+    trace_id, task_id = current_foundry_invocation_context()
+    logger.info(
+        "action_verification_static_done",
+        trace_id=trace_id,
+        task_id=task_id,
+        **summary.as_dict(),
+    )
     return summary

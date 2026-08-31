@@ -12,10 +12,12 @@ action 우선순위 같은 business decision은 `src/agent`가 소유합니다.
 | [`resource_graph.py`](resource_graph.py) | accessible subscription 전체의 Resource Graph query와 KQL builder |
 | [`azure_rest.py`](azure_rest.py) | ARM list pagination과 single-object metadata endpoint 호출 |
 | [`cost_management.py`](cost_management.py) | subscription cost 집계 |
+| [`billing.py`](billing.py) | tenant-scope Microsoft.Billing account/profile 조회 (`2024-04-01`) |
 | [`log_analytics.py`](log_analytics.py) | workspace KQL query와 오류/activity 요약 |
 | [`microsoft_learn.py`](microsoft_learn.py) | Learn 검색, allow-listed page fetch, command block 추출 |
 | [`community_insights.py`](community_insights.py) | Azure Weekly의 topic-matched practitioner caveat cache |
 | [`checkpoint.py`](checkpoint.py) | inert/file/blob watermark store와 forward-only conditional write |
+| [`archive.py`](archive.py) | inert/file/blob canonical analysis store, create-only write, metadata cursor listing |
 | [`__init__.py`](__init__.py) | enabled subscription discovery와 process cache |
 
 ## 사용 예시
@@ -49,7 +51,10 @@ finally:
 확인합니다.
 
 `AzureRestClient.call_api()`는 `value` array와 `nextLink`가 있는 list endpoint용이고,
-`get_resource()`는 provider metadata처럼 JSON object 하나를 반환하는 endpoint용입니다.
+`get_resource()`는 provider metadata처럼 JSON object 하나를 반환하는 endpoint용입니다. 경로에
+`{subscriptionId}`가 있을 때만 subscription을 요구하며, Microsoft.Billing 같은 tenant-scope
+경로는 현재 identity가 직접 접근할 수 있는 범위만 반환합니다. 403이나 빈 접근 범위를 tenant에
+billing account가 없다는 뜻으로 바꾸지 않습니다.
 
 ## 불변식
 
@@ -59,11 +64,13 @@ finally:
 - 서비스 실패를 리소스 부재로 바꾸지 않고 오류 또는 낮은 confidence로 Agent에 전달합니다.
 - page fetch는 allow-list와 HTTP(S) scheme을 검사해 SSRF를 막습니다.
 - checkpoint blob은 HTTPS와 Entra token만 사용하고 ETag로 뒤로 쓰기/동시 writer를 방지합니다.
+- archive blob은 HTTPS/Entra와 `If-None-Match: *`를 사용하고, payload와 search metadata를 한 PUT에
+  commit합니다. business document 생성과 reader policy는 `src/archive`가 소유합니다.
 - 서비스에서 report wording이나 category를 결정하지 않습니다.
 - 새 dependency는 `requirements.txt`와 `pyproject.toml`에 함께 추가합니다.
 
 ## 검증
 
 ```powershell
-& .\.venv\Scripts\Activate.ps1; python -m pytest tests\test_services.py tests\test_subscription_discovery.py tests\test_azure_rest.py tests\test_checkpoint.py tests\test_community_insights.py -o "addopts=" -q
+& .\.venv\Scripts\Activate.ps1; python -m pytest tests\test_services.py tests\test_billing.py tests\test_subscription_discovery.py tests\test_azure_rest.py tests\test_checkpoint.py tests\test_archive_store.py tests\test_community_insights.py -o "addopts=" -q
 ```

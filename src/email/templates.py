@@ -4,6 +4,8 @@ import re
 
 # Aliased: several renderers below bind a local name `html` for their output.
 from html import escape as _escape
+from html import unescape as _unescape
+from urllib.parse import urlparse
 
 # Canonical UI label bundles live in src/i18n/labels/<code>.py. Re-exported so the
 # renderers below (and their callers) keep importing get_labels from templates.
@@ -22,6 +24,14 @@ _RE_NUMBERED = re.compile(r"^\s*(\d+)\.\s+(.+)$")
 # Pipe table: a header row followed by a |---|---| separator row.
 _RE_TABLE_ROW = re.compile(r"^\|(.+)\|\s*$")
 _RE_TABLE_SEP = re.compile(r"^\|[\s:\-|]+\|\s*$")
+
+_EMAIL_LINK_DOMAINS = (
+    "microsoft.com",
+    "azure.com",
+    "github.com",
+    "azureweekly.info",
+    "aka.ms",
+)
 
 # Action-item safety gate. The border tints the whole card; the badge colour is
 # also used for the findings block so a blocked item reads as one unit.
@@ -401,16 +411,18 @@ def _linkify_md(match: "re.Match[str]") -> str:
     back to the link text alone (the URL is dropped).
     """
     label, url = match.group(1), match.group(2)
-    if not (url.startswith("https://") or url.startswith("http://") or url.startswith("#")):
+    href = safe_email_href(url, allow_fragment=True)
+    if not href:
         return label
     return (
-        f'<a href="{url}" class="azb-link" '
+        f'<a href="{href}" class="azb-link" '
         f'style="color: #1a6fb5; text-decoration: none;">{label}</a>'
     )
 
 
 def _inline_format(text: str) -> str:
     """Apply inline markdown formatting (link, bold, code) to text."""
+    text = _escape(str(text), quote=True)
     # Markdown links first so the URL is not mangled by the bold/code passes
     text = _RE_MD_LINK.sub(_linkify_md, text)
     # Bold: **text** (emphasis styling)
@@ -422,6 +434,57 @@ def _inline_format(text: str) -> str:
         text,
     )
     return text
+
+
+def escape_email_text(value: object) -> str:
+    """Escape an untrusted value before inserting it into email HTML."""
+    return _escape(str(value), quote=True)
+
+
+def safe_email_href(url: str, allow_fragment: bool = False) -> str:
+    """Return an escaped allow-listed HTTPS URL or in-message fragment."""
+    raw = _unescape(str(url or "")).strip()
+    if allow_fragment and re.fullmatch(r"#[A-Za-z0-9_.:-]+", raw):
+        return raw
+    parsed = urlparse(raw)
+    hostname = (parsed.hostname or "").lower()
+    if (
+        parsed.scheme != "https"
+        or not hostname
+        or parsed.username
+        or parsed.password
+        or parsed.port
+        or not any(
+            hostname == domain or hostname.endswith(f".{domain}") for domain in _EMAIL_LINK_DOMAINS
+        )
+    ):
+        return ""
+    return _escape(raw, quote=True)
+
+
+def safe_archive_url(archive_url: str) -> str:
+    """Return a normalized HTTPS archive URL, or an empty string when unsafe."""
+    if not archive_url:
+        return ""
+    parsed = urlparse(archive_url)
+    if parsed.scheme != "https" or not parsed.netloc:
+        return ""
+    return archive_url
+
+
+def format_archive_link_html(archive_url: str, language: str = "ko") -> str:
+    """Render an optional authenticated archive link using an HTTPS URL only."""
+    archive_url = safe_archive_url(archive_url)
+    if not archive_url:
+        return ""
+    label = _escape(get_labels(language)["archive_shared_original"])
+    safe_url = _escape(archive_url, quote=True)
+    return (
+        '<p style="margin: 7px 0 0 0;">'
+        f'<a href="{safe_url}" class="azb-link" '
+        'style="color: #5b9bd5; font-size: 12px; text-decoration: none;">'
+        f"{label}</a></p>"
+    )
 
 
 # ============================================================================
@@ -496,6 +559,7 @@ HTML_EMAIL_TEMPLATE = (
                             </table>
                             <p style="margin: 14px 0 0 0; color: #ffffff; font-size: 20px; font-weight: 600; line-height: 1.45;">{title}</p>
                             <p style="margin: 8px 0 0 0; color: #7a8fa3; font-size: 14px;">{label_update_type}: {update_type} &middot; {published_date} &middot; <a href="{link}" class="azb-link" style="color: #5b9bd5; text-decoration: none;">{label_detail_link}</a></p>
+                            {archive_link_html}
                         </td>
                     </tr>
 
@@ -758,7 +822,7 @@ def format_impact_section_html(
     for key, label, color in fields:
         value = getattr(impact_details, f"{key}_impact", "")
         if value and value.strip().lower() not in {v.lower() for v in skip_values}:
-            items.append((label, color, value))
+            items.append((label, color, escape_email_text(value)))
 
     if not items:
         return ""
@@ -882,7 +946,7 @@ def format_affected_resources_html(
     if uniform_type:
         resource_header += (
             ' <span style="text-transform: none; font-weight: 600; color: #6b7785;">'
-            f"&middot; {uniform_type}</span>"
+            f"&middot; {escape_email_text(uniform_type)}</span>"
         )
 
     html = f"""
@@ -915,7 +979,7 @@ def format_affected_resources_html(
         labels, since the slash-separated pair is self-evident — with a
         placeholder when a value is missing, so every row keeps the same shape.
         """
-        name = res.get("name", "Unknown")
+        name = escape_email_text(res.get("name", "Unknown"))
         subscription = (
             res.get("subscription")
             or res.get("subscriptionName")
@@ -925,12 +989,15 @@ def format_affected_resources_html(
         rg = res.get("resourceGroup") or ""
 
         if subscription or rg:
-            scope = f"{subscription or L['unknown_scope']} / {rg or L['unknown_scope']}"
+            scope = (
+                f"{escape_email_text(subscription or L['unknown_scope'])} / "
+                f"{escape_email_text(rg or L['unknown_scope'])}"
+            )
         else:
             # Both missing — say it once instead of repeating the placeholder.
-            scope = L["unknown_scope"]
+            scope = escape_email_text(L["unknown_scope"])
         if not uniform_type:
-            scope += f" &middot; {_short_type(res)}"
+            scope += f" &middot; {escape_email_text(_short_type(res))}"
 
         out = f'<span style="font-weight: 600;">{name}</span>'
         out += f'<br><span style="font-size: 12px; color: #8c96a3;">{scope}</span>'
@@ -963,7 +1030,7 @@ def format_affected_resources_html(
         if has_reason:
             html += (
                 f'<td class="azb-cell azb-text azb-col-reason" '
-                f'style="{reason_cell}">{reason}</td>'
+                f'style="{reason_cell}">{escape_email_text(reason)}</td>'
             )
         html += "</tr>\n"
 
@@ -1079,12 +1146,12 @@ def format_action_items_html(
         for i, rec in enumerate(recommendations, 1):
             inner += f"""
             <div class="azb-panel" style="background-color: #f8f9fb; border-radius: 5px; padding: 10px 12px; margin-bottom: 6px; border: 1px solid #e4e9ee;">
-                <p class="azb-text" style="margin: 0; font-size: 14px; color: #333;"><strong>{i}.</strong> {rec}</p>
+                <p class="azb-text" style="margin: 0; font-size: 14px; color: #333;"><strong>{i}.</strong> {escape_email_text(rec)}</p>
             </div>
             """
     elif items:
         for step_num, item in enumerate(items, 1):
-            task = item.task if hasattr(item, "task") else str(item)
+            task = escape_email_text(item.task if hasattr(item, "task") else str(item))
             procedure = item.procedure if hasattr(item, "procedure") else ""
             cli_command = item.cli_command if hasattr(item, "cli_command") else ""
             estimated_time = item.estimated_time if hasattr(item, "estimated_time") else ""
@@ -1105,7 +1172,7 @@ def format_action_items_html(
             """
 
             if targets:
-                t_str = ", ".join(targets[:3])
+                t_str = ", ".join(escape_email_text(target) for target in targets[:3])
                 if len(targets) > 3:
                     t_str += f" {L['remaining_targets'].format(n=len(targets) - 3)}"
                 inner += f'<p class="azb-text-secondary" style="margin: 2px 0; font-size: 14px; color: #6b7785;">{L["target"]}: {t_str}</p>'
@@ -1113,20 +1180,20 @@ def format_action_items_html(
             if procedure:
                 steps = _split_procedure(procedure)
                 if len(steps) <= 1:
-                    inner += f'<p class="azb-text" style="margin: 2px 0; font-size: 14px; color: #444; line-height: 1.5;">{procedure}</p>'
+                    inner += f'<p class="azb-text" style="margin: 2px 0; font-size: 14px; color: #444; line-height: 1.5;">{escape_email_text(procedure)}</p>'
                 else:
                     ordinal = 0
                     for step_text, is_sub in steps:
                         if is_sub:
                             inner += (
                                 f'<p class="azb-text" style="margin: 1px 0 1px 20px; font-size: 14px; '
-                                f'color: #444; line-height: 1.5;">&bull; {step_text}</p>'
+                                f'color: #444; line-height: 1.5;">&bull; {escape_email_text(step_text)}</p>'
                             )
                         else:
                             ordinal += 1
                             inner += (
                                 f'<p class="azb-text" style="margin: 3px 0; font-size: 14px; '
-                                f'color: #444; line-height: 1.5;"><strong>{ordinal}.</strong> {step_text}</p>'
+                                f'color: #444; line-height: 1.5;"><strong>{ordinal}.</strong> {escape_email_text(step_text)}</p>'
                             )
 
             if cli_command:
@@ -1135,40 +1202,41 @@ def format_action_items_html(
                     f"font-family: {FONT_STACK_MONO}; "
                     f"background-color: #f5f6f8; padding: 6px 10px; border-radius: 3px; "
                     f"border: 1px solid #e4e9ee; line-height: 1.6; "
-                    f'white-space: pre-wrap;">{cli_command}</div>'
+                    f'white-space: pre-wrap;">{escape_email_text(cli_command)}</div>'
                 )
 
             meta_parts = []
             if deadline:
-                meta_parts.append(f"{L['deadline']}: {deadline}")
+                meta_parts.append(f"{L['deadline']}: {escape_email_text(deadline)}")
             if estimated_time:
-                meta_parts.append(f"{L['estimated']}: {estimated_time}")
+                meta_parts.append(f"{L['estimated']}: {escape_email_text(estimated_time)}")
             if meta_parts:
                 inner += f'<p class="azb-action-meta" style="margin: 2px 0; font-size: 12px; color: #98a3af;">{" &middot; ".join(meta_parts)}</p>'
 
             if risk:
-                inner += f'<p style="margin: 4px 0 0 0; font-size: 14px; color: #c0392b; font-weight: 600;">{L["risk_if_not_done"]}: {risk}</p>'
+                inner += f'<p style="margin: 4px 0 0 0; font-size: 14px; color: #c0392b; font-weight: 600;">{L["risk_if_not_done"]}: {escape_email_text(risk)}</p>'
 
             if precaution:
                 inner += (
                     f'<p style="margin: 4px 0 0 0; font-size: 12px; color: #5b6a7a;">'
-                    f'<span style="font-weight: 600;">{L["precaution"]}:</span> {precaution}</p>'
+                    f'<span style="font-weight: 600;">{L["precaution"]}:</span> {escape_email_text(precaution)}</p>'
                 )
 
             if rollback:
                 inner += (
                     f'<p style="margin: 2px 0 0 0; font-size: 12px; color: #5b6a7a;">'
-                    f'<span style="font-weight: 600;">{L["rollback"]}:</span> {rollback}</p>'
+                    f'<span style="font-weight: 600;">{L["rollback"]}:</span> {escape_email_text(rollback)}</p>'
                 )
 
             # reference_url comes from LLM output — only http(s) may become an anchor.
-            if reference_url.startswith(("http://", "https://")):
+            safe_reference_url = safe_email_href(reference_url)
+            if safe_reference_url:
                 inner += (
                     f'<p style="margin: 2px 0 0 0; font-size: 12px; color: #5b6a7a;">'
                     f'<span style="font-weight: 600;">{L["action_reference"]}:</span> '
-                    f'<a href="{reference_url}" class="azb-link" '
+                    f'<a href="{safe_reference_url}" class="azb-link" '
                     f'style="color: #1a6fb5; text-decoration: none; word-break: break-all;">'
-                    f"{reference_url}</a></p>"
+                    f"{escape_email_text(reference_url)}</a></p>"
                 )
 
             if verify_notes:
@@ -1225,9 +1293,14 @@ def format_reference_docs_html(docs: list, language: str = "ko") -> str:
             url = "#"
             context = ""
 
-        inner += f'<p style="margin: 0 0 2px 0; font-size: 14px;"><a href="{url}" class="azb-link" style="color: #1a6fb5; text-decoration: none;">{title} &rarr;</a></p>'
+        safe_url = safe_email_href(url)
+        safe_title = escape_email_text(title)
+        if safe_url:
+            inner += f'<p style="margin: 0 0 2px 0; font-size: 14px;"><a href="{safe_url}" class="azb-link" style="color: #1a6fb5; text-decoration: none;">{safe_title} &rarr;</a></p>'
+        else:
+            inner += f'<p style="margin: 0 0 2px 0; font-size: 14px;">{safe_title}</p>'
         if context:
-            inner += f'<p class="azb-text-secondary" style="margin: 0 0 6px 0; font-size: 12px; color: #6b7785; padding-left: 8px;">{L["doc_context"]}: {context}</p>'
+            inner += f'<p class="azb-text-secondary" style="margin: 0 0 6px 0; font-size: 12px; color: #6b7785; padding-left: 8px;">{L["doc_context"]}: {escape_email_text(context)}</p>'
         else:
             inner += '<div style="height: 4px;"></div>'
 
@@ -1263,7 +1336,7 @@ def format_additional_checks_html(checks: list, language: str = "ko") -> str:
     """
 
     for check in checks:
-        html += f'<p style="margin: 0 0 6px 0; font-size: 14px; color: #78350f; line-height: 1.55;">• {check}</p>'
+        html += f'<p style="margin: 0 0 6px 0; font-size: 14px; color: #78350f; line-height: 1.55;">• {escape_email_text(check)}</p>'
 
     html += """
             </div>
@@ -1298,7 +1371,7 @@ def format_relevance_evidence_html(evidence: str, language: str = "ko") -> str:
                 <tr>
                     <td style="padding: 8px 12px;">
                         <span style="font-size: 12px; font-weight: 700; color: #0078d4; text-transform: uppercase; letter-spacing: 0.3px;">{L['relevance_evidence']}</span>
-                        <p class="azb-text" style="margin: 2px 0 0 0; font-size: 14px; color: #1a1a1a; line-height: 1.5;">{evidence}</p>
+                        <p class="azb-text" style="margin: 2px 0 0 0; font-size: 14px; color: #1a1a1a; line-height: 1.5;">{_inline_format(evidence)}</p>
                     </td>
                 </tr>
             </table>
@@ -1380,7 +1453,7 @@ def format_quick_decision_html(
             t = r.get("type", "")
             if t:
                 types.add(t.split("/")[-1] if "/" in t else t)
-        type_str = ", ".join(list(types)[:3])
+        type_str = ", ".join(escape_email_text(value) for value in list(types)[:3])
         scope_text = (
             f"{count}{L['count_suffix']} {type_str}" if type_str else f"{count}{L['count_suffix']}"
         )
@@ -1432,12 +1505,12 @@ def format_quick_decision_html(
         rows_html += "<tr>"
         if deadline:
             rows_html += f'<td style="{field_style}">{L["deadline"]}</td>'
-            rows_html += f'<td style="{value_style}">{deadline}</td>'
+            rows_html += f'<td style="{value_style}">{escape_email_text(deadline)}</td>'
         else:
             rows_html += "<td></td><td></td>"
         if work_text:
             rows_html += f'<td style="{field_style}">{L["work_estimate"]}</td>'
-            rows_html += f'<td style="{value_style}">{work_text}</td>'
+            rows_html += f'<td style="{value_style}">{escape_email_text(work_text)}</td>'
         else:
             rows_html += "<td></td><td></td>"
         rows_html += "</tr>"
@@ -1499,9 +1572,9 @@ def format_timeline_html(
             f'<td style="text-align: center; vertical-align: top; padding: 4px 6px;">'
             f'<div style="width: 10px; height: 10px; border-radius: 50%; '
             f'background-color: #0078d4; margin: 0 auto 4px auto;"></div>'
-            f'<p style="margin: 0; font-size: 12px; font-weight: 600; color: #1a1a1a;">{date}</p>'
+            f'<p style="margin: 0; font-size: 12px; font-weight: 600; color: #1a1a1a;">{escape_email_text(date)}</p>'
             f'<p class="azb-tl-task" style="margin: 2px 0 0 0; font-size: 12px; color: #6b7785; '
-            f'max-width: 120px; line-height: 1.3;">{task}</p>'
+            f'max-width: 120px; line-height: 1.3;">{escape_email_text(task)}</p>'
             f"</td>"
         )
         if connector:
@@ -1635,12 +1708,13 @@ def format_digest_update_card_html(
     """
     L = get_labels(language)
 
-    title = update.title[:80] + "…" if len(update.title) > 80 else update.title
-    link = update.link or "#"
+    raw_title = update.title[:80] + "…" if len(update.title) > 80 else update.title
+    title = escape_email_text(raw_title)
+    link = safe_email_href(update.link) or "#"
 
     # --- Skipped update — muted row spanning all columns ---
     if skip_reason or result is None:
-        skip_text = skip_reason or ""
+        skip_text = escape_email_text(skip_reason or "")
         return f"""
         <tr>
             <td colspan="4" class="azb-cell" style="padding:8px 12px; border-bottom:1px solid #edf0f3;">

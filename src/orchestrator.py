@@ -85,6 +85,7 @@ class RunRecord:
     """State of a single orchestrated digest run."""
 
     run_id: str
+    source: str = "scheduled_digest"
     status: str = "queued"  # queued | running | completed | failed
     since: Optional[datetime] = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
@@ -92,6 +93,8 @@ class RunRecord:
     watermark: Optional[datetime] = None
     total: int = 0
     analyzed: int = 0
+    archived: int = 0
+    archive_failed: int = 0
     failed: int = 0
     relevant: int = 0
     deferred: int = 0
@@ -110,6 +113,7 @@ class RunRecord:
         elapsed = (self.finished_at or datetime.now(timezone.utc)) - self.started_at
         return {
             "run_id": self.run_id,
+            "source": self.source,
             "status": self.status,
             "since": iso(self.since),
             "started_at": iso(self.started_at),
@@ -117,6 +121,8 @@ class RunRecord:
             "watermark": iso(self.watermark),
             "total": self.total,
             "analyzed": self.analyzed,
+            "archived": self.archived,
+            "archive_failed": self.archive_failed,
             "failed": self.failed,
             "relevant": self.relevant,
             "deferred": self.deferred,
@@ -174,11 +180,17 @@ def get_run_store() -> RunStore:
     return _run_store
 
 
-def register_services(analyzer: Any, email_service: Any, rss_parser: Any) -> None:
+def register_services(
+    analyzer: Any,
+    email_service: Any,
+    rss_parser: Any,
+    archive_service: Any = None,
+) -> None:
     """Register the long-lived services an orchestrated run needs."""
     _services["analyzer"] = analyzer
     _services["email_service"] = email_service
     _services["rss_parser"] = rss_parser
+    _services["archive_service"] = archive_service
 
 
 def services_ready() -> bool:
@@ -186,7 +198,11 @@ def services_ready() -> bool:
     return bool(_services.get("analyzer") and _services.get("rss_parser"))
 
 
-def start_run(since: Optional[datetime] = None, dry_run: bool = False) -> RunRecord:
+def start_run(
+    since: Optional[datetime] = None,
+    dry_run: bool = False,
+    source: str = "api_orchestrate",
+) -> RunRecord:
     """Create a run record and drive it in the background.
 
     Args:
@@ -204,12 +220,14 @@ def start_run(since: Optional[datetime] = None, dry_run: bool = False) -> RunRec
         raise RuntimeError("Orchestrator services are not initialized")
 
     record = _run_store.create(since=since, dry_run=dry_run)
+    record.source = source
     task = asyncio.create_task(
         execute_run(
             record,
             _services["analyzer"],
             _services.get("email_service"),
             _services["rss_parser"],
+            _services.get("archive_service"),
         )
     )
     _active_tasks.add(task)
@@ -282,6 +300,7 @@ async def execute_run(
     analyzer: Any,
     email_service: Any,
     rss_parser: Any,
+    archive_service: Any = None,
 ) -> RunRecord:
     """Analyse every update since ``record.since`` and send the digest.
 
@@ -321,6 +340,7 @@ async def execute_run(
         semaphore = asyncio.Semaphore(settings.max_concurrent_analyses)
         results_lock = asyncio.Lock()
         digest_items: list[dict] = []
+        archive_errors: list[str] = []
         consecutive_failures = 0
         slowest_s = 0.0
 
@@ -356,7 +376,48 @@ async def execute_run(
                     consecutive_failures = 0
                     if result.should_notify:
                         record.relevant += 1
-                    digest_items.append({"update": update, "result": result, "skip_reason": ""})
+
+                receipt = None
+                if archive_service is not None:
+                    try:
+                        from src.archive.models import ArchiveSource
+
+                        receipt = await archive_service.archive_analysis(
+                            update,
+                            result,
+                            ArchiveSource(record.source),
+                            run_id=record.run_id,
+                        )
+                        if archive_service.configured and not receipt.archived:
+                            raise RuntimeError("configured archive did not persist the analysis")
+                    except Exception as exc:
+                        logger.error(
+                            "orchestrator_archive_failed",
+                            run_id=record.run_id,
+                            update_id=getattr(update, "id", ""),
+                            error=str(exc),
+                        )
+                        async with results_lock:
+                            record.archive_failed += 1
+                            archive_errors.append(str(exc)[:200])
+                        return
+
+                async with results_lock:
+                    if receipt is not None and receipt.archived:
+                        record.archived += 1
+                    digest_items.append(
+                        {
+                            "update": update,
+                            "result": result,
+                            "skip_reason": "",
+                            "archive_id": receipt.archive_id if receipt else "",
+                            "archive_url": (
+                                archive_service.detail_url(receipt.archive_id)
+                                if receipt and receipt.archived
+                                else ""
+                            ),
+                        }
+                    )
                     slowest_s = max(slowest_s, time.time() - update_started)
                     cursor.finish(index)
 
@@ -364,6 +425,12 @@ async def execute_run(
             record.deferred = len(targets)
         else:
             await asyncio.gather(*[_analyze_one(i, update) for i, update in enumerate(targets)])
+            if archive_errors:
+                record.watermark = cursor.watermark
+                record.pending = cursor.pending
+                raise RuntimeError(
+                    f"Archive persistence failed for {len(archive_errors)} analysis result(s)"
+                )
             record.email_sent = await _send_digest(digest_items, analyzer, email_service)
 
         record.watermark = cursor.watermark
@@ -418,7 +485,7 @@ async def _send_digest(digest_items: list[dict], analyzer: Any, email_service: A
                 if isinstance(result, BaseException):
                     items.append(item)
                 else:
-                    items.append({"update": item["update"], "result": result, "skip_reason": ""})
+                    items.append({**item, "result": result})
             items.extend(without_results)
             return bool(
                 await email_service.send_digest_report(
