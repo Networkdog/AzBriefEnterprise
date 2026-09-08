@@ -23,6 +23,7 @@ from typing import Any, Awaitable, Callable, Iterator, Optional
 from langchain_core.messages import AIMessage
 from structlog import get_logger
 
+from src.agent.scope import current_analysis_scope
 from src.config import EVIDENCE_SPECIALIST_ROLES, Settings
 
 logger = get_logger()
@@ -515,7 +516,9 @@ SPECIALIST_PROMPTS: dict[str, str] = {
         "Close facts that Resource Graph and Azure MCP cannot establish by using the minimum "
         "read-only ARM, Resource Health, Policy, Advisor, Activity Log, Cost Management, and "
         "Billing calls. Analyze configuration, dependencies, regional availability, service "
-        "health, policy posture, and costs only when relevant to the update. State the exact "
+        "health, policy posture, and costs only when relevant to the update. For GA/Preview, "
+        "check the primary Regions from Resource Graph, but scope provider/resource-type location "
+        "results as deployability evidence rather than proof of feature rollout. State the exact "
         "subscription or resource scope and cost time window. A failed call, partial page, or "
         "missing permission is a gap, not a zero value. Never issue a mutation.\n"
         "Return only one JSON object with status, claims, and gaps. status is ok or partial. "
@@ -936,19 +939,20 @@ async def _invoke_foundry_agent(
     import asyncio
 
     try:
-        return await asyncio.wait_for(
-            asyncio.to_thread(
-                _run_foundry_agent_sync,
-                project_endpoint,
-                agent_name,
-                prompt,
-                local_tools,
-                trace_id,
-                task_id,
-                disable_tools,
-            ),
-            timeout=timeout_s,
-        )
+        with foundry_invocation_context(trace_id, task_id):
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    _run_foundry_agent_sync,
+                    project_endpoint,
+                    agent_name,
+                    prompt,
+                    local_tools,
+                    trace_id,
+                    task_id,
+                    disable_tools,
+                ),
+                timeout=timeout_s,
+            )
     except Exception as exc:  # pragma: no cover - requires live SDK
         logger.warning(
             "foundry_agent_failed",
@@ -1020,9 +1024,13 @@ def build_specialist_collaboration_node(
 
     def _prompt(role: str, update_context: str) -> str:
         spec = by_role[role]
+        scope = current_analysis_scope()
+        update_context = f"{update_context}\n\n{scope.prompt_text()}"
         if role in ("azure_mcp", "azure_api"):
             scope_lines = [f"Azure tenant ID: {settings.azure_tenant_id}"]
-            if settings.azure_subscription_id:
+            if scope.subscriptions:
+                scope_lines.append(f"Azure subscription IDs: {', '.join(scope.subscriptions)}")
+            elif settings.azure_subscription_id:
                 scope_lines.append(f"Azure subscription ID: {settings.azure_subscription_id}")
             update_context = (
                 f"{update_context}\n\nAzure MCP scope (use these exact GUIDs):\n"
@@ -1039,6 +1047,18 @@ def build_specialist_collaboration_node(
         trace_id: str,
     ) -> tuple[str, str]:
         spec = by_role[role]
+        scope = current_analysis_scope()
+        if scope.is_bounded and role in ("azure_mcp", "azure_api"):
+            return role, json.dumps(
+                {
+                    "status": "partial",
+                    "claims": [],
+                    "gaps": [
+                        f"{role} tools were not called because they cannot enforce the "
+                        "subscriber Management Group/Subscription/Resource Group boundary"
+                    ],
+                }
+            )
         invoke_kwargs: dict[str, Any] = {
             "trace_id": trace_id,
             "task_id": f"specialist:{role}",

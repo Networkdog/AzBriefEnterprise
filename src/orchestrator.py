@@ -18,17 +18,71 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any, Literal, Optional
+from urllib.parse import urlparse
 
 from structlog import get_logger
 
+from src.admin.configuration import get_admin_configuration
+from src.agent.scope import AnalysisScope
 from src.config import get_settings
+from src.i18n.labels import get_labels
 from src.services.checkpoint import get_checkpoint_store
 
 logger = get_logger()
 
 MAX_TRACKED_RUNS = 50
 MAX_CONSECUTIVE_FAILURES = 3
+MAX_MANUAL_TARGETS = 100
+
+
+@dataclass(frozen=True)
+class RunSelection:
+    """Bounded target selector for an orchestrated run."""
+
+    mode: Literal["checkpoint", "date_range", "recent", "update_id", "update_url"] = "checkpoint"
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    recent_count: Optional[int] = None
+    update_id: str = ""
+    update_url: str = ""
+
+    def __post_init__(self) -> None:
+        if self.mode == "date_range":
+            if self.start_date is None or self.end_date is None:
+                raise ValueError("date_range requires start_date and end_date")
+            if _ensure_utc(self.start_date) > _ensure_utc(self.end_date):
+                raise ValueError("start_date must not be later than end_date")
+        elif self.mode == "recent":
+            if self.recent_count is None or not 1 <= self.recent_count <= MAX_MANUAL_TARGETS:
+                raise ValueError(f"recent_count must be between 1 and {MAX_MANUAL_TARGETS}")
+        elif self.mode == "update_id":
+            if not self.update_id.isdigit():
+                raise ValueError("update_id must contain digits only")
+        elif self.mode == "update_url":
+            parsed = urlparse(self.update_url)
+            hostname = (parsed.hostname or "").lower()
+            if (
+                parsed.scheme != "https"
+                or hostname != "azure.microsoft.com"
+                or "updates" not in {part.lower() for part in parsed.path.split("/") if part}
+            ):
+                raise ValueError("update_url must be an HTTPS Azure Updates URL")
+
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the selector without exposing any sensitive value."""
+
+        def iso(value: Optional[datetime]) -> Optional[str]:
+            return _ensure_utc(value).isoformat() if value else None
+
+        return {
+            "mode": self.mode,
+            "start_date": iso(self.start_date),
+            "end_date": iso(self.end_date),
+            "recent_count": self.recent_count,
+            "update_id": self.update_id or None,
+            "update_url": self.update_url or None,
+        }
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -43,6 +97,68 @@ def _filter_updates(updates: list, since: datetime) -> list:
     fallback = datetime.min.replace(tzinfo=timezone.utc)
     selected = [u for u in updates if u.published_date and _ensure_utc(u.published_date) > since]
     return sorted(selected, key=lambda u: _ensure_utc(u.published_date or fallback))
+
+
+def _chronological(updates: list) -> list:
+    """Return dated updates oldest-first, followed by undated single targets."""
+    fallback = datetime.max.replace(tzinfo=timezone.utc)
+    return sorted(updates, key=lambda item: _ensure_utc(item.published_date or fallback))
+
+
+async def _select_targets(record: "RunRecord", rss_parser: Any) -> list:
+    """Resolve one run selector through the parser's owning lookup method."""
+    selection = record.selection
+    if selection.mode == "checkpoint":
+        since = await resolve_since(record.since)
+        record.since = since
+        return _filter_updates(await rss_parser.get_updates(), since)
+
+    if selection.mode == "date_range":
+        updates = await rss_parser.get_updates_by_date_range(
+            selection.start_date,
+            selection.end_date,
+        )
+    elif selection.mode == "recent":
+        updates = sorted(
+            await rss_parser.get_updates(),
+            key=lambda item: (
+                _ensure_utc(item.published_date)
+                if item.published_date
+                else datetime.min.replace(tzinfo=timezone.utc)
+            ),
+            reverse=True,
+        )[: selection.recent_count]
+    elif selection.mode == "update_id":
+        update = await rss_parser.fetch_update_by_id(selection.update_id)
+        updates = [update] if update else []
+    else:
+        update = await rss_parser.get_update_by_url(selection.update_url)
+        if update is None:
+            details = await rss_parser.fetch_update_details(selection.update_url)
+            update = details.get("update")
+            if update is None and (details.get("title") or details.get("content")):
+                from src.rss.parser import AzureUpdate
+
+                update = AzureUpdate(
+                    id=selection.update_url,
+                    title=details.get("title") or "Unknown Update",
+                    description=details.get("content") or "",
+                    link=selection.update_url,
+                    published_date=None,
+                    categories=[],
+                    azure_services=[],
+                    update_type=None,
+                    status=None,
+                )
+        updates = [update] if update else []
+
+    if not updates:
+        raise ValueError(f"No Azure Updates matched selector '{selection.mode}'")
+    if len(updates) > MAX_MANUAL_TARGETS:
+        raise ValueError(
+            f"Selector matched {len(updates)} updates; narrow it to {MAX_MANUAL_TARGETS} or fewer"
+        )
+    return _chronological(updates)
 
 
 class _WatermarkCursor:
@@ -100,7 +216,10 @@ class RunRecord:
     deferred: int = 0
     pending: int = 0
     email_sent: bool = False
+    send_email: bool = True
     dry_run: bool = False
+    selection: RunSelection = field(default_factory=RunSelection)
+    commit_checkpoint: bool = True
     checkpoint_committed: bool = False
     error: str = ""
 
@@ -128,7 +247,10 @@ class RunRecord:
             "deferred": self.deferred,
             "pending": self.pending,
             "email_sent": self.email_sent,
+            "send_email": self.send_email,
             "dry_run": self.dry_run,
+            "selection": self.selection.to_dict(),
+            "commit_checkpoint": self.commit_checkpoint,
             "checkpoint_committed": self.checkpoint_committed,
             "elapsed_seconds": round(elapsed.total_seconds(), 1),
             "error": self.error,
@@ -148,8 +270,22 @@ class RunStore:
         self._runs: OrderedDict[str, RunRecord] = OrderedDict()
         self._max_runs = max_runs
 
-    def create(self, since: Optional[datetime], dry_run: bool = False) -> RunRecord:
-        record = RunRecord(run_id=uuid.uuid4().hex, since=since, dry_run=dry_run)
+    def create(
+        self,
+        since: Optional[datetime],
+        dry_run: bool = False,
+        selection: Optional[RunSelection] = None,
+        commit_checkpoint: bool = True,
+        send_email: bool = True,
+    ) -> RunRecord:
+        record = RunRecord(
+            run_id=uuid.uuid4().hex,
+            since=since,
+            dry_run=dry_run,
+            selection=selection or RunSelection(),
+            commit_checkpoint=commit_checkpoint,
+            send_email=send_email,
+        )
         self._runs[record.run_id] = record
         while len(self._runs) > self._max_runs:
             self._runs.popitem(last=False)
@@ -202,6 +338,9 @@ def start_run(
     since: Optional[datetime] = None,
     dry_run: bool = False,
     source: str = "api_orchestrate",
+    selection: Optional[RunSelection] = None,
+    commit_checkpoint: bool = True,
+    send_email: bool = True,
 ) -> RunRecord:
     """Create a run record and drive it in the background.
 
@@ -209,6 +348,7 @@ def start_run(
         since: Only analyse updates published after this instant. Defaults to
             the last 24 hours when the caller has no checkpoint.
         dry_run: Collect targets without analysing or sending email.
+        send_email: Deliver a digest after analysis. Disable for an archive-only run.
 
     Returns:
         The newly created record, already queued.
@@ -219,7 +359,13 @@ def start_run(
     if not services_ready():
         raise RuntimeError("Orchestrator services are not initialized")
 
-    record = _run_store.create(since=since, dry_run=dry_run)
+    record = _run_store.create(
+        since=since,
+        dry_run=dry_run,
+        selection=selection,
+        commit_checkpoint=commit_checkpoint,
+        send_email=send_email,
+    )
     record.source = source
     task = asyncio.create_task(
         execute_run(
@@ -236,6 +382,8 @@ def start_run(
         "orchestrator_run_started",
         run_id=record.run_id,
         since=since.isoformat() if since else None,
+        selection=record.selection.mode,
+        send_email=record.send_email,
         dry_run=dry_run,
     )
     return record
@@ -267,7 +415,7 @@ async def resolve_since(explicit: Optional[datetime]) -> datetime:
 
 async def _commit_checkpoint(record: RunRecord) -> None:
     """Advance the durable checkpoint. Never raises — not advancing is safe."""
-    if record.watermark is None or record.dry_run:
+    if record.watermark is None or record.dry_run or not record.commit_checkpoint:
         return
     try:
         record.checkpoint_committed = await get_checkpoint_store().advance(record.watermark)
@@ -321,18 +469,18 @@ async def execute_run(
     settings = get_settings()
     record.status = "running"
     started = time.time()
-    since = await resolve_since(record.since)
-    record.since = since
-
     try:
-        updates = await rss_parser.get_updates()
-        targets = _filter_updates(updates, since)
+        targets = await _select_targets(record, rss_parser)
         record.total = len(targets)
 
         if not targets:
             record.status = "completed"
             record.finished_at = datetime.now(timezone.utc)
-            logger.info("orchestrator_run_empty", run_id=record.run_id, since=since.isoformat())
+            logger.info(
+                "orchestrator_run_empty",
+                run_id=record.run_id,
+                since=record.since.isoformat() if record.since else None,
+            )
             return record
 
         cursor = _WatermarkCursor(targets)
@@ -431,7 +579,14 @@ async def execute_run(
                 raise RuntimeError(
                     f"Archive persistence failed for {len(archive_errors)} analysis result(s)"
                 )
-            record.email_sent = await _send_digest(digest_items, analyzer, email_service)
+            if record.send_email:
+                record.email_sent = await _send_digest(
+                    digest_items,
+                    analyzer,
+                    email_service,
+                    deadline=deadline,
+                    estimate_s=max(slowest_s, 1.0),
+                )
 
         record.watermark = cursor.watermark
         record.pending = cursor.pending
@@ -457,36 +612,122 @@ async def execute_run(
     return record
 
 
-async def _send_digest(digest_items: list[dict], analyzer: Any, email_service: Any) -> bool:
+async def _send_digest(
+    digest_items: list[dict],
+    analyzer: Any,
+    email_service: Any,
+    deadline: Any = None,
+    estimate_s: float = 0.0,
+) -> bool:
     """Send the consolidated digest, per subscriber when subscribers exist."""
     if not digest_items or email_service is None:
         return False
 
-    settings = get_settings()
-    subscribers = settings.get_subscribers()
+    subscribers = await get_admin_configuration().get_subscribers()
     date_range = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     try:
         if not subscribers:
             return bool(await email_service.send_digest_report(digest_items, date_range=date_range))
 
+        def _scope_key(scope: AnalysisScope) -> tuple[tuple[str, ...], ...]:
+            return (
+                tuple(sorted(value.casefold() for value in scope.management_groups)),
+                tuple(sorted(value.casefold() for value in scope.subscriptions)),
+                tuple(sorted(value.casefold() for value in scope.resource_groups)),
+            )
+
+        subscriber_scopes = {
+            subscriber.email: AnalysisScope.from_subscriber(subscriber)
+            for subscriber in subscribers
+        }
+        unique_scopes: dict[tuple[tuple[str, ...], ...], AnalysisScope] = {}
+        for scope in subscriber_scopes.values():
+            if scope.is_bounded:
+                unique_scopes.setdefault(_scope_key(scope), scope)
+
+        scoped_results: dict[tuple[tuple[tuple[str, ...], ...], int], Any] = {}
+        if unique_scopes:
+            semaphore = asyncio.Semaphore(get_settings().max_concurrent_analyses)
+
+            async def _analyze_scoped(item: dict, scope: AnalysisScope) -> Any:
+                async with semaphore:
+                    if deadline is not None and not deadline.has_budget_for(max(estimate_s, 1.0)):
+                        raise RuntimeError("run deadline cannot fit another scoped analysis")
+                    return await analyzer.analyze_update(item["update"], scope=scope)
+
+            jobs = [
+                (scope_key, index, _analyze_scoped(item, scope))
+                for scope_key, scope in unique_scopes.items()
+                for index, item in enumerate(digest_items)
+                if item.get("result")
+            ]
+            outcomes = await asyncio.gather(
+                *(job[2] for job in jobs),
+                return_exceptions=True,
+            )
+            for (scope_key, index, _), outcome in zip(jobs, outcomes):
+                scoped_results[(scope_key, index)] = outcome
+
         async def _customize_and_send(subscriber) -> bool:
-            with_results = [item for item in digest_items if item["result"]]
-            without_results = [item for item in digest_items if not item["result"]]
+            scope = subscriber_scopes[subscriber.email]
+            labels = get_labels(subscriber.language)
+            with_results: list[tuple[int, dict, Any]] = []
+            items_by_index: dict[int, dict] = {}
+            for index, item in enumerate(digest_items):
+                if not item.get("result"):
+                    items_by_index[index] = item
+                    continue
+                source_result = item["result"]
+                if scope.is_bounded:
+                    source_result = scoped_results.get((_scope_key(scope), index))
+                    if isinstance(source_result, BaseException) or source_result is None:
+                        logger.warning(
+                            "subscriber_scoped_analysis_failed",
+                            subscriber=subscriber.email,
+                            update_id=getattr(item["update"], "id", ""),
+                            error=(
+                                type(source_result).__name__
+                                if isinstance(source_result, BaseException)
+                                else "missing_result"
+                            ),
+                        )
+                        items_by_index[index] = {
+                            **item,
+                            "result": None,
+                            "skip_reason": labels["subscriber_scope_analysis_failed"],
+                            "archive_id": "",
+                            "archive_url": "",
+                            "subscriber_scope_bounded": True,
+                        }
+                        continue
+                with_results.append((index, item, source_result))
+
             customized = await asyncio.gather(
                 *[
-                    analyzer.customize_for_subscriber(item["result"], subscriber, item["update"])
-                    for item in with_results
+                    analyzer.customize_for_subscriber(source_result, subscriber, item["update"])
+                    for _, item, source_result in with_results
                 ],
                 return_exceptions=True,
             )
-            items = []
-            for item, result in zip(with_results, customized):
+            for (index, item, source_result), result in zip(with_results, customized):
                 if isinstance(result, BaseException):
-                    items.append(item)
+                    items_by_index[index] = {
+                        **item,
+                        "result": source_result,
+                        "archive_id": "" if scope.is_bounded else item.get("archive_id", ""),
+                        "archive_url": "" if scope.is_bounded else item.get("archive_url", ""),
+                        "subscriber_scope_bounded": scope.is_bounded,
+                    }
                 else:
-                    items.append({**item, "result": result})
-            items.extend(without_results)
+                    items_by_index[index] = {
+                        **item,
+                        "result": result,
+                        "archive_id": "" if scope.is_bounded else item.get("archive_id", ""),
+                        "archive_url": "" if scope.is_bounded else item.get("archive_url", ""),
+                        "subscriber_scope_bounded": scope.is_bounded,
+                    }
+            items = [items_by_index[index] for index in range(len(digest_items))]
             return bool(
                 await email_service.send_digest_report(
                     items,

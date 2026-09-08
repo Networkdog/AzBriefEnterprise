@@ -54,7 +54,8 @@ The ceiling is intentionally unreachable while a known gap remains.
 12. Added strict stage JSON schemas, forced final synthesis, semantic normalization/reason codes, and explicit review-removal audit logs.
 13. Removed six redundant impact pre-analysis tools already owned by the downstream Plan-Execute loop and filled required `service_name` from immutable update context instead of invoking LLM repair.
 14. Moved the complete analyzer and subscriber customization into a Foundry Hosted Agent Responses handler; the old enrichment-only boundary was removed.
-15. Added a strict v2 wire contract with discriminated analysis/customization operations, full `AnalysisResult` payloads, and trace/operation matching.
+15. Added a strict v3 wire contract with discriminated analysis/customization operations,
+	async-safe subscriber hierarchy scope, full `AnalysisResult` payloads, and trace/operation matching.
 16. Replaced local analyzers in FastAPI and the scheduler with a fail-closed `HostedAgentAnalyzer` proxy and separated Container Apps versus Hosted Agent identity responsibilities.
 17. Added an authenticated MCP Python SDK v2 Streamable HTTP surface to the Container App; its analysis tool delegates to the Hosted Agent instead of recreating the graph.
 18. Set Hosted proxy calls to `store=false` for the one-shot contract, added the required `api-version=v1`, and preserved differential retry semantics.

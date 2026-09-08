@@ -14,16 +14,25 @@ SUBSCRIBER_CUSTOMIZATION_PROMPT = """You are an expert at tailoring Azure Update
 - **Name**: {subscriber_name}
 - **Job Role**: {subscriber_role}
 - **Report Language**: {subscriber_language}
+- **Resource Scope**:
+{subscriber_resource_scope}
+- **Focus Services**: {subscriber_focus_services}
 
 ## Instructions (execute steps in order, independently)
 
 ### STEP 1: Relevance Decision
 Determine if this update is relevant to the subscriber's role.
+- Use only resources inside the supplied Resource Scope. It is a hard investigation boundary,
+  not a writing preference.
 - Does the subscriber need to take any action?
 - Does the subscriber need to be aware of this change?
 → If both are NO, set `"subscriber_relevance": "skip"`.
 
-**IMPORTANT**: If the original report has `"relevance": "not_relevant"` AND `"affected_resources": []`, the subscriber should almost always set `"subscriber_relevance": "skip"` unless the subscriber's role has a specific reason to track this service (e.g., Azure 총괄 role may need awareness of all retirements, but only if the service is in scope for their organization).
+**Resource ownership is not a relevance gate.** Even if the base report has `"relevance":
+"not_relevant"` and no resource rows, independently assess the supplied role and focus services.
+Changes/retirements may matter for lifecycle responsibility; new capabilities may inform a design
+or adoption decision. Use only the original evidence and declared profile, never invented plans.
+Role interest changes `job_relevance`, not the original environment applicability or impact.
 
 **CRITICAL — "skip" does NOT mean "stop processing"**: Even when subscriber_relevance is "skip", you MUST still complete Steps 1.5 and 3 (job_relevance assessment and language translation). The digest email includes ALL updates regardless of skip status — untranslated text causes language mixing.
 
@@ -47,11 +56,15 @@ Note: `job_relevance` evaluates role fit — it is independent of `importance` (
 - **affected_resources**: Move role-relevant resources to the top. May remove irrelevant resources
 - **action_items**: Re-prioritize urgency based on role. May remove irrelevant items
 - **impact_summary**: Keep original values (translate only)
+- **relevance_evidence**: Preserve the original applicability/value evidence, analysis-time scope,
+  and uncertainty; translate without replacing it with a delivery or role-interest justification.
+- **relevance**, **importance**, **impact_level**: Preserve the environment assessment; role interest
+  alone must not promote a missing resource or unconfirmed use case into a confirmed match.
 
 **Capability-category updates** (`new_feature`, `new_service`, `region_expansion`, `preview`,
 `sdk_tooling`) carry an opportunity, not an impact. Tailor them by making that opportunity concrete
-for this role's remit — which decision this role would own, and which of the already-listed candidate
-resources fall inside their scope — using ONLY facts present in the original. Do NOT introduce
+for this role's remit — which decision this role would own, and which evidenced resources,
+workflows or requirements fit that remit — using ONLY facts present in the original. Do NOT introduce
 "운영에 영향이 없습니다" / "도입하지 않아도 리스크는 없습니다" statements: a newly released capability
 never changes existing behaviour, so its absence is a tautology. If the original avoided such
 sentences, the tailored version must too.
@@ -84,7 +97,7 @@ Translation targets:
 - relevance_evidence
 - affected_resources values for reason
 - additional_checks items
-- reference_docs related_content (keep title and url unchanged)
+- reference_docs description and related_content (keep title and url unchanged)
 
 Do NOT translate: resource names, resource types, CLI commands, URLs (these are proper nouns/code).
 

@@ -180,7 +180,7 @@ class AzureUpdateParser:
                         links.append({"text": text, "url": href})
 
                 update.learn_more_links = links
-                update.detail_description = soup.get_text(separator=" ", strip=True)
+                update.detail_description = self._clean_html(desc_html)
 
                 logger.info(
                     "update_detail_fetched",

@@ -1,6 +1,6 @@
 ---
 name: report-evaluation
-description: 'G-Eval LLM-as-a-Judge methodology for scoring and autonomously improving AzBrief analysis reports. Use when: G-Eval, LLM-as-a-Judge, report evaluation, quality scoring, rubric, dimension score, self-improvement loop, geval.py, GEvalJudge, logprob normalization, score normalization, calibration, actionability, faithfulness, job relevance, architectural depth, evaluate report quality, iterate to perfect score.'
+description: 'G-Eval and Microsoft Foundry cloud-evaluation methodology for scoring and autonomously improving AzBrief analysis reports. Use when: G-Eval, LLM-as-a-Judge, Foundry evaluation, cloud evaluation, report evaluation, quality scoring, rubric, dimension score, self-improvement loop, geval.py, GEvalJudge, logprob normalization, calibration, actionability, faithfulness, job relevance, architectural depth.'
 ---
 
 # AzBrief Report Evaluation — G-Eval LLM-as-a-Judge
@@ -13,6 +13,9 @@ description: 'G-Eval LLM-as-a-Judge methodology for scoring and autonomously imp
   architectural depth. Faithfulness outranks polish.
 - Treat any fabricated resource, date, command, or URL as critical. Reward concise evidence,
   honest zero-impact findings, and explicit limits rather than verbosity.
+- Judge changes by confirmed applicability/action and capabilities by documented value/adoption
+  conditions. Empty ARM inventory proves neither no relevance nor SDK/code non-use. Require no
+  invented migration, mandatory trial, adoption plan, or named resource for a workload-only case.
 - Return evidence-addressed corrections that name the unsupported claim or missing fact and
   the smallest required change; never rewrite merely to raise a score. Request at most one
   evidence-preserving rewrite and keep it only when the score improves.
@@ -50,6 +53,10 @@ python -m scripts.quality_campaign run --campaign eval_runs/campaign-q3 \
   --tag baseline-a --runtime local --split diagnosis --concurrency 1 --use-azd-env \
   --resume-run eval_runs/campaign-q3/runs/<interrupted-baseline-a>
 
+# Cross-check one completed run with Foundry managed evaluators
+python -m scripts.foundry_evaluation \
+  --run-dir eval_runs/campaign-q3/runs/<completed-run> --use-azd-env
+
 # Generate a real-data report, score it with G-Eval, iterate to the target (3 rounds)
 python -m scripts.evaluate_report --latest --with-html --iterate 3
 
@@ -77,10 +84,38 @@ Override the location with `--out-dir DIR` or the `AZBRIEF_EVAL_DIR` environment
 | `src/agent/geval.py` | `GEvalJudge`, `GEvalReport`, `DimensionScore`, `DIMENSIONS` — the judge |
 | `scripts/evaluate_report.py` | CLI loop: generate → rule pre-check → G-Eval → feedback → repeat |
 | `scripts/quality_campaign.py` | Frozen period/splits, Hosted or local-harness runs, layered gates, paired comparison |
+| `scripts/foundry_evaluation.py` | Public-context/canonical-report bridge to Foundry cloud evaluators |
 | `references/quality-campaign-rubric.md` | Research basis, impossible-perfect anchors, release gates, trace contract |
 | `src/config.py` | `geval_*` settings (enabled, target, logprob, max_iterations) |
 | `tests/test_geval.py` | Judge unit tests (fake LLM, logprob math, aggregation, edge cases) |
+| `tests/test_foundry_evaluation.py` | Cloud payload, privacy boundary, polling, and transient retry tests |
 | `src/agent/prompts/` | Report prompts — the lever that G-Eval feedback improves |
+
+## Foundry Cloud Cross-Check
+
+Run `scripts/foundry_evaluation.py` only after `quality_campaign` has produced a completed,
+lineage-valid run. It evaluates the precomputed report rather than invoking the Agent again, so the
+local and cloud judges see exactly the same output artifact. The inline dataset contains public Azure
+Update context plus the canonical report. It rejects email-like values and never exports raw tenant
+evidence, subscriber data, or private reasoning.
+
+The default managed evaluators are `coherence`, `fluency`, `relevance`, and `task_adherence`.
+`indirect_attack` is supported as an explicit `--evaluators` choice, but only in a Foundry risk and
+safety evaluation region. Korea Central supports batch evaluation but is not currently a safety
+evaluator region. Do not silently skip it: either omit it explicitly or use a dedicated supported-region
+evaluation project. The project's system-assigned identity needs account-scoped Foundry User; the
+control-plane UAMI's assignment is a different principal and is not sufficient. The enterprise Bicep
+also connects a dedicated Entra-only evaluation storage account and grants the project identity Blob
+Data Owner there; never reuse or expose the checkpoint/archive account for evaluator artifacts.
+
+Cloud groundedness is intentionally absent because the privacy boundary withholds the tenant evidence
+that grounded the report. A cloud faithfulness judgment without that evidence would create false
+hallucination findings. The local quality-reviewer remains authoritative for faithfulness, trajectory,
+and action safety. Foundry output is an independent cross-check and never compensates for a blocker.
+The CLI retries transient managed-runtime `SystemError` failures once and preserves every attempt and
+row-level result under `<run>/foundry_evaluations/`. `--eval-id` reuses a definition only when its
+item schema, ordered evaluator set, mappings, and judge initialization exactly match the request;
+definition drift fails before a remote run is created.
 
 ---
 
@@ -166,8 +201,9 @@ percentage (`score/5·100`), a grade band (S/A/B/C/D/F), `passed` (≥ target), 
 
 Every rubric embeds explicit exemptions the judge must honor — do **not** deduct when:
 
-- **Zero affected resources**: a report that transparently says so and gives only monitoring
-  guidance is *correct* for `actionability`. Do not demand fabricated commands/deadlines.
+- **Zero affected resources**: a confirmed scoped absence can justify no migration; code/SDK or
+  dependency evidence can still require action. New capabilities need value/adoption conditions,
+  not an owned deployment or mandatory evaluation. Do not demand fabricated commands/deadlines.
 - **Honest limits**: "compatibility cannot be confirmed with the collected data" is a
   *positive* `faithfulness` signal, not a deduction.
 - **No subscriber profile**: score `job_relevance` against a general Azure admin; don't
@@ -179,10 +215,17 @@ But one absence statement is **not** exempt: for a Capability-family update (`ne
 `new_service`, `region_expansion`, `preview`, `sdk_tooling`) the judge treats "이 업데이트는 운영에
 영향이 없습니다 / 도입하지 않아도 리스크가 없습니다" as a substantive `actionability` gap, because a
 newly released capability never changes existing behaviour — the sentence is a tautology. The useful
-answer is the opportunity: what becomes possible, for which named candidates, at what adoption cost,
+answer is the opportunity: what becomes possible for known workloads or supplied requirements, at what adoption cost,
 and whose responsibility it is. `render_report_markdown()` therefore shows the judge the update
 category in the badge line and titles the impact table `활용 기회` (not `영향 분석`) for those
 categories, matching what the reader sees in the email.
+
+The environment-relevance section uses the same localized `relevance_evidence` label as Archive and
+email. Judge its actual grounding: public documents establish a capability's conditional use cases,
+not that the tenant needs or plans to adopt it. Preserve `unknown` for material missing evidence.
+The mechanical evaluator checks rationale presence and structural contradictions without requiring
+resource counts for workload/code-only cases. Its revised category-aware scoring must not be compared
+directly with old totals as evidence of a generation-quality gain; establish a fresh baseline.
 
 **Verbosity bias**: the judge is instructed to reward sharp, concise insight over length —
 a defense against reward hacking (padding text to inflate scores).

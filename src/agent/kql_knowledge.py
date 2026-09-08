@@ -1,15 +1,17 @@
-"""KQL Knowledge Base — accumulates discovered Resource Graph schema insights.
+"""KQL Knowledge Base — reuses and accumulates Resource Graph schema insights.
 
 When the agent runs an exploratory query (e.g., sampling `properties` keys from a
 resource type), the results are stored here so that future analyses can reference
 the discovered column paths without re-exploring.
 
-The knowledge is stored in a JSON file on disk and loaded lazily.
+The checked-in JSON is a tenant-neutral seed. Runtime discoveries are loaded lazily
+and persisted under ``AZBRIEF_DATA_DIR`` (or the ignored local ``data/`` directory).
 """
 
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -18,17 +20,30 @@ from structlog import get_logger
 
 logger = get_logger()
 
-# Default path — sits next to this module so it ships with the package
-_DEFAULT_PATH = Path(__file__).parent / "kql_knowledge_base.json"
+# The checked-in file is a tenant-neutral seed. Runtime discoveries belong in
+# the ignored data directory, never back in the source tree.
+_SEED_PATH = Path(__file__).parent / "kql_knowledge_base.json"
+_DEFAULT_DATA_DIR = Path(__file__).parent.parent.parent / "data"
+_RUNTIME_FILE_NAME = "kql_knowledge_base.json"
 
 # In-memory cache
 _cache: Optional[dict] = None
 _cache_path: Optional[Path] = None
 
 
+def _bounded_scope_active() -> bool:
+    """Return whether shared KQL memory is unsafe for the current analysis."""
+    from src.agent.scope import current_analysis_scope
+
+    return current_analysis_scope().is_bounded
+
+
 def _get_path() -> Path:
-    """Return the knowledge base file path."""
-    return _cache_path or _DEFAULT_PATH
+    """Return the writable runtime knowledge path."""
+    if _cache_path is not None:
+        return _cache_path
+    data_dir = Path(os.environ.get("AZBRIEF_DATA_DIR", str(_DEFAULT_DATA_DIR))).expanduser()
+    return data_dir / _RUNTIME_FILE_NAME
 
 
 def _load() -> dict:
@@ -37,16 +52,17 @@ def _load() -> dict:
     if _cache is not None:
         return _cache
 
-    path = _get_path()
-    if path.exists():
+    runtime_path = _get_path()
+    source_path = runtime_path if runtime_path.exists() else _SEED_PATH
+    if source_path.exists():
         try:
-            _cache = json.loads(path.read_text(encoding="utf-8"))
+            _cache = json.loads(source_path.read_text(encoding="utf-8"))
             logger.debug("KQL knowledge base loaded", entries=len(_cache.get("schemas", {})))
         except Exception:
             logger.warning("Failed to load KQL knowledge base, starting fresh")
-            _cache = {"schemas": {}, "queries": {}}
+            _cache = {"schemas": {}, "queries": {}, "failed_queries": []}
     else:
-        _cache = {"schemas": {}, "queries": {}}
+        _cache = {"schemas": {}, "queries": {}, "failed_queries": []}
     return _cache
 
 
@@ -56,6 +72,7 @@ def _save() -> None:
         return
     path = _get_path()
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(_cache, indent=2, ensure_ascii=False), encoding="utf-8")
         logger.debug("KQL knowledge base saved", path=str(path))
     except Exception as e:
@@ -69,6 +86,8 @@ def record_schema(resource_type: str, property_paths: list[str]) -> None:
         resource_type: Normalized resource type (e.g., "microsoft.storage/storageaccounts")
         property_paths: List of discovered property paths (e.g., ["properties.minimumTlsVersion"])
     """
+    if _bounded_scope_active():
+        return
     kb = _load()
     key = resource_type.lower()
     existing = set(kb["schemas"].get(key, {}).get("paths", []))
@@ -94,6 +113,8 @@ def record_successful_query(resource_type: str, purpose: str, query: str) -> Non
         purpose: What this query achieves (e.g., "Get TLS version for storage accounts")
         query: The KQL query string
     """
+    if _bounded_scope_active():
+        return
     kb = _load()
     key = resource_type.lower()
     if key not in kb["queries"]:
@@ -123,6 +144,8 @@ def record_failed_query(query: str, error: str) -> None:
         query: The KQL query that failed
         error: The error message from Azure Resource Graph
     """
+    if _bounded_scope_active():
+        return
     kb = _load()
     if "failed_queries" not in kb:
         kb["failed_queries"] = []
@@ -153,6 +176,8 @@ def get_known_schema(resource_type: str) -> list[str]:
     Returns:
         List of known property paths, or empty list
     """
+    if _bounded_scope_active():
+        return []
     kb = _load()
     entry = kb["schemas"].get(resource_type.lower(), {})
     return entry.get("paths", [])
@@ -167,6 +192,8 @@ def get_known_queries(resource_type: str) -> list[dict]:
     Returns:
         List of query records [{purpose, query, recorded}]
     """
+    if _bounded_scope_active():
+        return []
     kb = _load()
     return kb["queries"].get(resource_type.lower(), [])
 
@@ -177,6 +204,8 @@ def build_context_for_prompt() -> str:
     Returns:
         Formatted text block, or empty string if no knowledge exists.
     """
+    if _bounded_scope_active():
+        return ""
     kb = _load()
     has_schemas = bool(kb.get("schemas"))
     has_queries = bool(kb.get("queries"))

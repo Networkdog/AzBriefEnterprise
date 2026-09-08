@@ -109,6 +109,13 @@ param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-hellowo
 @description('Optional private registry login server (e.g. myacr.azurecr.io) pulled with the managed identity. Leave empty for public images.')
 param containerRegistryServer string = ''
 
+@description('Role assignment permissions mode of the existing ACR. ABAC-enabled registries require Container Registry Repository Reader; legacy registries require AcrPull.')
+@allowed([
+  'AbacRepositoryPermissions'
+  'LegacyRegistryPermissions'
+])
+param containerRegistryRoleAssignmentMode string = 'AbacRepositoryPermissions'
+
 @description('Minimum replica count. 1 keeps the orchestrator warm; 0 scales to zero between runs.')
 @minValue(0)
 @maxValue(10)
@@ -232,6 +239,9 @@ param emailDataLocation string = 'Korea'
 @description('Fallback recipient address used when no subscriber list is configured.')
 param emailRecipientAddress string = ''
 
+@description('Mailbox that receives each persisted feedback submission. Leave empty to persist feedback without sending a notification.')
+param feedbackRecipientAddress string = ''
+
 @description('Subscriber list as a JSON array, e.g. [{"email":"a@co.com","name":"A","role":"Cloud Architect","language":"ko"}].')
 param subscribers string = ''
 
@@ -239,8 +249,11 @@ param subscribers string = ''
 // Scheduler (Container Apps Job)
 // ============================================================================
 
-@description('Cron expression, in UTC, for the daily digest job. Default: 02:00 UTC every day.')
+@description('Protected default automatic-run cron in UTC. Admin-managed daily times are added to this schedule. Default: 02:00 UTC every day.')
 param scheduleCronExpression string = '0 2 * * *'
+
+@description('Cron expression for the lightweight schedule dispatcher. It claims due schedules from durable Admin configuration before starting analysis.')
+param scheduleDispatcherCronExpression string = '*/5 * * * *'
 
 @description('Seconds a single job execution may run before Container Apps stops it. Keep RUN_TIME_BUDGET_S below this so the run defers leftover updates and commits its checkpoint before the replica is killed.')
 @minValue(600)
@@ -283,16 +296,20 @@ var foundryAccountName = 'aif-${baseName}-${shortSuffix}'
 var foundryProjectName = '${baseName}-agents'
 var containerEnvName = 'cae-${baseName}-${shortSuffix}'
 var containerAppName = 'ca-${baseName}'
+var azureMcpContainerAppName = 'ca-${baseName}-mcp'
+var azureMcpContainerEnvName = '${azureMcpContainerAppName}-env'
 var communicationServiceName = 'acs-${baseName}-${shortSuffix}'
 var emailServiceName = 'acs-email-${baseName}-${shortSuffix}'
 var schedulerJobName = 'caj-${baseName}'
 var storageAccountName = take('st${toLower(replace(baseName, '-', ''))}${shortSuffix}', 24)
+var evaluationStorageAccountName = take('steval${toLower(replace(baseName, '-', ''))}${shortSuffix}', 24)
 var vnetName = 'vnet-${baseName}-${shortSuffix}'
 var perimeterName = 'nsp-${baseName}-${shortSuffix}'
 var perimeterProfileName = 'azbrief'
 
 var stateContainerName = 'azbrief-state'
 var checkpointBlobUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${stateContainerName}/checkpoint.json'
+var adminConfigBlobUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${stateContainerName}/admin-config.json'
 var archiveContainerName = 'azbrief-archive'
 var archiveBlobContainerUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${archiveContainerName}'
 
@@ -301,12 +318,15 @@ var roleIds = {
   keyVaultSecretsUser: '4633458b-17de-408a-b874-0445c86b69e6'
   foundryUser: '53ca6127-db72-4b80-b1b0-d745d6d5456d'
   reader: 'acdd72a7-3385-48ef-bd42-f606fba81ae7'
-  acrPull: '7f951dda-4ed3-4680-a7ca-43fe172d538d'
   storageBlobDataContributor: 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+  storageBlobDataOwner: 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
   monitoringMetricsPublisher: '3913510d-42f4-4e42-8a64-420c390055eb'
 }
 
 var hasRegistry = !empty(containerRegistryServer)
+var containerRegistryPullRoleName = containerRegistryRoleAssignmentMode == 'AbacRepositoryPermissions'
+  ? 'Container Registry Repository Reader'
+  : 'AcrPull'
 
 var vnetMode = networkIsolationMode == 'vnetInjection'
 // Closed only when the isolation mode asks for it AND setup access is not held open.
@@ -357,6 +377,72 @@ var foundryAzureMcpAgentName = '${baseName}-azure-mcp'
 var foundryAzureApiAgentName = '${baseName}-azure-api'
 var foundryReportWriterAgentName = '${baseName}-report-writer'
 var foundryQualityReviewerAgentName = '${baseName}-quality-reviewer'
+var adminReadinessPromptAgents = {
+  coordinator: foundryCoordinatorAgentName
+  resource_graph: foundryResourceGraphAgentName
+  azure_mcp: foundryAzureMcpAgentName
+  azure_api: foundryAzureApiAgentName
+  report_writer: foundryReportWriterAgentName
+  quality_reviewer: foundryQualityReviewerAgentName
+}
+var adminReadinessSupportResources = [
+  {
+    id: 'managed_identity'
+    label: 'User-assigned managed identity'
+    name: managedIdentityName
+    resource_type: 'Microsoft.ManagedIdentity/userAssignedIdentities'
+    api_version: '2023-01-31'
+  }
+  {
+    id: 'key_vault'
+    label: 'Key Vault'
+    name: keyVaultName
+    resource_type: 'Microsoft.KeyVault/vaults'
+    api_version: '2023-07-01'
+  }
+  {
+    id: 'state_storage'
+    label: 'State Storage'
+    name: storageAccountName
+    resource_type: 'Microsoft.Storage/storageAccounts'
+    api_version: '2023-05-01'
+  }
+  {
+    id: 'evaluation_storage'
+    label: 'Evaluation Storage'
+    name: evaluationStorageAccountName
+    resource_type: 'Microsoft.Storage/storageAccounts'
+    api_version: '2023-05-01'
+  }
+  {
+    id: 'log_analytics'
+    label: 'Log Analytics'
+    name: logAnalyticsName
+    resource_type: 'Microsoft.OperationalInsights/workspaces'
+    api_version: '2023-09-01'
+  }
+  {
+    id: 'application_insights'
+    label: 'Application Insights'
+    name: appInsightsName
+    resource_type: 'Microsoft.Insights/components'
+    api_version: '2020-02-02'
+  }
+  {
+    id: 'communication_services'
+    label: 'Communication Services'
+    name: communicationServiceName
+    resource_type: 'Microsoft.Communication/communicationServices'
+    api_version: '2023-04-01'
+  }
+  {
+    id: 'email_service'
+    label: 'Email Communication Services'
+    name: emailServiceName
+    resource_type: 'Microsoft.Communication/emailServices'
+    api_version: '2023-04-01'
+  }
+]
 var containerAppUrl = 'https://${containerApp.properties.configuration.ingress.fqdn}'
 var archiveBaseUrl = 'https://${containerAppName}.${containerEnv.properties.defaultDomain}'
 
@@ -373,8 +459,9 @@ var ipRestrictions = [
   }
 ]
 
-// Shared by the Container App and scheduler control planes. Model and Prompt
-// Agent settings belong to the Hosted Agent service in azure.yaml, not here.
+// Shared by the Container App and scheduler control planes. Prompt Agent
+// definitions belong to the Hosted Agent; ADMIN_READINESS_* carries names only
+// so the control plane can verify the deployed topology without invoking it.
 var runtimeEnv = [
   { name: 'AZURE_TENANT_ID', value: tenant().tenantId }
   { name: 'AZURE_CLIENT_ID', value: managedIdentity.properties.clientId }
@@ -382,11 +469,17 @@ var runtimeEnv = [
   { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
   { name: 'FOUNDRY_HOSTED_AGENT_NAME', value: foundryHostedAgentName }
   { name: 'FOUNDRY_HOSTED_AGENT_TIMEOUT_S', value: '1800' }
+  { name: 'SCHEDULE_CRON_EXPRESSION', value: scheduleCronExpression }
+  { name: 'SCHEDULE_DISPATCH_ENABLED', value: 'true' }
   { name: 'CHECKPOINT_BLOB_URL', value: checkpointBlobUrl }
+  { name: 'ADMIN_CONFIG_BLOB_URL', value: adminConfigBlobUrl }
   { name: 'ARCHIVE_BLOB_CONTAINER_URL', value: archiveBlobContainerUrl }
   { name: 'ARCHIVE_BASE_URL', value: archiveBaseUrl }
   { name: 'ARCHIVE_UI_ENABLED', value: string(archiveUiEnabled) }
   { name: 'ARCHIVE_ALLOWED_PRINCIPALS', value: archiveAllowedPrincipals }
+  { name: 'FEEDBACK_UI_ENABLED', value: 'true' }
+  { name: 'FEEDBACK_BASE_URL', value: archiveBaseUrl }
+  { name: 'FEEDBACK_RECIPIENT_ADDRESS', value: feedbackRecipientAddress }
   { name: 'RUN_TIME_BUDGET_S', value: string(runTimeBudgetSeconds) }
   { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: 'https://${communicationService.properties.hostName}' }
   { name: 'COMMUNICATION_SERVICES_CONNECTION_STRING', secretRef: 'acs-connection-string' }
@@ -396,6 +489,15 @@ var runtimeEnv = [
   { name: 'API_KEY', secretRef: 'orchestrator-api-key' }
   { name: 'ADMIN_UI_ENABLED', value: string(adminUiEnabled) }
   { name: 'ADMIN_ALLOWED_PRINCIPALS', value: adminAllowedPrincipals }
+  { name: 'ADMIN_READINESS_RESOURCE_GROUP', value: resourceGroup().name }
+  { name: 'ADMIN_READINESS_FOUNDRY_ACCOUNT', value: foundryAccountName }
+  { name: 'ADMIN_READINESS_FOUNDRY_PROJECT', value: foundryProjectName }
+  { name: 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', value: modelDeploymentName }
+  { name: 'ADMIN_READINESS_CONTAINER_ENVIRONMENTS', value: base64(string([containerEnvName, azureMcpContainerEnvName])) }
+  { name: 'ADMIN_READINESS_CONTAINER_APPS', value: base64(string([containerAppName, azureMcpContainerAppName])) }
+  { name: 'ADMIN_READINESS_CONTAINER_JOBS', value: base64(string([schedulerJobName])) }
+  { name: 'ADMIN_READINESS_PROMPT_AGENTS', value: base64(string(adminReadinessPromptAgents)) }
+  { name: 'ADMIN_READINESS_SUPPORT_RESOURCES', value: base64(string(adminReadinessSupportResources)) }
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
   { name: 'OTEL_ENABLED', value: 'true' }
   { name: 'LOG_LEVEL', value: 'INFO' }
@@ -630,6 +732,46 @@ resource storagePrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' 
 
 resource storagePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (vnetMode) {
   parent: storagePrivateEndpoint
+  name: 'default'
+  properties: {
+    privateDnsZoneConfigs: [
+      {
+        name: 'blob'
+        properties: {
+          privateDnsZoneId: privateDnsZones[4].id
+        }
+      }
+    ]
+  }
+}
+
+resource evaluationStoragePrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = if (vnetMode) {
+  name: 'pe-${evaluationStorageAccountName}'
+  location: location
+  tags: tags
+  properties: {
+    subnet: {
+      id: privateEndpointSubnetId
+    }
+    privateLinkServiceConnections: [
+      {
+        name: 'blob'
+        properties: {
+          privateLinkServiceId: evaluationStorageAccount.id
+          groupIds: [
+            'blob'
+          ]
+        }
+      }
+    ]
+  }
+  dependsOn: [
+    vnet
+  ]
+}
+
+resource evaluationStoragePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (vnetMode) {
+  parent: evaluationStoragePrivateEndpoint
   name: 'default'
   properties: {
     privateDnsZoneConfigs: [
@@ -915,6 +1057,51 @@ resource archiveContainer 'Microsoft.Storage/storageAccounts/blobServices/contai
   }
 }
 
+// Foundry cloud evaluation uses a separate store so its project identity cannot
+// mutate the digest checkpoint or canonical report archive.
+resource evaluationStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: evaluationStorageAccountName
+  location: location
+  tags: tags
+  sku: {
+    name: 'Standard_LRS'
+  }
+  kind: 'StorageV2'
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    publicNetworkAccess: vnetMode ? 'Disabled' : 'Enabled'
+    networkAcls: {
+      defaultAction: vnetMode ? 'Deny' : 'Allow'
+      bypass: 'AzureServices'
+    }
+  }
+}
+
+resource foundryEvaluationStorageConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = {
+  parent: foundryProject
+  name: evaluationStorageAccountName
+  properties: {
+    category: 'AzureStorageAccount'
+    target: evaluationStorageAccount.properties.primaryEndpoints.blob
+    authType: 'AAD'
+    isSharedToAll: true
+    metadata: {
+      ApiType: 'Azure'
+      ResourceId: evaluationStorageAccount.id
+      location: evaluationStorageAccount.location
+    }
+  }
+  dependsOn: [
+    evaluationStoragePrivateDnsZoneGroup
+    foundryProjectStorageBlobDataOwnerAssignment
+    foundryProjectUserAssignment
+    foundryProjectCapabilityHost
+  ]
+}
+
 // ============================================================================
 // Container Apps
 // ============================================================================
@@ -1096,6 +1283,9 @@ resource containerAppAuth 'Microsoft.App/containerApps/authConfigs@2024-03-01' =
       }
     }
     login: {
+      allowedExternalRedirectUrls: [
+        containerAppUrl
+      ]
       preserveUrlFragmentsForLogins: false
     }
   }
@@ -1130,7 +1320,7 @@ resource schedulerJob 'Microsoft.App/jobs@2024-03-01' = {
       // analysis twice in one night.
       replicaRetryLimit: 0
       scheduleTriggerConfig: {
-        cronExpression: scheduleCronExpression
+        cronExpression: scheduleDispatcherCronExpression
         parallelism: 1
         replicaCompletionCount: 1
       }
@@ -1211,6 +1401,34 @@ resource foundryUserAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
   dependsOn: [
     foundryProject
   ]
+}
+
+// Cloud evaluation starts managed compute under the project's own identity.
+// Foundry User on the control-plane UAMI does not flow to that principal.
+resource foundryProjectUserAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: foundryAccount
+  name: guid(foundryAccount.id, foundryProject.id, roleIds.foundryUser)
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleIds.foundryUser)
+    principalId: foundryProject.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    foundryUserAssignment
+  ]
+}
+
+resource foundryProjectStorageBlobDataOwnerAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: evaluationStorageAccount
+  name: guid(evaluationStorageAccount.id, foundryProject.id, roleIds.storageBlobDataOwner)
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      roleIds.storageBlobDataOwner
+    )
+    principalId: foundryProject.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
 }
 
 // Resource-group Reader so the app can inspect its own deployment. Tenant- or
@@ -1348,6 +1566,20 @@ resource storagePerimeterAssociation 'Microsoft.Network/networkSecurityPerimeter
   }
 }
 
+resource evaluationStoragePerimeterAssociation 'Microsoft.Network/networkSecurityPerimeters/resourceAssociations@2024-07-01' = if (perimeterMode) {
+  parent: networkPerimeter
+  name: 'assoc-evaluation-storage'
+  properties: {
+    privateLinkResource: {
+      id: evaluationStorageAccount.id
+    }
+    profile: {
+      id: perimeterProfile.id
+    }
+    accessMode: perimeterAccessMode
+  }
+}
+
 // Learning mode is only useful if the decisions are readable — NSPAccessLogs is
 // what tells you which rules you still need before switching to Enforced.
 resource perimeterDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (perimeterMode) {
@@ -1394,6 +1626,9 @@ output adminPageUrl string = adminUiEnabled ? '${containerAppUrl}/admin' : '(dis
 @description('Archive Page URL. Administrators and explicitly allowed archive readers can browse canonical analyses.')
 output archivePageUrl string = archiveUiEnabled ? '${containerAppUrl}/archive' : '(disabled — configure Entra sign-in and an archive or admin allow-list)'
 
+@description('Public feedback form linked from every HTML and plain-text email report.')
+output feedbackPageUrl string = internalIngress ? '${containerAppUrl}/feedback (VNet-only)' : '${containerAppUrl}/feedback'
+
 @description('Microsoft Foundry project endpoint used by the Hosted Agent and persisted Prompt Agents.')
 output foundryProjectEndpoint string = foundryProjectEndpoint
 
@@ -1422,24 +1657,30 @@ output keyVaultName string = keyVault.name
 @description('Container Apps Job that runs the daily digest.')
 output schedulerJobName string = schedulerJob.name
 
-@description('Cron expression (UTC) the scheduler job runs on.')
+@description('Protected default automatic-run cron expression (UTC).')
 output scheduleCronExpression string = scheduleCronExpression
+
+@description('Cron expression (UTC) used to poll durable automatic schedules.')
+output scheduleDispatcherCronExpression string = scheduleDispatcherCronExpression
 
 @description('Blob holding the digest checkpoint. Delete it to re-analyse from the default window.')
 output checkpointBlobUrl string = checkpointBlobUrl
 
+@description('Private JSON blob holding Admin-managed subscribers, principals, and schedules.')
+output adminConfigBlobUrl string = adminConfigBlobUrl
+
 @description('Private Blob container holding immutable canonical analysis versions.')
 output archiveBlobContainerUrl string = archiveBlobContainerUrl
 
-@description('Command that starts a digest run immediately instead of waiting for the schedule.')
+@description('Command that starts the scheduler Job immediately. In dispatcher mode, analysis starts only when an automatic schedule is due.')
 output runNowCommand string = 'az containerapp job start --name ${schedulerJobName} --resource-group ${resourceGroup().name}'
 
 @description('Command that grants the identity subscription-wide Reader access.')
 output grantReaderCommand string = 'az role assignment create --assignee ${managedIdentity.properties.principalId} --role Reader --scope /subscriptions/${subscription().subscriptionId}'
 
-@description('Command that lets the identity pull from your registry. The template wires the registry reference but cannot assign a role on a registry it does not own.')
+@description('Command that lets the identity pull from your registry using the role required by its RBAC/ABAC mode. The template cannot assign a role on a registry it does not own.')
 output grantAcrPullCommand string = hasRegistry
-  ? 'az role assignment create --assignee ${managedIdentity.properties.principalId} --role AcrPull --scope $(az acr show --name ${split(containerRegistryServer, '.')[0]} --query id -o tsv)'
+  ? 'az role assignment create --assignee ${managedIdentity.properties.principalId} --role "${containerRegistryPullRoleName}" --scope $(az acr show --name ${split(containerRegistryServer, '.')[0]} --query id -o tsv)'
   : '(no containerRegistryServer supplied)'
 
 @description('Commands that roll the real AzBrief image onto BOTH the app and the scheduler job. Updating only the app leaves the nightly digest on the previous build.')

@@ -5,7 +5,7 @@ import re
 # Aliased: several renderers below bind a local name `html` for their output.
 from html import escape as _escape
 from html import unescape as _unescape
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 # Canonical UI label bundles live in src/i18n/labels/<code>.py. Re-exported so the
 # renderers below (and their callers) keep importing get_labels from templates.
@@ -31,6 +31,11 @@ _EMAIL_LINK_DOMAINS = (
     "github.com",
     "azureweekly.info",
     "aka.ms",
+)
+
+_AZURE_PORTAL_ROOT = "https://portal.azure.com/"
+_SUBSCRIPTION_ID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
 # Action-item safety gate. The border tints the whole card; the badge colour is
@@ -61,16 +66,15 @@ CAPABILITY_CATEGORIES = (
 # ============================================================================
 # Type scale
 # ============================================================================
-# Body copy sits at 16px — the browser/email default, and the size mail clients
-# render normal text at. Every other size is a step on the same scale, so the
-# hierarchy stays proportional if the base ever moves.
+# Body copy sits at the compact 12px size requested for regular email text.
+# Every other size follows the same proportional scale.
 FONT_SIZE_PX: dict[str, int] = {
-    "meta": 12,  # badges, table headers, timestamps, fine print   (0.75x)
-    "secondary": 14,  # table cells, action detail lines, CLI blocks    (0.875x)
-    "body": 16,  # prose, list items, concept boxes                (1x)
-    "heading": 18,  # section labels                                  (1.125x)
-    "title": 20,  # update titles                                   (1.25x)
-    "masthead": 26,  # AzBrief wordmark                                (1.625x)
+    "meta": 10,  # badges, table headers, timestamps, fine print
+    "secondary": 11,  # table cells, action detail lines, CLI blocks
+    "body": 12,  # prose, list items, concept boxes
+    "heading": 14,  # section labels
+    "title": 16,  # update titles
+    "masthead": 20,  # AzBrief wordmark
 }
 
 # ============================================================================
@@ -124,8 +128,8 @@ _CLIENT_COMPAT_STYLE_ESCAPED = _CLIENT_COMPAT_STYLE.replace("{", "{{").replace("
 # around the card pins it to 640px there instead.
 #
 # The min-width queries grow the card on desktop so the extra width goes to the
-# content instead of the gray backdrop. At the 16px body size 640px holds ~36
-# Korean characters per line and 900px ~50, which is the comfortable ceiling —
+# content instead of the gray backdrop. At the 12px body size 640px holds ~48
+# Korean characters per line and 900px ~67, which is the comfortable ceiling —
 # past that the line length costs more than the recovered space is worth.
 # ============================================================================
 
@@ -141,9 +145,7 @@ _RESPONSIVE_STYLE = """
     /* Digest metric columns shrink so the title column stays readable. */
     .azb-col-metric { width: 46px !important;
       padding-left: 4px !important; padding-right: 4px !important; }
-    .azb-col-metric span { font-size: 12px !important; padding: 2px 4px !important; }
-    /* Let the reason column share the width instead of claiming a fixed 60%. */
-    .azb-col-reason { width: auto !important; }
+    .azb-col-metric span { font-size: 10px !important; padding: 2px 4px !important; }
     /* Quick decision grid: 4 columns become label-over-value blocks. */
     .azb-qd td { display: block !important; width: auto !important;
       padding-top: 0 !important; padding-bottom: 0 !important; }
@@ -213,7 +215,7 @@ def markdown_to_html(text: str, strip_headings: bool = False) -> str:
         html_parts.append(
             '<div class="azb-concept" style="margin: 10px 0; padding: 10px 14px; '
             "background-color: #f0f5fa; border-left: 3px solid #5b9bd5; "
-            "border-radius: 0 4px 4px 0; font-size: 14px; color: #3b4a5a; "
+            "border-radius: 0 4px 4px 0; font-size: 11px; color: #3b4a5a; "
             'line-height: 1.6;">'
             f"{content}</div>"
         )
@@ -307,7 +309,7 @@ def markdown_to_html(text: str, strip_headings: bool = False) -> str:
                 list_type = "ul"
             item_text = _inline_format(bullet_match.group(1))
             html_parts.append(
-                f'<li class="azb-text" style="margin: 3px 0; font-size: 16px; color: #333; '
+                f'<li class="azb-text" style="margin: 3px 0; font-size: 12px; color: #333; '
                 f'line-height: 1.6;">{item_text}</li>'
             )
             continue
@@ -323,7 +325,7 @@ def markdown_to_html(text: str, strip_headings: bool = False) -> str:
                 list_type = "ol"
             item_text = _inline_format(num_match.group(2))
             html_parts.append(
-                f'<li class="azb-text" style="margin: 3px 0; font-size: 16px; color: #333; '
+                f'<li class="azb-text" style="margin: 3px 0; font-size: 12px; color: #333; '
                 f'line-height: 1.6;">{item_text}</li>'
             )
             continue
@@ -335,7 +337,7 @@ def markdown_to_html(text: str, strip_headings: bool = False) -> str:
             list_type = None
         formatted = _inline_format(stripped)
         html_parts.append(
-            f'<p class="azb-text" style="margin: 4px 0; font-size: 16px; color: #333; '
+            f'<p class="azb-text" style="margin: 4px 0; font-size: 12px; color: #333; '
             f'line-height: 1.7;">{formatted}</p>'
         )
 
@@ -430,7 +432,7 @@ def _inline_format(text: str) -> str:
     # Inline code: `code`
     text = _RE_INLINE_CODE.sub(
         r'<code class="azb-code" style="background-color: #f0f0f0; padding: 1px 5px; '
-        r'border-radius: 3px; font-family: monospace; font-size: 14px;">\1</code>',
+        r'border-radius: 3px; font-family: monospace; font-size: 11px;">\1</code>',
         text,
     )
     return text
@@ -462,6 +464,112 @@ def safe_email_href(url: str, allow_fragment: bool = False) -> str:
     return _escape(raw, quote=True)
 
 
+def _resource_arm_id(resource: dict) -> str:
+    """Return a complete ARM resource ID when it can be determined safely."""
+    supplied_id = str(resource.get("id") or resource.get("resourceId") or "").strip()
+    if supplied_id:
+        segments = supplied_id.strip("/").split("/")
+        if (
+            len(segments) >= 8
+            and segments[0].lower() == "subscriptions"
+            and _SUBSCRIPTION_ID_RE.fullmatch(segments[1])
+            and segments[2].lower() == "resourcegroups"
+            and segments[4].lower() == "providers"
+            and len(segments[6:]) % 2 == 0
+            and all(segment and not re.search(r"[\\?#\x00-\x1f]", segment) for segment in segments)
+        ):
+            return "/" + "/".join(segments)
+
+    subscription_id = str(resource.get("subscriptionId") or "").strip()
+    resource_group = str(resource.get("resourceGroup") or "").strip()
+    resource_type = str(resource.get("type") or "").strip("/")
+    resource_name = str(resource.get("name") or "").strip()
+    type_segments = resource_type.split("/")
+    if (
+        not _SUBSCRIPTION_ID_RE.fullmatch(subscription_id)
+        or not resource_group
+        or re.search(r"[\\/?#\x00-\x1f]", resource_group)
+        or len(type_segments) != 2
+        or not all(type_segments)
+        or not resource_name
+        or re.search(r"[\\/?#\x00-\x1f]", resource_name)
+    ):
+        return ""
+    return (
+        f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+        f"/providers/{resource_type}/{resource_name}"
+    )
+
+
+def _portal_scope_url(resource: dict, scope: str) -> str:
+    """Build a Portal URL for a resource, subscription, or resource group."""
+    arm_id = _resource_arm_id(resource)
+    subscription_id = str(resource.get("subscriptionId") or "").strip()
+    if arm_id and not subscription_id:
+        subscription_id = arm_id.strip("/").split("/")[1]
+    if not _SUBSCRIPTION_ID_RE.fullmatch(subscription_id):
+        return ""
+
+    if scope == "subscription":
+        target_id = f"/subscriptions/{subscription_id}"
+    elif scope == "resource_group":
+        resource_group = str(resource.get("resourceGroup") or "").strip()
+        if not resource_group and arm_id:
+            resource_group = arm_id.strip("/").split("/")[3]
+        if not resource_group or re.search(r"[\\/?#\x00-\x1f]", resource_group):
+            return ""
+        target_id = f"/subscriptions/{subscription_id}/resourceGroups/{resource_group}"
+    elif scope == "resource":
+        if not arm_id:
+            return ""
+        target_id = arm_id
+    else:
+        return ""
+
+    encoded_id = quote(target_id, safe="/-._~()")
+    return f"{_AZURE_PORTAL_ROOT}#resource{encoded_id}"
+
+
+def _portal_link_html(value: object, url: str) -> str:
+    """Render a value as a Portal link, or plain text when no safe URL exists."""
+    safe_value = escape_email_text(value)
+    safe_url = safe_email_href(url)
+    if not safe_url:
+        return safe_value
+    return (
+        f'<a href="{safe_url}" class="azb-link" title="Azure Portal" '
+        'style="color: #1a6fb5; text-decoration: underline;">'
+        f"{safe_value}</a>"
+    )
+
+
+def _cloud_shell_url(command: str) -> str:
+    """Return the official Portal Cloud Shell URL for the command's shell."""
+    text = str(command or "").strip()
+    if not text:
+        return ""
+    is_powershell = bool(
+        re.search(r"(?:^|[\s;|])[A-Z][A-Za-z]+-Az[A-Z][A-Za-z]*", text)
+        or re.search(r"(?m)^\s*\$[A-Za-z_][A-Za-z0-9_]*\s*=", text)
+        or re.search(r"\$(?:env|Env):[A-Za-z_]", text)
+    )
+    shell = "pwsh" if is_powershell else "bash"
+    return f"{_AZURE_PORTAL_ROOT}?feature.azureconsole.shell={shell}#cloudshell"
+
+
+def _link_portal_keyword(text: object, portal_url: str) -> str:
+    """Link the Portal entry point in a procedure when its target is unambiguous."""
+    safe_text = escape_email_text(text)
+    safe_url = safe_email_href(portal_url)
+    if not safe_url or "Azure Portal" not in safe_text:
+        return safe_text
+    portal_link = (
+        f'<a href="{safe_url}" class="azb-link" title="Azure Portal" '
+        'style="color: #1a6fb5; text-decoration: underline;">Azure Portal</a>'
+    )
+    return safe_text.replace("Azure Portal", portal_link, 1)
+
+
 def safe_archive_url(archive_url: str) -> str:
     """Return a normalized HTTPS archive URL, or an empty string when unsafe."""
     if not archive_url:
@@ -482,7 +590,23 @@ def format_archive_link_html(archive_url: str, language: str = "ko") -> str:
     return (
         '<p style="margin: 7px 0 0 0;">'
         f'<a href="{safe_url}" class="azb-link" '
-        'style="color: #5b9bd5; font-size: 12px; text-decoration: none;">'
+        'style="color: #5b9bd5; font-size: 10px; text-decoration: none;">'
+        f"{label}</a></p>"
+    )
+
+
+def format_feedback_link_html(feedback_url: str, language: str = "ko") -> str:
+    """Render a trusted HTTPS link to the public feedback form."""
+    feedback_url = safe_archive_url(feedback_url)
+    if not feedback_url:
+        return ""
+    label = _escape(get_labels(language)["feedback_link"])
+    safe_url = _escape(feedback_url, quote=True)
+    return (
+        '<p style="margin: 0 0 7px 0;">'
+        f'<a href="{safe_url}" class="azb-link" '
+        'style="color: #1a6fb5; font-size: 11px; font-weight: 700; '
+        'text-decoration: underline;">'
         f"{label}</a></p>"
     )
 
@@ -512,8 +636,9 @@ def format_archive_link_html(archive_url: str, language: str = "ko") -> str:
 
 # System fonts only: email clients block webfonts, and bundled families are not installed.
 FONT_STACK_SANS = (
-    "'Segoe UI', -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo', "
-    "'Malgun Gothic', Roboto, 'Noto Sans CJK KR', 'Helvetica Neue', Arial, sans-serif"
+    "'AppleSDGothicNeo-Regular', 'Microsoft GothicNeo', '맑은 고딕', "
+    "'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', -apple-system, "
+    "BlinkMacSystemFont, Roboto, 'Noto Sans CJK KR', 'Helvetica Neue', Arial, sans-serif"
 )
 FONT_STACK_MONO = "Consolas, Menlo, 'DejaVu Sans Mono', 'Courier New', monospace"
 
@@ -550,15 +675,15 @@ HTML_EMAIL_TEMPLATE = (
                             <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
                                 <tr>
                                     <td style="vertical-align: middle;">
-                                        <span style="color: #ffffff; font-size: 26px; font-weight: 700; letter-spacing: -0.3px;">AzBrief</span>
+                                        <span style="color: #ffffff; font-size: 20px; font-weight: 700; letter-spacing: -0.3px;">AzBrief</span>
                                     </td>
                                     <td align="right" style="vertical-align: middle;">
-                                        <span style="display: inline-block; background-color: {urgency_bg_color}; color: #fff; padding: 4px 12px; border-radius: 3px; font-size: 12px; font-weight: 700; letter-spacing: 0.5px;">{urgency_badge}</span>
+                                        <span style="display: inline-block; background-color: {urgency_bg_color}; color: #fff; padding: 4px 12px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px;">{urgency_badge}</span>
                                     </td>
                                 </tr>
                             </table>
-                            <p style="margin: 14px 0 0 0; color: #ffffff; font-size: 20px; font-weight: 600; line-height: 1.45;">{title}</p>
-                            <p style="margin: 8px 0 0 0; color: #7a8fa3; font-size: 14px;">{label_update_type}: {update_type} &middot; {published_date} &middot; <a href="{link}" class="azb-link" style="color: #5b9bd5; text-decoration: none;">{label_detail_link}</a></p>
+                            <p style="margin: 14px 0 0 0; color: #ffffff; font-size: 16px; font-weight: 600; line-height: 1.45;">{title}</p>
+                            <p style="margin: 8px 0 0 0; color: #7a8fa3; font-size: 11px;">{label_update_type}: {update_type} &middot; {published_date} &middot; <a href="{link}" class="azb-link" style="color: #5b9bd5; text-decoration: none;">{label_detail_link}</a></p>
                             {archive_link_html}
                         </td>
                     </tr>
@@ -569,17 +694,17 @@ HTML_EMAIL_TEMPLATE = (
                             <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-stack">
                                 <tr>
                                     <td style="vertical-align: middle;">
-                                        <p class="azb-text" style="margin: 0; font-size: 16px; color: #1a1a1a; font-weight: 500; line-height: 1.55;">{one_line_summary}</p>
+                                        <p class="azb-text" style="margin: 0; font-size: 12px; color: #1a1a1a; font-weight: 500; line-height: 1.55;">{one_line_summary}</p>
                                     </td>
                                     <td align="right" class="azb-stack-tail" style="vertical-align: middle; white-space: nowrap; padding-left: 12px;">
-                                        <span style="display: inline-block; background-color: {relevance_bg_color}; color: {relevance_text_color}; border: 1px solid {relevance_border_color}; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: 700; letter-spacing: 0.3px;">{relevance_label}</span>
+                                        <span style="display: inline-block; background-color: {relevance_bg_color}; color: {relevance_text_color}; border: 1px solid {relevance_border_color}; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.3px;">{relevance_label}</span>
                                     </td>
                                 </tr>
                             </table>
                         </td>
                     </tr>
 
-                    <!-- Relevance evidence (why this update was selected) -->
+                    <!-- 환경 연관성 -->
                     {relevance_evidence_html}
 
                     <!-- Batch context (filtering stats) -->
@@ -591,8 +716,8 @@ HTML_EMAIL_TEMPLATE = (
                     <!-- Analysis -->
                     <tr>
                         <td class="azb-section azb-pad" style="padding: 22px 32px 18px 32px;">
-                            <p class="azb-heading" style="margin: 0 0 10px 0; font-size: 18px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{label_analysis_summary}</p>
-                            <div class="azb-text" style="font-size: 16px; color: #333; line-height: 1.7;">{analysis_summary}</div>
+                            <p class="azb-heading" style="margin: 0 0 10px 0; font-size: 14px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{label_analysis_summary}</p>
+                            <div class="azb-text" style="font-size: 12px; color: #333; line-height: 1.7;">{analysis_summary}</div>
                         </td>
                     </tr>
 
@@ -617,8 +742,9 @@ HTML_EMAIL_TEMPLATE = (
                     <!-- Footer -->
                     <tr>
                         <td class="azb-footer azb-pad" style="background-color: #f8f9fb; padding: 14px 32px; border-top: 1px solid #e2e7ed;">
-                            <p style="margin: 0; font-size: 12px; color: #a0a8b4; line-height: 1.6;">{label_disclaimer_title}: {label_disclaimer_body}</p>
-                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #b8bfc8;">{label_footer_generated} &middot; AzBrief AI Agent &middot; {label_footer_basis} &middot; {generated_at}</p>
+                            {feedback_link_html}
+                            <p style="margin: 0; font-size: 10px; color: #a0a8b4; line-height: 1.6;">{label_disclaimer_title}: {label_disclaimer_body}</p>
+                            <p style="margin: 6px 0 0 0; font-size: 10px; color: #b8bfc8;">{label_footer_generated} &middot; AzBrief AI Agent &middot; {label_footer_basis} &middot; {generated_at}</p>
                         </td>
                     </tr>
 
@@ -830,18 +956,18 @@ def format_impact_section_html(
     html = f"""
     <tr>
         <td class="azb-pad" style="padding: 0 32px 16px 32px;">
-            <p class="azb-heading" style="margin: 0 0 8px 0; font-size: 18px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{section_label}</p>
+            <p class="azb-heading" style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{section_label}</p>
             <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-impact" style="background-color: #f8f9fb; border-radius: 6px; border: 1px solid #e8ecf0;">
     """
     for i, (label, color, value) in enumerate(items):
         border_top = " border-top: 1px solid #e8ecf0;" if i > 0 else ""
         html += f"""
                 <tr>
-                    <td class="azb-impact-label" style="padding: 8px 12px 8px 14px;{border_top} vertical-align: top; width: 1%; white-space: nowrap;">
-                        <span style="font-size: 12px; font-weight: 700; color: {color}; text-transform: uppercase; letter-spacing: 0.3px;">{label}</span>
+                    <td class="azb-impact-label" width="96" style="padding: 8px 12px 8px 14px;{border_top} vertical-align: top; width: 96px; min-width: 96px; white-space: nowrap; word-break: keep-all;">
+                        <span style="font-size: 10px; font-weight: 700; color: {color}; text-transform: uppercase; letter-spacing: 0.3px;">{label}</span>
                     </td>
                     <td class="azb-impact-value" style="padding: 8px 14px;{border_top} vertical-align: top;">
-                        <span style="font-size: 14px; color: #333; line-height: 1.5;">{value}</span>
+                        <span style="font-size: 11px; color: #333; line-height: 1.5;">{value}</span>
                     </td>
                 </tr>
         """
@@ -868,8 +994,9 @@ def format_affected_resources_html(
     changes to "replaceable resources" to reflect that these are existing
     resources that could benefit from the new capability.
 
-    All resources are displayed without truncation. Columns are determined
-    dynamically based on available data (reason, subscription, resource group).
+    All resources are displayed without truncation. Each reason spans one full
+    row, followed by resource name, subscription, resource group, and type
+    columns for the resources sharing that reason.
 
     Args:
         resources: List of resource dicts with name, type, resourceGroup,
@@ -899,110 +1026,48 @@ def format_affected_resources_html(
             return f"""
     <tr>
         <td class="azb-pad" style="padding: 0 32px 16px 32px;">
-            <p class="azb-heading" style="margin: 0 0 8px 0; font-size: 18px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{section_label}</p>
-            <p class="azb-text-muted" style="margin: 0; font-size: 14px; color: #8c96a3; font-style: italic;">{empty_label}</p>
+            <p class="azb-heading" style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{section_label}</p>
+            <p class="azb-text-muted" style="margin: 0; font-size: 11px; color: #8c96a3; font-style: italic;">{empty_label}</p>
         </td>
     </tr>
     """
         return ""
 
-    count = len(resources)
-    count_display = f"{count}{L['count_suffix']}"
+    count_display = f"{len(resources)}{L['count_suffix']}"
 
-    # Determine which optional columns are needed
-    has_reason = any(r.get("reason", "") for r in resources)
-
-    # Table cell styles
-    hdr = (
-        "font-size: 12px; font-weight: 700; color: #5b6a7a; "
-        "text-transform: uppercase; letter-spacing: 0.4px; "
-        "padding: 6px 8px; border-bottom: 2px solid #d0d7de; "
-        "background-color: #f1f3f6; white-space: nowrap;"
+    header_style = (
+        f"font-size: {FONT_SIZE_PX['meta']}px; font-weight: 700; color: #5b6a7a; "
+        "text-transform: uppercase; letter-spacing: 0.4px; padding: 5px 7px; "
+        "border-bottom: 1px solid #d9dfe6; background-color: #f8f9fb; "
+        "text-align: left; white-space: nowrap;"
     )
-    cell = (
-        "font-size: 14px; color: #333; padding: 5px 8px; "
-        "border-bottom: 1px solid #edf0f3; vertical-align: top; "
-        "line-height: 1.45; word-break: break-word;"
+    cell_style = (
+        f"font-size: {FONT_SIZE_PX['secondary']}px; color: #333; padding: 6px 7px; "
+        "border-bottom: 1px solid #edf0f3; vertical-align: top; line-height: 1.45; "
+        "word-break: break-word;"
     )
-    # The reason is a single value for the whole (possibly grouped) row, so it
-    # reads better centred against the stacked resource names.
-    reason_cell = cell.replace("vertical-align: top;", "vertical-align: middle;")
 
     def _short_type(res: dict) -> str:
         """Last segment of an ARM resource type ("…/runbooks" → "runbooks")."""
         res_type = res.get("type") or "Unknown"
         return res_type.split("/")[-1] if "/" in res_type else res_type
 
-    # Measured on 319 real rows: 73.8% of tables contain a SINGLE resource type,
-    # because one update usually hits one kind of resource. Repeating that type
-    # on every row costs a line per resource for no information, so it is lifted
-    # into the column header and only rendered per-row when types actually differ.
-    distinct_types = {_short_type(r) for r in resources}
-    uniform_type = distinct_types.pop() if len(distinct_types) == 1 else ""
-    # The header style is uppercase, but resource types are camelCase
-    # ("storageAccounts") — uppercasing them hurts readability and disagrees
-    # with the per-row rendering, so the type keeps its original casing.
-    resource_header = L["col_resource"]
-    if uniform_type:
-        resource_header += (
-            ' <span style="text-transform: none; font-weight: 600; color: #6b7785;">'
-            f"&middot; {escape_email_text(uniform_type)}</span>"
-        )
-
     html = f"""
     <tr>
         <td class="azb-pad" style="padding: 0 32px 16px 32px;">
             <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
                 <tr>
-                    <td><p class="azb-heading" style="margin: 0 0 8px 0; font-size: 18px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{section_label}</p></td>
-                    <td align="right"><span style="font-size: 14px; color: #5b9bd5; font-weight: 600;">{count_display}</span></td>
+                    <td><p class="azb-heading" style="margin: 0 0 8px 0; font-size: {FONT_SIZE_PX['heading']}px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{section_label}</p></td>
+                    <td align="right"><span style="font-size: {FONT_SIZE_PX['secondary']}px; color: #5b9bd5; font-weight: 600;">{count_display}</span></td>
                 </tr>
             </table>
             <div style="overflow-x: auto;">
-            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-panel" style="border: 1px solid #d0d7de; border-radius: 6px; border-collapse: separate; overflow: hidden; min-width: 100%;">
-                <tr>
-                    <th class="azb-th" style="{hdr} text-align: left;">{resource_header}</th>
+            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-panel" style="border: 1px solid #d0d7de; border-radius: 6px; border-collapse: separate; border-spacing: 0; overflow: hidden; min-width: 100%;">
     """
-    if has_reason:
-        html += (
-            f'<th class="azb-th azb-col-reason" style="{hdr} text-align: left; width: 60%;">'
-            f'{L["impact_reason"]}</th>\n'
-        )
-    html += "</tr>\n"
 
-    # Group resources that share the SAME impact reason into a single row.
+    # Group resources that share the same impact reason. Empty reasons stay
+    # separate so unrelated resources are never presented as one evidence set.
     # Resources with an empty reason are never merged — each keeps its own row.
-    def _resource_entry_html(res: dict) -> str:
-        """Render one resource as two lines: name, then scope (and type if mixed).
-
-        Scope is ALWAYS rendered as ``subscription / resource group`` — no
-        labels, since the slash-separated pair is self-evident — with a
-        placeholder when a value is missing, so every row keeps the same shape.
-        """
-        name = escape_email_text(res.get("name", "Unknown"))
-        subscription = (
-            res.get("subscription")
-            or res.get("subscriptionName")
-            or res.get("subscriptionId")
-            or ""
-        )
-        rg = res.get("resourceGroup") or ""
-
-        if subscription or rg:
-            scope = (
-                f"{escape_email_text(subscription or L['unknown_scope'])} / "
-                f"{escape_email_text(rg or L['unknown_scope'])}"
-            )
-        else:
-            # Both missing — say it once instead of repeating the placeholder.
-            scope = escape_email_text(L["unknown_scope"])
-        if not uniform_type:
-            scope += f" &middot; {escape_email_text(_short_type(res))}"
-
-        out = f'<span style="font-weight: 600;">{name}</span>'
-        out += f'<br><span style="font-size: 12px; color: #8c96a3;">{scope}</span>'
-        return out
-
     groups: dict = {}
     for idx, res in enumerate(resources):
         reason_key = (res.get("reason") or "").strip()
@@ -1010,29 +1075,61 @@ def format_affected_resources_html(
         key = reason_key if reason_key else f"\x00__no_reason__{idx}"
         groups.setdefault(key, []).append(res)
 
-    for gi, group in enumerate(groups.values()):
-        reason = group[0].get("reason", "") or ""
-        bg = "#ffffff" if gi % 2 == 0 else "#f9fafb"
-        row_class = "azb-cell-even" if gi % 2 == 0 else "azb-cell-odd"
-
-        html += f'<tr class="{row_class}" style="background-color: {bg};">'
-        html += f'<td class="azb-cell azb-text" style="{cell}">'
-        if len(group) == 1:
-            html += _resource_entry_html(group[0])
-        else:
-            # Multiple resources share the same reason — stack them in one cell so
-            # the reason is shown once. No group-size badge: it rendered only on
-            # grouped rows, which made the resource column look inconsistent.
-            for j, res in enumerate(group):
-                divider = "" if j == len(group) - 1 else "border-bottom: 1px dashed #e4e9ee;"
-                html += f'<div style="padding: 4px 0; {divider}">{_resource_entry_html(res)}</div>'
-        html += "</td>"
-        if has_reason:
-            html += (
-                f'<td class="azb-cell azb-text azb-col-reason" '
-                f'style="{reason_cell}">{escape_email_text(reason)}</td>'
-            )
+    column_headers = (
+        (L["col_resource"], "28%"),
+        (L["subscription"], "24%"),
+        (L["resource_group"], "24%"),
+        (L["col_type"], "24%"),
+    )
+    for group_index, group in enumerate(groups.values()):
+        reason = (group[0].get("reason") or "").strip()
+        group_border = "" if group_index == 0 else " border-top: 2px solid #d0d7de;"
+        reason_value = escape_email_text(reason) if reason else "&mdash;"
+        html += (
+            '<tr class="azb-resource-reason">'
+            f'<td colspan="4" style="padding: 8px 10px;{group_border} '
+            'background-color: #eef3f8; line-height: 1.5;">'
+            f'<span style="font-size: {FONT_SIZE_PX["meta"]}px; font-weight: 700; '
+            f'color: #0f4c81; margin-right: 7px;">{L["impact_reason"]}</span>'
+            f'<span class="azb-text" style="font-size: {FONT_SIZE_PX["body"]}px; '
+            f'color: #263746;">{reason_value}</span></td></tr>\n'
+        )
+        html += '<tr class="azb-resource-columns">'
+        for label, width in column_headers:
+            html += f'<th class="azb-th" width="{width}" style="{header_style} width: {width};">{label}</th>'
         html += "</tr>\n"
+
+        for resource_index, resource in enumerate(group):
+            row_class = "azb-cell-even" if resource_index % 2 == 0 else "azb-cell-odd"
+            background = "#ffffff" if resource_index % 2 == 0 else "#fbfcfd"
+            subscription = (
+                resource.get("subscription")
+                or resource.get("subscriptionName")
+                or resource.get("subscriptionId")
+                or L["unknown_scope"]
+            )
+            resource_group = resource.get("resourceGroup") or L["unknown_scope"]
+            values = (
+                (
+                    resource.get("name") or "Unknown",
+                    True,
+                    _portal_scope_url(resource, "resource"),
+                ),
+                (subscription, False, _portal_scope_url(resource, "subscription")),
+                (resource_group, False, _portal_scope_url(resource, "resource_group")),
+                (_short_type(resource), False, ""),
+            )
+            html += (
+                f'<tr class="azb-resource-row {row_class}" '
+                f'style="background-color: {background};">'
+            )
+            for value, emphasize, portal_url in values:
+                weight = " font-weight: 600;" if emphasize else ""
+                html += (
+                    f'<td class="azb-cell azb-text" style="{cell_style}{weight}">'
+                    f"{_portal_link_html(value, portal_url)}</td>"
+                )
+            html += "</tr>\n"
 
     html += """
             </table>
@@ -1115,6 +1212,7 @@ def format_action_items_html(
     recommendations: list = None,
     language: str = "ko",
     update_category: str = "new_feature",
+    affected_resources: list = None,
 ) -> str:
     """Format action items as a self-contained <tr> section.
 
@@ -1126,6 +1224,7 @@ def format_action_items_html(
         recommendations: Fallback list of string recommendations
         language: Language code for UI labels
         update_category: Update category — sections hidden for non-applicable categories
+        affected_resources: Structured resources used to resolve action targets to Portal links
 
     Returns:
         Complete <tr> HTML block; empty string if nothing to show.
@@ -1137,8 +1236,40 @@ def format_action_items_html(
     L = get_labels(language)
     items = action_items if action_items else []
 
+    resource_links: dict[str, str] = {}
+    ambiguous_names: set[str] = set()
+    for resource in affected_resources or []:
+        name = str(resource.get("name") or "").strip()
+        portal_url = _portal_scope_url(resource, "resource")
+        if not name or not portal_url:
+            continue
+        key = name.casefold()
+        if key in resource_links:
+            ambiguous_names.add(key)
+        else:
+            resource_links[key] = portal_url
+    for name in ambiguous_names:
+        resource_links.pop(name, None)
+
     # Build inner content
     inner = ""
+
+    def _action_detail_row(
+        label: str,
+        value_html: str,
+        *,
+        label_color: str = "#5b6a7a",
+        value_color: str = "#3b4a5a",
+    ) -> str:
+        return (
+            '<tr class="azb-action-detail-row">'
+            f'<td width="86" style="padding: 6px 8px 6px 14px; border-top: 1px solid #e4e9ee; '
+            f'vertical-align: top; font-size: {FONT_SIZE_PX["meta"]}px; font-weight: 700; '
+            f'color: {label_color}; white-space: nowrap;">{label}</td>'
+            f'<td style="padding: 6px 14px 6px 8px; border-top: 1px solid #e4e9ee; '
+            f'vertical-align: top; font-size: {FONT_SIZE_PX["secondary"]}px; color: {value_color}; '
+            f'line-height: 1.5; word-break: break-word;">{value_html}</td></tr>'
+        )
 
     if not items and recommendations:
         # Only show text-style recommendations when there are NO structured action items
@@ -1146,12 +1277,13 @@ def format_action_items_html(
         for i, rec in enumerate(recommendations, 1):
             inner += f"""
             <div class="azb-panel" style="background-color: #f8f9fb; border-radius: 5px; padding: 10px 12px; margin-bottom: 6px; border: 1px solid #e4e9ee;">
-                <p class="azb-text" style="margin: 0; font-size: 14px; color: #333;"><strong>{i}.</strong> {escape_email_text(rec)}</p>
+                <p class="azb-text" style="margin: 0; font-size: 11px; color: #333;"><strong>{i}.</strong> {escape_email_text(rec)}</p>
             </div>
             """
     elif items:
         for step_num, item in enumerate(items, 1):
             task = escape_email_text(item.task if hasattr(item, "task") else str(item))
+            why = item.why if hasattr(item, "why") else ""
             procedure = item.procedure if hasattr(item, "procedure") else ""
             cli_command = item.cli_command if hasattr(item, "cli_command") else ""
             estimated_time = item.estimated_time if hasattr(item, "estimated_time") else ""
@@ -1165,92 +1297,168 @@ def format_action_items_html(
             verify_notes = list(getattr(item, "verification_notes", []) or [])
             card_border = _VERIFY_BORDER.get(verify_status, "#e4e9ee")
             verify_badge = _format_verification_badge(verify_status, language)
+            target_urls = {
+                resource_links.get(str(target).strip().casefold(), "") for target in targets
+            }
+            target_urls.discard("")
+            procedure_portal_url = (
+                next(iter(target_urls)) if len(targets) == 1 and len(target_urls) == 1 else ""
+            )
 
             inner += f"""
-            <div class="azb-action" style="background-color: #f8f9fb; border-radius: 5px; padding: 12px 14px; margin-bottom: 8px; border: 1px solid {card_border};">
-                <p class="azb-action-title" style="margin: 0 0 4px 0; font-size: 16px; font-weight: 600; color: #1a1a1a; line-height: 1.5;"><span style="display: inline-block; background-color: #0078d4; color: #fff; font-size: 12px; font-weight: 700; padding: 2px 6px; border-radius: 10px; margin-right: 6px; vertical-align: middle; min-width: 14px; text-align: center;">{step_num}</span>{task}{verify_badge}</p>
+            <div class="azb-action" style="background-color: #f8f9fb; border-radius: 5px; margin-bottom: 8px; border: 1px solid {card_border}; overflow: hidden;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-action-header">
+                    <tr>
+                        <td width="34" style="padding: 11px 0 10px 14px; vertical-align: top;">
+                            <span style="display: inline-block; background-color: #0078d4; color: #fff; font-size: {FONT_SIZE_PX['meta']}px; font-weight: 700; padding: 2px 6px; border-radius: 10px; min-width: 14px; text-align: center;">{step_num}</span>
+                        </td>
+                        <td style="padding: 10px 14px 9px 7px; vertical-align: top;">
+                            <p class="azb-action-title" style="margin: 0; font-size: {FONT_SIZE_PX['heading']}px; font-weight: 700; color: #1a1a1a; line-height: 1.45;">{task}{verify_badge}</p>
+                        </td>
+                    </tr>
+                </table>
             """
 
+            context_rows = ""
             if targets:
-                t_str = ", ".join(escape_email_text(target) for target in targets[:3])
+                t_str = ", ".join(
+                    _portal_link_html(
+                        target,
+                        resource_links.get(str(target).strip().casefold(), ""),
+                    )
+                    for target in targets[:3]
+                )
                 if len(targets) > 3:
                     t_str += f" {L['remaining_targets'].format(n=len(targets) - 3)}"
-                inner += f'<p class="azb-text-secondary" style="margin: 2px 0; font-size: 14px; color: #6b7785;">{L["target"]}: {t_str}</p>'
+                context_rows += _action_detail_row(L["target"], t_str)
+            if why:
+                context_rows += _action_detail_row(L["why"], escape_email_text(why))
+            if context_rows:
+                inner += (
+                    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
+                    'width="100%" class="azb-action-context">'
+                    f"{context_rows}</table>"
+                )
 
+            procedure_html = ""
             if procedure:
                 steps = _split_procedure(procedure)
                 if len(steps) <= 1:
-                    inner += f'<p class="azb-text" style="margin: 2px 0; font-size: 14px; color: #444; line-height: 1.5;">{escape_email_text(procedure)}</p>'
+                    procedure_html += (
+                        f'<p class="azb-text" style="margin: 0; font-size: {FONT_SIZE_PX["body"]}px; '
+                        f'color: #333; line-height: 1.55;">'
+                        f"{_link_portal_keyword(procedure, procedure_portal_url)}</p>"
+                    )
                 else:
                     ordinal = 0
                     for step_text, is_sub in steps:
                         if is_sub:
-                            inner += (
-                                f'<p class="azb-text" style="margin: 1px 0 1px 20px; font-size: 14px; '
-                                f'color: #444; line-height: 1.5;">&bull; {escape_email_text(step_text)}</p>'
+                            procedure_html += (
+                                f'<p class="azb-text" style="margin: 2px 0 2px 20px; font-size: {FONT_SIZE_PX["body"]}px; '
+                                f'color: #444; line-height: 1.5;">&bull; '
+                                f"{_link_portal_keyword(step_text, procedure_portal_url)}</p>"
                             )
                         else:
                             ordinal += 1
-                            inner += (
-                                f'<p class="azb-text" style="margin: 3px 0; font-size: 14px; '
-                                f'color: #444; line-height: 1.5;"><strong>{ordinal}.</strong> {escape_email_text(step_text)}</p>'
+                            procedure_html += (
+                                f'<p class="azb-text" style="margin: 3px 0; font-size: {FONT_SIZE_PX["body"]}px; '
+                                f'color: #444; line-height: 1.5;"><strong>{ordinal}.</strong> '
+                                f"{_link_portal_keyword(step_text, procedure_portal_url)}</p>"
                             )
 
             if cli_command:
-                inner += (
-                    f'<div class="azb-cli" style="margin: 4px 0; font-size: 14px; color: #1a1a1a; '
+                cloud_shell_url = safe_email_href(_cloud_shell_url(cli_command))
+                safe_command = escape_email_text(cli_command)
+                command_html = (
+                    f'<a href="{cloud_shell_url}" class="azb-link" '
+                    f'title="{escape_email_text(L["cloud_shell_open"])}" '
+                    'style="display: block; color: #1a1a1a; text-decoration: none;">'
+                    f"{safe_command}</a>"
+                    if cloud_shell_url
+                    else safe_command
+                )
+                procedure_html += (
+                    f'<div class="azb-cli" style="margin: 7px 0 0 0; font-size: {FONT_SIZE_PX["secondary"]}px; color: #1a1a1a; '
                     f"font-family: {FONT_STACK_MONO}; "
-                    f"background-color: #f5f6f8; padding: 6px 10px; border-radius: 3px; "
-                    f"border: 1px solid #e4e9ee; line-height: 1.6; "
-                    f'white-space: pre-wrap;">{escape_email_text(cli_command)}</div>'
+                    f"background-color: #eef1f4; padding: 7px 9px; border-radius: 3px; "
+                    f"border: 1px solid #dce2e8; line-height: 1.55; "
+                    f'white-space: pre-wrap;">{command_html}</div>'
+                )
+                if cloud_shell_url:
+                    procedure_html += (
+                        f'<p style="margin: 3px 0 0 0; font-size: {FONT_SIZE_PX["meta"]}px; '
+                        f'color: #6b7785;"><a href="{cloud_shell_url}" class="azb-link" '
+                        'style="color: #1a6fb5; text-decoration: underline;">'
+                        f'{escape_email_text(L["cloud_shell_open"])} &rarr;</a></p>'
+                    )
+            if procedure_html:
+                inner += (
+                    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
+                    'width="100%" class="azb-action-procedure">'
+                    '<tr><td style="padding: 9px 14px 10px 14px; border-top: 1px solid #e4e9ee;">'
+                    f'<p style="margin: 0 0 5px 0; font-size: {FONT_SIZE_PX["meta"]}px; '
+                    f'font-weight: 700; color: #0f4c81; text-transform: uppercase;">{L["procedure"]}</p>'
+                    f"{procedure_html}</td></tr></table>"
                 )
 
-            meta_parts = []
+            schedule_cells = []
             if deadline:
-                meta_parts.append(f"{L['deadline']}: {escape_email_text(deadline)}")
+                schedule_cells.append((L["deadline"], escape_email_text(deadline)))
             if estimated_time:
-                meta_parts.append(f"{L['estimated']}: {escape_email_text(estimated_time)}")
-            if meta_parts:
-                inner += f'<p class="azb-action-meta" style="margin: 2px 0; font-size: 12px; color: #98a3af;">{" &middot; ".join(meta_parts)}</p>'
+                schedule_cells.append((L["estimated"], escape_email_text(estimated_time)))
+            if schedule_cells:
+                cell_width = 100 // len(schedule_cells)
+                cells_html = ""
+                for label, value in schedule_cells:
+                    cells_html += (
+                        f'<td width="{cell_width}%" style="padding: 7px 14px; border-top: 1px solid #e4e9ee; '
+                        f'vertical-align: top;"><span style="font-size: {FONT_SIZE_PX["meta"]}px; '
+                        f'font-weight: 700; color: #6b7785;">{label}</span><br>'
+                        f'<span style="font-size: {FONT_SIZE_PX["secondary"]}px; color: #263746; '
+                        f'line-height: 1.45;">{value}</span></td>'
+                    )
+                inner += (
+                    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
+                    'width="100%" class="azb-action-schedule" style="background-color: #f3f6f8;">'
+                    f"<tr>{cells_html}</tr></table>"
+                )
 
+            guardrail_rows = ""
             if risk:
-                inner += f'<p style="margin: 4px 0 0 0; font-size: 14px; color: #c0392b; font-weight: 600;">{L["risk_if_not_done"]}: {escape_email_text(risk)}</p>'
+                guardrail_rows += _action_detail_row(
+                    L["risk_if_not_done"],
+                    escape_email_text(risk),
+                    label_color="#a93226",
+                    value_color="#a93226",
+                )
 
             if precaution:
-                inner += (
-                    f'<p style="margin: 4px 0 0 0; font-size: 12px; color: #5b6a7a;">'
-                    f'<span style="font-weight: 600;">{L["precaution"]}:</span> {escape_email_text(precaution)}</p>'
-                )
+                guardrail_rows += _action_detail_row(L["precaution"], escape_email_text(precaution))
 
             if rollback:
-                inner += (
-                    f'<p style="margin: 2px 0 0 0; font-size: 12px; color: #5b6a7a;">'
-                    f'<span style="font-weight: 600;">{L["rollback"]}:</span> {escape_email_text(rollback)}</p>'
-                )
+                guardrail_rows += _action_detail_row(L["rollback"], escape_email_text(rollback))
 
             # reference_url comes from LLM output — only http(s) may become an anchor.
             safe_reference_url = safe_email_href(reference_url)
             if safe_reference_url:
-                inner += (
-                    f'<p style="margin: 2px 0 0 0; font-size: 12px; color: #5b6a7a;">'
-                    f'<span style="font-weight: 600;">{L["action_reference"]}:</span> '
+                reference_link = (
                     f'<a href="{safe_reference_url}" class="azb-link" '
                     f'style="color: #1a6fb5; text-decoration: none; word-break: break-all;">'
-                    f"{escape_email_text(reference_url)}</a></p>"
+                    f"{escape_email_text(reference_url)}</a>"
                 )
+                guardrail_rows += _action_detail_row(L["action_reference"], reference_link)
 
             if verify_notes:
-                # The gate's findings sit last so the reader has already seen what
-                # the item asks for before reading why it is disputed. Notes quote
-                # untrusted text (LLM verdicts, withheld commands), so they are
-                # escaped rather than markdown-formatted.
                 note_color = _VERIFY_COLOR.get(verify_status, "#5b6a7a")
                 findings = "<br>".join(f"&middot; {_escape(str(n))}" for n in verify_notes[:4])
+                guardrail_rows += _action_detail_row(
+                    L["verification"], findings, label_color=note_color, value_color=note_color
+                )
+            if guardrail_rows:
                 inner += (
-                    f'<p style="margin: 4px 0 0 0; font-size: 12px; color: {note_color}; '
-                    f'line-height: 1.6; word-break: break-word;">'
-                    f'<span style="font-weight: 700;">{L["verification"]}:</span><br>'
-                    f"{findings}</p>"
+                    '<table role="presentation" cellspacing="0" cellpadding="0" border="0" '
+                    'width="100%" class="azb-action-guardrails">'
+                    f"{guardrail_rows}</table>"
                 )
 
             inner += "</div>"
@@ -1261,7 +1469,7 @@ def format_action_items_html(
     return f"""
     <tr>
         <td class="azb-pad" style="padding: 0 32px 16px 32px;">
-            <p class="azb-heading" style="margin: 0 0 8px 0; font-size: 18px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{L['action_items']}</p>
+            <p class="azb-heading" style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{L['action_items']}</p>
             {inner}
         </td>
     </tr>
@@ -1272,7 +1480,7 @@ def format_reference_docs_html(docs: list, language: str = "ko") -> str:
     """Format reference documents as a self-contained <tr> section.
 
     Args:
-        docs: List of doc dicts (title, url, related_content)
+        docs: List of doc dicts (title, url, description, related_content)
         language: Language code for UI labels
 
     Returns:
@@ -1287,27 +1495,45 @@ def format_reference_docs_html(docs: list, language: str = "ko") -> str:
         if isinstance(doc, dict):
             title = doc.get("title", "Document")
             url = doc.get("url", "#")
+            summary = doc.get("description", "")
             context = doc.get("related_content", "")
         else:
             title = str(doc)
             url = "#"
+            summary = ""
             context = ""
 
         safe_url = safe_email_href(url)
         safe_title = escape_email_text(title)
         if safe_url:
-            inner += f'<p style="margin: 0 0 2px 0; font-size: 14px;"><a href="{safe_url}" class="azb-link" style="color: #1a6fb5; text-decoration: none;">{safe_title} &rarr;</a></p>'
+            inner += f'<p style="margin: 0 0 3px 0; font-size: 11px;"><a href="{safe_url}" class="azb-link" style="color: #1a6fb5; text-decoration: none; font-weight: 600;">{safe_title} &rarr;</a></p>'
         else:
-            inner += f'<p style="margin: 0 0 2px 0; font-size: 14px;">{safe_title}</p>'
-        if context:
-            inner += f'<p class="azb-text-secondary" style="margin: 0 0 6px 0; font-size: 12px; color: #6b7785; padding-left: 8px;">{L["doc_context"]}: {escape_email_text(context)}</p>'
+            inner += (
+                f'<p style="margin: 0 0 3px 0; font-size: 11px; font-weight: 600;">{safe_title}</p>'
+            )
+        if summary:
+            inner += (
+                f'<p class="azb-text" style="margin: 0 0 3px 0; font-size: '
+                f'{FONT_SIZE_PX["secondary"]}px; color: #3b4a5a; line-height: 1.5;">'
+                f"{escape_email_text(summary)}</p>"
+            )
+            if context and context != summary:
+                inner += f'<p class="azb-text-secondary" style="margin: 0 0 8px 0; font-size: 10px; color: #6b7785;">{L["doc_context"]}: {escape_email_text(context)}</p>'
+            else:
+                inner += '<div style="height: 5px;"></div>'
+        elif context:
+            inner += (
+                f'<p class="azb-text" style="margin: 0 0 8px 0; font-size: '
+                f'{FONT_SIZE_PX["secondary"]}px; color: #3b4a5a; line-height: 1.5;">'
+                f"{escape_email_text(context)}</p>"
+            )
         else:
             inner += '<div style="height: 4px;"></div>'
 
     return f"""
     <tr>
         <td class="azb-pad" style="padding: 0 32px 16px 32px;">
-            <p class="azb-heading" style="margin: 0 0 6px 0; font-size: 18px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{L['reference_docs']}</p>
+            <p class="azb-heading" style="margin: 0 0 6px 0; font-size: 14px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{L['reference_docs']}</p>
             {inner}
         </td>
     </tr>
@@ -1331,12 +1557,12 @@ def format_additional_checks_html(checks: list, language: str = "ko") -> str:
     html = f"""
     <tr>
         <td class="azb-pad" style="padding: 0 36px 20px 36px;">
-            <p class="azb-checks-title" style="margin: 0 0 12px 0; font-size: 18px; font-weight: 700; color: #b45309;">{L['additional_checks']}</p>
+            <p class="azb-checks-title" style="margin: 0 0 12px 0; font-size: 14px; font-weight: 700; color: #b45309;">{L['additional_checks']}</p>
             <div class="azb-checks" style="background-color: #fffbeb; border-radius: 6px; padding: 12px 14px; border: 1px solid #fde68a;">
     """
 
     for check in checks:
-        html += f'<p style="margin: 0 0 6px 0; font-size: 14px; color: #78350f; line-height: 1.55;">• {escape_email_text(check)}</p>'
+        html += f'<p style="margin: 0 0 6px 0; font-size: 11px; color: #78350f; line-height: 1.55;">• {escape_email_text(check)}</p>'
 
     html += """
             </div>
@@ -1348,10 +1574,10 @@ def format_additional_checks_html(checks: list, language: str = "ko") -> str:
 
 
 def format_relevance_evidence_html(evidence: str, language: str = "ko") -> str:
-    """Format relevance evidence as a compact info bar.
+    """Format environment relevance as a compact info bar.
 
-    Shows WHY this update was selected for the admin's environment,
-    with a reference to actual resource names/counts from Resource Graph.
+    Preserve category-aware applicability, value, and evidence limits without
+    treating resource ownership as a prerequisite for relevance.
 
     Args:
         evidence: Relevance evidence text (1-2 sentences)
@@ -1370,8 +1596,8 @@ def format_relevance_evidence_html(evidence: str, language: str = "ko") -> str:
             <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-info-bar" style="background-color: #eef6ff; border-left: 3px solid #0078d4;">
                 <tr>
                     <td style="padding: 8px 12px;">
-                        <span style="font-size: 12px; font-weight: 700; color: #0078d4; text-transform: uppercase; letter-spacing: 0.3px;">{L['relevance_evidence']}</span>
-                        <p class="azb-text" style="margin: 2px 0 0 0; font-size: 14px; color: #1a1a1a; line-height: 1.5;">{_inline_format(evidence)}</p>
+                        <span style="font-size: 10px; font-weight: 700; color: #0078d4; text-transform: uppercase; letter-spacing: 0.3px;">{L['relevance_evidence']}</span>
+                        <p class="azb-text" style="margin: 2px 0 0 0; font-size: 11px; color: #1a1a1a; line-height: 1.5;">{_inline_format(evidence)}</p>
                     </td>
                 </tr>
             </table>
@@ -1406,7 +1632,7 @@ def format_batch_context_html(
     return f"""
     <tr>
         <td class="azb-pad" style="padding: 4px 32px 0 32px;">
-            <p style="margin: 0; font-size: 12px; color: #8c96a3; letter-spacing: 0.2px;">{text}</p>
+            <p style="margin: 0; font-size: 10px; color: #8c96a3; letter-spacing: 0.2px;">{text}</p>
         </td>
     </tr>
     """
@@ -1416,7 +1642,7 @@ def _no_action_needed(language: str = "ko") -> str:
     """Return placeholder HTML for when no action items exist."""
     L = get_labels(language)
     return (
-        '<p style="color: #8c96a3; font-size: 14px; font-style: italic;">'
+        '<p style="color: #8c96a3; font-size: 11px; font-style: italic;">'
         f"{L['no_action_needed']}</p>"
     )
 
@@ -1483,12 +1709,12 @@ def format_quick_decision_html(
 
     rows_html = ""
     field_style = (
-        "font-size: 12px; font-weight: 700; color: #5b6a7a; "
+        "font-size: 10px; font-weight: 700; color: #5b6a7a; "
         "text-transform: uppercase; letter-spacing: 0.3px; "
         "padding: 5px 10px; width: 90px; vertical-align: top;"
     )
     value_style = (
-        "font-size: 14px; color: #1a1a1a; padding: 5px 10px; "
+        "font-size: 11px; color: #1a1a1a; padding: 5px 10px; "
         "vertical-align: top; line-height: 1.4;"
     )
 
@@ -1519,7 +1745,7 @@ def format_quick_decision_html(
     <tr>
         <td class="azb-pad" style="padding: 12px 32px 0 32px;">
             <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-qd" style="background-color: #f8f9fb; border-radius: 6px; border: 1px solid #e2e7ed;">
-                <tr><td colspan="4" class="azb-qd-label" style="padding: 6px 10px 2px 10px; font-size: 12px; font-weight: 700; color: #0078d4; text-transform: uppercase; letter-spacing: 0.4px;">{L['quick_decision']}</td></tr>
+                <tr><td colspan="4" class="azb-qd-label" style="padding: 6px 10px 2px 10px; font-size: 10px; font-weight: 700; color: #0078d4; text-transform: uppercase; letter-spacing: 0.4px;">{L['quick_decision']}</td></tr>
                 {rows_html}
             </table>
         </td>
@@ -1572,8 +1798,8 @@ def format_timeline_html(
             f'<td style="text-align: center; vertical-align: top; padding: 4px 6px;">'
             f'<div style="width: 10px; height: 10px; border-radius: 50%; '
             f'background-color: #0078d4; margin: 0 auto 4px auto;"></div>'
-            f'<p style="margin: 0; font-size: 12px; font-weight: 600; color: #1a1a1a;">{escape_email_text(date)}</p>'
-            f'<p class="azb-tl-task" style="margin: 2px 0 0 0; font-size: 12px; color: #6b7785; '
+            f'<p style="margin: 0; font-size: 10px; font-weight: 600; color: #1a1a1a;">{escape_email_text(date)}</p>'
+            f'<p class="azb-tl-task" style="margin: 2px 0 0 0; font-size: 10px; color: #6b7785; '
             f'max-width: 120px; line-height: 1.3;">{escape_email_text(task)}</p>'
             f"</td>"
         )
@@ -1583,7 +1809,7 @@ def format_timeline_html(
     return f"""
     <tr>
         <td class="azb-pad" style="padding: 0 32px 14px 32px;">
-            <p style="margin: 0 0 8px 0; font-size: 18px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{L['timeline']}</p>
+            <p style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{L['timeline']}</p>
             <div style="overflow-x: auto;">
             <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin: 0 auto;">
                 <tr>{dots_html}</tr>
@@ -1656,7 +1882,7 @@ def _level_badge_html(level: str, language: str = "ko") -> str:
     return (
         f'<span class="{badge_class}" style="display:inline-block; background-color:{colors["bg"]}; '
         f'color:{colors["color"]}; padding:2px 8px; border-radius:3px; '
-        f'font-size:14px; font-weight:600;">{label}</span>'
+        f'font-size:11px; font-weight:600;">{label}</span>'
     )
 
 
@@ -1671,7 +1897,7 @@ def format_digest_table_header_html(language: str = "ko") -> str:
     """
     L = get_labels(language)
     hdr_style = (
-        "padding:10px 12px; font-size:14px; font-weight:700; color:#5b6a7a; "
+        "padding:10px 12px; font-size:11px; font-weight:700; color:#5b6a7a; "
         "border-bottom:2px solid #d0d5dd; text-align:left;"
     )
     return f"""
@@ -1718,9 +1944,9 @@ def format_digest_update_card_html(
         return f"""
         <tr>
             <td colspan="4" class="azb-cell" style="padding:8px 12px; border-bottom:1px solid #edf0f3;">
-                <span class="azb-skip-badge" style="display:inline-block; background-color:#e8ecf0; color:#8c96a3; padding:1px 6px; border-radius:3px; font-size:12px; font-weight:600; margin-right:6px;">{L['digest_skipped_label']}</span>
-                <a href="{link}" class="azb-skip-link" style="color:#8c96a3; text-decoration:none; font-size:14px;">{title}</a>
-                {'<span class="azb-text-muted" style="font-size:12px; color:#b0b8c4; font-style:italic; margin-left:6px;">' + skip_text + '</span>' if skip_text else ''}
+                <span class="azb-skip-badge" style="display:inline-block; background-color:#e8ecf0; color:#8c96a3; padding:1px 6px; border-radius:3px; font-size:10px; font-weight:600; margin-right:6px;">{L['digest_skipped_label']}</span>
+                <a href="{link}" class="azb-skip-link" style="color:#8c96a3; text-decoration:none; font-size:11px;">{title}</a>
+                {'<span class="azb-text-muted" style="font-size:10px; color:#b0b8c4; font-style:italic; margin-left:6px;">' + skip_text + '</span>' if skip_text else ''}
             </td>
         </tr>"""
 
@@ -1751,7 +1977,7 @@ def format_digest_update_card_html(
     return f"""
         <tr>
             <td class="azb-cell" style="{cell_style} border-left:3px solid {importance_colors['dot_color']};">
-                <a href="{anchor_href}" class="azb-text" style="color:#1a1a1a; text-decoration:none; font-size:16px; font-weight:600; line-height:1.4;">{title}</a>
+                <a href="{anchor_href}" class="azb-text" style="color:#1a1a1a; text-decoration:none; font-size:12px; font-weight:600; line-height:1.4;">{title}</a>
             </td>
             <td class="azb-cell azb-col-metric" style="{center_cell}">{_level_badge_html(importance, language)}</td>
             <td class="azb-cell azb-col-metric" style="{center_cell}">{_level_badge_html(impact_level, language)}</td>

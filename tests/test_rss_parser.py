@@ -133,12 +133,11 @@ class TestAzureUpdateParser:
     def test_clean_html(self):
         """HTML cleaning removes tags and normalizes whitespace."""
         parser = AzureUpdateParser()
-        html = "<p>Hello  <strong>world</strong>  </p>"
+        html = "<p>Hello  <strong>world</strong>\n\navailable in all\nAzure regions</p>"
         cleaned = parser._clean_html(html)
         assert "<p>" not in cleaned
         assert "<strong>" not in cleaned
-        assert "Hello" in cleaned
-        assert "world" in cleaned
+        assert cleaned == "Hello world available in all Azure regions"
 
 
 class TestHistoryArchiveMerge:

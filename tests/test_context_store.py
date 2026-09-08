@@ -7,6 +7,7 @@ prompt budget stays reachable instead of being dropped.
 
 import asyncio
 import json
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -17,12 +18,16 @@ from src.agent.context_store import (
     get_result_store,
     store_and_handle,
 )
+from src.agent.foundry_backend import foundry_invocation_context
 from src.agent.resilience import TOOL_RESULT_BUDGET_CHARS
 from src.agent.tools import (
     FindRelatedResourcesTool,
     GetServiceRegionAvailabilityTool,
+    GetServiceResourceDetailsTool,
     QueryToolResultInput,
     QueryToolResultTool,
+    SearchAzureDocsTool,
+    _focused_availability_excerpt,
     format_rg_result,
 )
 
@@ -59,6 +64,13 @@ class TestToolResultStore:
 
     def test_get_unknown_ref_returns_none(self):
         assert ToolResultStore().get("R999") is None
+
+    def test_get_rejects_a_different_trace_owner(self):
+        store = ToolResultStore()
+        entry = store.put(tool="t", result="secret", trace_id="trace-a")
+
+        assert store.get(entry.ref, trace_id="trace-a") is entry
+        assert store.get(entry.ref, trace_id="trace-b") is None
 
     def test_oversized_entry_is_capped(self):
         store = ToolResultStore(max_entry_chars=100)
@@ -174,6 +186,21 @@ class TestQueryToolResultTool:
         entry = self._stored(isolated_store, needle="MyStorageAcct")
         out = asyncio.run(QueryToolResultTool()._arun(ref=entry.ref, pattern="mystorageacct"))
         assert "MyStorageAcct" in out
+
+    def test_cross_trace_ref_is_not_readable(self, isolated_store):
+        entry = isolated_store.put(
+            tool="query_azure_resources",
+            result="scope-a-resource",
+            trace_id="trace-a",
+        )
+
+        with foundry_invocation_context("trace-b", "tool:query"):
+            out = asyncio.run(
+                QueryToolResultTool()._arun(ref=entry.ref, pattern="scope-a-resource")
+            )
+
+        assert "scope-a-resource" not in out
+        assert "owned by this analysis" in out
 
     def test_no_match_is_reported_as_a_confirmed_absence(self, isolated_store):
         entry = self._stored(isolated_store)
@@ -330,9 +357,9 @@ class TestFindRelatedResourcesFormat:
         out = FindRelatedResourcesTool._format_related(["batch"], {"data": []})
         assert "No resources found" in out
 
-    def test_subscription_shown_only_when_ambiguous(self):
+    def test_subscription_id_is_always_shown(self):
         single = FindRelatedResourcesTool._format_related(["storage"], {"data": _rows(2)})
-        assert "sub=" not in single
+        assert "sub=sub-a" in single
 
         rows = _rows(2)
         rows[1]["subscriptionId"] = "sub-b"
@@ -345,6 +372,30 @@ class TestFindRelatedResourcesFormat:
         query = ResourceGraphQueryBuilder.find_related_resources(["storage"])
         assert "properties" not in query
         assert "order by type asc, name asc" in query
+
+    @pytest.mark.asyncio
+    async def test_service_details_always_preserve_subscription_id(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        service = MagicMock()
+        service.query_resources = AsyncMock(
+            return_value={
+                "data": [
+                    {
+                        "name": "storage-a",
+                        "subscriptionId": "11111111-1111-1111-1111-111111111111",
+                        "resourceGroup": "production-rg",
+                    }
+                ],
+                "count": 1,
+                "total_records": 1,
+            }
+        )
+        monkeypatch.setattr("src.agent.tools.record_successful_query", lambda **_kwargs: None)
+
+        output = await GetServiceResourceDetailsTool(service=service)._arun("Storage")
+
+        assert "subscriptionId: 11111111-1111-1111-1111-111111111111" in output
 
 
 class TestRegionAvailabilityVerdict:
@@ -387,6 +438,55 @@ class TestRegionAvailabilityVerdict:
         )
         assert "### Detail (3 resource types)" in out
         assert "Microsoft.App/type001" in out
+
+
+class TestFeatureRegionDocumentation:
+    def test_excerpt_matches_canonical_region_name_with_spaces(self):
+        content = (
+            "Overview\nThis feature is available in West Europe.\n"
+            "Regional table\nKorea Central\nGeneral Availability\n"
+        )
+
+        excerpt = _focused_availability_excerpt(content, ["koreacentral"])
+
+        assert "Korea Central" in excerpt
+
+    @pytest.mark.asyncio
+    async def test_region_search_fetches_targeted_official_page_content(self):
+        service = type("LearnService", (), {})()
+        service.search_azure_docs = AsyncMock(
+            return_value={
+                "results": [
+                    {
+                        "title": "Feature availability by region",
+                        "url": "https://learn.microsoft.com/azure/example/regions",
+                        "description": "Regional availability reference.",
+                    }
+                ]
+            }
+        )
+        service.fetch_page_content = AsyncMock(
+            return_value={
+                "title": "Feature availability by region",
+                "url": "https://learn.microsoft.com/azure/example/regions",
+                "content": "Preview regions\nWest Europe\nKorea Central\nJapan East",
+            }
+        )
+        tool = SearchAzureDocsTool(service=service)
+
+        output = await tool.ainvoke(
+            {
+                "query": "Example feature supported regions availability koreacentral",
+                "service_name": "Example Service",
+                "include_content": True,
+                "focus_terms": ["koreacentral"],
+            }
+        )
+
+        assert "Feature-level regional availability evidence" in output
+        assert "Korea Central" in output
+        assert "https://learn.microsoft.com/azure/example/regions" in output
+        service.fetch_page_content.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -442,7 +542,8 @@ class TestExecutionNodeWiring:
         assert "needle-acct-871" not in stored_text
 
         ref = stored_text.split("[ref=")[1].split("]")[0]
-        found = asyncio.run(QueryToolResultTool()._arun(ref=ref, pattern="needle-acct-871"))
+        with foundry_invocation_context("tr-exec", "tool:query"):
+            found = asyncio.run(QueryToolResultTool()._arun(ref=ref, pattern="needle-acct-871"))
         assert "needle-acct-871" in found
 
     def test_small_result_is_stored_verbatim(self, isolated_store):

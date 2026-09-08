@@ -30,7 +30,7 @@ architectural depth**를 평가하고 개선할 때 사용하는 skill입니다.
 ```powershell
 & .\.venv\Scripts\Activate.ps1
 python -m scripts.quality_campaign prepare --from 2026-06-01 --to 2026-08-29 --sample 24 --seed 42 --output eval_runs/campaign-q3
-python -m scripts.quality_campaign run --campaign eval_runs/campaign-q3 --tag baseline-a --runtime local --split diagnosis --concurrency 1 --use-azd-env
+python -m scripts.quality_campaign run --campaign eval_runs/campaign-q3 --tag baseline-a --runtime local --split diagnosis --use-azd-env
 ```
 
 Judge 자체의 parsing과 집계는 Azure 호출 없이 집중 검증할 수 있습니다.

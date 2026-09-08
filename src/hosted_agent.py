@@ -1,6 +1,7 @@
 """Foundry Hosted Agent entry point for the complete AzBrief analysis runtime."""
 
 import asyncio
+import json
 import os
 import time
 from pathlib import Path
@@ -23,6 +24,7 @@ from src.agent.analyzer import AnalysisResult, AzureUpdateAnalyzer  # noqa: E402
 from src.agent.foundry_backend import foundry_invocation_context  # noqa: E402
 from src.agent.hosted_contract import (  # noqa: E402
     HOSTED_AGENT_REQUEST_ADAPTER,
+    HOSTED_ANALYSIS_CONTRACT_VERSION,
     HostedAgentResponse,
     HostedAnalysisRequest,
     HostedCustomizationRequest,
@@ -31,6 +33,7 @@ from src.agent.hosted_contract import (  # noqa: E402
     HostedRunDiagnostics,
     HostedUpdate,
 )
+from src.agent.scope import AnalysisScope  # noqa: E402
 from src.config import Subscriber, get_settings  # noqa: E402
 from src.logging_config import setup_logging  # noqa: E402
 from src.rss.parser import AzureUpdate  # noqa: E402
@@ -43,7 +46,10 @@ class AnalysisRuntime(Protocol):
     """Runtime operations exposed by the Hosted Agent protocol."""
 
     async def analyze_update(
-        self, update: AzureUpdate, trace_id: Optional[str] = None
+        self,
+        update: AzureUpdate,
+        trace_id: Optional[str] = None,
+        scope: Optional[AnalysisScope] = None,
     ) -> AnalysisResult: ...
 
     async def customize_for_subscriber(
@@ -111,9 +117,15 @@ def _to_azure_update(payload: HostedUpdate) -> AzureUpdate:
 
 async def execute_request(raw_request: str, analyzer: AnalysisRuntime) -> HostedAgentResponse:
     """Validate and execute one full-analysis runtime request."""
+    response_contract_version = HOSTED_ANALYSIS_CONTRACT_VERSION
     try:
+        payload = json.loads(raw_request)
+        if isinstance(payload, dict) and payload.get("contract_version") == "2":
+            response_contract_version = "2"
+            payload["contract_version"] = HOSTED_ANALYSIS_CONTRACT_VERSION
+            raw_request = json.dumps(payload)
         request = HOSTED_AGENT_REQUEST_ADAPTER.validate_json(raw_request)
-    except ValidationError:
+    except (json.JSONDecodeError, ValidationError):
         return HostedAgentResponse(
             operation="analyze_update",
             status="failed",
@@ -132,7 +144,11 @@ async def execute_request(raw_request: str, analyzer: AnalysisRuntime) -> Hosted
         update = _to_azure_update(request.update)
         with foundry_invocation_context(request.trace_id, f"hosted:{request.operation}"):
             if isinstance(request, HostedAnalysisRequest):
-                result = await analyzer.analyze_update(update, trace_id=request.trace_id)
+                result = await analyzer.analyze_update(
+                    update,
+                    trace_id=request.trace_id,
+                    scope=request.scope,
+                )
                 result_payload = result.model_dump(mode="json")
             elif isinstance(request, HostedEvaluationRequest):
                 result = await analyzer.analyze_update(update, trace_id=request.trace_id)
@@ -159,6 +175,7 @@ async def execute_request(raw_request: str, analyzer: AnalysisRuntime) -> Hosted
             trace_id=request.trace_id,
         )
         return HostedAgentResponse(
+            contract_version=response_contract_version,
             operation=request.operation,
             status="failed",
             trace_id=request.trace_id,
@@ -173,6 +190,7 @@ async def execute_request(raw_request: str, analyzer: AnalysisRuntime) -> Hosted
         elapsed_s=round(time.monotonic() - started, 2),
     )
     return HostedAgentResponse(
+        contract_version=response_contract_version,
         operation=request.operation,
         status="completed",
         result=result_payload,

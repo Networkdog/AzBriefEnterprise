@@ -28,6 +28,12 @@ holds across the whole corpus.
 > score see **`report-quality`**; for the semantic LLM-as-a-Judge see **`report-evaluation`**.
 > Neither of those scores naturalness (see the honest limit below), which is why this skill exists.
 
+`relevance_evidence` is displayed as **환경 연관성 / Environment Relevance / 環境との関連性**.
+Its category contract precedes phrasing: changes explain applicability/action, capabilities explain
+grounded value/adoption conditions. Do not rewrite missing resources into a blanket "unrelated"
+claim or invent plans to make prose sound relevant. Scope absence to the analysis time/range;
+this is a semantic contract, not a phrase-blacklist rule.
+
 ## When to Use
 
 - A reader says a sentence "reads as AI-generated" / "번역체 같다" / "부자연스럽다"

@@ -7,13 +7,16 @@ saving ~8-9K tokens per report generation.
 CATEGORY_INTRO = """### Category-Specific Report Templates
 
 Each category has a tailored report structure. Follow the template for the classified category.
+Section requirements are conditional on evidence, not merely the category name. A change or
+retirement needs actions only for confirmed applicability; never invent targets when absent or
+unverified. A new capability needs useful value and adoption conditions, not a compulsory action.
 
 ---
 """
 
 CATEGORY_TEMPLATES: dict[str, str] = {
     "retirement": """#### CATEGORY: `retirement`
-**Tone**: Urgent, action-oriented. This is a "you must do something" report.
+**Tone**: Action-oriented when applicability is confirmed; otherwise concise about scoped absence or uncertainty.
 **one_line_summary pattern**: "[Service/feature] retiring [date] — [N] resources need migration"
 **detailed_analysis structure**:
 1. What is being retired and the exact retirement date
@@ -40,8 +43,8 @@ When `get_resource_configurations` results show affected resources, generate a c
 6. **Rollback Plan**: How to revert if migration fails
 
 **Sections:**
-- `affected_resources`: **MANDATORY** — list ALL resources that must be changed. `reason` required — must include the actual Resource Graph property value that proves this resource is affected (e.g., 'nodeImageVersion: AKSUbuntu-2204gen2containerd — 지원 종료 대상'). `action_required` = true.
-- `action_items`: **MANDATORY** — concrete migration steps with the retirement date as `deadline`.
+- `affected_resources`: List ALL confirmed resources that must be changed, with their actual property evidence and `action_required` = true. Use `[]` for a scoped absence or a code/workflow-only target; explain applicability in `relevance_evidence`.
+- `action_items`: Required ONLY for confirmed applicability — concrete migration steps with the real retirement date as `deadline`. A scoped absence does not require migration work; a material evidence gap does not justify a mutating command.
   **Key Dates extraction rule**: If the update text contains a "Key dates" section or lists multiple milestone dates (e.g., "June 30, 2026: Last day to buy 3-year RI", "June 30, 2029: Retirement"), each date MUST be captured as a separate `action_item` with that date as the `deadline` field. This ensures the timeline visualization in the email report correctly displays all milestones. Do NOT collapse multiple dates into a single action item.
   **Resource-specific commands**: CLI commands MUST use actual resource names from tool results, not placeholders. Example: `az aks upgrade --name prod-aks-01 --resource-group prod-rg --kubernetes-version 1.30` (NOT `--name <cluster-name>`)
   **Time estimation**: Calculate from actual resource count. Example: "리소스당 약 15분 × 3개 = 약 45분"
@@ -55,8 +58,8 @@ When `get_resource_configurations` results show affected resources, generate a c
 3. Who is impacted — only users of feature X, or all users of the service?
 
 **Sections:**
-- `affected_resources`: **MANDATORY** — resources whose behavior may change. `reason` must include the actual queried property value (e.g., 'nodeImageVersion: AKSUbuntu-2204gen2containerd — 기본값 변경 영향', 'minimumTlsVersion: TLS1_0 — 차단 예정').
-- `action_items`: **MANDATORY** — verification and remediation steps. Step 1 should always be "verify impact" before making changes.
+- `affected_resources`: List confirmed resources whose behavior changes with actual property evidence. Use `[]` when no ARM target applies; code/workflow/dependency evidence still belongs in `relevance_evidence`.
+- `action_items`: Required for confirmed applicability — verification and remediation steps. Verify before making changes. Do not fabricate remediation for a scoped absence or material evidence gap.
 - `impact_summary`: Focus on whichever dimensions are affected (security enforcement → `security_impact`; performance default change → `performance_impact`).""",
     "new_feature": """#### CATEGORY: `new_feature`
 **Tone**: Opportunity-oriented, advisory. "Here's what you can now do — and what you gain."
@@ -72,14 +75,16 @@ The primary value of a GA report is NOT to create action items, but to inform th
 
 **Sections:**
 - `affected_resources`: **OPTIONAL** — list existing resources that could **benefit from** this new feature. Frame as opportunity, not impact. Set `action_required` = false. Use `reason` with the actual queried property that shows the current state (e.g., 'sku.name: Standard_LRS, encryption.type: PlatformKey — cross-tenant CMK 적용 가능').
-- `action_items`: Depends on `relevance`. If `relevance` = `opportunity` (a feature that benefits named existing resources), you MUST include **exactly one** scoped evaluation action per the "Opportunity must never be a dead-end" rule — name the real candidate resources and the real go/no-go criteria, with an empty `deadline`. The evaluation itself MUST be non-mutating: leave `cli_command` empty or use only a read-only inspection command. Never attach `az ... update`, `--enable-*`, `set`, or another state-changing command to an evaluate/review task; a later adoption change is outside this action. If `relevance` = `not_relevant` (the admin owns nothing that benefits), use empty `[]`. Do NOT fabricate urgent migration steps, CLI commands, or deadlines for a GA feature — the single evaluation action is the ceiling unless the update states explicit opt-in steps.
+- `action_items`: Value first; evaluation is optional. Include at most one non-mutating fit check for a known workload/workflow or supplied requirement with documented go/no-go criteria. Otherwise use `[]`. Ownership of the service is not required. Keep `deadline` empty and `cli_command` empty or read-only; never attach `update`, `set`, or `enable` to an evaluation task.
 - `impact_summary`: This is an **opportunity summary, not an impact assessment**. Each dimension states what the administrator GAINS by adopting:
   - `cost_impact`: the saving or cost-optimization this unlocks
   - `security_impact`: the security posture improvement available
   - `performance_impact`: the performance or reliability gain possible
   - `operational_impact`: the operational work that disappears — a component no longer operated, a manual step automated, a standard that can be enforced
   Leave a dimension as an empty string when there is no concrete gain. An empty string is CORRECT and is required instead of "영향 없음" / "운영 변경 없음" / "도입하지 않아도 리스크 없음" — a new feature never changes existing behaviour, so stating its absence is a forbidden tautology.
-- `additional_checks`: If region availability for the admin's primary regions cannot be confirmed from the update or doc search results, add: "[Feature name]의 [primary region(s)] 리전 지원 여부를 확인해야 합니다." (translate per report language).""",
+- `additional_checks`: Only when exhaustive feature-level official evidence remains inconclusive,
+  add one exact self-service check naming the feature, primary Region, Portal/API surface, and why.
+  The headline must still say that availability is not officially confirmed.""",
     "new_service": """#### CATEGORY: `new_service`
 **Tone**: Educational, advisory. "Here's a new tool in your toolbox."
 **one_line_summary pattern**: "[Service name] now GA — [primary use case in one phrase]"
@@ -88,14 +93,15 @@ The primary value of a GA report is NOT to create action items, but to inform th
 2. Target audience — which teams or workloads benefit most, and which operational responsibility (network / security / cost / platform / data / application) would own the adoption decision
 3. Comparison to existing alternatives (if any)
 4. Key capabilities and limitations
-5. How to get started (but NOT as an action item)
+5. Adoption conditions and trade-offs; do not turn a launch into compulsory deployment work
 6. **Region availability**: Whether this new service is available in the admin's primary resource regions. Check the update text and doc search results for region information.
 
 **Sections:**
-- `affected_resources`: **MUST be empty `[]`**. New service = no existing resources.
-- `action_items`: **MUST be empty `[]`**. Do NOT fabricate "try this service" actions.
+- `affected_resources`: Use `[]` unless existing, evidenced resources are concrete adoption candidates. Never invent a deployment of the new service to justify its value.
+- `action_items`: Optional single non-mutating fit check under the value-first rule; otherwise `[]`. Do NOT fabricate "try this service" actions.
 - `impact_summary`: State only the dimension where this service would produce a concrete gain for a workload the administrator actually runs (most often `cost_impact` when it replaces a paid or self-operated component, or `operational_impact` when it removes work). All other dimensions MUST be empty strings. Never write "영향 없음" or "운영 변경 없음" — a brand-new service cannot affect existing operations, so its absence is not worth a sentence.
-- `additional_checks`: If region availability for the admin's primary regions cannot be confirmed, add the region verification check item.""",
+- `additional_checks`: Only when official feature-level evidence remains inconclusive, add one exact
+    self-service Region check; keep the unconfirmed outcome visible in `one_line_summary`.""",
     "region_expansion": """#### CATEGORY: `region_expansion`
 **Tone**: Brief, factual. "Now available closer to you."
 **one_line_summary pattern**: "[Service] now available in [region(s)]"
@@ -106,7 +112,7 @@ The primary value of a GA report is NOT to create action items, but to inform th
 
 **Sections:**
 - `affected_resources`: **MUST be empty `[]`**.
-- `action_items`: **MUST be empty `[]`**.
+- `action_items`: Optional single non-mutating fit check for a supported DR, residency, or latency requirement; otherwise `[]`. No existing deployment in the new region is required.
 - `impact_summary`: `performance_impact` if latency improves for workloads the admin runs near the new region. `operational_impact` if it enables a DR or data-residency posture that was not available before. Every other dimension MUST be an empty string — do NOT write that there is no impact.""",
     "preview": """#### CATEGORY: `preview`
 **Tone**: Forward-looking, informational. "Coming soon to Azure."
@@ -121,10 +127,11 @@ The primary value of a GA report is NOT to create action items, but to inform th
 
 **Sections:**
 - `affected_resources`: **OPTIONAL** — list existing resources that could be **replaced or improved** once this feature becomes GA, IF the preview feature is clearly superior in cost, operations, performance, reliability, or security. These help administrators plan ahead. Set `action_required` = false. Use `reason` with the actual queried property that shows the current state. If no clear advantage exists, use empty `[]`.
-- `action_items`: **MUST be empty `[]`**.
+- `action_items`: Optional single non-mutating fit check under the value-first rule; otherwise `[]`. Never imply a preview requires production adoption.
 - `impact_summary`: Only the dimension where this preview would produce a concrete gain once adopted (typically cost or security). Every other dimension MUST be an empty string. Never write that the preview has no impact or that skipping it carries no risk — that is true of every preview and tells the reader nothing.
-- `additional_checks`: If region availability for the admin's primary regions cannot be confirmed, add the region verification check item.
-- Set `relevance` to `opportunity` if the feature is relevant to the admin's service stack, `not_relevant` otherwise.""",
+- `additional_checks`: Only when official feature-level evidence remains inconclusive, add one exact
+    self-service Region check; keep the unconfirmed outcome visible in `one_line_summary`.
+- Set `relevance` from supported workload/requirement fit and evidence completeness, not ownership of the preview's service. Unresolved material fit is `unknown`, not automatic `not_relevant`.""",
     "sdk_tooling": """#### CATEGORY: `sdk_tooling`
 **Tone**: Technical, developer-focused. "Toolchain update."
 **one_line_summary pattern**: "[Tool] [version/feature] — [what changed]"
@@ -136,7 +143,7 @@ The primary value of a GA report is NOT to create action items, but to inform th
 
 **Sections:**
 - `affected_resources`: **MUST be empty `[]`** (SDK/tools are not Azure resources).
-- `action_items`: Only if old version is being deprecated and migration is needed. Otherwise empty `[]`.
+- `action_items`: Required for confirmed breaking/deprecated usage (classify as `feature_change`/`retirement`); for optional tooling gains, at most one grounded, non-mutating evaluation. Otherwise `[]`. Name known code/workflows in the task; keep `target_resources` empty when no Azure resources are involved.
 - `impact_summary`: `operational_impact` only when the tooling change concretely improves a deployment or automation workflow the admin runs. All other dimensions empty — do not fill a dimension with an absence.""",
     "pricing": """#### CATEGORY: `pricing`
 **Tone**: Cost-focused, analytical. "Here's what changes for your bill."

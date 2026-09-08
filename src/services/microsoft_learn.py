@@ -93,7 +93,7 @@ class MicrosoftLearnService:
 
         # Clean up the query - remove special characters and limit length
         clean_query = query.replace("[", "").replace("]", "").replace(":", " ")
-        clean_query = " ".join(clean_query.split())[:100]  # Limit query length
+        clean_query = " ".join(clean_query.split())[:180]  # Keep feature name + region terms
 
         # Build search URL with proper encoding.
         # NOTE: The Learn search API's server-side OData filter

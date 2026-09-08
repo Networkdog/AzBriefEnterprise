@@ -11,8 +11,8 @@ identity에서 실행됩니다.
 | 파일/디렉터리 | 실행 위치 | 책임 |
 |---|---|---|
 | [`main.py`](main.py) | Container App | FastAPI, `/api/*`, `/admin`, `/archive`, `/mcp`, service lifespan |
-| [`scheduler.py`](scheduler.py) | Container Apps Job | 예약 digest 한 번을 시작하고 process exit code 반환 |
-| [`orchestrator.py`](orchestrator.py) | App/Job | RSS window, concurrency, digest, watermark/checkpoint |
+| [`scheduler.py`](scheduler.py) | Container Apps Job | 내구성 일정 lease를 선점한 뒤 예약 digest를 시작하고 종료 코드 반환 |
+| [`orchestrator.py`](orchestrator.py) | App/Job | checkpoint/기간/최근 N/번호/URL 선택, concurrency, digest, watermark |
 | [`hosted_agent.py`](hosted_agent.py) | Foundry Hosted Agent | v2 contract 처리와 `AzureUpdateAnalyzer` 소유 |
 | [`agent/`](agent/) | Hosted Agent 중심 | LangGraph, Prompt Agent adapter, tools, resilience, evaluation |
 | [`admin/`](admin/) | Container App | EasyAuth 기반 관리 콘솔과 run API |
@@ -28,7 +28,7 @@ identity에서 실행됩니다.
 ## 실행 흐름
 
 ```text
-Container Apps Job -> scheduler -> orchestrator -> HostedAgentAnalyzer
+Container Apps Job -> schedule dispatcher/lease -> scheduler -> orchestrator -> HostedAgentAnalyzer
                                               -> Foundry Hosted Agent
                                               -> evidence specialists (parallel)
                                               -> coordinator / writer / reviewer
@@ -56,7 +56,8 @@ fail closed합니다.
 & .\.venv\Scripts\Activate.ps1; python -m uvicorn src.main:app --reload
 ```
 
-예약 실행과 같은 제어 흐름을 한 번 실행합니다.
+예약 실행과 같은 제어 흐름을 강제로 한 번 실행합니다. 배포된 Job은
+`SCHEDULE_DISPATCH_ENABLED=true`이므로 만기 일정이 있을 때만 이 경로를 호출합니다.
 
 ```powershell
 & .\.venv\Scripts\Activate.ps1; python -m src.scheduler

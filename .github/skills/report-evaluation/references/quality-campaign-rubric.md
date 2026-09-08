@@ -33,6 +33,7 @@ gates below; continuous improvement continues after release.
 | Action safety | `ActionItemVerifier` | Scope, grounding, placeholders, destructive behavior, independent cross-check, command withholding | Zero blocked or unverified item; no missing verification when actions exist |
 | Reliability | `quality_campaign compare` | Generation success, full selected-case coverage, A/A noise, paired change, untouched holdout | Zero execution/generation failure; candidate clears noise without regressions |
 | Deployment fidelity | Hosted `evaluate_update` operation | The deployed Hosted Agent and immutable Prompt Agent roster behave like the accepted source candidate | Full-period Hosted run has `release_eligible=true` |
+| Independent cloud cross-check | Foundry managed coherence, fluency, relevance, and task-adherence evaluators | The same canonical report remains clear and on-task under a second evaluator implementation | Supplemental signal only; cannot compensate for or override any blocker above |
 
 The first five G-Eval dimensions remain orthogonal:
 
@@ -70,7 +71,12 @@ The first five G-Eval dimensions remain orthogonal:
    untouched holdout and import/tests remain green.
 7. After user-approved provisioning/deployment, run the same cases through Hosted `evaluate_update`.
    The release campaign uses every update in the selected period (`--sample 0 --split all`).
-8. Stop an optimization branch after three attempts below the A/A noise floor. Record failed
+8. Submit the completed canonical reports to `scripts/foundry_evaluation.py` as an independent cloud
+   cross-check. Export only public update context and the canonical report. Do not export raw tenant
+   evidence, subscriber data, or private reasoning, and do not run cloud groundedness without the
+   exact evidence snapshot. A Foundry score cannot override a local semantic, trajectory, safety, or
+   reliability blocker.
+9. Stop an optimization branch after three attempts below the A/A noise floor. Record failed
    hypotheses in campaign artifacts, but add repository Learnings only for validated results.
 
 Long runs preserve every attempt in `attempts/` and checkpoint the final case outcome atomically in

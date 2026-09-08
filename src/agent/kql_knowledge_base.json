@@ -127,6 +127,7 @@
       "paths": [
         "properties.additionalCapabilities",
         "properties.additionalCapabilities.hibernationEnabled",
+        "properties.additionalCapabilities.ultraSSDEnabled",
         "properties.diagnosticsProfile",
         "properties.diagnosticsProfile.bootDiagnostics",
         "properties.extended",
@@ -154,7 +155,7 @@
         "properties.timeCreated",
         "properties.vmId"
       ],
-      "updated": "2026-08-31"
+      "updated": "2026-09-01"
     },
     "microsoft.containerservice/managedclusters": {
       "paths": [
@@ -501,6 +502,7 @@
         "properties.minimalTlsVersion",
         "properties.networkAclBypass",
         "properties.networkAclBypassResourceIds",
+        "properties.perPartitionAutomaticFailoverEnabled",
         "properties.provisioningState",
         "properties.publicNetworkAccess",
         "properties.readLocations",
@@ -508,7 +510,7 @@
         "properties.virtualNetworkRules",
         "properties.writeLocations"
       ],
-      "updated": "2026-07-18"
+      "updated": "2026-09-01"
     },
     "microsoft.cognitiveservices/accounts": {
       "paths": [
@@ -742,6 +744,63 @@
         "properties.vnetEncryptionSupported"
       ],
       "updated": "2026-08-31"
+    },
+    "microsoft.network/loadbalancers": {
+      "paths": [
+        "properties.backendAddressPools",
+        "properties.frontendIPConfigurations",
+        "properties.inboundNatPools",
+        "properties.inboundNatRules",
+        "properties.loadBalancingRules",
+        "properties.outboundRules",
+        "properties.probes",
+        "properties.provisioningState",
+        "properties.resourceGuid",
+        "sku.name",
+        "sku.tier"
+      ],
+      "updated": "2026-09-01"
+    },
+    "microsoft.web/staticsites": {
+      "paths": [
+        "properties.allowConfigFileUpdates",
+        "properties.backendRegion",
+        "properties.backendRegion.regionName",
+        "properties.backendRegion.status",
+        "properties.branch",
+        "properties.contentDistributionEndpoint",
+        "properties.customDomains",
+        "properties.databaseConnections",
+        "properties.defaultHostname",
+        "properties.deploymentAuthPolicy",
+        "properties.deploymentStorageAccountReferenceIdentity",
+        "properties.deploymentStorageAccountResourceId",
+        "properties.enterpriseGradeCdnStatus",
+        "properties.federatedIdentityClientId",
+        "properties.federatedIdentitySubscriptionId",
+        "properties.federatedIdentityTenantId",
+        "properties.keyVaultReferenceIdentity",
+        "properties.linkedBackends",
+        "properties.networkConfigurations",
+        "properties.prettyName",
+        "properties.prettyNameHostname",
+        "properties.prettyNameStatus",
+        "properties.privateEndpointConnections",
+        "properties.provider",
+        "properties.publicNetworkAccess",
+        "properties.repositoryUrl",
+        "properties.stableInboundIP",
+        "properties.stagingEnvironmentPolicy",
+        "properties.stagingEnvironmentRegion",
+        "properties.targetResourceGroupResourceId",
+        "properties.trafficSplitting",
+        "properties.trafficSplitting.environmentDistribution",
+        "properties.trialExpirationTimeUtc",
+        "properties.userProvidedFunctionApps",
+        "sku.name",
+        "sku.tier"
+      ],
+      "updated": "2026-09-01"
     }
   },
   "queries": {
@@ -810,14 +869,14 @@
         "purpose": "Custom query (auto-fixed)",
         "query": "Resources\n| where type =~ 'microsoft.storage/storageaccounts'\n| project name, type, resourceGroup, subscriptionId, location, properties",
         "recorded": "2026-03-20"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources | where type =~ 'Microsoft.Storage/storageAccounts' | extend encryptionServices = properties.encryption | extend fileEndpoints = tostring(properties.primaryEndpoints.file) | extend skuName = tostring(sku.name) | project name, resourceGroup, subscriptionId, location, skuName, encryptionServices, fileEndpoints | where isnotnull(fileEndpoints) | limit 200",
+        "recorded": "2026-09-01"
       }
     ],
     "microsoft.compute/virtualmachines": [
-      {
-        "purpose": "Custom query (auto-fixed)",
-        "query": "Resources\n| where type =~ 'microsoft.compute/virtualmachines'\n| extend vmSize = tostring(properties.hardwareProfile.vmSize)\n| extend retirementScope = case(\n    vmSize startswith 'Standard_A' and vmSize contains 'v2', '1-year RI retirement',\n    vmSize startswith 'Standard_A' and vmSize contains 'mv2', '1-year RI retirement',\n    vmSize startswith 'Standard_B' and not(vmSize startswith 'Standard_Bs') and not(vmSize startswith 'Standard_Ba'), '1-year RI retirement',\n    vmSize startswith 'Standard_D' and not(vmSize contains 'v4') and not(vmSize contains 'v5') and not(vmSize contains 'v6') and not(vmSize contains 'v7') and not(vmSize contains 'v8') and not(vmSize contains 'v9'), '1-year RI retirement candidate',\n    vmSize startswith 'Standard_Dv2', '1-year RI retirement',\n    vmSize startswith 'Standard_Dsv2', '1-year RI retirement',\n    vmSize startswith 'Standard_Dv3', '1-year and 3-year RI retirement',\n    vmSize startswith 'Standard_Dsv3', '1-year and 3-year RI retirement',\n    vmSize startswith 'Standard_Ev3', '1-year and 3-year RI retirement',\n    vmSize startswith 'Standard_Esv3', '1-year and 3-year RI retirement',\n    vmSize startswith 'Standard_F' and not(vmSize startswith 'Standard_Fx'), '1-year RI retirement candidate',\n    vmSize startswith 'Standard_Fs', '1-year RI retirement',\n    vmSize startswith 'Standard_Fsv2', '1-year RI retirement',\n    vmSize startswith 'Standard_G', '1-year RI retirement',\n    vmSize startswith 'Standard_Ls' and not(vmSize startswith 'Standard_Lsv3') and not(vmSize startswith 'Standard_Lsv4'), '1-year RI retirement candidate',\n    vmSize startswith 'Standard_Lsv2', '1-year RI retirement',\n    'Not listed in update')\n| where retirementScope != 'Not listed in update'\n| project name, resourceGroup, subscriptionId, location, vmSize, retirementScope, id\n| order by location asc, vmSize asc, name asc\n| limit 200",
-        "recorded": "2026-08-01"
-      },
       {
         "purpose": "Custom query (auto-fixed)",
         "query": "Resources\n| where type =~ 'microsoft.compute/virtualmachines'\n| extend vmSize = tostring(properties.hardwareProfile.vmSize)\n| extend retirementScope = case(\n    vmSize matches regex '^Standard_A.*v2', '1-year RI retirement',\n    vmSize matches regex '^Standard_A.*mv2', '1-year RI retirement',\n    vmSize matches regex '^Standard_B.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Dv3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Dsv3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Ev3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Esv3.*', '1-year and 3-year RI retirement',\n    vmSize matches regex '^Standard_Dsv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Dv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Ds.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_D.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Fsv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Fs.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_F.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Gs.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_G.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Lsv2.*', '1-year RI retirement',\n    vmSize matches regex '^Standard_Ls.*', '1-year RI retirement',\n    'Not listed in update')\n| where retirementScope != 'Not listed in update'\n| project name, resourceGroup, subscriptionId, location, vmSize, retirementScope, id\n| order by location asc, vmSize asc, name asc\n| limit 200",
@@ -837,33 +896,38 @@
         "purpose": "Custom query (auto-fixed)",
         "query": "Resources | where type =~ 'microsoft.compute/virtualmachines' | extend vmSize = tostring(properties.hardwareProfile.vmSize) | summarize count(), any(vmSize) by subscriptionId | limit 200",
         "recorded": "2026-08-31"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources | where type =~ 'Microsoft.Compute/virtualMachines' | extend deploySeries = substring(properties.hardwareProfile.vmSize, indexof(properties.hardwareProfile.vmSize,'_')) | project name, resourceGroup, subscriptionId, location, properties.hardwareProfile.vmSize, deploySeries, properties.storageProfile.osDisk.osType, properties.storageProfile.imageReference.publisher, properties.provisioningState | where deploySeries contains \"v6\" or deploySeries contains \"v5\" | order by name asc | limit 200",
+        "recorded": "2026-09-01"
       }
     ],
     "microsoft.network/privateendpoints": [
       {
         "purpose": "Result-improved query (was empty)",
-        "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tolower(conn.properties.privateLinkServiceId) | where targetId contains 'microsoft.storage/storageaccounts/stsmnfssource' | project name, resourceGroup, subscriptionId, targetId",
-        "recorded": "2026-08-31"
-      },
-      {
-        "purpose": "Result-improved query (was empty)",
-        "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'cognitiveservices' | project name, resourceGroup, subscriptionId, targetId",
-        "recorded": "2026-08-31"
-      },
-      {
-        "purpose": "Result-improved query (was empty)",
-        "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'storageaccounts' | project name, resourceGroup, subscriptionId, targetId",
-        "recorded": "2026-08-31"
-      },
-      {
-        "purpose": "Result-improved query (was empty)",
-        "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'storageAccounts' | project name, resourceGroup, subscriptionId, targetId | limit 200",
-        "recorded": "2026-08-31"
-      },
-      {
-        "purpose": "Result-improved query (was empty)",
         "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'cognitiveservices' | project name, resourceGroup, subscriptionId, targetId | limit 200",
         "recorded": "2026-08-31"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains '/Microsoft.KeyVault/' | project name, resourceGroup, subscriptionId, targetId",
+        "recorded": "2026-09-01"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'Microsoft.Storage/storageAccounts' | project name, resourceGroup, subscriptionId, targetId",
+        "recorded": "2026-09-01"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'microsoft.storage/storageaccounts' | project name, resourceGroup, subscriptionId, targetId",
+        "recorded": "2026-09-01"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'storageAccounts' | project name, resourceGroup, subscriptionId, targetId",
+        "recorded": "2026-09-01"
       }
     ],
     "microsoft.insights/diagnosticsettings": [
@@ -1071,6 +1135,11 @@
         "purpose": "Get Azure Kubernetes Service (AKS) resource details",
         "query": "Resources\n        | where type =~ 'Microsoft.ContainerService/managedClusters'\n        | extend kubernetesVersion = properties.kubernetesVersion\n        | extend currentKubernetesVersion = properties.currentKubernetesVersion\n        | extend powerState = properties.powerState.code\n        | extend provisioningState = properties.provisioningState\n        | extend nodeResourceGroup = properties.nodeResourceGroup\n        | extend networkPlugin = properties.networkProfile.networkPlugin\n        | extend networkPolicy = properties.networkProfile.networkPolicy\n        | extend networkDataplane = properties.networkProfile.networkDataplane\n        | extend advancedNetworkingObservability = properties.networkProfile.advancedNetworking.observability.enabled\n        | extend advancedNetworkingSecurity = properties.networkProfile.advancedNetworking.security.enabled\n        | extend loadBalancerSku = properties.networkProfile.loadBalancerSku\n        | extend serviceCidr = properties.networkProfile.serviceCidr\n        | extend dnsServiceIP = properties.networkProfile.dnsServiceIP\n        | extend outboundType = properties.networkProfile.outboundType\n        | extend agentPoolCount = array_length(properties.agentPoolProfiles)\n        | extend enableRBAC = properties.enableRBAC\n        | extend aadEnabled = isnotnull(properties.aadProfile)\n        | extend localAccountDisabled = properties.disableLocalAccounts\n        | extend autoUpgradeChannel = properties.autoUpgradeProfile.upgradeChannel\n        | extend nodeOsUpgradeChannel = properties.autoUpgradeProfile.nodeOSUpgradeChannel\n        | extend addonHttpRouting = properties.addonProfiles.httpApplicationRouting.enabled\n        | extend addonMonitoring = properties.addonProfiles.omsagent.enabled\n        | extend addonPolicy = properties.addonProfiles.azurepolicy.enabled\n        | extend addonKeyVaultCSI = properties.addonProfiles.azureKeyvaultSecretsProvider.enabled\n        | extend addonAppRouting = properties.addonProfiles.ingressApplicationGateway.enabled\n        | extend addonDefender = properties.securityProfile.defender.securityMonitoring.enabled\n        | extend addonWorkloadIdentity = properties.securityProfile.workloadIdentity.enabled\n        | extend addonImageCleaner = properties.securityProfile.imageCleaner.enabled\n        | extend privateFqdn = properties.privateFQDN\n        | extend apiServerAccessProfile = properties.apiServerAccessProfile.authorizedIPRanges\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, kubernetesVersion,\n                  currentKubernetesVersion, powerState, provisioningState,\n                  networkPlugin, networkPolicy, networkDataplane, loadBalancerSku,\n                  advancedNetworkingObservability, advancedNetworkingSecurity,\n                  outboundType, agentPoolCount,\n                  enableRBAC, aadEnabled, localAccountDisabled,\n                  autoUpgradeChannel, nodeOsUpgradeChannel,\n                  addonHttpRouting, addonMonitoring, addonPolicy,\n                  addonKeyVaultCSI, addonAppRouting, addonDefender,\n                  addonWorkloadIdentity, addonImageCleaner,\n                  privateFqdn, skuTier",
         "recorded": "2026-07-24"
+      },
+      {
+        "purpose": "Get Azure Kubernetes Service (AKS) resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.ContainerService/managedClusters'\n        | extend kubernetesVersion = properties.kubernetesVersion\n        | extend currentKubernetesVersion = properties.currentKubernetesVersion\n        | extend powerState = properties.powerState.code\n        | extend provisioningState = properties.provisioningState\n        | extend nodeResourceGroup = properties.nodeResourceGroup\n        | extend networkPlugin = properties.networkProfile.networkPlugin\n        | extend networkPolicy = properties.networkProfile.networkPolicy\n        | extend networkDataplane = properties.networkProfile.networkDataplane\n        | extend advancedNetworkingObservability = properties.networkProfile.advancedNetworking.observability.enabled\n        | extend advancedNetworkingSecurity = properties.networkProfile.advancedNetworking.security.enabled\n        | extend loadBalancerSku = properties.networkProfile.loadBalancerSku\n        | extend serviceCidr = properties.networkProfile.serviceCidr\n        | extend dnsServiceIP = properties.networkProfile.dnsServiceIP\n        | extend outboundType = properties.networkProfile.outboundType\n        | extend agentPoolCount = array_length(properties.agentPoolProfiles)\n        | extend enableRBAC = properties.enableRBAC\n        | extend aadEnabled = isnotnull(properties.aadProfile)\n        | extend localAccountDisabled = properties.disableLocalAccounts\n        | extend autoUpgradeChannel = properties.autoUpgradeProfile.upgradeChannel\n        | extend nodeOsUpgradeChannel = properties.autoUpgradeProfile.nodeOSUpgradeChannel\n        | extend addonHttpRouting = properties.addonProfiles.httpApplicationRouting.enabled\n        | extend addonMonitoring = properties.addonProfiles.omsagent.enabled\n        | extend addonPolicy = properties.addonProfiles.azurepolicy.enabled\n        | extend addonKeyVaultCSI = properties.addonProfiles.azureKeyvaultSecretsProvider.enabled\n        | extend addonAppRouting = properties.addonProfiles.ingressApplicationGateway.enabled\n        | extend addonDefender = properties.securityProfile.defender.securityMonitoring.enabled\n        | extend addonWorkloadIdentity = properties.securityProfile.workloadIdentity.enabled\n        | extend azureFilesCSIDriver = properties.storageProfile.fileCSIDriver.enabled\n        | extend azureDiskCSIDriver = properties.storageProfile.diskCSIDriver.enabled\n        | extend addonImageCleaner = properties.securityProfile.imageCleaner.enabled\n        | extend privateFqdn = properties.privateFQDN\n        | extend apiServerAccessProfile = properties.apiServerAccessProfile.authorizedIPRanges\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, kubernetesVersion,\n                  currentKubernetesVersion, powerState, provisioningState,\n                  networkPlugin, networkPolicy, networkDataplane, loadBalancerSku,\n                  advancedNetworkingObservability, advancedNetworkingSecurity,\n                  outboundType, agentPoolCount,\n                  enableRBAC, aadEnabled, localAccountDisabled,\n                  autoUpgradeChannel, nodeOsUpgradeChannel,\n                  addonHttpRouting, addonMonitoring, addonPolicy,\n                  addonKeyVaultCSI, addonAppRouting, addonDefender,\n                  addonWorkloadIdentity, azureFilesCSIDriver, azureDiskCSIDriver,\n                  addonImageCleaner,\n                  privateFqdn, skuTier",
+        "recorded": "2026-09-01"
       }
     ],
     "azure kubernetes service": [
@@ -1083,6 +1152,11 @@
         "purpose": "Get Azure Kubernetes Service resource details",
         "query": "Resources\n        | where type =~ 'Microsoft.ContainerService/managedClusters'\n        | extend kubernetesVersion = properties.kubernetesVersion\n        | extend currentKubernetesVersion = properties.currentKubernetesVersion\n        | extend powerState = properties.powerState.code\n        | extend provisioningState = properties.provisioningState\n        | extend nodeResourceGroup = properties.nodeResourceGroup\n        | extend networkPlugin = properties.networkProfile.networkPlugin\n        | extend networkPolicy = properties.networkProfile.networkPolicy\n        | extend networkDataplane = properties.networkProfile.networkDataplane\n        | extend advancedNetworkingObservability = properties.networkProfile.advancedNetworking.observability.enabled\n        | extend advancedNetworkingSecurity = properties.networkProfile.advancedNetworking.security.enabled\n        | extend loadBalancerSku = properties.networkProfile.loadBalancerSku\n        | extend serviceCidr = properties.networkProfile.serviceCidr\n        | extend dnsServiceIP = properties.networkProfile.dnsServiceIP\n        | extend outboundType = properties.networkProfile.outboundType\n        | extend agentPoolCount = array_length(properties.agentPoolProfiles)\n        | extend enableRBAC = properties.enableRBAC\n        | extend aadEnabled = isnotnull(properties.aadProfile)\n        | extend localAccountDisabled = properties.disableLocalAccounts\n        | extend autoUpgradeChannel = properties.autoUpgradeProfile.upgradeChannel\n        | extend nodeOsUpgradeChannel = properties.autoUpgradeProfile.nodeOSUpgradeChannel\n        | extend addonHttpRouting = properties.addonProfiles.httpApplicationRouting.enabled\n        | extend addonMonitoring = properties.addonProfiles.omsagent.enabled\n        | extend addonPolicy = properties.addonProfiles.azurepolicy.enabled\n        | extend addonKeyVaultCSI = properties.addonProfiles.azureKeyvaultSecretsProvider.enabled\n        | extend addonAppRouting = properties.addonProfiles.ingressApplicationGateway.enabled\n        | extend addonDefender = properties.securityProfile.defender.securityMonitoring.enabled\n        | extend addonWorkloadIdentity = properties.securityProfile.workloadIdentity.enabled\n        | extend addonImageCleaner = properties.securityProfile.imageCleaner.enabled\n        | extend privateFqdn = properties.privateFQDN\n        | extend apiServerAccessProfile = properties.apiServerAccessProfile.authorizedIPRanges\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, kubernetesVersion,\n                  currentKubernetesVersion, powerState, provisioningState,\n                  networkPlugin, networkPolicy, networkDataplane, loadBalancerSku,\n                  advancedNetworkingObservability, advancedNetworkingSecurity,\n                  outboundType, agentPoolCount,\n                  enableRBAC, aadEnabled, localAccountDisabled,\n                  autoUpgradeChannel, nodeOsUpgradeChannel,\n                  addonHttpRouting, addonMonitoring, addonPolicy,\n                  addonKeyVaultCSI, addonAppRouting, addonDefender,\n                  addonWorkloadIdentity, addonImageCleaner,\n                  privateFqdn, skuTier",
         "recorded": "2026-07-24"
+      },
+      {
+        "purpose": "Get Azure Kubernetes Service resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.ContainerService/managedClusters'\n        | extend kubernetesVersion = properties.kubernetesVersion\n        | extend currentKubernetesVersion = properties.currentKubernetesVersion\n        | extend powerState = properties.powerState.code\n        | extend provisioningState = properties.provisioningState\n        | extend nodeResourceGroup = properties.nodeResourceGroup\n        | extend networkPlugin = properties.networkProfile.networkPlugin\n        | extend networkPolicy = properties.networkProfile.networkPolicy\n        | extend networkDataplane = properties.networkProfile.networkDataplane\n        | extend advancedNetworkingObservability = properties.networkProfile.advancedNetworking.observability.enabled\n        | extend advancedNetworkingSecurity = properties.networkProfile.advancedNetworking.security.enabled\n        | extend loadBalancerSku = properties.networkProfile.loadBalancerSku\n        | extend serviceCidr = properties.networkProfile.serviceCidr\n        | extend dnsServiceIP = properties.networkProfile.dnsServiceIP\n        | extend outboundType = properties.networkProfile.outboundType\n        | extend agentPoolCount = array_length(properties.agentPoolProfiles)\n        | extend enableRBAC = properties.enableRBAC\n        | extend aadEnabled = isnotnull(properties.aadProfile)\n        | extend localAccountDisabled = properties.disableLocalAccounts\n        | extend autoUpgradeChannel = properties.autoUpgradeProfile.upgradeChannel\n        | extend nodeOsUpgradeChannel = properties.autoUpgradeProfile.nodeOSUpgradeChannel\n        | extend addonHttpRouting = properties.addonProfiles.httpApplicationRouting.enabled\n        | extend addonMonitoring = properties.addonProfiles.omsagent.enabled\n        | extend addonPolicy = properties.addonProfiles.azurepolicy.enabled\n        | extend addonKeyVaultCSI = properties.addonProfiles.azureKeyvaultSecretsProvider.enabled\n        | extend addonAppRouting = properties.addonProfiles.ingressApplicationGateway.enabled\n        | extend addonDefender = properties.securityProfile.defender.securityMonitoring.enabled\n        | extend addonWorkloadIdentity = properties.securityProfile.workloadIdentity.enabled\n        | extend azureFilesCSIDriver = properties.storageProfile.fileCSIDriver.enabled\n        | extend azureDiskCSIDriver = properties.storageProfile.diskCSIDriver.enabled\n        | extend addonImageCleaner = properties.securityProfile.imageCleaner.enabled\n        | extend privateFqdn = properties.privateFQDN\n        | extend apiServerAccessProfile = properties.apiServerAccessProfile.authorizedIPRanges\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, kubernetesVersion,\n                  currentKubernetesVersion, powerState, provisioningState,\n                  networkPlugin, networkPolicy, networkDataplane, loadBalancerSku,\n                  advancedNetworkingObservability, advancedNetworkingSecurity,\n                  outboundType, agentPoolCount,\n                  enableRBAC, aadEnabled, localAccountDisabled,\n                  autoUpgradeChannel, nodeOsUpgradeChannel,\n                  addonHttpRouting, addonMonitoring, addonPolicy,\n                  addonKeyVaultCSI, addonAppRouting, addonDefender,\n                  addonWorkloadIdentity, azureFilesCSIDriver, azureDiskCSIDriver,\n                  addonImageCleaner,\n                  privateFqdn, skuTier",
+        "recorded": "2026-09-01"
       }
     ],
     "virtual networks": [
@@ -1231,6 +1305,11 @@
         "purpose": "Custom query (auto-fixed)",
         "query": "Resources\n| where type =~ 'microsoft.documentdb/databaseaccounts'\n| extend apiTypes = tostring(properties.EnabledApiTypes)\n| extend backupType = tostring(properties.backupPolicy.type)\n| extend analyticalStorage = tostring(properties.enableAnalyticalStorage)\n| extend disableLocalAuth = tostring(properties.disableLocalAuth)\n| extend multiWrite = tostring(properties.enableMultipleWriteLocations)\n| extend autoFailover = tostring(properties.enableAutomaticFailover)\n| project name, resourceGroup, subscriptionId, location, apiTypes, backupType, analyticalStorage, disableLocalAuth, multiWrite, autoFailover, id\n| order by location asc, name asc",
         "recorded": "2026-08-01"
+      },
+      {
+        "purpose": "Result-improved query (was empty)",
+        "query": "Resources | where type =~ 'Microsoft.DocumentDB/databaseAccounts' and properties.analyticalStorageConfiguration.schemaType =~ 'WellDefined' | extend enableAnalyticalStorage = properties.enableAnalyticalStorage | project name, subscriptionId, resourceGroup, location, id, enableAnalyticalStorage | limit 200",
+        "recorded": "2026-09-01"
       }
     ],
     "microsoft.cognitiveservices/accounts": [
@@ -1248,6 +1327,11 @@
         "purpose": "Custom query (auto-fixed)",
         "query": "Resources | where type =~ 'microsoft.cognitiveservices/accounts' | extend a365LoggingEnabled = properties.a365LoggingEnabled, a365Status = properties.a365Status, aiFoundryAPIEndpoint = properties['endpoints.AI Foundry API'] | project id, name, a365LoggingEnabled, a365Status, aiFoundryAPIEndpoint | order by name asc | limit 200",
         "recorded": "2026-08-31"
+      },
+      {
+        "purpose": "Custom query (auto-fixed)",
+        "query": "Resources | where type =~ 'Microsoft.CognitiveServices/accounts' | extend customSubDomainName = tostring(properties.customSubDomainName) | project id, name, kind, location, sku.name, customSubDomainName | order by name asc | limit 200",
+        "recorded": "2026-09-01"
       }
     ],
     "azure ai services": [
@@ -1330,6 +1414,11 @@
         "purpose": "Custom query (auto-fixed)",
         "query": "Resources | where type =~ 'microsoft.insights/datacollectionrules' | extend dataSourcesCount = iif(isnull(properties['dataSources']), 0, array_length(properties['dataSources'])) | summarize totalCount=count(), dataSourcesCountSum=sum(dataSourcesCount) by subscriptionId | limit 200",
         "recorded": "2026-08-31"
+      },
+      {
+        "purpose": "Get microsoft.insights/datacollectionrules resource details",
+        "query": "Resources\n        | where type contains 'microsoft.insights/datacollectionrules' or name contains 'microsoft.insights/datacollectionrules'\n        | project id, name, type, location, resourceGroup, subscriptionId, tags, sku, properties\n        | order by type asc",
+        "recorded": "2026-09-01"
       }
     ],
     "microsoft.alertsmanagement/prometheusrulegroups": [
@@ -1366,63 +1455,35 @@
         "query": "Resources\n        | where type =~ 'Microsoft.Compute/virtualMachines'\n        | extend vmSize = properties.hardwareProfile.vmSize\n        | extend osType = properties.storageProfile.osDisk.osType\n        | extend osPublisher = properties.storageProfile.imageReference.publisher\n        | extend osOffer = properties.storageProfile.imageReference.offer\n        | extend osSku = properties.storageProfile.imageReference.sku\n        | extend osVersion = properties.storageProfile.imageReference.version\n        | extend provisioningState = properties.provisioningState\n        | extend licenseType = properties.licenseType\n        | extend securityType = properties.securityProfile.securityType\n        | extend secureBootEnabled = properties.securityProfile.uefiSettings.secureBootEnabled\n        | extend vTpmEnabled = properties.securityProfile.uefiSettings.vTpmEnabled\n        | extend encryptionAtHost = properties.securityProfile.encryptionAtHost\n        | extend osDiskType = properties.storageProfile.osDisk.managedDisk.storageAccountType\n        | extend osDiskSizeGB = properties.storageProfile.osDisk.diskSizeGB\n        | extend dataDisksCount = array_length(properties.storageProfile.dataDisks)\n        | extend nicCount = array_length(properties.networkProfile.networkInterfaces)\n        | extend availabilityZone = zones[0]\n        | project name, resourceGroup, subscriptionId, location, vmSize, osType, \n                  osPublisher, osOffer, osSku, osVersion, provisioningState, licenseType,\n                  securityType, secureBootEnabled, vTpmEnabled, encryptionAtHost,\n                  osDiskType, osDiskSizeGB, dataDisksCount, nicCount, availabilityZone, tags\n        | order by name asc",
         "recorded": "2026-08-31"
       }
+    ],
+    "virtual machine scale set": [
+      {
+        "purpose": "Get Virtual Machine Scale Set resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Compute/virtualMachines'\n        | extend vmSize = properties.hardwareProfile.vmSize\n        | extend osType = properties.storageProfile.osDisk.osType\n        | extend osPublisher = properties.storageProfile.imageReference.publisher\n        | extend osOffer = properties.storageProfile.imageReference.offer\n        | extend osSku = properties.storageProfile.imageReference.sku\n        | extend osVersion = properties.storageProfile.imageReference.version\n        | extend provisioningState = properties.provisioningState\n        | extend licenseType = properties.licenseType\n        | extend securityType = properties.securityProfile.securityType\n        | extend secureBootEnabled = properties.securityProfile.uefiSettings.secureBootEnabled\n        | extend vTpmEnabled = properties.securityProfile.uefiSettings.vTpmEnabled\n        | extend encryptionAtHost = properties.securityProfile.encryptionAtHost\n        | extend osDiskType = properties.storageProfile.osDisk.managedDisk.storageAccountType\n        | extend osDiskSizeGB = properties.storageProfile.osDisk.diskSizeGB\n        | extend dataDisksCount = array_length(properties.storageProfile.dataDisks)\n        | extend nicCount = array_length(properties.networkProfile.networkInterfaces)\n        | extend availabilityZone = zones[0]\n        | project name, resourceGroup, subscriptionId, location, vmSize, osType, \n                  osPublisher, osOffer, osSku, osVersion, provisioningState, licenseType,\n                  securityType, secureBootEnabled, vTpmEnabled, encryptionAtHost,\n                  osDiskType, osDiskSizeGB, dataDisksCount, nicCount, availabilityZone, tags\n        | order by name asc",
+        "recorded": "2026-09-01"
+      }
+    ],
+    "storage accounts": [
+      {
+        "purpose": "Get Storage Accounts resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.Storage/storageAccounts'\n        | extend accessTier = properties.accessTier\n        | extend enableHttpsTrafficOnly = properties.supportsHttpsTrafficOnly\n        | extend isHnsEnabled = properties.isHnsEnabled\n        | extend isSftpEnabled = properties.isSftpEnabled\n        | extend minimumTlsVersion = properties.minimumTlsVersion\n        | extend allowBlobPublicAccess = properties.allowBlobPublicAccess\n        | extend allowSharedKeyAccess = properties.allowSharedKeyAccess\n        | extend networkAcls = properties.networkAcls.defaultAction\n        | extend publicNetworkAccess = properties.publicNetworkAccess\n        | extend privateEndpoints = array_length(properties.privateEndpointConnections)\n        | extend primaryLocation = properties.primaryLocation\n        | extend secondaryLocation = properties.secondaryLocation\n        | extend largeFileSharesState = properties.largeFileSharesState\n        | extend infrastructureEncryption = properties.encryption.requireInfrastructureEncryption\n        | extend keySource = properties.encryption.keySource\n        | extend skuName = sku.name\n        | extend skuTier = sku.tier\n        | project name, resourceGroup, subscriptionId, location, skuName, skuTier, accessTier, \n                  isHnsEnabled, isSftpEnabled, enableHttpsTrafficOnly, \n                  minimumTlsVersion, allowBlobPublicAccess, allowSharedKeyAccess,\n                  networkAcls, publicNetworkAccess, privateEndpoints, secondaryLocation,\n                  largeFileSharesState, infrastructureEncryption, keySource\n        | order by name asc",
+        "recorded": "2026-09-01"
+      }
+    ],
+    "application gateway": [
+      {
+        "purpose": "Get Application Gateway resource details",
+        "query": "Resources\n        | where type contains 'Microsoft.Network/applicationGateways' or name contains 'Microsoft.Network/applicationGateways'\n        | project id, name, type, location, resourceGroup, subscriptionId, tags, sku, properties\n        | order by type asc",
+        "recorded": "2026-09-01"
+      }
+    ],
+    "microsoft cognitive services/accounts": [
+      {
+        "purpose": "Get Microsoft Cognitive Services/accounts resource details",
+        "query": "Resources\n        | where type =~ 'Microsoft.CognitiveServices/accounts'\n        | extend skuName = tostring(sku.name)\n        | extend skuTier = tostring(sku.tier)\n        | extend publicNetworkAccess = tostring(properties.publicNetworkAccess)\n        | extend customSubDomainName = tostring(properties.customSubDomainName)\n        | project name, resourceGroup, subscriptionId, location, kind, skuName, skuTier,\n                  publicNetworkAccess, customSubDomainName",
+        "recorded": "2026-09-01"
+      }
     ]
   },
-  "failed_queries": [
-    {
-      "query": "bad query",
-      "error": "InvalidQuery: persistent error",
-      "recorded": "2026-03-19 22:43"
-    },
-    {
-      "query": "Resources\n| where type =~ 'microsoft.containerservice/managedclusters'\n| mv-expand agentPool = properties.agentPoolProfiles\n| extend poolName = tostring(agentPool.name)\n| extend osType = tostring(agentPool.osType)\n| extend osSKU = tostring(agentPool.osSKU)\n| extend vmSize = tostring(agentPool.vmSize)\n| extend count = tostring(agentPool.count)\n| extend enableAutoScaling = tostring(agentPool.enableAutoScaling)\n| extend minCount = tostring(agentPool.minCount)\n| extend maxCount = tostring(agentPool.maxCount)\n| extend mode = tostring(agentPool.mode)\n| project clusterName=name, resourceGroup, subscriptionId, location, poolName, mode, osType, osSKU, vmSize, count, enableAutoScaling, minCount, maxCount, id\n| limit 1000",
-      "error": "(BadRequest) Please provide below info when asking for support: timestamp = 2026-08-03T04:25:23.9771666Z, correlationId = a70a76b7-6fbe-4deb-9a95-89c1ef84ce51.\nCode: BadRequest\nMessage: Please provide below info when asking for support: timestamp = 2026-08-03T04:25:23.9771666Z, correlationId = a70a7",
-      "recorded": "2026-08-03 13:25"
-    },
-    {
-      "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'azurefirewalls' | project name, resourceGroup, subscriptionId, targetId",
-      "error": "None",
-      "recorded": "2026-08-06 19:05"
-    },
-    {
-      "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'privateendpoints' | project name, resourceGroup, subscriptionId, targetId",
-      "error": "('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))",
-      "recorded": "2026-08-09 09:48"
-    },
-    {
-      "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'virtualnetworks' | project name, resourceGroup, subscriptionId, targetId",
-      "error": "('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))",
-      "recorded": "2026-08-09 09:49"
-    },
-    {
-      "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'controllers' | project name, resourceGroup, subscriptionId, targetId",
-      "error": "(BadRequest) Please provide below info when asking for support: timestamp = 2026-08-30T12:48:33.1168462Z, correlationId = df6e8bc9-18dd-4839-91a8-4b0751362f2b.\nCode: BadRequest\nMessage: Please provide below info when asking for support: timestamp = 2026-08-30T12:48:33.1168462Z, correlationId = df6e8",
-      "recorded": "2026-08-30 21:48"
-    },
-    {
-      "query": "servicehealthresources\n| where type =~ 'microsoft.resourcehealth/events'\n| where tostring(properties.eventType) == 'PlannedMaintenance'\n| extend \n    eventType = tostring(properties.eventType),\n    status = tostring(properties.status),\n    title = tostring(properties.title),\n    summary = tostring(properties.summary),\n    impactStartTime = todatetime(properties.impactStartTime),\n    impactMitigationTime = todatetime(properties.impactMitigationTime),\n    impactedServices = tostring(properties.impact)\n| project \n    name, \n    eventType, \n    status, \n    title, \n    summary,\n    impactStartTime,\n    impactMitigationTime,\n    impactedServices\n| order by impactStartTime desc\n| limit 50",
-      "error": "(BadRequest) Please provide below info when asking for support: timestamp = 2026-08-30T12:57:00.3719326Z, correlationId = 2b26e29d-06f8-42e0-a808-960d42babea0.\nCode: BadRequest\nMessage: Please provide below info when asking for support: timestamp = 2026-08-30T12:57:00.3719326Z, correlationId = 2b26e",
-      "recorded": "2026-08-30 21:57"
-    },
-    {
-      "query": "servicehealthresources\n| where type =~ 'microsoft.resourcehealth/events'\n\n| extend \n    eventType = tostring(properties.eventType),\n    status = tostring(properties.status),\n    title = tostring(properties.title),\n    summary = tostring(properties.summary),\n    impactStartTime = todatetime(properties.impactStartTime),\n    impactMitigationTime = todatetime(properties.impactMitigationTime),\n    impactedServices = tostring(properties.impact)\n| project \n    name, \n    eventType, \n    status, \n    title, \n    summary,\n    impactStartTime,\n    impactMitigationTime,\n    impactedServices\n| order by impactStartTime desc\n| limit 50",
-      "error": "(BadRequest) Please provide below info when asking for support: timestamp = 2026-08-30T13:17:52.7235795Z, correlationId = 7f980565-6a1d-4e27-9f8b-0ed81a6e4738.\nCode: BadRequest\nMessage: Please provide below info when asking for support: timestamp = 2026-08-30T13:17:52.7235795Z, correlationId = 7f980",
-      "recorded": "2026-08-30 22:17"
-    },
-    {
-      "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'workspaces' | project name, resourceGroup, subscriptionId, targetId",
-      "error": "None",
-      "recorded": "2026-08-31 07:28"
-    },
-    {
-      "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'accounts' | project name, resourceGroup, subscriptionId, targetId",
-      "error": "HTTPSConnection(host='management.azure.com', port=443): Failed to resolve 'management.azure.com' ([Errno 11001] getaddrinfo failed)",
-      "recorded": "2026-08-31 09:49"
-    },
-    {
-      "query": "Resources | where type =~ 'microsoft.network/privateendpoints' | mv-expand conn = properties.privateLinkServiceConnections | extend targetId = tostring(conn.properties.privateLinkServiceId) | where targetId contains 'networkinterfaces' | project name, resourceGroup, subscriptionId, targetId",
-      "error": "None",
-      "recorded": "2026-08-31 09:51"
-    }
-  ]
+  "failed_queries": []
 }

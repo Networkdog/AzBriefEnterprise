@@ -14,6 +14,7 @@ from src.agent.hosted_contract import (
     HostedSubscriber,
     HostedUpdate,
 )
+from src.agent.scope import AnalysisScope
 from src.config import Settings, Subscriber
 from src.rss.parser import AzureUpdate
 
@@ -266,6 +267,7 @@ def test_proxy_fails_closed_without_a_hosted_agent_name():
 async def test_proxy_returns_complete_hosted_analysis(monkeypatch):
     async def fake_invoke(settings, request):
         assert request.update.id == "update-1"
+        assert request.scope.management_groups == ("platform-mg",)
         return HostedAgentResponse(
             operation="analyze_update",
             status="completed",
@@ -276,7 +278,10 @@ async def test_proxy_returns_complete_hosted_analysis(monkeypatch):
     monkeypatch.setattr(hosted_client, "invoke_hosted_agent", fake_invoke)
     analyzer = hosted_client.HostedAgentAnalyzer(_settings())
 
-    result = await analyzer.analyze_update(_update())
+    result = await analyzer.analyze_update(
+        _update(),
+        scope=AnalysisScope(management_groups=["platform-mg"]),
+    )
 
     assert result.update_id == "update-1"
     assert result.one_line_summary == "Summary"

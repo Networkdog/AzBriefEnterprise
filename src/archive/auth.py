@@ -4,6 +4,7 @@ from fastapi import HTTPException, Request
 from structlog import get_logger
 
 from src.admin.auth import AdminPrincipal, extract_principal
+from src.admin.configuration import get_admin_configuration
 from src.config import get_settings
 
 logger = get_logger()
@@ -26,7 +27,14 @@ async def require_archive_reader(request: Request) -> AdminPrincipal:
         )
 
     allowed = settings.get_archive_allowed_principals()
-    if not allowed or not (principal.identifiers & allowed):
+    if not (principal.identifiers & allowed):
+        try:
+            allowed |= await get_admin_configuration().get_managed_admin_principals()
+        except Exception as exc:
+            logger.error("archive_admin_configuration_read_failed", error=type(exc).__name__)
+            raise HTTPException(status_code=503, detail="관리자 구성을 읽지 못했습니다.")
+
+    if not (principal.identifiers & allowed):
         logger.warning(
             "archive_auth_forbidden",
             path=request.url.path,

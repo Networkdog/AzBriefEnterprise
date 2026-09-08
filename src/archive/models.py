@@ -158,7 +158,7 @@ class ArchiveDocumentV1(BaseModel):
     analyzed_at: datetime
     source: ArchiveSource
     run_id: str = Field(default="", max_length=128)
-    hosted_contract_version: Literal["2"] = HOSTED_ANALYSIS_CONTRACT_VERSION
+    hosted_contract_version: Literal["2", "3"] = HOSTED_ANALYSIS_CONTRACT_VERSION
     hosted_agent_name: str = Field(default="", max_length=256)
     trace_id: str = Field(default="", max_length=128)
     report_language: str = Field(default="ko", min_length=2, max_length=35)

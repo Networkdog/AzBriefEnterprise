@@ -313,8 +313,8 @@ raw comment는 민감 데이터일 수 있다. credential, bearer token, connect
 3. 사용자가 명시적으로 저장한 표현 선호
 4. 현재 요청에만 적용되는 일회성 옵션
 
-`HostedCustomizationRequest`의 현재 계약은 `extra="forbid"`인 v2다. 구현 시 계약을 v3로 올리고
-`HostedReportPreferences` 타입을 추가한다. 제어면은 profile을 enum과 숫자로 검증한 뒤에만 v3
+`HostedCustomizationRequest`의 현재 계약은 `extra="forbid"`인 v3다. 구현 시 계약을 v4로 올리고
+`HostedReportPreferences` 타입을 추가한다. 제어면은 profile을 enum과 숫자로 검증한 뒤에만 v4
 요청을 만든다. Report Writer에는 렌더링된 제한 값만 전달하며 raw feedback text는 전달하지 않는다.
 
 이 메모리는 `customize_for_subscriber` 단계에서 표현과 우선순위만 바꾼다. planning, Resource

@@ -85,3 +85,58 @@ class TestRunScheduledDigest:
         _, analyzer = wired("completed")
         await scheduler.run_scheduled_digest()
         assert analyzer.closed == [True]
+
+
+class TestDispatchScheduledDigest:
+    @pytest.mark.asyncio
+    async def test_idle_dispatch_does_not_construct_the_analysis_runtime(self, monkeypatch):
+        class Configuration:
+            async def claim_due_automatic_run(self, now=None):
+                return None
+
+        called = []
+        monkeypatch.setattr(
+            "src.admin.configuration.get_admin_configuration",
+            lambda: Configuration(),
+        )
+        monkeypatch.setattr(
+            scheduler, "run_scheduled_digest", lambda dry_run=False: called.append(1)
+        )
+
+        assert await scheduler.dispatch_scheduled_digest() == 0
+        assert called == []
+
+    @pytest.mark.asyncio
+    async def test_due_dispatch_runs_once_and_releases_the_lease(self, monkeypatch):
+        lease = type(
+            "Lease",
+            (),
+            {
+                "schedule_key": "admin:1",
+                "scheduled_for": datetime(2026, 9, 1, 14, 30, tzinfo=UTC),
+            },
+        )()
+
+        class Configuration:
+            def __init__(self):
+                self.released = []
+
+            async def claim_due_automatic_run(self, now=None):
+                return lease
+
+            async def release_automatic_run(self, claimed):
+                self.released.append(claimed)
+
+        configuration = Configuration()
+
+        async def run(dry_run=False):
+            return 0
+
+        monkeypatch.setattr(
+            "src.admin.configuration.get_admin_configuration",
+            lambda: configuration,
+        )
+        monkeypatch.setattr(scheduler, "run_scheduled_digest", run)
+
+        assert await scheduler.dispatch_scheduled_digest() == 0
+        assert configuration.released == [lease]

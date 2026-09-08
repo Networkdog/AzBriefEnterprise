@@ -32,11 +32,20 @@
     "emailRecipientAddress": {
       "value": "admin@your-company.com"
     },
+    "feedbackRecipientAddress": {
+      "value": ""
+    },
     "subscribers": {
       "value": "[{\"email\":\"admin@your-company.com\",\"name\":\"Admin\",\"role\":\"Cloud Architect\",\"language\":\"ko\"}]"
     },
     "containerImage": {
       "value": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+    },
+    "containerRegistryServer": {
+      "value": ""
+    },
+    "containerRegistryRoleAssignmentMode": {
+      "value": "AbacRepositoryPermissions"
     },
     "minReplicas": {
       "value": 1
@@ -49,6 +58,9 @@
     },
     "scheduleCronExpression": {
       "value": "0 2 * * *"
+    },
+    "scheduleDispatcherCronExpression": {
+      "value": "*/5 * * * *"
     },
     "jobReplicaTimeoutSeconds": {
       "value": 43200

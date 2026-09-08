@@ -148,6 +148,25 @@ Thumbs.db
 
 # Temporary debug/test artifacts
 scripts/.tmp-*/
+/session_logs.txt
+/azd-*.log
+/get_stats.py
+/parse_logs.py
+/verify-readonly.ps1
+/.agent_configs/
+/.playwright-mcp/
+/admin-*.png
+/archive-*.png
+/.github/prompts/banner-design/
+/.github/prompts/brand/
+/.github/prompts/design/
+/.github/prompts/design-system/
+/.github/prompts/slides/
+/.github/prompts/ui-styling/
+/.github/prompts/ui-ux-pro-max/
+/.github/prompts/ui-ux-pro-max.prompt.md
+*.png.tmp
+*.png.draft
 
 # Wheel files (downloaded or built locally)
 *.whl

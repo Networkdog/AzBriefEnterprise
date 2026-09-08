@@ -17,8 +17,13 @@ from src.agent.analyzer import (
     RelevanceStatus,
     UrgencyLevel,
     _escape_braces,
+    _extract_primary_regions,
+    _missing_region_mentions,
+    _region_report_gaps,
+    _requires_region_availability,
 )
 from src.agent.resilience import CircuitBreaker, TransitionType
+from src.agent.scope import AnalysisScope
 from src.config import Subscriber
 
 
@@ -36,6 +41,52 @@ class TestEscapeBraces:
 
     def test_empty_string(self):
         assert _escape_braces("") == ""
+
+
+class TestPrimaryRegionExtraction:
+    def test_uses_resource_graph_count_order_and_excludes_nonregional_locations(self):
+        summary = """## Resource Inventory (2 resource types total)
+- microsoft.storage/storageaccounts: 10
+
+## Resource Regions
+
+- global: 50
+- koreacentral: 30
+- eastus: 12
+- unknown: 8
+- japaneast: 4
+- westus: 2
+"""
+
+        assert _extract_primary_regions(summary) == ["koreacentral", "eastus", "japaneast"]
+
+    def test_ga_and_preview_require_region_verdicts(self):
+        assert _requires_region_availability(
+            {"title": "Feature", "update_type": "General Availability"}
+        )
+        assert _requires_region_availability(
+            {"title": "Public Preview: Feature", "update_type": None}
+        )
+        assert not _requires_region_availability(
+            {"title": "Retirement: Feature", "update_type": "Retirement"}
+        )
+
+    def test_region_mentions_accept_official_names_with_spaces(self):
+        content = "Korea Central에서 사용 가능하며 East US에서는 아직 지원되지 않습니다."
+        assert _missing_region_mentions(content, ["koreacentral", "eastus"]) == []
+
+    def test_report_region_check_requires_first_region_in_headline(self):
+        content = json.dumps(
+            {
+                "one_line_summary": "기능이 GA되었습니다",
+                "detailed_analysis": "Korea Central에서 지금 사용할 수 있습니다.",
+            }
+        )
+
+        headline_missing, missing_regions = _region_report_gaps(content, ["koreacentral"])
+
+        assert headline_missing is True
+        assert missing_regions == []
 
 
 class TestParsePlanJson:
@@ -282,6 +333,62 @@ class TestParseEvaluationJson:
         assert result["phase"] == "error"
         assert result["last_transition"] == TransitionType.MODEL_ERROR.value
 
+    @pytest.mark.asyncio
+    async def test_missing_primary_region_coverage_cannot_pass_as_sufficient(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.llm_quality_reviewer = type("QualityReviewer", (), {})()
+        analyzer.llm_quality_reviewer.ainvoke = AsyncMock(
+            return_value=type(
+                "Response",
+                (),
+                {
+                    "content": json.dumps(
+                        {
+                            "verdict": "sufficient",
+                            "coverage": {
+                                "resource_identification": True,
+                                "documentation_evidence": True,
+                                "evidence_complete": True,
+                            },
+                            "missing_aspects": [],
+                            "suggestions": [],
+                            "reason": "All checks passed",
+                        }
+                    ),
+                    "response_metadata": {},
+                },
+            )()
+        )
+        analyzer._llm_circuit_breaker = CircuitBreaker(
+            failure_threshold=3,
+            reset_timeout=120,
+        )
+        plan = AnalysisPlan(
+            plan_id="p1",
+            update_summary="GA feature",
+            analysis_goal="verify regional availability",
+            tasks=[],
+        )
+        state = {
+            "update_context": "update context",
+            "resource_summary": "## Resource Regions\n\n- koreacentral: 30",
+            "update": {"title": "Feature", "update_type": "General Availability"},
+            "task_results": {},
+            "analysis_plan": plan.model_dump(),
+            "task_revision_count": 0,
+            "plan_revision_count": 1,
+            "task_result_char_history": [],
+            "iteration": 1,
+            "trace_id": "trace-region-eval",
+        }
+
+        result = await analyzer._evaluation_node(state)
+
+        assert result["evaluation"]["verdict"] == "partial"
+        assert result["evaluation"]["coverage"]["primary_region_availability"] is False
+        assert "primary_region_availability" in result["evaluation"]["missing_aspects"]
+        assert "include_content=true" in result["evaluation"]["suggestions"][0]
+
 
 class TestShouldSkipUpdate:
     """Test the pre-analysis skip filter."""
@@ -437,6 +544,158 @@ class TestEnrichmentWithNullUpdateType:
         assert result is not None
 
 
+class TestRegionAvailabilityEnrichment:
+    """GA and Preview updates require feature-level regional evidence."""
+
+    @staticmethod
+    def _plan() -> AnalysisPlan:
+        return AnalysisPlan(
+            plan_id="plan_v1",
+            update_summary="Feature release",
+            analysis_goal="assess",
+            tasks=[],
+        )
+
+    def test_ga_adds_scoped_arm_check_and_exact_feature_doc_search(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        title = "Generally Available: Workload identity support for Azure Files CSI driver"
+        state = {
+            "task_results": {},
+            "resource_summary": "## Resource Regions\n\n- koreacentral: 30\n- eastus: 5",
+            "update": {
+                "title": title,
+                "update_type": "General Availability",
+                "azure_services": ["Azure Kubernetes Service (AKS)"],
+            },
+        }
+
+        result = analyzer._inject_enrichment_tasks(self._plan(), state)
+        tasks = {task.tool_name: task for task in result.tasks}
+
+        assert tasks["get_service_region_availability"].tool_args == {
+            "provider_namespace": "Microsoft.ContainerService",
+            "resource_type": "managedClusters",
+            "regions": "koreacentral,eastus",
+        }
+        assert tasks["search_azure_docs"].tool_args == {
+            "query": f'"{title}" supported regions availability koreacentral eastus',
+            "include_content": True,
+            "focus_terms": ["koreacentral", "eastus"],
+            "service_name": "Azure Kubernetes Service (AKS)",
+        }
+
+    def test_preview_without_resource_type_still_adds_feature_doc_search(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        title = "Public Preview: Contoso mode for Azure Network Watcher"
+        state = {
+            "task_results": {},
+            "update": {
+                "title": title,
+                "update_type": "Public Preview",
+                "azure_services": ["Network Watcher"],
+            },
+        }
+
+        result = analyzer._inject_enrichment_tasks(self._plan(), state)
+        region_doc_tasks = [
+            task
+            for task in result.tasks
+            if task.tool_name == "search_azure_docs"
+            and task.tool_args.get("query") == f'"{title}" supported regions availability'
+        ]
+
+        assert len(region_doc_tasks) == 1
+        assert region_doc_tasks[0].tool_args["include_content"] is True
+
+    def test_unscoped_provider_task_does_not_suppress_exact_resource_type_check(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        plan = self._plan()
+        plan.tasks.append(
+            AnalysisTask(
+                task_id="task_1",
+                description="Broad provider check",
+                method="azure_rest",
+                tool_name="get_service_region_availability",
+                tool_args={"provider_namespace": "Microsoft.ContainerService"},
+                purpose="Check provider locations",
+            )
+        )
+        state = {
+            "task_results": {},
+            "resource_summary": "## Resource Regions\n\n- koreacentral: 30",
+            "update": {
+                "title": "Generally Available: AKS feature",
+                "update_type": "General Availability",
+                "azure_services": ["Azure Kubernetes Service (AKS)"],
+            },
+        }
+
+        result = analyzer._inject_enrichment_tasks(plan, state)
+        scoped = [
+            task
+            for task in result.tasks
+            if task.tool_name == "get_service_region_availability"
+            and task.tool_args.get("resource_type") == "managedClusters"
+        ]
+
+        assert len(scoped) == 1
+        assert scoped[0].tool_args["regions"] == "koreacentral"
+
+    def test_shallow_matching_doc_search_does_not_suppress_content_fetch(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        title = "Generally Available: AKS feature"
+        query = f'"{title}" supported regions availability koreacentral'
+        plan = self._plan()
+        plan.tasks.append(
+            AnalysisTask(
+                task_id="task_1",
+                description="Search titles only",
+                method="learn_search",
+                tool_name="search_azure_docs",
+                tool_args={"query": query},
+                purpose="Find documentation",
+            )
+        )
+        state = {
+            "task_results": {},
+            "resource_summary": "## Resource Regions\n\n- koreacentral: 30",
+            "update": {
+                "title": title,
+                "update_type": "General Availability",
+                "azure_services": ["Azure Kubernetes Service (AKS)"],
+            },
+        }
+
+        result = analyzer._inject_enrichment_tasks(plan, state)
+        rich_searches = [
+            task
+            for task in result.tasks
+            if task.tool_name == "search_azure_docs"
+            and task.tool_args.get("include_content") is True
+        ]
+
+        assert len(rich_searches) == 1
+        assert rich_searches[0].tool_args["focus_terms"] == ["koreacentral"]
+
+
+class TestRegionAvailabilityPromptContract:
+    def test_feature_level_evidence_and_region_outcome_are_mandatory(self):
+        from src.agent.prompts.phases import EVALUATION_PROMPT, PLANNING_PROMPT
+        from src.agent.prompts.report.base import REPORT_AFTER
+        from src.agent.prompts.tools import TOOLS_PROMPT
+
+        planning = " ".join(PLANNING_PROMPT.split())
+        evaluation = " ".join(EVALUATION_PROMPT.split())
+        tools = " ".join(TOOLS_PROMPT.split())
+        report = " ".join(REPORT_AFTER.split())
+
+        assert "include_content=true" in planning
+        assert '"primary_region_availability": true' in evaluation
+        assert "A provider-wide availability ratio is not a substitute" in evaluation
+        assert "NOT for a new feature layered on an existing type" in tools
+        assert "Put the first primary Region and its outcome" in report
+
+
 class TestLanguageIsolation:
     """Test that customize_for_subscriber respects language boundaries.
 
@@ -459,19 +718,18 @@ class TestLanguageIsolation:
             should_notify=should_notify,
         )
 
-    def test_not_relevant_same_language_skips_customization(self):
-        """not_relevant + same language → returns original (no LLM call needed)."""
+    @pytest.mark.asyncio
+    async def test_no_profile_same_language_skips_customization(self):
+        """Only a missing role/focus profile and no translation permit the fast path."""
         result = self._make_result(relevance="not_relevant", should_notify=False)
-        sub = Subscriber(email="a@b.com", name="Alice", role="Infra", language="ko")
+        sub = Subscriber(email="a@b.com", name="Alice", role="", language="ko")
 
         with patch.object(AzureUpdateAnalyzer, "__init__", return_value=None):
             analyzer = AzureUpdateAnalyzer.__new__(AzureUpdateAnalyzer)
             analyzer.settings = type("S", (), {"report_language": "ko"})()
 
-        # Same language + not_relevant → skip is expected
-        # The skip condition: not_relevant AND no affected_resources AND not needs_translation
-        needs_translation = sub.language != analyzer.settings.report_language
-        assert needs_translation is False
+        tailored = await analyzer.customize_for_subscriber(result, sub, object())
+        assert tailored is result
 
     def test_not_relevant_different_language_needs_translation(self):
         """not_relevant + different language → must NOT skip (needs translation)."""
@@ -484,12 +742,7 @@ class TestLanguageIsolation:
         assert needs_translation is True
 
         # The skip condition should NOT trigger when needs_translation is True
-        skip = (
-            result.relevance == RelevanceStatus.NOT_RELEVANT
-            and not result.should_notify
-            and not result.affected_resources
-            and not needs_translation  # This prevents skipping
-        )
+        skip = not sub.role and not sub.focus_services and not needs_translation
         assert skip is False, (
             "not_relevant items MUST be customized when subscriber language "
             "differs from report language to prevent language mixing in digest"
@@ -499,8 +752,120 @@ class TestLanguageIsolation:
         """Subscriber model defaults: alert_level='all', empty lists."""
         sub = Subscriber(email="a@b.com", name="Test")
         assert sub.alert_level == "all"
+        assert sub.management_groups == []
         assert sub.subscriptions == []
         assert sub.focus_services == []
+
+    def test_customization_prompt_declares_resource_scope_a_hard_boundary(self):
+        from src.agent.prompts import SUBSCRIBER_CUSTOMIZATION_PROMPT
+        from src.agent.prompts.report.base import REPORT_AFTER
+
+        assert "{subscriber_resource_scope}" in SUBSCRIBER_CUSTOMIZATION_PROMPT
+        assert "hard investigation boundary" in SUBSCRIBER_CUSTOMIZATION_PROMPT
+        assert '"subscriptionId": "exact subscription GUID' in REPORT_AFTER
+
+    def test_customization_output_is_filtered_against_the_subscriber_scope(self):
+        result = self._make_result(relevance="relevant", should_notify=True)
+        analyzer = AzureUpdateAnalyzer.__new__(AzureUpdateAnalyzer)
+        analyzer.settings = type("S", (), {"action_verification_enabled": False})()
+        scope = AnalysisScope(
+            subscriptions=["11111111-1111-1111-1111-111111111111"],
+            resource_groups=["production-rg"],
+        )
+        customized = {
+            "affected_resources": [
+                {
+                    "name": "in-scope",
+                    "subscriptionId": "11111111-1111-1111-1111-111111111111",
+                    "resourceGroup": "production-rg",
+                },
+                {
+                    "name": "out-of-scope",
+                    "subscriptionId": "22222222-2222-2222-2222-222222222222",
+                    "resourceGroup": "other-rg",
+                },
+            ]
+        }
+
+        tailored = analyzer._build_customized_result(
+            result,
+            customized,
+            object(),
+            scope=scope,
+        )
+
+        assert [resource["name"] for resource in tailored.affected_resources] == ["in-scope"]
+
+    @pytest.mark.asyncio
+    async def test_same_language_empty_role_early_return_is_still_scope_filtered(self):
+        result = self._make_result(relevance="relevant", should_notify=True).model_copy(
+            update={
+                "affected_resources": [
+                    {
+                        "name": "in-scope",
+                        "subscriptionId": "11111111-1111-1111-1111-111111111111",
+                        "resourceGroup": "production-rg",
+                    },
+                    {
+                        "name": "out-of-scope",
+                        "subscriptionId": "22222222-2222-2222-2222-222222222222",
+                        "resourceGroup": "other-rg",
+                    },
+                ]
+            }
+        )
+        subscriber = Subscriber(
+            email="scope@example.com",
+            name="Scope",
+            role="",
+            language="ko",
+            subscriptions=["11111111-1111-1111-1111-111111111111"],
+            resource_groups=["production-rg"],
+        )
+        analyzer = AzureUpdateAnalyzer.__new__(AzureUpdateAnalyzer)
+        analyzer.settings = type("S", (), {"report_language": "ko"})()
+
+        tailored = await analyzer.customize_for_subscriber(result, subscriber, object())
+
+        assert [resource["name"] for resource in tailored.affected_resources] == ["in-scope"]
+
+    @pytest.mark.asyncio
+    async def test_analysis_wrapper_filters_the_result_after_all_rewrites(self):
+        result = self._make_result(relevance="relevant", should_notify=True).model_copy(
+            update={
+                "affected_resources": [
+                    {
+                        "name": "in-scope",
+                        "subscriptionId": "11111111-1111-1111-1111-111111111111",
+                        "resourceGroup": "production-rg",
+                    },
+                    {
+                        "name": "post-critic-out-of-scope",
+                        "subscriptionId": "22222222-2222-2222-2222-222222222222",
+                        "resourceGroup": "other-rg",
+                    },
+                ]
+            }
+        )
+        analyzer = AzureUpdateAnalyzer.__new__(AzureUpdateAnalyzer)
+
+        async def completed_analysis(_update, trace_id=None):
+            assert trace_id == "trace-scope"
+            return result
+
+        analyzer._analyze_update_scoped = completed_analysis
+        scope = AnalysisScope(
+            subscriptions=["11111111-1111-1111-1111-111111111111"],
+            resource_groups=["production-rg"],
+        )
+
+        tailored = await analyzer.analyze_update(
+            object(),
+            trace_id="trace-scope",
+            scope=scope,
+        )
+
+        assert [resource["name"] for resource in tailored.affected_resources] == ["in-scope"]
 
 
 class TestKqlTaskRouting:
@@ -696,6 +1061,55 @@ class TestContextualToolArguments:
 
 class TestReportOutputRecovery:
     @pytest.mark.asyncio
+    async def test_rate_limited_report_waits_and_retries(self, monkeypatch):
+        from src.agent import analyzer as analyzer_module
+
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.settings = SimpleNamespace(report_language="ko", custom_system_prompt="")
+        analyzer._llm_circuit_breaker = CircuitBreaker(
+            failure_threshold=3,
+            reset_timeout=120,
+        )
+        analyzer.llm_report_writer = type("ReportWriter", (), {})()
+        analyzer.llm_report_writer.ainvoke = AsyncMock(
+            side_effect=[
+                RuntimeError("Error code: 429 - rate_limit_exceeded"),
+                AIMessage(
+                    content='{"relevance":"not_relevant","detailed_analysis":"complete"}',
+                    response_metadata={"finish_reason": "stop"},
+                ),
+            ]
+        )
+        sleep = AsyncMock()
+        monkeypatch.setattr("src.agent.resilience.asyncio.sleep", sleep)
+        monkeypatch.setattr("src.agent.resilience.random.uniform", lambda *_: 0)
+        monkeypatch.setattr(analyzer_module, "get_settings", lambda: analyzer.settings)
+        plan = AnalysisPlan(
+            plan_id="p1",
+            update_summary="update",
+            analysis_goal="report",
+            tasks=[],
+        )
+        state = {
+            "update_context": "update context",
+            "resource_summary": "resource summary",
+            "task_results": {},
+            "analysis_plan": plan.model_dump(),
+            "update": {"title": "Update", "update_type": "Feature Change"},
+            "trace_id": "trace-rate-limit",
+            "iteration": 1,
+            "report_feedback": "",
+        }
+
+        result = await analyzer._report_node(state)
+
+        assert analyzer.llm_report_writer.ainvoke.await_count == 2
+        sleep.assert_awaited_once_with(10.0)
+        assert result["analysis_result"]["raw_analysis"] == (
+            '{"relevance":"not_relevant","detailed_analysis":"complete"}'
+        )
+
+    @pytest.mark.asyncio
     async def test_length_limited_foundry_response_is_continued(self, monkeypatch):
         from src.agent import analyzer as analyzer_module
 
@@ -744,3 +1158,54 @@ class TestReportOutputRecovery:
         )
         recovery_messages = analyzer.llm_report_writer.ainvoke.await_args_list[1].args[0]
         assert recovery_messages[-1].content == analyzer_module.OUTPUT_RECOVERY_MESSAGE
+
+    @pytest.mark.asyncio
+    async def test_ga_report_retries_once_when_primary_region_verdict_is_missing(self, monkeypatch):
+        from src.agent import analyzer as analyzer_module
+
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.settings = SimpleNamespace(report_language="ko", custom_system_prompt="")
+        analyzer._llm_circuit_breaker = CircuitBreaker(
+            failure_threshold=3,
+            reset_timeout=120,
+        )
+        analyzer.llm_report_writer = type("ReportWriter", (), {})()
+        analyzer.llm_report_writer.ainvoke = AsyncMock(
+            side_effect=[
+                AIMessage(
+                    content='{"one_line_summary":"기능이 GA되었습니다","detailed_analysis":"설명"}',
+                    response_metadata={"finish_reason": "stop"},
+                ),
+                AIMessage(
+                    content=(
+                        '{"one_line_summary":"koreacentral: 지금 사용 가능 - 기능 GA",'
+                        '"detailed_analysis":"Korea Central에서 지금 사용할 수 있습니다."}'
+                    ),
+                    response_metadata={"finish_reason": "stop"},
+                ),
+            ]
+        )
+        monkeypatch.setattr(analyzer_module, "get_settings", lambda: analyzer.settings)
+        plan = AnalysisPlan(
+            plan_id="p1",
+            update_summary="update",
+            analysis_goal="report",
+            tasks=[],
+        )
+        state = {
+            "update_context": "update context",
+            "resource_summary": "## Resource Regions\n\n- koreacentral: 30",
+            "task_results": {},
+            "analysis_plan": plan.model_dump(),
+            "update": {"title": "Feature", "update_type": "General Availability"},
+            "trace_id": "trace-region",
+            "iteration": 1,
+            "report_feedback": "",
+        }
+
+        result = await analyzer._report_node(state)
+
+        assert analyzer.llm_report_writer.ainvoke.await_count == 2
+        assert "koreacentral" in result["analysis_result"]["raw_analysis"]
+        retry_prompt = analyzer.llm_report_writer.ainvoke.await_args_list[1].args[0][-1].content
+        assert "official feature-level evidence" in retry_prompt

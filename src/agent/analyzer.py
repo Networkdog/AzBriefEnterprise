@@ -38,6 +38,13 @@ from src.agent.resilience import (
     TransitionType,
     calculate_backoff,
     parse_json_resilient,
+    retry_with_backoff,
+)
+from src.agent.scope import (
+    SCOPED_ANALYSIS_TOOL_NAMES,
+    AnalysisScope,
+    analysis_scope_context,
+    current_analysis_scope,
 )
 from src.agent.telemetry import setup_telemetry, traced_span
 from src.agent.tools import KQL_TOOL_NAMES, WRITE_TOOL_NAMES, get_all_tools
@@ -99,6 +106,65 @@ def _escape_braces(s: str) -> str:
     e.g., Azure REST API paths like '/subscriptions/{subscriptionId}/...'
     """
     return s.replace("{", "{{").replace("}", "}}")
+
+
+def _extract_primary_regions(resource_summary: str, limit: int = 3) -> list[str]:
+    """Extract the busiest Azure regions from a Resource Graph summary."""
+    regions: list[str] = []
+    in_region_section = False
+    for line in resource_summary.splitlines():
+        if "resource regions" in line.lower():
+            in_region_section = True
+            continue
+        if not in_region_section:
+            continue
+        if not line.startswith("- "):
+            if line.strip() and not line.startswith("..."):
+                break
+            continue
+        region = line[2:].split(":", 1)[0].strip()
+        if region and region.lower() not in {"global", "unknown"}:
+            regions.append(region)
+        if len(regions) >= limit:
+            break
+    return regions
+
+
+def _requires_region_availability(update: dict[str, Any]) -> bool:
+    """Return whether an update requires a primary-Region availability verdict."""
+    update_type = str(update.get("update_type") or "").lower()
+    title = str(update.get("title") or "").lower()
+    markers = (
+        "general availability",
+        "generally available",
+        "public preview",
+        "in preview",
+        "region expansion",
+        "new region",
+        "available in",
+    )
+    return any(marker in update_type or marker in title for marker in markers)
+
+
+def _missing_region_mentions(content: str, regions: list[str]) -> list[str]:
+    """Return primary regions that are absent from a generated report."""
+    normalized_content = "".join(char.lower() for char in content if char.isalnum())
+    return [
+        region
+        for region in regions
+        if "".join(char.lower() for char in region if char.isalnum()) not in normalized_content
+    ]
+
+
+def _region_report_gaps(content: str, regions: list[str]) -> tuple[bool, list[str]]:
+    """Validate primary-Region placement in a generated report JSON."""
+    parsed = parse_json_resilient(content)
+    if not isinstance(parsed, dict):
+        return True, list(regions)
+    one_line = str(parsed.get("one_line_summary") or "")
+    detailed = str(parsed.get("detailed_analysis") or "")
+    headline_missing = bool(regions and _missing_region_mentions(one_line, regions[:1]))
+    return headline_missing, _missing_region_mentions(f"{one_line}\n{detailed}", regions)
 
 
 def _extract_llm_meta(response) -> dict[str, Any]:
@@ -229,7 +295,7 @@ class AnalysisResult(BaseModel):
     blast_radius_detail: str = ""  # explanation of blast radius calculation
     relevance: RelevanceStatus
     one_line_summary: str = ""  # executive one-line summary
-    relevance_evidence: str = ""  # why this update is relevant to admin's environment
+    relevance_evidence: str = ""  # category-aware applicability/value and evidence limits
     relevance_reason: str
     affected_resources: list[dict[str, Any]]
     impact_summary: str
@@ -758,6 +824,7 @@ class AzureUpdateAnalyzer:
             if svc in service_to_resource_type:
                 resource_type_filter = service_to_resource_type[svc]
                 break
+        primary_regions = _extract_primary_regions(state.get("resource_summary", ""))
 
         # 1. Resource Health — always inject (shows if resources are healthy)
         if "get_resource_health" not in existing_tools:
@@ -907,44 +974,94 @@ class AzureUpdateAnalyzer:
                 )
                 next_id += 1
 
-        # 7. Service Region Availability — inject for GA/preview/region-expansion/new-service
-        # Answers "is this service/feature available in the admin's regions?" using the ARM
-        # providers API (authoritative), preventing vague "needs verification" conclusions.
+        # 7. Primary-Region availability — inject for GA/preview/region-expansion/new-service.
+        # ARM proves exact resource-type deployability; official feature text proves rollout.
         title_lower = update.get("title", "").lower()
         ut_lower = update_type.lower()
-        is_region_availability_relevant = any(
-            kw in ut_lower
-            for kw in ("general availability", "preview", "region", "launch", "in development")
-        ) or any(
-            kw in title_lower
-            for kw in (
-                "now available",
-                "generally available",
-                "public preview",
-                "new region",
-                "region expansion",
-                "expanding to",
-                "available in",
-            )
+        is_region_availability_relevant = (
+            _requires_region_availability(update)
+            or any(kw in ut_lower for kw in ("region", "launch", "in development"))
+            or any(kw in title_lower for kw in ("now available", "expanding to"))
         )
-        if (
-            "get_service_region_availability" not in existing_tools
-            and is_region_availability_relevant
-            and resource_type_filter
-        ):
-            provider_ns = resource_type_filter.split("/")[0]
-            injected.append(
-                AnalysisTask(
-                    task_id=f"enrich_{next_id}",
-                    description="Auto-enrichment: service region availability check",
-                    method="azure_rest",
-                    tool_name="get_service_region_availability",
-                    tool_args={"provider_namespace": provider_ns},
-                    purpose="Verify whether the announced service/feature is available in the admin's primary regions",
-                    max_retries=1,
+        if is_region_availability_relevant:
+            has_scoped_region_check = False
+            if resource_type_filter:
+                expected_namespace, expected_resource_type = resource_type_filter.split("/", 1)
+                has_scoped_region_check = any(
+                    task.tool_name == "get_service_region_availability"
+                    and str(task.tool_args.get("provider_namespace", "")).lower()
+                    == expected_namespace.lower()
+                    and str(task.tool_args.get("resource_type", "")).lower()
+                    == expected_resource_type.lower()
+                    and (
+                        not primary_regions
+                        or str(task.tool_args.get("regions", "")).lower()
+                        == ",".join(primary_regions).lower()
+                    )
+                    for task in plan.tasks
                 )
+            if not has_scoped_region_check and resource_type_filter:
+                provider_ns, resource_type = resource_type_filter.split("/", 1)
+                region_args = {
+                    "provider_namespace": provider_ns,
+                    "resource_type": resource_type,
+                }
+                if primary_regions:
+                    region_args["regions"] = ",".join(primary_regions)
+                injected.append(
+                    AnalysisTask(
+                        task_id=f"enrich_{next_id}",
+                        description="Auto-enrichment: resource type region availability check",
+                        method="azure_rest",
+                        tool_name="get_service_region_availability",
+                        tool_args=region_args,
+                        purpose=(
+                            "Verify whether the service resource type is deployable in the "
+                            "admin's primary regions"
+                        ),
+                        max_retries=1,
+                    )
+                )
+                next_id += 1
+
+            title = update.get("title", "").strip()
+            region_query = f'"{title}" supported regions availability'
+            if primary_regions:
+                region_query += f" {' '.join(primary_regions)}"
+            has_exact_region_search = any(
+                task.tool_name == "search_azure_docs"
+                and task.tool_args.get("query") == region_query
+                and task.tool_args.get("include_content") is True
+                and set(task.tool_args.get("focus_terms") or []) >= set(primary_regions)
+                for task in plan.tasks
             )
-            next_id += 1
+            if title and not has_exact_region_search:
+                search_args: dict[str, Any] = {
+                    "query": region_query,
+                    "include_content": True,
+                    "focus_terms": primary_regions,
+                }
+                if azure_services:
+                    search_args["service_name"] = azure_services[0]
+                injected.append(
+                    AnalysisTask(
+                        task_id=f"enrich_{next_id}",
+                        description="Auto-enrichment: feature-level region availability evidence",
+                        method="learn_search",
+                        tool_name="search_azure_docs",
+                        tool_args=search_args,
+                        purpose=(
+                            "Verify the announced feature's rollout in the admin's primary "
+                            "regions from official Microsoft documentation"
+                        ),
+                        max_retries=1,
+                    )
+                )
+                next_id += 1
+
+        scope = current_analysis_scope()
+        if scope.is_bounded:
+            injected = [task for task in injected if task.tool_name in SCOPED_ANALYSIS_TOOL_NAMES]
 
         if injected:
             plan.tasks.extend(injected)
@@ -1086,6 +1203,19 @@ class AzureUpdateAnalyzer:
                 task.error = f"Tool '{task.tool_name}' not found"
                 logger.warning(
                     "Tool not found",
+                    trace_id=state.get("trace_id", ""),
+                    task_id=task.task_id,
+                    tool_name=task.tool_name,
+                )
+                return
+
+            scope = current_analysis_scope()
+            if scope.is_bounded and task.tool_name not in SCOPED_ANALYSIS_TOOL_NAMES:
+                task.status = "failed"
+                task.error = "Tool cannot enforce the subscriber resource scope"
+                task_results[task.task_id] = task.error
+                logger.warning(
+                    "scoped_tool_blocked",
                     trace_id=state.get("trace_id", ""),
                     task_id=task.task_id,
                     tool_name=task.tool_name,
@@ -1424,6 +1554,27 @@ class AzureUpdateAnalyzer:
         # Parse EvaluationResult
         evaluation = self._parse_evaluation_json(raw)
 
+        update = state.get("update", {})
+        primary_regions = _extract_primary_regions(state.get("resource_summary", ""))
+        if (
+            evaluation.verdict != "model_error"
+            and _requires_region_availability(update)
+            and primary_regions
+            and evaluation.coverage.get("primary_region_availability") is not True
+        ):
+            evaluation.verdict = "partial"
+            evaluation.coverage["primary_region_availability"] = False
+            if "primary_region_availability" not in evaluation.missing_aspects:
+                evaluation.missing_aspects.append("primary_region_availability")
+            suggestion = (
+                "Fetch feature-level official documentation for "
+                + ", ".join(primary_regions)
+                + " with search_azure_docs(include_content=true, focus_terms=[...])."
+            )
+            if suggestion not in evaluation.suggestions:
+                evaluation.suggestions.append(suggestion)
+            evaluation.reason += " [Primary-Region availability coverage was not confirmed.]"
+
         # Prevent infinite loops
         if evaluation.verdict == "partial" and task_revision_count >= 3:
             logger.warning(
@@ -1690,14 +1841,25 @@ class AzureUpdateAnalyzer:
             content = '{"relevance": "unknown", "detailed_analysis": "LLM circuit breaker open. Unable to generate report."}'
         else:
             try:
-                response = await _ainvoke_with_trace(
-                    self.llm_report_writer,
-                    [
-                        SystemMessage(content=report_system),
-                        HumanMessage(content=prompt_text),
-                    ],
-                    trace_id=state.get("trace_id", ""),
-                    task_id="report_writer:report",
+
+                async def _generate_report():
+                    return await _ainvoke_with_trace(
+                        self.llm_report_writer,
+                        [
+                            SystemMessage(content=report_system),
+                            HumanMessage(content=prompt_text),
+                        ],
+                        trace_id=state.get("trace_id", ""),
+                        task_id="report_writer:report",
+                    )
+
+                response = await retry_with_backoff(
+                    _generate_report,
+                    max_retries=3,
+                    retryable_errors=(429,),
+                    base_delay=10.0,
+                    max_delay=60.0,
+                    is_foreground=True,
                 )
                 self._llm_circuit_breaker.record_success()
                 content = response.content if hasattr(response, "content") else str(response)
@@ -1751,6 +1913,70 @@ class AzureUpdateAnalyzer:
                 self._llm_circuit_breaker.record_failure()
                 logger.error("report_llm_failed", error=str(llm_err))
                 content = f'{{"relevance": "unknown", "detailed_analysis": "Report generation failed: {str(llm_err)[:100]}"}}'
+
+        primary_regions = _extract_primary_regions(resource_summary)
+        headline_missing, missing_regions = _region_report_gaps(content, primary_regions)
+        if (
+            response is not None
+            and _requires_region_availability(update)
+            and (headline_missing or missing_regions)
+        ):
+            region_instruction = (
+                "Regenerate the complete JSON report because it omitted the mandatory primary-Region "
+                f"availability verdict for: {', '.join(missing_regions)}. Put the first primary Region "
+                "and one of these outcomes in one_line_summary: available now, available with a stated "
+                "prerequisite, not available, or not confirmed by official feature-level evidence. "
+                "State every listed Region's outcome in detailed_analysis. Use the Azure Update text or "
+                "fetched Microsoft Learn feature-level excerpt as the authority. An ARM provider/resource "
+                "type result proves only service deployment support unless the announced object is that "
+                "exact resource type; it does not prove a feature rollout. Preserve all existing grounded "
+                "facts and URLs, add no new facts, and return JSON only."
+            )
+            try:
+                region_response = await _ainvoke_with_trace(
+                    self.llm_report_writer,
+                    [
+                        SystemMessage(content=report_system),
+                        HumanMessage(content=f"{prompt_text}\n\n{region_instruction}"),
+                    ],
+                    trace_id=state.get("trace_id", ""),
+                    task_id="report_writer:region_availability_recovery",
+                )
+                corrected_content = (
+                    region_response.content
+                    if hasattr(region_response, "content")
+                    else str(region_response)
+                )
+                corrected_headline_missing, corrected_missing = _region_report_gaps(
+                    corrected_content,
+                    primary_regions,
+                )
+                if (
+                    corrected_content.strip()
+                    and not corrected_headline_missing
+                    and not corrected_missing
+                ):
+                    content = corrected_content
+                    response = region_response
+                    logger.info(
+                        "region_availability_report_recovered",
+                        trace_id=state.get("trace_id", ""),
+                        primary_regions=primary_regions,
+                    )
+                else:
+                    logger.warning(
+                        "region_availability_report_recovery_incomplete",
+                        trace_id=state.get("trace_id", ""),
+                        headline_missing=corrected_headline_missing,
+                        missing_regions=corrected_missing,
+                    )
+            except Exception as region_error:
+                logger.warning(
+                    "region_availability_report_recovery_failed",
+                    trace_id=state.get("trace_id", ""),
+                    missing_regions=missing_regions,
+                    error=str(region_error)[:200],
+                )
         _llm_elapsed = time.time() - _llm_t0
         llm_meta = _extract_llm_meta(response) if response else {}
         logger.debug("llm_response", phase="report", content=content)
@@ -2650,6 +2876,35 @@ class AzureUpdateAnalyzer:
         return "\n".join(lines)
 
     async def analyze_update(
+        self,
+        update: AzureUpdate,
+        trace_id: Optional[str] = None,
+        scope: Optional[AnalysisScope] = None,
+    ) -> AnalysisResult:
+        """Analyze an update within an async-safe hard resource boundary."""
+        with analysis_scope_context(scope):
+            result = await self._analyze_update_scoped(update, trace_id=trace_id)
+            return self._filter_result_to_scope(result, current_analysis_scope())
+
+    @staticmethod
+    def _filter_result_to_scope(
+        result: AnalysisResult,
+        scope: AnalysisScope,
+    ) -> AnalysisResult:
+        """Apply the hard boundary to the final structured report result."""
+        if not scope.is_bounded:
+            return result
+        return result.model_copy(
+            update={
+                "affected_resources": [
+                    resource
+                    for resource in result.affected_resources
+                    if scope.contains_resource(resource)
+                ]
+            }
+        )
+
+    async def _analyze_update_scoped(
         self, update: AzureUpdate, trace_id: Optional[str] = None
     ) -> AnalysisResult:
         """Analyze an Azure Update.
@@ -2797,7 +3052,7 @@ class AzureUpdateAnalyzer:
 
         update_context = ANALYSIS_PROMPT.format(
             title=update.title,
-            description=update.description,
+            description=update.detail_description or update.description,
             update_type=update.update_type or "Unknown",
             azure_services=(
                 ", ".join(update.azure_services) if update.azure_services else "Unknown"
@@ -2808,26 +3063,33 @@ class AzureUpdateAnalyzer:
             link=update.link,
             learn_more_section=learn_more_section,
             resource_summary=resource_summary,
+            primary_regions=(
+                ", ".join(_extract_primary_regions(resource_summary))
+                or "Unknown (Resource Graph region distribution was unavailable)"
+            ),
             resource_query_status=(
                 "Success" if resource_query_success else "Failed (could not retrieve resource list)"
             ),
             kql_knowledge_context=kql_knowledge_context,
         )
+        scope = current_analysis_scope()
+        if scope.is_bounded:
+            update_context += f"\n\n## Subscriber Resource Scope\n{scope.prompt_text()}"
 
-        # Build history context from previous analyses (cross-update intelligence)
-        from src.agent.history import build_history_context_for_prompt, rotate_history
+        scope = current_analysis_scope()
+        if not scope.is_bounded:
+            # Cross-update memory is canonical and must never enter a scoped analysis.
+            from src.agent.history import build_history_context_for_prompt, rotate_history
 
-        # Rotate old history records (lightweight, runs once per analysis)
-        rotate_history()
-
-        history_context = build_history_context_for_prompt(
-            services=update.azure_services or [],
-            update_id=update.id,
-            max_related=5,
-        )
-        if history_context:
-            update_context += "\n" + history_context
-            _console(f"  History context: {len(history_context)} chars injected")
+            rotate_history()
+            history_context = build_history_context_for_prompt(
+                services=update.azure_services or [],
+                update_id=update.id,
+                max_related=5,
+            )
+            if history_context:
+                update_context += "\n" + history_context
+                _console(f"  History context: {len(history_context)} chars injected")
 
         # Inject practitioner commentary (Azure Weekly digest). Official docs
         # describe what a feature is; they rarely describe what breaks or
@@ -2840,12 +3102,13 @@ class AzureUpdateAnalyzer:
         # Inject prior analysis-pattern hint: which tools historically produced
         # grounded findings for these services. Steers the planner toward a
         # stronger first plan (fewer execute→revise cycles). Empty during cold start.
-        from src.agent.pattern_memory import build_pattern_hint_for_prompt
+        if not scope.is_bounded:
+            from src.agent.pattern_memory import build_pattern_hint_for_prompt
 
-        pattern_hint = build_pattern_hint_for_prompt(update)
-        if pattern_hint:
-            update_context += "\n" + pattern_hint
-            _console(f"  Pattern hint: {len(pattern_hint)} chars injected")
+            pattern_hint = build_pattern_hint_for_prompt(update)
+            if pattern_hint:
+                update_context += "\n" + pattern_hint
+                _console(f"  Pattern hint: {len(pattern_hint)} chars injected")
 
         # Initialize state for Plan-Execute-Evaluate loop
         initial_state: AgentState = {
@@ -2885,7 +3148,8 @@ class AzureUpdateAnalyzer:
                 f"{evaluation.get('reason', 'unknown evaluation error')}"
             )
 
-        # Parse the result
+        # Parse the result. The public wrapper applies the hard scope again after
+        # G-Eval and every other rewrite has completed.
         result = self._parse_analysis_result(final_state, update)
         self._attach_result_evidence(
             result,
@@ -2945,22 +3209,22 @@ class AzureUpdateAnalyzer:
                 logger.debug("trajectory_eval_skipped", error=str(exc))
 
         # Save to analysis history (cross-update intelligence)
-        from src.agent.history import save_analysis_record, update_retirement_tracker
+        if not scope.is_bounded:
+            from src.agent.history import save_analysis_record, update_retirement_tracker
 
-        save_analysis_record(result)
-        update_retirement_tracker(result)
+            save_analysis_record(result)
+            update_retirement_tracker(result)
 
-        # Record which tools worked for this update's services (planning memory).
-        # Feeds build_pattern_hint_for_prompt on future analyses of the same service.
-        try:
-            from src.agent.pattern_memory import (
-                extract_successful_tools,
-                record_analysis_pattern,
-            )
+            # Record which tools worked for this update's services (planning memory).
+            try:
+                from src.agent.pattern_memory import (
+                    extract_successful_tools,
+                    record_analysis_pattern,
+                )
 
-            record_analysis_pattern(update, result, extract_successful_tools(final_state))
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.debug("pattern_record_skipped", error=str(exc))
+                record_analysis_pattern(update, result, extract_successful_tools(final_state))
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("pattern_record_skipped", error=str(exc))
 
         _total_elapsed = time.time() - _analysis_t0
         _console(f"\n{'#'*60}")
@@ -3133,27 +3397,13 @@ class AzureUpdateAnalyzer:
         base_language = normalize_language(settings.report_language)
         subscriber_language = normalize_language(subscriber.language)
         needs_translation = subscriber_language != base_language
+        subscriber_scope = AnalysisScope.from_subscriber(subscriber)
+        result = self._filter_result_to_scope(result, subscriber_scope)
 
-        if not subscriber.role and not needs_translation:
+        if not subscriber.role and not subscriber.focus_services and not needs_translation:
             logger.info(
-                "Subscriber has no role and same language, skipping customization",
+                "Subscriber has no role or focus services and same language, skipping customization",
                 subscriber=subscriber.email,
-            )
-            return result
-
-        # 관련 없는 업데이트는 구독자 맞춤화를 건너뛰어 토큰 절약
-        # 단, 구독자의 언어가 기본 보고서 언어와 다른 경우에는
-        # 번역이 필요하므로 건너뛰지 않음 (언어 혼합 방지)
-        if (
-            result.relevance == RelevanceStatus.NOT_RELEVANT
-            and not result.should_notify
-            and not result.affected_resources
-            and not needs_translation
-        ):
-            logger.info(
-                "Skipping subscriber customization — not_relevant with no affected resources",
-                subscriber=subscriber.email,
-                relevance=result.relevance.value,
             )
             return result
 
@@ -3165,6 +3415,7 @@ class AzureUpdateAnalyzer:
             "impact_level": result.impact_level,
             "relevance": result.relevance.value,
             "one_line_summary": result.one_line_summary,
+            "relevance_evidence": result.relevance_evidence,
             "detailed_analysis": result.relevance_reason,
             "affected_resources": result.affected_resources,
             "action_items": [
@@ -3205,6 +3456,10 @@ class AzureUpdateAnalyzer:
             subscriber_name=subscriber.name,
             subscriber_role=subscriber.role,
             subscriber_language=language_display(subscriber_language),
+            subscriber_resource_scope=subscriber_scope.prompt_text(),
+            subscriber_focus_services=(
+                ", ".join(subscriber.focus_services) if subscriber.focus_services else "All"
+            ),
             language_translation_notes=get_translation_notes(subscriber_language),
         )
 
@@ -3297,12 +3552,20 @@ class AzureUpdateAnalyzer:
                 # Even on skip, use translated text from LLM response to prevent
                 # language mixing in the digest email (all items are rendered).
                 customized_result = self._build_customized_result(
-                    result, customized, update, language=getattr(subscriber, "language", "ko")
+                    result,
+                    customized,
+                    update,
+                    language=getattr(subscriber, "language", "ko"),
+                    scope=subscriber_scope,
                 )
                 return customized_result.model_copy(update={"should_notify": False})
 
             return self._build_customized_result(
-                result, customized, update, language=getattr(subscriber, "language", "ko")
+                result,
+                customized,
+                update,
+                language=getattr(subscriber, "language", "ko"),
+                scope=subscriber_scope,
             )
 
         except Exception as e:
@@ -3344,6 +3607,7 @@ class AzureUpdateAnalyzer:
         customized: dict,
         update: "AzureUpdate",
         language: str = "ko",
+        scope: Optional[AnalysisScope] = None,
     ) -> AnalysisResult:
         """Build AnalysisResult from customized JSON, falling back to original values.
 
@@ -3352,6 +3616,7 @@ class AzureUpdateAnalyzer:
             customized: Customized JSON dict from LLM
             update: Original Azure Update
             language: Subscriber language, used for the re-verification notes
+            scope: Hard resource boundary used for deterministic output validation
 
         Returns:
             New AnalysisResult with customized fields
@@ -3472,6 +3737,12 @@ class AzureUpdateAnalyzer:
             in [RelevanceStatus.RELEVANT, RelevanceStatus.OPPORTUNITY, RelevanceStatus.UNKNOWN]
         )
 
+        affected_resources = customized.get("affected_resources", original.affected_resources)
+        if scope and scope.is_bounded:
+            affected_resources = [
+                resource for resource in affected_resources if scope.contains_resource(resource)
+            ]
+
         customized_result = AnalysisResult(
             update_id=original.update_id,
             update_title=original.update_title,
@@ -3501,7 +3772,7 @@ class AzureUpdateAnalyzer:
             one_line_summary=customized.get("one_line_summary", original.one_line_summary),
             relevance_evidence=customized.get("relevance_evidence", original.relevance_evidence),
             relevance_reason=customized.get("detailed_analysis", original.relevance_reason),
-            affected_resources=customized.get("affected_resources", original.affected_resources),
+            affected_resources=affected_resources,
             impact_summary=original.impact_summary,
             impact_details=impact_details,
             action_items=action_items if action_items else original.action_items,
@@ -3972,7 +4243,7 @@ class AzureUpdateAnalyzer:
             # Don't duplicate: if impact_summary is empty, leave it empty
             # (structured impact_details will be shown instead)
 
-            # Extract relevance evidence (why this update was selected)
+            # 환경 연관성의 근거와 판단 한계를 보존
             relevance_evidence = clean_for_display(parsed_json.get("relevance_evidence", ""))
         else:
             # Fallback: Try regex-based extraction

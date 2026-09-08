@@ -194,17 +194,17 @@ class TestQualityScoring:
         assert cat["max"] == 25, f"Content accuracy max should be 25, got {cat['max']}"
         assert cat["score"] >= 20, f"High quality content should score >= 20, got {cat['score']}"
 
-    def test_relevance_mismatch_penalized(self, evaluator, sample_update):
-        """Relevant but no affected resources → penalized."""
+    def test_relevance_without_rationale_penalized(self, evaluator, sample_update):
+        """A relevance claim needs evidence even when no Azure resource rows apply."""
         result = AnalysisResult(
             update_id="test",
             update_title="Test",
             urgency=UrgencyLevel.MEDIUM,
             relevance=RelevanceStatus.RELEVANT,
             one_line_summary="Test summary with specific details and 3 resources",
-            relevance_evidence="Test evidence with 3 resources found",
+            relevance_evidence="",
             relevance_reason="Some analysis text " * 50,
-            affected_resources=[],  # Mismatch: relevant but no resources
+            affected_resources=[],
             impact_summary="",
             action_items=[],
             recommendations=[],
@@ -214,7 +214,55 @@ class TestQualityScoring:
         qr = evaluator.evaluate(result, sample_update, language="ko")
         # Find relevance classification item
         rel_item = next(i for i in qr.items if i.name == "relevance_classification")
-        assert rel_item.score < rel_item.max_score, "Relevance mismatch should be penalized"
+        assert rel_item.score < rel_item.max_score, "Missing relevance rationale must be penalized"
+
+    @pytest.mark.parametrize("include_region", [False, True])
+    def test_ga_primary_region_is_checked_when_resource_evidence_exists(
+        self,
+        evaluator,
+        include_region,
+    ):
+        update = AzureUpdate(
+            id="ga-region",
+            title="Generally Available: Example feature",
+            description="Example feature is generally available.",
+            link="https://azure.microsoft.com/updates/example",
+            published_date=datetime(2026, 9, 1),
+            categories=["Example"],
+            azure_services=["Example"],
+            update_type="General Availability",
+            status="Launched",
+        )
+        region_text = "koreacentral: 지금 사용 가능 — " if include_region else ""
+        result = AnalysisResult(
+            update_id=update.id,
+            update_title=update.title,
+            update_category="new_feature",
+            relevance=RelevanceStatus.OPPORTUNITY,
+            one_line_summary=region_text + "Example feature가 GA되었습니다",
+            relevance_evidence="환경에서 Example 리소스 3개를 확인했습니다.",
+            relevance_reason=(
+                "Korea Central에서 기능을 사용할 수 있습니다."
+                if include_region
+                else "이 기능은 운영을 단순화합니다."
+            ),
+            affected_resources=[],
+            impact_summary="",
+            recommendations=[],
+            reference_docs=[{"title": "Doc", "url": "https://learn.microsoft.com/example"}],
+            should_notify=True,
+        )
+        result._evidence_resource_summary = "## Resource Regions\n\n- koreacentral: 30\n- eastus: 5"
+        if include_region:
+            result.relevance_reason += " East US에서도 사용할 수 있습니다."
+
+        quality = evaluator.evaluate(result, update, language="ko")
+        category_item = next(item for item in quality.items if item.name == "update_category")
+
+        if include_region:
+            assert not any("Region" in deduction for deduction in category_item.deductions)
+        else:
+            assert any("primary Region" in deduction for deduction in category_item.deductions)
 
     def test_fabricated_deadline_penalized(self, evaluator, sample_update):
         result = AnalysisResult(

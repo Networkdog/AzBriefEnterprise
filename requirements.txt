@@ -24,6 +24,7 @@ beautifulsoup4>=4.12.0,<5.0
 
 # Utilities
 structlog>=24.1.0,<26.0
+croniter>=2.0.0,<7.0
 
 # Microsoft Foundry-only backend. Agent definitions use immutable versions and
 # runtime calls use the project-scoped Responses API. No Azure OpenAI/OpenAI

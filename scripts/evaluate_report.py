@@ -39,6 +39,9 @@ from src.agent.analyzer import (
     AnalysisResult,
     AzureUpdateAnalyzer,
     ImpactSummary,
+    _extract_primary_regions,
+    _missing_region_mentions,
+    _requires_region_availability,
 )
 from src.agent.geval import GEvalJudge, GEvalReport
 from src.agent.resilience import TOOL_RESULT_BUDGET_CHARS
@@ -232,31 +235,23 @@ class ReportQualityEvaluator:
         item = ScoreItem("relevance_classification", "content_accuracy", 5)
         rel = result.relevance.value
         has_resources = bool(result.affected_resources)
-        if rel == "relevant" and has_resources:
-            item.score = 5
-            item.reason = "Relevance=relevant with affected resources identified"
-        elif rel == "not_relevant" and not has_resources:
-            item.score = 5
-            item.reason = "Relevance=not_relevant with no affected resources"
-        elif rel == "opportunity":
-            item.score = 4
-            item.reason = "Relevance=opportunity (acceptable)"
-        elif rel == "unknown":
+        evidence = (result.relevance_evidence or "").strip()
+        if rel == "not_relevant" and has_resources:
             item.score = 2
-            item.reason = "Relevance=unknown — resource query may have failed"
-            item.deductions.append("Could not determine relevance")
+            item.reason = "Relevance=not_relevant but affected resources exist"
+            item.deductions.append("Resources found but marked not relevant")
+        elif not evidence:
+            item.score = 2
+            item.reason = "Relevance classification has no supporting rationale"
+            item.deductions.append("Explain applicability, value, or the material evidence gap")
+        elif rel == "unknown":
+            item.score = 4
+            item.reason = "Explicit uncertainty; verify the stated gap against evidence"
         else:
-            # Mismatch cases
-            if rel == "relevant" and not has_resources:
-                item.score = 2
-                item.reason = "Relevance=relevant but no affected resources listed"
-                item.deductions.append("Relevant without resource evidence")
-            elif rel == "not_relevant" and has_resources:
-                item.score = 2
-                item.reason = "Relevance=not_relevant but affected resources exist"
-                item.deductions.append("Resources found but marked not relevant")
-            else:
-                item.score = 3
+            item.score = 5
+            item.reason = (
+                "Relevance rationale present; semantic correctness requires evidence review"
+            )
         items.append(item)
 
         # 1.2 One-line summary quality (3 pts)
@@ -319,13 +314,15 @@ class ReportQualityEvaluator:
         if not evidence:
             item.score = 1
             item.reason = "Missing relevance_evidence"
-            item.deductions.append("No evidence explaining why this update was selected")
+            item.deductions.append("No explanation of environment applicability or value")
         else:
             item.score = 5
             deductions = []
-            # Should contain resource names or counts
-            if not re.search(r"\d+", evidence):
-                deductions.append("No resource counts in evidence")
+            resource_names = [r["name"] for r in result.affected_resources if r.get("name")]
+            if result.affected_resources and not (
+                re.search(r"\d+", evidence) or any(name in evidence for name in resource_names)
+            ):
+                deductions.append("Resource-backed relevance lacks a resource name or count")
                 item.score -= 1
             # Should not be too short
             if len(evidence) < 30:
@@ -393,6 +390,27 @@ class ReportQualityEvaluator:
                     for h in hits[:4]
                 ]
                 item.reason = f"Category: {category}, {len(hits)} absence-of-impact statement(s)"
+
+            update_payload = {
+                "title": update.title,
+                "update_type": update.update_type,
+            }
+            resource_summary = getattr(result, "_evidence_resource_summary", "")
+            primary_regions = _extract_primary_regions(resource_summary)
+            if _requires_region_availability(update_payload) and primary_regions:
+                first_region = primary_regions[0]
+                if _missing_region_mentions(result.one_line_summary or "", [first_region]):
+                    item.score = max(0, item.score - 2)
+                    item.deductions.append(
+                        f"GA/Preview headline omits primary Region '{first_region}' and its outcome"
+                    )
+                report_text = f"{result.one_line_summary}\n{result.relevance_reason}"
+                missing_regions = _missing_region_mentions(report_text, primary_regions)
+                if missing_regions:
+                    item.score = max(0, item.score - 1)
+                    item.deductions.append(
+                        "GA/Preview report omits Region verdicts for: " + ", ".join(missing_regions)
+                    )
         else:
             item.score = 1
             item.reason = f"Invalid category: {category}"
@@ -475,8 +493,10 @@ class ReportQualityEvaluator:
         item = ScoreItem("impact_summary", "structure", 4)
         impact = result.impact_details
         if not impact:
-            item.score = 1
-            item.reason = "No impact_details object"
+            item.score = 4 if rel in ("not_relevant", "unknown") else 1
+            item.reason = (
+                "No established impact details" if item.score == 4 else "No impact_details object"
+            )
         else:
             values = [
                 v.strip()
@@ -496,7 +516,7 @@ class ReportQualityEvaluator:
             )
             substantive = len(values) - len(hollow)
             if substantive == 0:
-                item.score = 1
+                item.score = 4 if not hollow and rel in ("not_relevant", "unknown") else 1
                 item.reason = (
                     f"All {len(hollow)} dimension(s) state only an absence of impact"
                     if hollow
@@ -515,16 +535,9 @@ class ReportQualityEvaluator:
         # 2.3 Affected resources quality (5 pts)
         item = ScoreItem("affected_resources", "structure", 5)
         resources = result.affected_resources or []
-        if category in ("new_service", "region_expansion", "sdk_tooling") and not resources:
+        if not resources:
             item.score = 5
-            item.reason = f"Empty affected_resources correct for {category}"
-        elif rel == "not_relevant" and not resources:
-            item.score = 5
-            item.reason = "No resources for not_relevant update"
-        elif not resources and category in ("retirement", "feature_change"):
-            item.score = 2
-            item.reason = "Missing affected resources for retirement/feature_change"
-            item.deductions.append("Retirement/feature_change should list affected resources")
+            item.reason = "No Azure resource rows; verify applicability/value in relevance evidence"
         else:
             item.score = 5
             deductions = []
@@ -857,27 +870,37 @@ class ReportQualityEvaluator:
         category = getattr(result, "update_category", "new_feature")
         rel = result.relevance.value
 
-        # Categories where action items are mandatory
-        action_required_categories = {"retirement", "feature_change"}
+        # 적용이 확인된 변경에만 조치를 요구하고 신규 가치에 의무 작업을 만들지 않음
+        action_required = rel == "relevant" and category in {
+            "retirement",
+            "feature_change",
+            "pricing",
+            "sdk_tooling",
+        }
 
         # 4.1 Action items presence (5 pts)
         item = ScoreItem("action_items_presence", "actionability", 5)
         aitems = result.action_items or []
-        if category in action_required_categories and rel in ("relevant", "opportunity"):
+        if action_required:
             if not aitems:
                 item.score = 1
                 item.reason = f"Missing action items for {category} (mandatory)"
-                item.deductions.append("Action items required for retirement/feature_change")
+                item.deductions.append(
+                    "Confirmed applicable changes require an actionable next step"
+                )
             else:
                 item.score = 5
                 item.reason = f"{len(aitems)} action items for {category}"
-        elif category in ("new_service", "region_expansion", "preview", "sdk_tooling"):
-            if not aitems:
-                item.score = 5
-                item.reason = f"Empty action items correct for {category}"
-            else:
-                item.score = 4
-                item.reason = f"{len(aitems)} action items for {category} (optional)"
+        elif category in CAPABILITY_CATEGORIES:
+            item.score = 5 if len(aitems) <= 1 else 3
+            item.reason = f"Value-first report with {len(aitems)} optional evaluation actions"
+            if len(aitems) > 1:
+                item.deductions.append(
+                    "Use at most one bounded evaluation for an optional capability"
+                )
+        elif not aitems:
+            item.score = 5
+            item.reason = "No compulsory action without confirmed applicability"
         else:
             item.score = 4 if aitems else 3
             item.reason = f"{len(aitems)} action items for {category}"
@@ -886,7 +909,7 @@ class ReportQualityEvaluator:
         # 4.2 Action item quality (5 pts)
         item = ScoreItem("action_items_quality", "actionability", 5)
         if not aitems:
-            item.score = 5 if category not in action_required_categories else 0
+            item.score = 0 if action_required else 5
             item.reason = "No action items to evaluate"
         else:
             item.score = 5

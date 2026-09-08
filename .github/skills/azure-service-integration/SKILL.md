@@ -151,6 +151,7 @@ python -m scripts.test_local resources     # Integration test
 | `MicrosoftLearnService` | `microsoft_learn.py` | `httpx` (REST API) | Search Microsoft Learn docs |
 | `AzureRestService` | `azure_rest.py` | `httpx` (REST API) | Direct ARM REST calls (`call_api` for paginated `value` lists; `get_resource` for single-object endpoints like `providers/{namespace}`) |
 | `ArchiveStore` / `BlobArchiveStore` | `archive.py` | `httpx` (Blob REST) | Immutable canonical analysis versions plus metadata-only list projection; control-plane data access, not an Agent evidence tool |
+| `RuntimeInventoryService` | `runtime_inventory.py` | `httpx` + `azure-ai-projects` | Admin readiness용 병렬 ARM 조회, thread-safe lazy credential, safe Agent latest-version kind/status projection |
 
 `AzureRestClient` resolves a subscription only when the path contains `{subscriptionId}`.
 Tenant-scope endpoints such as `/providers/Microsoft.Billing/billingAccounts` must not fail merely

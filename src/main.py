@@ -8,6 +8,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from structlog import get_logger
 
+from src.admin.configuration import get_admin_configuration
 from src.admin.router import router as admin_router
 from src.agent.hosted_client import HostedAgentAnalyzer
 from src.archive.models import ArchiveReceipt, ArchiveSource
@@ -15,6 +16,8 @@ from src.archive.router import router as archive_router
 from src.archive.service import ArchiveService
 from src.config import get_settings
 from src.email.service import EmailService
+from src.feedback.router import router as feedback_router
+from src.feedback.service import FeedbackService, get_feedback_service
 from src.logging_config import setup_logging
 from src.mcp_server import mcp, mcp_http_app, register_mcp_services
 from src.middleware import verify_api_key
@@ -44,12 +47,13 @@ analyzer: Optional[HostedAgentAnalyzer] = None
 email_service: Optional[EmailService] = None
 rss_parser: Optional[AzureUpdateParser] = None
 archive_service: Optional[ArchiveService] = None
+feedback_service: Optional[FeedbackService] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan handler."""
-    global analyzer, archive_service, email_service, rss_parser
+    global analyzer, archive_service, email_service, feedback_service, rss_parser
 
     logger.info("Initializing AzBrief application")
 
@@ -58,6 +62,8 @@ async def lifespan(app: FastAPI):
     settings = get_settings()
     analyzer = HostedAgentAnalyzer(settings)
     email_service = EmailService()
+    feedback_service = get_feedback_service()
+    feedback_service.set_notifier(email_service.send_feedback_notification)
     rss_parser = AzureUpdateParser()
     archive_service = ArchiveService(settings=settings)
 
@@ -69,6 +75,7 @@ async def lifespan(app: FastAPI):
         "AzBrief application started",
         foundry_hosted_agent=settings.foundry_hosted_agent_name,
         admin_ui=settings.admin_ui_enabled,
+        feedback_ui=settings.feedback_ui_enabled,
     )
 
     try:
@@ -93,6 +100,7 @@ app = FastAPI(
 
 app.include_router(admin_router)
 app.include_router(archive_router)
+app.include_router(feedback_router)
 app.mount("/mcp", mcp_http_app, name="mcp")
 
 
@@ -300,15 +308,23 @@ async def _analyze_update(
             and (result.should_notify or not get_settings().report_filtering_enabled)
             and email_service
         ):
-            subscribers = get_settings().get_subscribers()
-            if subscribers and not request.recipient_email:
+            subscribers = await get_admin_configuration().get_subscribers()
+            selected_subscribers = subscribers
+            if request.recipient_email:
+                recipient_key = request.recipient_email.strip().casefold()
+                selected_subscribers = [
+                    subscriber
+                    for subscriber in subscribers
+                    if subscriber.email.strip().casefold() == recipient_key
+                ]
+            if selected_subscribers:
                 # Send personalized reports per subscriber
                 background_tasks.add_task(
                     email_service.send_to_subscribers,
                     update,
                     result,
                     analyzer,
-                    subscribers,
+                    selected_subscribers,
                     archive_url,
                 )
             else:

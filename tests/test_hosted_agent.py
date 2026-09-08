@@ -11,6 +11,7 @@ from src.agent.hosted_contract import (
     HostedSubscriber,
     HostedUpdate,
 )
+from src.agent.scope import AnalysisScope
 from src.config import Settings
 from src.hosted_agent import execute_request, get_hosted_settings
 
@@ -91,9 +92,10 @@ def test_hosted_runtime_rejects_an_incomplete_specialist_roster(monkeypatch):
 @pytest.mark.asyncio
 async def test_execute_request_returns_complete_analysis_contract():
     class FakeAnalyzer:
-        async def analyze_update(self, update, trace_id=None):
+        async def analyze_update(self, update, trace_id=None, scope=None):
             assert update.id == "update-1"
             assert trace_id == "trace-1"
+            assert scope == AnalysisScope()
             return _result()
 
     request = HostedAnalysisRequest(update=_update(), trace_id="trace-1")
@@ -107,10 +109,30 @@ async def test_execute_request_returns_complete_analysis_contract():
 
 
 @pytest.mark.asyncio
+async def test_execute_request_accepts_legacy_v2_during_hosted_first_rollout():
+    class FakeAnalyzer:
+        async def analyze_update(self, update, trace_id=None, scope=None):
+            assert update.id == "update-1"
+            assert scope == AnalysisScope()
+            return _result()
+
+    payload = HostedAnalysisRequest(update=_update(), trace_id="trace-v2").model_dump(mode="json")
+    payload["contract_version"] = "2"
+    payload.pop("scope")
+
+    response = await execute_request(__import__("json").dumps(payload), FakeAnalyzer())
+
+    assert response.status == "completed"
+    assert response.contract_version == "2"
+    assert response.trace_id == "trace-v2"
+
+
+@pytest.mark.asyncio
 async def test_execute_request_returns_bounded_evaluation_diagnostics():
     class FakeAnalyzer:
-        async def analyze_update(self, update, trace_id=None):
+        async def analyze_update(self, update, trace_id=None, scope=None):
             assert trace_id == "trace-eval"
+            assert scope is None
             return _result()
 
         def get_last_run_diagnostics(self):

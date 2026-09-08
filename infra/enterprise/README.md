@@ -13,10 +13,18 @@
 | Foundry | AI Services account, project, model deployment, VNet mode의 project capability host |
 | Control plane | 같은 image를 쓰는 Container App(API/Admin/MCP)과 Container Apps Job(schedule) |
 | State | Entra-only Storage account의 checkpoint container, private immutable archive container, Key Vault secret reference |
+| Evaluation | 별도 Entra-only Storage account, Foundry project AAD connection, project identity 전용 Blob Data Owner |
 | Delivery | Communication Services와 Email Services managed domain |
 | Observability | Log Analytics와 Application Insights |
-| Identity | App/Job용 user-assigned identity와 resource별 최소 범위 role assignment |
-| Network | `vnetInjection`, `perimeter`, `public` 중 하나의 경계 |
+| Identity | App/Job용 user-assigned identity, Foundry project system identity와 resource별 최소 범위 role assignment |
+| Network | `vnetInjection`, `perimeter`, `public` 중 하나의 경계; evaluation storage도 같은 profile 적용 |
+
+App과 Job에는 `ADMIN_READINESS_*` expected inventory가 동일하게 주입됩니다. 이 값은 Foundry
+계정/Project/model, specialist Agent 이름, 두 Container Apps Environment/App, Scheduler Job과
+기반 Azure resource 목록만 담습니다. Agent definition이나 secret은 담지 않으며 `/admin`의 live
+readiness checklist가 실제 ARM/Foundry 상태와 비교할 때 사용합니다.
+List/map 형태의 값은 `base64(string(...))`으로 전달합니다. `az containerapp update`가 JSON quote를
+제거해 startup을 깨뜨릴 수 있으므로 CLI rollout도 같은 Base64 JSON 계약을 따라야 합니다.
 
 Prompt Agent version과 Hosted Agent version은 data-plane 객체이므로 이 Bicep이 만들지 않습니다.
 인프라 배포 뒤 [`scripts/provision_foundry_agents.py`](../../scripts/provision_foundry_agents.py)와
@@ -38,7 +46,8 @@ Hosted 배포용 `azd env set` 명령을 제공합니다.
 
 ## 중요한 parameter 묶음
 
-- Compute: `containerImage`, `minReplicas`, `maxReplicas`, `scheduleCronExpression`,
+- Compute: `containerImage`, `minReplicas`, `maxReplicas`, 보호된 기본 일정인
+  `scheduleCronExpression`, 일정 확인 주기인 `scheduleDispatcherCronExpression`,
   `jobReplicaTimeoutSeconds`
 - Foundry: `foundryLocation`, model 이름/SKU/capacity, `foundryHostedAgentName`
 - Network: `networkIsolationMode`, 기존 VNet 또는 세 subnet prefix, `internalIngressOnly`
@@ -52,9 +61,17 @@ Hosted 배포용 `azd env set` 명령을 제공합니다.
   in-place로 전환할 수 있다고 가정하지 않습니다.
 - App과 Job은 같은 image와 user-assigned identity를 쓰지만 entry point가 다릅니다. image rollout은
   둘을 함께 갱신합니다.
+- Scheduler Job의 cron은 분석 일정 자체가 아니라 내구성 Admin 구성의 만기 슬롯을 확인하는
+  디스패처 주기입니다. 실제 기본 분석 cron은 `SCHEDULE_CRON_EXPRESSION`으로 전달됩니다.
 - `RUN_TIME_BUDGET_S`는 Job replica timeout보다 짧아야 미완료 항목을 다음 실행으로 넘길 수 있습니다.
 - Storage shared-key와 Foundry local auth를 켜서 편의상 우회하지 않습니다.
 - Admin은 Entra 설정과 allow-list가 모두 없으면 닫혀 있어야 합니다.
 - Archive container는 public access가 없고 App/Job UAMI만 REST data plane으로 읽고 씁니다.
+- Foundry evaluation artifact는 checkpoint/archive account가 아니라 전용 storage에 기록합니다. Project
+  identity에는 parent Foundry account의 Foundry User와 evaluation storage의 Blob Data Owner만
+  부여합니다.
+- VNet mode의 evaluation storage는 기존 Blob private DNS zone에 별도 Private Endpoint를 사용하고,
+  perimeter mode에서는 별도 NSP association을 사용합니다. 평가를 위해 state/archive storage의 public
+  access를 열지 않습니다.
 - Archive가 구성되면 저장 성공이 digest와 checkpoint보다 먼저여야 합니다.
 - control-plane identity에 Hosted Agent의 tenant evidence 권한을 대신 부여하지 않습니다.

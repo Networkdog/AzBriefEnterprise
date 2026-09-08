@@ -142,6 +142,15 @@ digest를 팀 구성원의 받은 편지함으로 전달합니다.
   - **중요성(Importance)** — Azure 생태계에서 업데이트 자체가 지니는 중요도
   - **영향도(Impact)** — Resource Graph 조회를 바탕으로 실제 리소스에 미치는 영향
   - **직무 연관성(Job relevance)** — 구독자의 구체적인 역할과의 연관성
+- **종류별 환경 연관성** — 기능 변경·은퇴는 적용 여부, 필요한 조치, 공식 기한을 설명합니다.
+  새 기능·서비스는 확인된 업무·워크로드나 요구에 주는 가치, 도입 조건과 대가를 설명하며
+  평가 작업은 선택 사항입니다. 리소스 미보유만으로 무관함이나 SDK·코드 미사용을 단정하지
+  않습니다. 중요한 근거 부족은 명시하고 가정한 활용 사례를 실제 도입 계획으로 꾸미지 않습니다.
+  영향 리소스가 없어도 구독자의 역할·관심 서비스를 평가합니다. Archive, 단건·digest 이메일,
+  평가 출력은 **환경 연관성**(`Environment Relevance` / `環境との関連性`) 제목을 공유하며,
+  기존 `relevance_evidence` 필드와 불변 Archive 원본은 유지합니다. 생성 지침은 Hosted 코드와
+  관련 Prompt Agent 버전을 배포한 뒤 새 분석부터 적용됩니다. 제어면 배포는 표시 제목만 바꾸며
+  과거 보고서 본문을 고치지 않습니다.
 - **테넌트 전체 연계** — 접근 가능한 모든 구독을 대상으로 Resource Graph를 조회합니다.
 - **문서에서 검증한 명령** — 업데이트가 가리키는 Learn 페이지를 가져와 `<pre>` 명령 블록을
   본문과 별도로 추출합니다. 실제 `az`/PowerShell 명령이 컨텍스트 예산에서 사라져 단순히
@@ -604,7 +613,7 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
    azd env new production
    azd env set AZURE_SUBSCRIPTION_ID '<subscription-id>'
    azd env set AZURE_LOCATION 'koreacentral'
-   azd env set AZURE_RESOURCE_GROUP 'RG-AZBRIEF-ENTERPRISE-2'
+  azd env set AZURE_RESOURCE_GROUP '<resource-group>'
    azd env set AZURE_MCP_CONTAINER_APP_NAME 'ca-azbrief-mcp'
    azd env set FOUNDRY_PROJECT_RESOURCE_ID '<project-arm-resource-id>'
    azd env set SERVICE_MANAGEMENT_REFERENCE ''
@@ -665,6 +674,8 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
    azd deploy azbrief-analysis-hosted --no-prompt
    azd ai agent show --output json
    ```
+  `azure.yaml`은 `AZURE_AI_PROJECT_ENDPOINT`로 Foundry project를 해석하며 공개 repository에
+  tenant별 project hostname을 넣지 않습니다.
 5. **Hosted Agent identity에 권한 부여** — `azd ai agent show --output json` 또는 Foundry
    Portal에서 새 Hosted Agent identity의 principal ID를 확인합니다. 분석할 모든 subscription에
    Reader를 부여하고, Log Analytics와 Cost Management 같은 도구가 요구하는 최소 data-plane
@@ -689,11 +700,17 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 
 | 목적 | 방법 |
 |-------------|------|
-| 실행 시각 변경 | `scheduleCronExpression`(UTC cron, 기본 `0 2 * * *`)으로 다시 배포 |
-| 즉시 실행 | 배포 output의 `runNowCommand`(`az containerapp job start`) 또는 `/admin`의 실행 버튼 사용 |
+| 매일 실행 시각 추가 | `/admin`의 **자동 실행**에서 UTC `HH:MM` 시각 추가. Private Admin 구성 Blob에 저장됩니다 |
+| 보호된 기본 시각 변경 | `scheduleCronExpression`(UTC cron, 기본 `0 2 * * *`)으로 다시 배포 |
+| 디스패처 주기 변경 | `scheduleDispatcherCronExpression`(기본 `*/5 * * * *`)으로 다시 배포. 이 주기는 만기 일정을 확인하고 선점만 합니다 |
+| 즉시 실행 | `/admin`의 실행 버튼에서 체크포인트, 기간, 최근 개수, Update 번호 또는 Azure Update URL 선택. `runNowCommand`는 Job 디스패처를 시작하므로 만기 일정이 있을 때만 분석합니다 |
 | 한 실행의 최대 시간 조정 | `jobReplicaTimeoutSeconds` 설정(기본 12시간, 최대 7일). `RUN_TIME_BUDGET_S`는 자동으로 이 값보다 한 시간 짧게 설정됩니다 |
 | 분석 window 초기화 | Output의 `checkpointBlobUrl`에 있는 blob을 삭제해 기본 24시간 window로 복귀 |
 | 실행 이력 확인 | Log Analytics 또는 `az containerapp job execution list` 사용 |
+
+디스패처는 `admin-config.json`의 ETag 보호 lease를 사용하므로 Job 실행이 겹쳐도 같은 일정 슬롯을
+두 번 선점하지 않습니다. Admin의 수동 선택 실행은 예약 digest checkpoint를 갱신하지 않습니다.
+따라서 과거 기간이나 단일 업데이트를 조사해도 다음 자동 digest의 항목을 건너뛰지 않습니다.
 
 > Job은 재시도하지 않습니다(`replicaRetryLimit: 0`). 실패한 실행은 checkpoint를 옮기지 않았으므로
 > 다음 schedule이 같은 window를 다시 처리합니다. 같은 밤에 같은 분석 비용을 두 번 지불하지
@@ -777,17 +794,30 @@ OpenAI/OpenAI chat client를 만들지 않습니다.
 
 ## 관리자 콘솔
 
-`https://<container-app>/admin`에서 구성 상태, 구독자, 최근 Azure 업데이트, 실행 이력을 확인하고
-분석을 즉시 시작할 수 있습니다.
+`https://<container-app>/admin`에서 조밀한 구성 상태 목록, 구독자, 자동 실행 일정, 최근 Azure
+업데이트와 실행 이력을 확인할 수 있습니다. 수동 분석 대상은 예약 checkpoint, 양 끝 날짜를
+포함하는 기간, 최근 N개, 숫자 Update 번호 한 개 또는 Azure Update URL 한 개로 지정합니다.
+Admin과 Archive shell은 넓은 browser에서 제한된 main content를 중앙에 두고 mobile에서는 유동
+폭을 유지합니다. Admin 작업은 서로 구분되는 full-width panel을 사용합니다. 변경 버튼은 관련
+입력과 같은 테두리 작업면 안에 두고, 결과 목록은 별도 하위 제목 아래에 표시합니다. 수동 실행은
+기본적으로 분석과 Archive 저장만 수행하고 이메일은 보내지 않습니다. **Digest 이메일 발송**을
+선택해야 전달하며, 드라이런은 대상만 확인하므로 발송과 동시에 요청할 수 없습니다. 실행 진단은
+처리 수, Archive/checkpoint/전달 상태와 제한된 오류를 표시합니다. 최근 업데이트는 URL 입력으로
+바로 가져올 수 있습니다. 관리 콘솔에서 만든 구독자는 제자리에서 수정할 수 있고 배포 구독자는
+계속 보호됩니다. 관리 표는 작업 열을 첫 열에 두므로 mobile 운영자는 부가 필드를 가로로
+스크롤하기 전에도 진단·수정·삭제·선택 명령을 사용할 수 있습니다.
 
 | 경로 | 설명 |
 |------|------|
 | `GET /admin` | 관리자 콘솔(server-rendered, 외부 리소스 없음, nonce 기반 CSP) |
 | `GET /api/admin/status` | Secret을 제외한 유효 구성 요약 |
-| `GET /api/admin/subscribers` | 구독자 목록 |
+| `GET /api/admin/subscribers` · `POST /api/admin/subscribers` | 구독자 조회 또는 추가 |
+| `PUT /api/admin/subscribers/{email}` · `DELETE /api/admin/subscribers/{email}` | 관리형 구독자 수정 또는 삭제 |
+| `GET /api/admin/schedules` | 보호된 배포 cron과 Admin이 추가한 매일 UTC 시각 |
+| `POST /api/admin/schedules` · `DELETE /api/admin/schedules/{time}` | 매일 UTC 시각 추가 또는 삭제 |
 | `GET /api/admin/updates` | 최근 Azure 업데이트 |
 | `GET /api/admin/runs` · `GET /api/admin/runs/{id}` | 실행 이력 및 단건 실행 조회 |
-| `POST /api/admin/runs` | 분석 시작, 동시 실행 한 건으로 제한 |
+| `POST /api/admin/runs` | 범위가 제한된 수동 분석 시작, 동시 실행 한 건으로 제한 |
 | `POST /mcp` | 최근 업데이트, Hosted 분석, digest 상태용 MCP Streamable HTTP tool |
 
 Container Apps 기본 제공 인증(EasyAuth)이 로그인을 처리합니다. Sidecar가 Entra ID token을
@@ -820,6 +850,11 @@ Platform 인증은 **AllowAnonymous** mode로 구성합니다. Platform 수준�
 
 직무연관성은 구독자별 전달 맥락이므로 이메일 발송에만 사용합니다. Archive 문서, Blob metadata,
 목록·상세 API 응답, browser 화면과 query filter에서는 제외합니다.
+
+Archive 상세 화면은 이메일과 같은 제한 Markdown 범위로 canonical 본문을 렌더링합니다. 문단,
+heading, 목록, `> **용어**:` 형식의 용어 설명 박스, fenced/inline code, 굵은 글씨, 허용된 링크를
+지원합니다. Browser는 `innerHTML` 없이 DOM node를 생성하므로 보고서 구조는 보존하되 본문에
+포함된 HTML을 실행하지 않습니다.
 
 | 경로 | 설명 |
 |---|---|
@@ -924,7 +959,7 @@ Prompt 예산보다 큰 도구 결과도 버리지 않습니다. 전체 텍스�
 | `FOUNDRY_PROJECT_ENDPOINT` | Foundry project endpoint | 예 | — |
 | `FOUNDRY_HOSTED_AGENT_NAME` | Container App과 scheduler가 호출하는 전체 분석 런타임 | 예¹ | — |
 | `FOUNDRY_HOSTED_AGENT_TIMEOUT_S` | Hosted Agent 작업 한 건의 제한 시간 | | `1800` |
-| `AZBRIEF_DATA_DIR` | Hosted Agent 이력/pattern 디렉터리. `$HOME/.azbrief`로 자동 설정됩니다 | | runtime-managed |
+| `AZBRIEF_DATA_DIR` | Hosted Agent 이력, pattern, KQL runtime cache 디렉터리. `$HOME/.azbrief`로 자동 설정됩니다 | | runtime-managed |
 | `FOUNDRY_COORDINATOR_AGENT_NAME` | 근거 계획 및 범위가 제한된 task 수정 Prompt Agent | 예² | — |
 | `FOUNDRY_RESOURCE_GRAPH_AGENT_NAME` | Resource Graph KQL 작성, 복구, 결과 분석 Prompt Agent | 예² | — |
 | `FOUNDRY_AZURE_MCP_AGENT_NAME` | 읽기 전용 Azure MCP tenant 분석 Prompt Agent | 예² | — |
@@ -1003,6 +1038,7 @@ GET  /api/archive/analyses/{id}    검증된 canonical 분석 문서
 GET  /admin                        관리자 콘솔(Entra ID 로그인)
 GET  /api/admin/status             Secret을 제외한 유효 구성
 GET  /api/admin/subscribers        구독자 목록
+PUT  /api/admin/subscribers/{email} 관리형 구독자 수정
 GET  /api/admin/updates            최근 Azure 업데이트
 GET  /api/admin/runs               실행 이력
 GET  /api/admin/runs/{id}          단건 실행
@@ -1119,6 +1155,10 @@ python -m scripts.evaluate_archive --records 10000
 <p align="right">(<a href="#azbrief-enterprise">맨 위로</a>)</p>
 
 ## 프로젝트 구조
+
+리포지토리 루트에는 `Dockerfile`, `azure.yaml`, `hosted_agent_main.py` 같은 표준 프로젝트
+metadata와 배포 entry point만 둡니다. 재사용 가능한 개발 도구는 `scripts/`에 두고, 일회성 로그
+parser, 테스트 screenshot, 브라우저 dump, session log와 배포 log는 commit하지 않습니다.
 
 ```
 AzBriefEnterprise/

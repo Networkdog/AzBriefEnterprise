@@ -246,6 +246,79 @@ class TestAnalyzeEndpoint:
         finally:
             main_module.analyzer = original
 
+    def test_explicit_configured_recipient_uses_subscriber_scope_path(
+        self, client, mock_update, mock_analysis_result, monkeypatch
+    ):
+        import src.main as main_module
+        from src.config import Subscriber
+
+        class Configuration:
+            async def get_subscribers(self):
+                return [
+                    Subscriber(
+                        email="scoped@example.com",
+                        name="Scoped",
+                        management_groups=["platform-mg"],
+                    )
+                ]
+
+        class Email:
+            def __init__(self):
+                self.scoped_calls = []
+                self.direct_calls = []
+
+            async def send_to_subscribers(
+                self, update, result, analyzer, subscribers, archive_url=""
+            ):
+                self.scoped_calls.append((update, result, analyzer, subscribers, archive_url))
+                return {subscribers[0].email: True}
+
+            async def send_analysis_report(self, *args, **kwargs):
+                self.direct_calls.append((args, kwargs))
+                return True
+
+        mock_rss = AsyncMock()
+        mock_rss.get_update_by_url = AsyncMock(return_value=mock_update)
+        mock_analyzer = AsyncMock()
+        mock_analyzer.analyze_update = AsyncMock(return_value=mock_analysis_result)
+        email = Email()
+        originals = (
+            main_module.analyzer,
+            main_module.archive_service,
+            main_module.rss_parser,
+            main_module.email_service,
+        )
+        monkeypatch.setattr(
+            "src.main.get_admin_configuration",
+            lambda: Configuration(),
+        )
+        try:
+            main_module.analyzer = mock_analyzer
+            main_module.archive_service = None
+            main_module.rss_parser = mock_rss
+            main_module.email_service = email
+
+            response = client.post(
+                "/api/analyze",
+                json={
+                    "update_url": "https://azure.microsoft.com/updates?id=123",
+                    "recipient_email": "SCOPED@example.com",
+                    "send_email": True,
+                },
+            )
+        finally:
+            (
+                main_module.analyzer,
+                main_module.archive_service,
+                main_module.rss_parser,
+                main_module.email_service,
+            ) = originals
+
+        assert response.status_code == 200
+        assert len(email.scoped_calls) == 1
+        assert email.scoped_calls[0][3][0].management_groups == ["platform-mg"]
+        assert email.direct_calls == []
+
 
 class TestBatchAnalyzeEndpoint:
     """Test /api/batch/analyze endpoint."""

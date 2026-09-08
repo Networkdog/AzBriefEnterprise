@@ -19,6 +19,7 @@ from src.agent.hosted_contract import (
     HostedUpdate,
 )
 from src.agent.resilience import calculate_backoff
+from src.agent.scope import AnalysisScope
 from src.config import Settings, Subscriber, get_azure_credential, get_settings
 from src.rss.parser import AzureUpdate
 
@@ -167,10 +168,15 @@ class HostedAgentAnalyzer:
                 "FOUNDRY_PROJECT_ENDPOINT and FOUNDRY_HOSTED_AGENT_NAME are required"
             )
 
-    async def analyze_update(self, update: AzureUpdate) -> AnalysisResult:
+    async def analyze_update(
+        self,
+        update: AzureUpdate,
+        scope: Optional[AnalysisScope] = None,
+    ) -> AnalysisResult:
         """Run the complete analysis graph in the Hosted Agent."""
         request = HostedAnalysisRequest(
             update=HostedUpdate.model_validate(update.to_dict()),
+            scope=scope or AnalysisScope(),
             trace_id=uuid.uuid4().hex[:12],
         )
         response = await invoke_hosted_agent(self.settings, request)
@@ -178,6 +184,7 @@ class HostedAgentAnalyzer:
             "foundry_hosted_analysis_done",
             trace_id=request.trace_id,
             update_id=update.id,
+            scoped=request.scope.is_bounded,
         )
         result = AnalysisResult.model_validate(response.result)
         result._hosted_trace_id = request.trace_id

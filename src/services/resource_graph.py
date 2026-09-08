@@ -1,6 +1,7 @@
 """Azure Resource Graph Service using Azure SDK directly."""
 
 import asyncio
+import re
 import threading
 import time
 from typing import Any, Optional
@@ -9,6 +10,7 @@ from azure.mgmt.resourcegraph import ResourceGraphClient
 from azure.mgmt.resourcegraph.models import QueryRequest
 from structlog import get_logger
 
+from src.agent.scope import AnalysisScope, current_analysis_scope
 from src.config import get_settings
 
 logger = get_logger()
@@ -113,6 +115,12 @@ class ResourceGraphService:
         Returns:
             Subscription display name, or the ID itself if name is unknown
         """
+        scope = current_analysis_scope()
+        if scope.is_bounded:
+            allowed = {item.casefold() for item in scope.subscriptions}
+            if allowed and subscription_id.casefold() not in allowed:
+                return subscription_id
+            return self._subscription_name_map.get(subscription_id, subscription_id)
         if not self._subscription_name_map:
             # Trigger discovery to populate the map
             self._discover_accessible_subscriptions()
@@ -124,6 +132,16 @@ class ResourceGraphService:
         Returns:
             Dictionary mapping subscription IDs to display names
         """
+        scope = current_analysis_scope()
+        if scope.is_bounded:
+            allowed = {item.casefold() for item in scope.subscriptions}
+            if not allowed:
+                return {}
+            return {
+                subscription_id: name
+                for subscription_id, name in self._subscription_name_map.items()
+                if subscription_id.casefold() in allowed
+            }
         if not self._subscription_name_map:
             self._discover_accessible_subscriptions()
         return dict(self._subscription_name_map)
@@ -143,7 +161,12 @@ class ResourceGraphService:
         if not data:
             return data
 
-        name_map = self.get_subscription_name_map()
+        scope = current_analysis_scope()
+        name_map = (
+            dict(self._subscription_name_map)
+            if scope.is_bounded
+            else self.get_subscription_name_map()
+        )
         for record in data:
             sub_id = record.get("subscriptionId")
             if sub_id and isinstance(sub_id, str):
@@ -162,7 +185,30 @@ class ResourceGraphService:
         Returns:
             Query results with data, count, and total_records
         """
-        if subscriptions is None:
+        scope = current_analysis_scope()
+        management_groups = list(scope.management_groups)
+        subscription_filter: list[str] = []
+
+        if management_groups:
+            requested = list(subscriptions) if subscriptions is not None else []
+            if scope.subscriptions and requested:
+                allowed = {item.casefold() for item in scope.subscriptions}
+                subscription_filter = [item for item in requested if item.casefold() in allowed]
+                if not subscription_filter:
+                    raise ValueError("Requested subscriptions are outside the analysis scope")
+            else:
+                subscription_filter = requested or list(scope.subscriptions)
+            subscriptions = None
+        elif scope.subscriptions:
+            if subscriptions is None:
+                subscriptions = list(scope.subscriptions)
+            else:
+                allowed = {item.casefold() for item in scope.subscriptions}
+                subscriptions = [item for item in subscriptions if item.casefold() in allowed]
+                if not subscriptions:
+                    raise ValueError("Requested subscriptions are outside the analysis scope")
+
+        if subscriptions is None and not management_groups:
             if self.subscription_id:
                 subscriptions = [self.subscription_id]
             else:
@@ -173,19 +219,28 @@ class ResourceGraphService:
                         "Set AZURE_SUBSCRIPTION_ID or ensure your identity has access to at least one enabled subscription."
                     )
 
-        # Sanitize common KQL issues before executing
+        # Sanitize common KQL issues before executing.
         query = self._sanitize_query(query)
+        query = self._apply_scope_filters(
+            query,
+            scope,
+            subscriptions=subscription_filter,
+        )
 
         logger.info(
             "resource_graph_query",
             query=query[:500],
-            subscription_count=len(subscriptions),
+            subscription_count=len(subscriptions or []),
+            management_group_count=len(management_groups),
+            resource_group_count=len(scope.resource_groups),
+            scoped=scope.is_bounded,
         )
 
         try:
             client = self._get_client()
             request = QueryRequest(
                 subscriptions=subscriptions,
+                management_groups=management_groups or None,
                 query=query,
             )
 
@@ -214,6 +269,56 @@ class ResourceGraphService:
             raise
 
     @staticmethod
+    def _apply_scope_filters(
+        query: str,
+        scope: AnalysisScope,
+        subscriptions: Optional[list[str]] = None,
+    ) -> str:
+        """Inject filters that QueryRequest cannot express as a separate scope."""
+        predicates: list[str] = []
+        if subscriptions:
+            values = ", ".join(f"'{item.replace(chr(39), chr(39) * 2)}'" for item in subscriptions)
+            predicates.append(f"subscriptionId in~ ({values})")
+        if scope.resource_groups:
+            exact_groups: list[tuple[str, str]] = []
+            named_groups: list[str] = []
+            for item in scope.resource_groups:
+                match = re.fullmatch(
+                    r"/subscriptions/([^/]+)/resourceGroups/([^/]+)",
+                    item,
+                    re.IGNORECASE,
+                )
+                if match is None:
+                    named_groups.append(item)
+                else:
+                    exact_groups.append((match.group(1), match.group(2)))
+            resource_group_terms: list[str] = []
+            if named_groups:
+                values = ", ".join(
+                    f"'{item.replace(chr(39), chr(39) * 2)}'" for item in named_groups
+                )
+                resource_group_terms.append(f"resourceGroup in~ ({values})")
+            resource_group_terms.extend(
+                f"(subscriptionId =~ '{subscription}' and resourceGroup =~ '{group}')"
+                for subscription, group in exact_groups
+            )
+            predicates.append(f"({' or '.join(resource_group_terms)})")
+        if not predicates:
+            return query
+
+        if re.search(r"\b(?:union|join)\b", query, re.IGNORECASE):
+            raise ValueError("A scoped Resource Graph query cannot contain union or join")
+
+        table = re.match(
+            r"^(\s*(?:Resources|ResourceContainers|[A-Za-z][A-Za-z0-9_]+Resources)\b)",
+            query,
+            re.IGNORECASE,
+        )
+        if table is None:
+            raise ValueError("Cannot apply resource scope to an unrecognized Resource Graph query")
+        return f"{query[:table.end()]}\n| where {' and '.join(predicates)}{query[table.end():]}"
+
+    @staticmethod
     def _sanitize_query(query: str) -> str:
         """Sanitize KQL query to fix common issues before execution.
 
@@ -238,24 +343,28 @@ class ResourceGraphService:
         """
         global _resource_types_cache, _resource_types_cache_time
 
-        # Thread-safe read
-        with _resource_types_cache_lock:
-            if (
-                _resource_types_cache
-                and (time.time() - _resource_types_cache_time) < _RESOURCE_TYPES_CACHE_TTL
-            ):
-                cache_age = round(time.time() - _resource_types_cache_time, 1)
-                logger.info("resource_types_cache_hit", cache_age_s=cache_age)
-                return _resource_types_cache
+        scope = current_analysis_scope()
+
+        if not scope.is_bounded:
+            # Thread-safe read. Scoped summaries must never reuse tenant-wide data.
+            with _resource_types_cache_lock:
+                if (
+                    _resource_types_cache
+                    and (time.time() - _resource_types_cache_time) < _RESOURCE_TYPES_CACHE_TTL
+                ):
+                    cache_age = round(time.time() - _resource_types_cache_time, 1)
+                    logger.info("resource_types_cache_hit", cache_age_s=cache_age)
+                    return _resource_types_cache
 
         logger.debug("resource_types_cache_miss")
         query = ResourceGraphQueryBuilder.get_resource_types_summary()
         result = await self.query_resources(query)
 
-        # Thread-safe write
-        with _resource_types_cache_lock:
-            _resource_types_cache = result
-            _resource_types_cache_time = time.time()
+        if not scope.is_bounded:
+            # Thread-safe write. A scoped result must never enter the shared cache.
+            with _resource_types_cache_lock:
+                _resource_types_cache = result
+                _resource_types_cache_time = time.time()
         return result
 
     async def find_related_resources(self, service_keywords: list[str]) -> dict[str, Any]:

@@ -12,7 +12,11 @@ description: 'Evaluate and improve AzBrief report quality. Use when: report qual
 - Analyze every update before classification; never silently filter coverage. Keep
      importance, tenant impact, and job relevance independent.
 - Match category framing: changes explain impact and inaction risk; capabilities explain
-     opportunity, named candidates, adoption cost, and owner.
+     documented value for known workloads or supplied requirements, adoption cost, and owner.
+     Resource ownership is not a relevance gate. `relevance_evidence` explains analysis-time scoped
+     applicability/value, not selection. Preserve material gaps and never invent usage or plans.
+     Changes require actions only for confirmed applicability; capability evaluation is optional
+     and limited to one grounded, non-mutating fit check.
 - Keep evidence, relevance, resource counts/reasons, and conclusions consistent. Actions name
      what, where, why, completion criteria, precautions, rollback, and only real deadlines.
 - Distinguish non-mutating evaluation actions from executable changes. An `advisory_review`
@@ -76,7 +80,7 @@ python -m scripts.run_quality_loop
 ## AzBrief Report Design Philosophy
 
 ### Core Mission
-AzBrief 보고서의 핵심 목적: **"관련 없는 정보를 걸러내고, 내 환경에 직접 영향을 주는 업데이트만 골라서 다음 행동을 알려주는 것"**
+AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·은퇴에는 필요한 조치를, 신규 기능·서비스에는 얻을 수 있는 가치와 도입 조건을 알려주는 것"**
 
 보고서 품질 3대 핵심 지표:
 1. **관련성 정밀도** — 포함된 업데이트 중 실제로 관리자가 "이건 나한테 해당돼"라고 동의하는 비율
@@ -100,10 +104,10 @@ AzBrief 보고서의 핵심 목적: **"관련 없는 정보를 걸러내고, 내
 
 | Criterion | Points | What it checks |
 |-----------|--------|----------------|
-| `relevance_classification` | 5 | relevance와 affected_resources 일치 여부 |
+| `relevance_classification` | 5 | 판단 근거 존재와 명시적 모순 검사. 리소스 수만으로 관련성을 판정하지 않으며 의미적 정확성은 동일 근거의 G-Eval로 검증 |
 | `one_line_summary` | 5 | 30-80자, 구체적, 내부 프로세스 미노출 |
 | `no_fabricated_urls` | 5 | 모든 URL이 실제 도구 결과에서 획득 |
-| `relevance_evidence` | 5 | 실제 리소스명/수치 포함된 매칭 근거 |
+| `relevance_evidence` | 5 | 변경의 적용 조건 또는 신규 가치와 근거. 리소스 행이 있을 때만 실제 이름/수치를 요구하고 코드·업무·요구 기반 근거도 허용 |
 | `no_fabricated_dates` | 5 | "within 2 weeks" 등 조작된 기한 없음 |
 | `update_category` | 5 | retirement/preview 등 update_type과 일치 + 카테고리 계열에 맞는 프레임(Capability 카테고리에서 "영향/리스크 없음" 동어반복 서술 시 항목당 -2점) |
 
@@ -125,7 +129,7 @@ AzBrief 보고서의 핵심 목적: **"관련 없는 정보를 걸러내고, 내
 ```
 1. Status Header (3초 스캔) → one_line_summary + urgency badge + three-axis badges (중요성/영향도/직무연관성)
 2. Quick Decision Card → 영향 범위, 조치 필요 여부, 기한, 작업량
-3. Relevance Evidence → "왜 이 업데이트가 선택됐는지" Resource Graph 매칭 근거
+3. Environment Relevance → 변경의 적용/조치 필요성 또는 신규 기능의 가치/도입 조건과 근거
 4. Detailed Analysis → 기술 맥락, concept boxes, 환경 연관성
 5. Key Dates Timeline → retirement/feature_change 시 마일스톤 시각화
 6. Impact Analysis → cost/security/performance/operational 차원
@@ -151,7 +155,7 @@ AzBrief 보고서의 핵심 목적: **"관련 없는 정보를 걸러내고, 내
 | `sentence_ending_variety` | 5 | 동일 종결어미 4회 이상 연속 없음 |
 
 **언어 작성 원칙**:
-- **관련성 근거 명시**: "AKS 클러스터 2개가 감지되어 이 업데이트가 포함되었습니다"
+- **환경 연관성 명시**: 변경에는 적용 조건과 필요한 조치, 신규 역량에는 확인된 업무·워크로드의 가치와 도입 조건을 설명한다. 부재는 분석 시점과 조회 범위로 한정한다.
 - **조치 문장은 동사로 시작**: "업그레이드를 고려할 수 있습니다" ❌ → "노드 풀을 1.31.x로 업그레이드합니다" ✅
 - **수치는 항상 맥락과 함께**: "23개 알림" ❌ → "23개 알림 중 조치 필요: 5건" ✅
 - **능동태 사용**: "정책 위반이 탐지되었습니다" ❌ → "7건의 정책 위반을 확인했습니다" ✅
@@ -163,7 +167,7 @@ AzBrief 보고서의 핵심 목적: **"관련 없는 정보를 걸러내고, 내
 
 | Criterion | Points | What it checks |
 |-----------|--------|----------------|
-| `action_items_presence` | 5 | retirement/feature_change → 필수 존재 |
+| `action_items_presence` | 5 | 적용이 확인된 변경에는 필요. 신규 역량은 가치 우선이며 평가 작업은 최대 1개 선택 사항 |
 | `action_items_quality` | 5 | task/why/target_resources/procedure 채움 |
 | `action_items_ordering` | 5 | step 순서대로 논리적 배열 |
 
@@ -284,10 +288,24 @@ Generate Report → Evaluate (score) → Build Feedback Prompt
 **원인**: 정확성 원칙 2가 "flag for CSA review"로 표현되어 LLM이 미확인 항목을 일괄 위임
 **수정**: `core.py` 원칙 2 + `writing.py` 원칙 5를 **self-serviceable** 체크로 재작성 — WHAT/WHERE(Portal blade·CLI·doc)/WHY를 명시. 툴이 이미 답한 리전/SKU 질문은 재제기 금지. `base.py` 출력 포맷·self-check에 금지 규칙 추가
 
-### Issue: opportunity 업데이트가 dead-end (조치 방치)
-**증상**: `relevance=opportunity` + `should_notify=true` 인데 `action_items: []` (알림 가치가 있는데 다음 행동 없음)
-**원인**: `new_feature` 템플릿이 "empty [] default, do NOT fabricate evaluate actions"로 과도하게 억제
-**수정**: `base.py`에 "Opportunity must never be a dead-end" 규칙 — 정확히 **1개 scoped 평가 action**(실제 후보 리소스명 + go/no-go 기준, `deadline=""`). `categories.py` new_feature와 정합
+### Issue: GA/Preview의 주사용 Region 가용성이 provider 존재로 과대 확정됨
+**증상**: `Microsoft.Network`가 Korea Central에 있다는 이유만으로 그 위의 신규 기능도 즉시
+사용 가능하다고 보고하거나, 반대로 기능 문서에 Region 답이 있는데도 추가 확인으로 넘김
+**원인**: ARM providers API의 resource-type 배치 범위와 기능별 rollout 범위를 같은 사실로 취급
+**수정**: Resource Graph의 Region별 리소스 수로 상위 3개 주사용 Region을 정하고, Azure Update
+상세 원문 및 `search_azure_docs(include_content=true, focus_terms=[...])`의 기능 본문을 우선합니다.
+정확한 SKU/resource type API는 배치 가용성만 증명합니다. Evaluator는 Region별 네 가지 결과
+(즉시 사용/선행 조건부/미지원/공식 근거 미확인)를 요구하고, 한 줄 요약 누락 시 한 번 재작성합니다.
+
+### Issue: 리소스 부재를 무관함으로 단정하거나 기회에 의무 작업을 붙임
+**증상**: 신규 서비스에 기존 리소스가 없다는 이유로 가치 설명을 생략하거나, `opportunity`마다
+"평가하세요"를 강제로 추가함. 단건·Archive의 선택 이유 제목도 실제 적용/가치 근거와 충돌함.
+**수정**: `base.py`, 계획·평가 지침과 category template은 변경의 적용/조치와 신규 역량의
+가치/도입 조건을 구분한다. 기존 배포 없이도 확인된 업무·요구에 맞는 가치를 설명할 수 있지만
+실제 도입 계획은 지어내지 않는다. 유용한 대상과 문서의 go/no-go 기준이 있을 때만 최대 1개
+비변경 평가 action을 작성하고, 그렇지 않으면 `[]`가 맞다. 이름/숫자 없는 근거와 정당한 빈
+action/resource 배열을 기계 평가에서 일괄 감점하지 않으며, 근거 없는 판정과 모순은 계속 검출한다.
+평가 기준이 달라졌으므로 이전 총점과 직접 비교해 품질 개선을 주장하지 않는다.
 
 ### Issue: 신규 기능·서비스 보고서에 "없던 시절"이 빠짐
 **증상**: `new_feature`/`new_service`/`preview` 보고서가 기능 설명과 이점만 나열하고, 그 기능이 없을 때 관리자가 같은 결과를 얻으려고 무엇을 했는지가 없어 변화의 크기를 가늠할 수 없음

@@ -9,7 +9,9 @@ from azure.core.exceptions import HttpResponseError
 from structlog import get_logger
 
 from src.agent.analyzer import AnalysisResult
+from src.agent.scope import AnalysisScope
 from src.config import Subscriber, get_settings
+from src.feedback.models import FeedbackSubmission
 
 if TYPE_CHECKING:  # analyzer imports this module's package at runtime
     from src.agent.analyzer import AzureUpdateAnalyzer
@@ -27,6 +29,7 @@ from src.email.templates import (
     format_batch_context_html,
     format_digest_table_header_html,
     format_digest_update_card_html,
+    format_feedback_link_html,
     format_impact_section_html,
     format_quick_decision_html,
     format_reference_docs_html,
@@ -41,6 +44,7 @@ from src.email.templates import (
     safe_archive_url,
     safe_email_href,
 )
+from src.feedback.service import build_feedback_page_url
 from src.i18n import get_language
 from src.rss.parser import AzureUpdate
 
@@ -101,6 +105,13 @@ class EmailService:
         self.settings = get_settings()
         self._client = None
         self._use_email = self.settings.use_email
+        self._transport_ready = bool(
+            (
+                self.settings.communication_services_connection_string
+                or self.settings.communication_services_endpoint
+            )
+            and self.settings.email_sender_address
+        )
 
     @property
     def client(self):
@@ -110,7 +121,7 @@ class EmailService:
         authenticates to the ACS endpoint with the managed identity, which is
         how the enterprise profile avoids storing an email secret at all.
         """
-        if not self._use_email:
+        if not self._transport_ready:
             return None
         if self._client is None:
             EmailClientClass = get_email_client_class()
@@ -126,6 +137,96 @@ class EmailService:
                     get_azure_credential(),
                 )
         return self._client
+
+    async def send_feedback_notification(self, submission: FeedbackSubmission) -> bool:
+        """Send one persisted feedback submission to the configured developer mailbox."""
+        recipient = (self.settings.feedback_recipient_address or "").strip()
+        if not self._transport_ready or not recipient:
+            logger.error(
+                "feedback_notification_not_configured",
+                feedback_id=submission.feedback_id,
+            )
+            return False
+
+        category_labels = {
+            "bug": "프로그램 버그",
+            "improvement": "개선 사항",
+            "report_context": "보고서 컨텍스트",
+        }
+        category = category_labels[submission.category.value]
+        subject = f"[AzBrief Feedback] [{category}] {submission.subject}"[:120]
+        report_reference = submission.report_reference or "없음"
+        contact_email = submission.contact_email or "미제공"
+        created_at = submission.created_at.astimezone(timezone.utc).strftime(
+            "%Y-%m-%d %H:%M:%S UTC"
+        )
+        safe_details = escape_email_text(submission.details).replace("\n", "<br>")
+        html_content = f"""<!doctype html>
+<html lang="ko"><body style="margin:0;padding:24px;background:#f4f6f7;font-family:{FONT_STACK_SANS};color:#172126;">
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #dce3e6;border-collapse:separate;">
+<tr><td style="padding:20px 24px;background:#172126;color:#ffffff;"><strong style="font-size:16px;">AzBrief Feedback</strong></td></tr>
+<tr><td style="padding:22px 24px;">
+<p style="margin:0 0 14px;font-size:14px;font-weight:700;">{escape_email_text(submission.subject)}</p>
+<p style="margin:0 0 8px;font-size:12px;"><strong>유형:</strong> {category}</p>
+<p style="margin:0 0 8px;font-size:12px;"><strong>보고서 참조:</strong> {escape_email_text(report_reference)}</p>
+<p style="margin:0 0 8px;font-size:12px;"><strong>연락처:</strong> {escape_email_text(contact_email)}</p>
+<p style="margin:0 0 16px;font-size:12px;"><strong>작성 언어:</strong> {escape_email_text(submission.language)}</p>
+<div style="padding:14px;background:#f8fafb;border-left:3px solid #0f766e;font-size:12px;line-height:1.65;overflow-wrap:anywhere;">{safe_details}</div>
+</td></tr>
+<tr><td style="padding:12px 24px;background:#f8f9fb;border-top:1px solid #dce3e6;color:#5f6f77;font-size:10px;">{escape_email_text(submission.feedback_id)} &middot; {created_at}</td></tr>
+</table></body></html>"""
+        plain_content = "\n".join(
+            [
+                "AzBrief Feedback",
+                f"유형: {category}",
+                f"제목: {submission.subject}",
+                f"보고서 참조: {report_reference}",
+                f"연락처: {contact_email}",
+                f"작성 언어: {submission.language}",
+                "",
+                submission.details,
+                "",
+                f"Feedback ID: {submission.feedback_id}",
+                f"작성 시각: {created_at}",
+            ]
+        )
+        message = {
+            "senderAddress": self.settings.email_sender_address,
+            "recipients": {"to": [{"address": recipient}]},
+            "content": {
+                "subject": subject,
+                "html": html_content,
+                "plainText": plain_content,
+            },
+        }
+
+        try:
+            poller = self.client.begin_send(message)
+            send_result = poller.result()
+            logger.info(
+                "feedback_notification_sent",
+                feedback_id=submission.feedback_id,
+                category=submission.category.value,
+                message_id=send_result.get("id"),
+            )
+            return True
+        except HttpResponseError as exc:
+            logger.error(
+                "feedback_notification_failed",
+                feedback_id=submission.feedback_id,
+                category=submission.category.value,
+                status_code=getattr(exc, "status_code", None),
+                error=str(exc),
+            )
+            return False
+        except Exception as exc:
+            logger.error(
+                "feedback_notification_failed",
+                feedback_id=submission.feedback_id,
+                category=submission.category.value,
+                error=str(exc),
+            )
+            return False
 
     def build_email_content(
         self,
@@ -148,6 +249,11 @@ class EmailService:
         """
         L = get_labels(language)
         archive_url = safe_archive_url(archive_url)
+        feedback_url = build_feedback_page_url(
+            self.settings,
+            language,
+            f"update:{update.id}",
+        )
 
         # Get urgency info
         urgency_value = (
@@ -191,7 +297,7 @@ class EmailService:
             relevance_label=relevance_colors["label"],
             # Summary
             one_line_summary=escape_email_text(one_line),
-            # Relevance evidence (why this update was selected)
+            # 환경 연관성
             relevance_evidence_html=format_relevance_evidence_html(
                 getattr(result, "relevance_evidence", ""),
                 language,
@@ -207,6 +313,7 @@ class EmailService:
                 else ""
             ),
             archive_link_html=format_archive_link_html(archive_url, language),
+            feedback_link_html=format_feedback_link_html(feedback_url, language),
             # Quick decision card
             quick_decision_html=format_quick_decision_html(result, language),
             # Update info
@@ -245,6 +352,7 @@ class EmailService:
                 result.recommendations,
                 language,
                 update_category=update_category,
+                affected_resources=result.affected_resources,
             ),
             # Reference docs (self-contained <tr>)
             reference_docs_section_html=format_reference_docs_html(result.reference_docs, language),
@@ -288,7 +396,13 @@ class EmailService:
         subject = f"{tag_part}{subject_text}"
 
         # Build plain text version
-        plain_content = self._build_plain_text(update, result, language, archive_url)
+        plain_content = self._build_plain_text(
+            update,
+            result,
+            language,
+            archive_url,
+            feedback_url,
+        )
 
         return {
             "subject": subject,
@@ -314,13 +428,13 @@ class EmailService:
             tags.append(
                 f'<span style="display: inline-block; background-color: #1a2d47; '
                 f"color: #8db4d8; padding: 2px 8px; border-radius: 3px; "
-                f"font-size: 12px; font-weight: 600; margin-right: 4px; "
+                f"font-size: 10px; font-weight: 600; margin-right: 4px; "
                 f'margin-top: 6px; letter-spacing: 0.2px;">{safe_service}</span>'
             )
         if len(services) > 4:
             tags.append(
                 f'<span style="display: inline-block; color: #5b7a96; '
-                f'font-size: 12px; margin-top: 6px;">+{len(services) - 4}</span>'
+                f'font-size: 10px; margin-top: 6px;">+{len(services) - 4}</span>'
             )
         return f'<div style="margin-top: 2px;">{"".join(tags)}</div>'
 
@@ -330,10 +444,12 @@ class EmailService:
         result: AnalysisResult,
         language: str = "ko",
         archive_url: str = "",
+        feedback_url: str = "",
     ) -> str:
         """Build plain text version of the email."""
         L = get_labels(language)
         archive_url = safe_archive_url(archive_url)
+        feedback_url = safe_archive_url(feedback_url)
         urgency_value = (
             result.urgency.value.upper()
             if hasattr(result, "urgency") and result.urgency
@@ -360,7 +476,7 @@ class EmailService:
         # Relevance evidence
         relevance_evidence = getattr(result, "relevance_evidence", "")
         if relevance_evidence:
-            lines.append(f"  → {relevance_evidence}")
+            lines.append(f"  {L['relevance_evidence']}: {relevance_evidence}")
 
         published = update.published_date.strftime("%Y-%m-%d") if update.published_date else "-"
         lines.extend(
@@ -518,6 +634,12 @@ class EmailService:
             for doc in result.reference_docs[:5]:
                 if isinstance(doc, dict):
                     lines.append(f"  - {doc.get('title', 'Document')}")
+                    summary = doc.get("description", "") or doc.get("related_content", "")
+                    if summary:
+                        lines.append(f"    {summary}")
+                    related_content = doc.get("related_content", "")
+                    if doc.get("description") and related_content != summary:
+                        lines.append(f"    {L['doc_context']}: {related_content}")
                     url = doc.get("url", "")
                     if url:
                         lines.append(f"    {url}")
@@ -529,6 +651,7 @@ class EmailService:
             [
                 "",
                 f"{L['disclaimer_title']}: {L['disclaimer_body']}",
+                *([f"{L['feedback_link']}: {feedback_url}"] if feedback_url else []),
                 "",
                 "=" * 60,
                 L["footer_auto"],
@@ -578,8 +701,9 @@ class EmailService:
             f"report_{safe_id}_{language}.html",
         )
 
-        # If email is not configured, print to console
-        if not self._use_email:
+        # A console-managed subscriber supplies an explicit recipient even when
+        # no static fallback recipient exists in the deployment environment.
+        if not self._use_email and not (recipient and self._transport_ready):
             return self._print_to_console(update, result, email_content)
 
         # Controlled autonomy: withhold auto-dispatch when approval is required.
@@ -692,12 +816,58 @@ class EmailService:
         # Phase 1: Customize all reports in parallel
         _t0 = time.time()
 
+        def _scope_key(scope: AnalysisScope) -> tuple[tuple[str, ...], ...]:
+            return (
+                tuple(sorted(value.casefold() for value in scope.management_groups)),
+                tuple(sorted(value.casefold() for value in scope.subscriptions)),
+                tuple(sorted(value.casefold() for value in scope.resource_groups)),
+            )
+
+        subscriber_scopes = {
+            subscriber.email: AnalysisScope.from_subscriber(subscriber)
+            for subscriber in subscribers
+        }
+        unique_scopes: dict[tuple[tuple[str, ...], ...], AnalysisScope] = {}
+        for scope in subscriber_scopes.values():
+            if scope.is_bounded:
+                unique_scopes.setdefault(_scope_key(scope), scope)
+
+        scope_outcomes: dict[tuple[tuple[str, ...], ...], object] = {}
+        if unique_scopes:
+            semaphore = asyncio.Semaphore(max(1, self.settings.max_concurrent_analyses))
+
+            async def _analyze_scoped(scope: AnalysisScope):
+                async with semaphore:
+                    return await analyzer.analyze_update(update, scope=scope)
+
+            outcomes = await asyncio.gather(
+                *[_analyze_scoped(scope) for scope in unique_scopes.values()],
+                return_exceptions=True,
+            )
+            scope_outcomes = dict(zip(unique_scopes, outcomes))
+
         async def _customize(sub):
+            scope = subscriber_scopes[sub.email]
+            source_result = base_result
+            if scope.is_bounded:
+                source_result = scope_outcomes.get(_scope_key(scope))
+                if isinstance(source_result, BaseException) or source_result is None:
+                    logger.warning(
+                        "subscriber_scoped_analysis_failed",
+                        subscriber=sub.email,
+                        update_id=update.id,
+                        error=(
+                            type(source_result).__name__
+                            if isinstance(source_result, BaseException)
+                            else "missing_result"
+                        ),
+                    )
+                    return None
             try:
-                return await analyzer.customize_for_subscriber(base_result, sub, update)
+                return await analyzer.customize_for_subscriber(source_result, sub, update)
             except Exception as e:
                 logger.error("Customization failed", subscriber=sub.email, error=str(e))
-                return base_result
+                return source_result
 
         customized_results = await asyncio.gather(*[_customize(s) for s in subscribers])
 
@@ -713,6 +883,8 @@ class EmailService:
 
         async def _send(sub, result):
             try:
+                if result is None:
+                    return False
                 if self.settings.report_filtering_enabled and not result.should_notify:
                     logger.info(
                         "Subscriber report skipped - not relevant to role",
@@ -747,7 +919,7 @@ class EmailService:
                     result,
                     recipient=sub.email,
                     language=sub.language,
-                    archive_url=archive_url,
+                    archive_url=("" if subscriber_scopes[sub.email].is_bounded else archive_url),
                 )
                 logger.info(
                     "Subscriber report sent", subscriber=sub.email, name=sub.name, sent=sent
@@ -907,23 +1079,23 @@ class EmailService:
             }.get(status, "⬜")
 
             rows_html += f"""<tr>
-                <td style="padding: 6px 8px; font-size: 14px; border-bottom: 1px solid #eee;">
-                    <span style="display: inline-block; background: {day_bg}; color: {day_color}; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 12px;">{day_text}</span>
+                <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #eee;">
+                    <span style="display: inline-block; background: {day_bg}; color: {day_color}; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 10px;">{day_text}</span>
                 </td>
-                <td style="padding: 6px 8px; font-size: 14px; border-bottom: 1px solid #eee; color: #333;">{title}</td>
-                <td style="padding: 6px 8px; font-size: 14px; border-bottom: 1px solid #eee; text-align: center; color: #555;">{count}</td>
-                <td style="padding: 6px 8px; font-size: 14px; border-bottom: 1px solid #eee; text-align: center;">{status_label}</td>
+                <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #eee; color: #333;">{title}</td>
+                <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #eee; text-align: center; color: #555;">{count}</td>
+                <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #eee; text-align: center;">{status_label}</td>
             </tr>"""
 
         return f"""<tr>
             <td class="azb-pad" style="padding: 16px 32px 12px 32px; border-bottom: 1px solid #e2e7ed;">
-                <p style="margin: 0 0 8px 0; font-size: 18px; font-weight: 700; color: #dc2626; text-transform: uppercase; letter-spacing: 0.3px;">⏰ {retirement_title}</p>
+                <p style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #dc2626; text-transform: uppercase; letter-spacing: 0.3px;">⏰ {retirement_title}</p>
                 <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border: 1px solid #e2e7ed; border-radius: 6px; overflow: hidden;">
                     <tr style="background-color: #f1f5f9;">
-                        <th style="padding: 6px 8px; font-size: 12px; font-weight: 600; color: #64748b; text-align: left;">D-Day</th>
-                        <th style="padding: 6px 8px; font-size: 12px; font-weight: 600; color: #64748b; text-align: left;">Update</th>
-                        <th style="padding: 6px 8px; font-size: 12px; font-weight: 600; color: #64748b; text-align: center;">Resources</th>
-                        <th style="padding: 6px 8px; font-size: 12px; font-weight: 600; color: #64748b; text-align: center;">Status</th>
+                        <th style="padding: 6px 8px; font-size: 10px; font-weight: 600; color: #64748b; text-align: left;">D-Day</th>
+                        <th style="padding: 6px 8px; font-size: 10px; font-weight: 600; color: #64748b; text-align: left;">Update</th>
+                        <th style="padding: 6px 8px; font-size: 10px; font-weight: 600; color: #64748b; text-align: center;">Resources</th>
+                        <th style="padding: 6px 8px; font-size: 10px; font-weight: 600; color: #64748b; text-align: center;">Status</th>
                     </tr>
                     {rows_html}
                 </table>
@@ -940,7 +1112,7 @@ class EmailService:
     ) -> str:
         """Build the full analysis detail section for one update inside a digest.
 
-        Includes: header, analysis summary, impact, affected resources,
+        Includes: header, analysis summary, environment relevance, impact, affected resources,
         action items, references, additional checks.
 
         Args:
@@ -976,6 +1148,7 @@ class EmailService:
 
         # Build each section via existing helpers
         analysis_html = markdown_to_html(result.relevance_reason or "", strip_headings=True)
+        relevance_html = format_relevance_evidence_html(result.relevance_evidence, language)
         timeline_html = format_timeline_html(
             result.action_items if hasattr(result, "action_items") else [],
             update_category,
@@ -996,6 +1169,7 @@ class EmailService:
             result.recommendations,
             language,
             update_category=update_category,
+            affected_resources=result.affected_resources,
         )
         checks_html = format_additional_checks_html(
             result.additional_checks if hasattr(result, "additional_checks") else [],
@@ -1015,25 +1189,26 @@ class EmailService:
                                         <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-stack">
                                             <tr>
                                                 <td>
-                                                    <span style="display: inline-block; background-color: {urgency_colors['bg_color']}; color: #fff; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: 700; letter-spacing: 0.3px;">{urgency_colors['badge']}</span>
-                                                    <span style="display: inline-block; background-color: {relevance_colors['bg_color']}; color: {relevance_colors['text_color']}; border: 1px solid {relevance_colors['border_color']}; padding: 2px 8px; border-radius: 3px; font-size: 12px; font-weight: 600; margin-left: 4px;">{relevance_colors['label']}</span>
+                                                    <span style="display: inline-block; background-color: {urgency_colors['bg_color']}; color: #fff; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.3px;">{urgency_colors['badge']}</span>
+                                                    <span style="display: inline-block; background-color: {relevance_colors['bg_color']}; color: {relevance_colors['text_color']}; border: 1px solid {relevance_colors['border_color']}; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-left: 4px;">{relevance_colors['label']}</span>
                                                 </td>
-                                                <td align="right" class="azb-detail-subtitle azb-stack-tail" style="color: #9bb3cf; font-size: 12px;">{L['update_type']}: {safe_update_type} &middot; {published}</td>
+                                                <td align="right" class="azb-detail-subtitle azb-stack-tail" style="color: #9bb3cf; font-size: 10px;">{L['update_type']}: {safe_update_type} &middot; {published}</td>
                                             </tr>
                                         </table>
-                                        <p style="margin: 8px 0 0 0; color: #ffffff; font-size: 18px; font-weight: 600; line-height: 1.4;">{safe_title}</p>
-                                        <p class="azb-detail-subtitle" style="margin: 4px 0 0 0; color: #c0cfe0; font-size: 14px; line-height: 1.4;">{safe_one_line}</p>
-                                        <p style="margin: 6px 0 0 0;"><a href="{safe_update_link}" class="azb-link" style="color: #7db8e8; font-size: 12px; text-decoration: none;">{L['detail_link']}</a></p>
+                                        <p style="margin: 8px 0 0 0; color: #ffffff; font-size: 14px; font-weight: 600; line-height: 1.4;">{safe_title}</p>
+                                        <p class="azb-detail-subtitle" style="margin: 4px 0 0 0; color: #c0cfe0; font-size: 11px; line-height: 1.4;">{safe_one_line}</p>
+                                        <p style="margin: 6px 0 0 0;"><a href="{safe_update_link}" class="azb-link" style="color: #7db8e8; font-size: 10px; text-decoration: none;">{L['detail_link']}</a></p>
                                         {format_archive_link_html(archive_url, language)}
                                     </td>
                                 </tr>
                                 <!-- Analysis body -->
                                 <tr>
                                     <td class="azb-section azb-pad" style="padding: 18px 32px 14px 32px;">
-                                        <p class="azb-heading" style="margin: 0 0 8px 0; font-size: 18px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{L['analysis_summary']}</p>
-                                        <div class="azb-text" style="font-size: 16px; color: #333; line-height: 1.7;">{analysis_html}</div>
+                                        <p class="azb-heading" style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{L['analysis_summary']}</p>
+                                        <div class="azb-text" style="font-size: 12px; color: #333; line-height: 1.7;">{analysis_html}</div>
                                     </td>
                                 </tr>
+                                {relevance_html}
                                 {timeline_html}
                                 {impact_html}
                                 {resources_html}
@@ -1066,6 +1241,11 @@ class EmailService:
             Dict with ``subject``, ``html_content``, ``plain_content``.
         """
         L = get_labels(language)
+        feedback_url = build_feedback_page_url(
+            self.settings,
+            language,
+            f"digest:{date_range}" if date_range else "digest",
+        )
 
         # Classify items by importance (high / medium / low)
         high_items = []  # important: directly relevant, high/critical urgency
@@ -1197,7 +1377,8 @@ class EmailService:
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
         # --- Build retirement countdown section ---
-        retirement_html = self._build_retirement_countdown_html(language)
+        scoped_delivery = any(item.get("subscriber_scope_bounded") for item in items)
+        retirement_html = "" if scoped_delivery else self._build_retirement_countdown_html(language)
 
         # --- Assemble full HTML ---
         html_content = f"""<!DOCTYPE html>
@@ -1224,14 +1405,14 @@ class EmailService:
                             <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
                                 <tr>
                                     <td style="vertical-align: middle;">
-                                        <span style="color: #ffffff; font-size: 26px; font-weight: 700; letter-spacing: -0.3px;">AzBrief</span>
+                                        <span style="color: #ffffff; font-size: 20px; font-weight: 700; letter-spacing: -0.3px;">AzBrief</span>
                                     </td>
                                     <td align="right" style="vertical-align: middle;">
-                                        <span class="azb-text-secondary" style="color: #7a8fa3; font-size: 14px;">{escape_email_text(date_range)}</span>
+                                        <span class="azb-text-secondary" style="color: #7a8fa3; font-size: 11px;">{escape_email_text(date_range)}</span>
                                     </td>
                                 </tr>
                             </table>
-                            <p style="margin: 10px 0 0 0; color: #ffffff; font-size: 20px; font-weight: 600;">{L['digest_title']}</p>
+                            <p style="margin: 10px 0 0 0; color: #ffffff; font-size: 16px; font-weight: 600;">{L['digest_title']}</p>
                         </td>
                     </tr>
 
@@ -1253,8 +1434,9 @@ class EmailService:
                     <!-- Footer -->
                     <tr>
                         <td class="azb-footer azb-pad" style="background-color: #f8f9fb; padding: 14px 32px; border-top: 1px solid #e2e7ed;">
-                            <p style="margin: 0; font-size: 12px; color: #a0a8b4; line-height: 1.6;">{L['disclaimer_title']}: {L['disclaimer_body']}</p>
-                            <p style="margin: 6px 0 0 0; font-size: 12px; color: #b8bfc8;">{L['footer_generated']} &middot; AzBrief AI Agent &middot; {L['footer_basis']} &middot; {generated_at}</p>
+                            {format_feedback_link_html(feedback_url, language)}
+                            <p style="margin: 0; font-size: 10px; color: #a0a8b4; line-height: 1.6;">{L['disclaimer_title']}: {L['disclaimer_body']}</p>
+                            <p style="margin: 6px 0 0 0; font-size: 10px; color: #b8bfc8;">{L['footer_generated']} &middot; AzBrief AI Agent &middot; {L['footer_basis']} &middot; {generated_at}</p>
                         </td>
                     </tr>
 
@@ -1266,7 +1448,12 @@ class EmailService:
 </body>
 </html>"""
 
-        plain_content = self._build_digest_plain_text(items, date_range, language)
+        plain_content = self._build_digest_plain_text(
+            items,
+            date_range,
+            language,
+            feedback_url,
+        )
 
         return {
             "subject": subject,
@@ -1279,6 +1466,7 @@ class EmailService:
         items: list[dict],
         date_range: str,
         language: str = "ko",
+        feedback_url: str = "",
     ) -> str:
         """Build plain text version of the digest email."""
         L = get_labels(language)
@@ -1318,7 +1506,7 @@ class EmailService:
             if one_line:
                 lines.append(f"     {one_line}")
             if evidence:
-                lines.append(f"     → {evidence}")
+                lines.append(f"     {L['relevance_evidence']}: {evidence}")
             lines.append(f"     {update.link}")
             archive_url = safe_archive_url(item.get("archive_url", ""))
             if archive_url:
@@ -1382,6 +1570,11 @@ class EmailService:
             [
                 "-" * 60,
                 f"{L['disclaimer_title']}: {L['disclaimer_body']}",
+                *(
+                    [f"{L['feedback_link']}: {safe_archive_url(feedback_url)}"]
+                    if safe_archive_url(feedback_url)
+                    else []
+                ),
             ]
         )
         return "\n".join(lines)
@@ -1420,7 +1613,7 @@ class EmailService:
             f"digest_{language}{safe_recipient}_{ts}.html",
         )
 
-        if not self._use_email:
+        if not self._use_email and not (recipient and self._transport_ready):
             # Console output
             print("\n" + "=" * 80)
             print(f"📧 {email_content['subject']}")

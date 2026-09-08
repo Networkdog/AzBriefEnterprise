@@ -5,12 +5,15 @@ from types import SimpleNamespace
 
 import pytest
 
+from src.agent.scope import AnalysisScope
 from src.archive.models import ArchiveReceipt
 from src.config import get_settings
 from src.orchestrator import (
     RunRecord,
+    RunSelection,
     RunStore,
     _filter_updates,
+    _send_digest,
     _WatermarkCursor,
     execute_run,
     parse_iso_utc,
@@ -128,15 +131,39 @@ class _FakeParser:
         return self._updates
 
 
+class _SelectingParser(_FakeParser):
+    def __init__(self, updates):
+        super().__init__(updates)
+        self.calls = []
+
+    async def get_updates(self):
+        self.calls.append(("recent",))
+        return self._updates
+
+    async def get_updates_by_date_range(self, start_date, end_date):
+        self.calls.append(("date_range", start_date, end_date))
+        return self._updates
+
+    async def fetch_update_by_id(self, update_id):
+        self.calls.append(("update_id", update_id))
+        return self._updates[0] if self._updates else None
+
+    async def get_update_by_url(self, update_url):
+        self.calls.append(("update_url", update_url))
+        return self._updates[0] if self._updates else None
+
+
 class _FakeAnalyzer:
     """Analyzer stub; `fail_ids` makes specific updates raise."""
 
     def __init__(self, fail_ids=()):
         self.fail_ids = set(fail_ids)
         self.seen: list[str] = []
+        self.scopes: list[AnalysisScope | None] = []
 
-    async def analyze_update(self, update):
+    async def analyze_update(self, update, scope=None):
         self.seen.append(update.id)
+        self.scopes.append(scope)
         if update.id in self.fail_ids:
             raise RuntimeError("analysis exploded")
         return SimpleNamespace(should_notify=True, relevance=SimpleNamespace(value="action"))
@@ -186,6 +213,71 @@ def _clear_settings_cache():
 
 
 class TestExecuteRun:
+    def test_update_url_selector_accepts_localized_azure_update_paths(self):
+        selection = RunSelection(
+            mode="update_url",
+            update_url="https://azure.microsoft.com/ko-kr/updates/example-update/",
+        )
+
+        assert selection.mode == "update_url"
+
+    @pytest.mark.asyncio
+    async def test_recent_selector_analyses_only_the_newest_requested_updates(self):
+        parser = _SelectingParser(_targets(5))
+        analyzer = _FakeAnalyzer()
+        record = RunRecord(
+            run_id="recent",
+            selection=RunSelection(mode="recent", recent_count=2),
+            commit_checkpoint=False,
+        )
+
+        await execute_run(record, analyzer, _FakeEmailService(), parser)
+
+        assert analyzer.seen == ["u3", "u4"]
+        assert parser.calls == [("recent",)]
+        assert record.total == 2
+
+    @pytest.mark.asyncio
+    async def test_date_range_selector_uses_the_history_aware_parser_path(self):
+        parser = _SelectingParser(_targets(2))
+        start = datetime(2026, 8, 1, tzinfo=UTC)
+        end = datetime(2026, 8, 2, tzinfo=UTC)
+        record = RunRecord(
+            run_id="range",
+            selection=RunSelection(mode="date_range", start_date=start, end_date=end),
+            commit_checkpoint=False,
+        )
+
+        await execute_run(record, _FakeAnalyzer(), _FakeEmailService(), parser)
+
+        assert parser.calls == [("date_range", start, end)]
+        assert record.total == 2
+
+    @pytest.mark.asyncio
+    async def test_update_id_and_url_selectors_use_direct_lookup_methods(self):
+        target = _targets(1)
+        for selection, expected in (
+            (RunSelection(mode="update_id", update_id="12345"), ("update_id", "12345")),
+            (
+                RunSelection(
+                    mode="update_url",
+                    update_url="https://azure.microsoft.com/en-us/updates?id=12345",
+                ),
+                ("update_url", "https://azure.microsoft.com/en-us/updates?id=12345"),
+            ),
+        ):
+            parser = _SelectingParser(target)
+            record = RunRecord(
+                run_id=selection.mode,
+                selection=selection,
+                commit_checkpoint=False,
+            )
+
+            await execute_run(record, _FakeAnalyzer(), _FakeEmailService(), parser)
+
+            assert parser.calls == [expected]
+            assert record.analyzed == 1
+
     @pytest.mark.asyncio
     async def test_empty_window_completes_without_email(self):
         record = RunRecord(run_id="r1", since=datetime(2026, 8, 5, tzinfo=UTC))
@@ -270,6 +362,185 @@ class TestExecuteRun:
         assert [item[0] for item in archive.seen] == ["u0"]
 
     @pytest.mark.asyncio
+    async def test_managed_subscriber_receives_the_digest(self, monkeypatch):
+        from src.config import Subscriber
+
+        class Configuration:
+            async def get_subscribers(self):
+                return [
+                    Subscriber(
+                        email="managed@example.com",
+                        name="Managed",
+                        language="en",
+                    )
+                ]
+
+        monkeypatch.setattr(
+            "src.orchestrator.get_admin_configuration",
+            lambda: Configuration(),
+        )
+        target = _targets(1)
+        record = RunRecord(
+            run_id="managed-subscriber",
+            since=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+        email = _FakeEmailService()
+
+        await execute_run(record, _FakeAnalyzer(), email, _FakeParser(target))
+
+        assert record.email_sent is True
+        assert email.calls == [{"items": 1, "recipient": "managed@example.com"}]
+
+    @pytest.mark.asyncio
+    async def test_subscribers_with_the_same_scope_share_one_scoped_analysis(self, monkeypatch):
+        from src.config import Subscriber
+
+        class Configuration:
+            async def get_subscribers(self):
+                return [
+                    Subscriber(
+                        email="one@example.com",
+                        name="One",
+                        management_groups=["platform-mg"],
+                        subscriptions=[
+                            "11111111-1111-1111-1111-111111111111",
+                            "22222222-2222-2222-2222-222222222222",
+                        ],
+                        resource_groups=["production-rg"],
+                    ),
+                    Subscriber(
+                        email="two@example.com",
+                        name="Two",
+                        management_groups=["PLATFORM-MG"],
+                        subscriptions=[
+                            "22222222-2222-2222-2222-222222222222",
+                            "11111111-1111-1111-1111-111111111111",
+                        ],
+                        resource_groups=["Production-RG"],
+                    ),
+                ]
+
+        monkeypatch.setattr(
+            "src.orchestrator.get_admin_configuration",
+            lambda: Configuration(),
+        )
+        analyzer = _FakeAnalyzer()
+        email = _FakeEmailService()
+        record = RunRecord(
+            run_id="scoped-subscribers",
+            since=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+
+        await execute_run(record, analyzer, email, _FakeParser(_targets(1)))
+
+        assert analyzer.seen == ["u0", "u0"]
+        assert analyzer.scopes[0] is None
+        assert analyzer.scopes[1] == AnalysisScope(
+            management_groups=["platform-mg"],
+            subscriptions=[
+                "11111111-1111-1111-1111-111111111111",
+                "22222222-2222-2222-2222-222222222222",
+            ],
+            resource_groups=["production-rg"],
+        )
+        assert {call["recipient"] for call in email.calls} == {
+            "one@example.com",
+            "two@example.com",
+        }
+
+    @pytest.mark.asyncio
+    async def test_scoped_analysis_failure_never_falls_back_to_canonical_result(self, monkeypatch):
+        from src.config import Subscriber
+
+        class Configuration:
+            async def get_subscribers(self):
+                return [
+                    Subscriber(
+                        email="scoped@example.com",
+                        name="Scoped",
+                        subscriptions=["11111111-1111-1111-1111-111111111111"],
+                    )
+                ]
+
+        class ScopedFailureAnalyzer(_FakeAnalyzer):
+            async def analyze_update(self, update, scope=None):
+                if scope and scope.is_bounded:
+                    raise RuntimeError("scoped query failed")
+                return await super().analyze_update(update, scope=scope)
+
+        class RecordingEmailService(_FakeEmailService):
+            async def send_digest_report(self, items, **kwargs):
+                assert items[0]["result"] is None
+                assert items[0]["skip_reason"]
+                assert items[0]["archive_url"] == ""
+                return await super().send_digest_report(items, **kwargs)
+
+        monkeypatch.setattr(
+            "src.orchestrator.get_admin_configuration",
+            lambda: Configuration(),
+        )
+        record = RunRecord(
+            run_id="scoped-failure",
+            since=datetime(2026, 7, 1, tzinfo=UTC),
+        )
+
+        await execute_run(
+            record,
+            ScopedFailureAnalyzer(),
+            RecordingEmailService(),
+            _FakeParser(_targets(1)),
+        )
+
+        assert record.email_sent is True
+
+    @pytest.mark.asyncio
+    async def test_expired_run_budget_does_not_start_scoped_analysis(self, monkeypatch):
+        from src.config import Subscriber
+
+        class Configuration:
+            async def get_subscribers(self):
+                return [
+                    Subscriber(
+                        email="scoped@example.com",
+                        name="Scoped",
+                        management_groups=["platform-mg"],
+                    )
+                ]
+
+        class Deadline:
+            def has_budget_for(self, _estimate):
+                return False
+
+        class RecordingEmailService(_FakeEmailService):
+            async def send_digest_report(self, items, **kwargs):
+                assert items[0]["result"] is None
+                assert items[0]["subscriber_scope_bounded"] is True
+                return await super().send_digest_report(items, **kwargs)
+
+        monkeypatch.setattr(
+            "src.orchestrator.get_admin_configuration",
+            lambda: Configuration(),
+        )
+        analyzer = _FakeAnalyzer()
+        delivered = await _send_digest(
+            [
+                {
+                    "update": _targets(1)[0],
+                    "result": SimpleNamespace(should_notify=True),
+                    "skip_reason": "",
+                    "archive_url": "https://archive.example/canonical",
+                }
+            ],
+            analyzer,
+            RecordingEmailService(),
+            deadline=Deadline(),
+            estimate_s=60,
+        )
+
+        assert delivered is True
+        assert analyzer.seen == []
+
+    @pytest.mark.asyncio
     async def test_a_rejected_digest_is_not_reported_as_sent(self):
         """A transport rejection must reach the record instead of reading as delivered."""
         targets = _targets(3)
@@ -281,6 +552,25 @@ class TestExecuteRun:
         assert record.analyzed == 3
         assert record.email_sent is False
         assert email.calls == [{"items": 3, "recipient": None}]
+
+    @pytest.mark.asyncio
+    async def test_archive_only_run_analyses_without_sending_email(self):
+        target = _targets(1)
+        email = _FakeEmailService()
+        archive = _FakeArchiveService()
+        record = RunRecord(
+            run_id="archive-only",
+            since=datetime(2026, 7, 1, tzinfo=UTC),
+            send_email=False,
+        )
+
+        await execute_run(record, _FakeAnalyzer(), email, _FakeParser(target), archive)
+
+        assert record.status == "completed"
+        assert record.analyzed == 1
+        assert record.archived == 1
+        assert record.email_sent is False
+        assert email.calls == []
 
     @pytest.mark.asyncio
     async def test_a_failing_update_does_not_pin_the_watermark(self):
@@ -325,6 +615,7 @@ class TestExecuteRun:
         payload = record.to_dict()
         assert payload["run_id"] == "r6"
         assert payload["since"] == "2026-08-01T00:00:00+00:00"
+        assert payload["send_email"] is True
         assert "api_key" not in payload
 
 
@@ -387,6 +678,20 @@ class TestCheckpointIntegration:
     async def test_dry_run_never_commits(self, store):
         recorder = store(_RecordingCheckpointStore())
         record = RunRecord(run_id="c3", since=datetime(2026, 7, 1, tzinfo=UTC), dry_run=True)
+
+        await execute_run(record, _FakeAnalyzer(), _FakeEmailService(), _FakeParser(_targets(2)))
+
+        assert recorder.advanced == []
+        assert record.checkpoint_committed is False
+
+    @pytest.mark.asyncio
+    async def test_manual_selection_never_commits_the_scheduled_checkpoint(self, store):
+        recorder = store(_RecordingCheckpointStore())
+        record = RunRecord(
+            run_id="manual",
+            selection=RunSelection(mode="recent", recent_count=1),
+            commit_checkpoint=False,
+        )
 
         await execute_run(record, _FakeAnalyzer(), _FakeEmailService(), _FakeParser(_targets(2)))
 

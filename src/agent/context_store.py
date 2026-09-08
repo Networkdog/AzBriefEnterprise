@@ -63,8 +63,8 @@ class StoredResult:
 class ToolResultStore:
     """Bounded, ref-addressable store of full tool results.
 
-    Refs are unique per store instance, so concurrent analyses sharing one
-    store cannot read each other's entries.
+    Refs are unique per store instance and retrieval can require the owning
+    trace, so concurrent analyses cannot read each other's entries.
     """
 
     def __init__(
@@ -124,10 +124,13 @@ class ToolResultStore:
             self._evict_locked()
         return entry
 
-    def get(self, ref: str) -> StoredResult | None:
-        """Look up a stored result by ref, or None if it is unknown or evicted."""
+    def get(self, ref: str, trace_id: str | None = None) -> StoredResult | None:
+        """Look up a result, optionally requiring the analysis trace that owns it."""
         with self._lock:
-            return self._entries.get(str(ref).strip())
+            entry = self._entries.get(str(ref).strip())
+            if entry is None or (trace_id is not None and entry.trace_id != trace_id):
+                return None
+            return entry
 
     def clear_trace(self, trace_id: str) -> int:
         """Drop every entry belonging to one analysis. Returns the count removed."""

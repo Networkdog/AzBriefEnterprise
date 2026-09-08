@@ -13,11 +13,13 @@ pytest로 검증합니다. 대부분 외부 Azure/Foundry 호출을 mock해 빠�
 | Agent loop와 resilience | [`test_analyzer.py`](test_analyzer.py), [`test_context_store.py`](test_context_store.py), [`test_resilience.py`](test_resilience.py) |
 | Foundry specialist team | [`test_foundry_backend.py`](test_foundry_backend.py), [`test_foundry_multi_agent.py`](test_foundry_multi_agent.py), [`test_provision_foundry_agents.py`](test_provision_foundry_agents.py) |
 | KQL과 Azure evidence | [`test_kql_sanitize.py`](test_kql_sanitize.py), [`test_kql_retry.py`](test_kql_retry.py), [`test_impact_tools.py`](test_impact_tools.py), [`test_billing.py`](test_billing.py) |
-| 제어면 | [`test_api.py`](test_api.py), [`test_admin.py`](test_admin.py), [`test_archive.py`](test_archive.py), [`test_mcp_server.py`](test_mcp_server.py), [`test_orchestrator.py`](test_orchestrator.py), [`test_scheduler.py`](test_scheduler.py) |
+| 제어면 | [`test_api.py`](test_api.py), [`test_admin.py`](test_admin.py), [`test_admin_readiness.py`](test_admin_readiness.py), [`test_archive.py`](test_archive.py), [`test_mcp_server.py`](test_mcp_server.py), [`test_orchestrator.py`](test_orchestrator.py), [`test_scheduler.py`](test_scheduler.py) |
 | 전달과 언어 | [`test_email.py`](test_email.py), [`test_i18n.py`](test_i18n.py), [`test_quality_evaluator.py`](test_quality_evaluator.py) |
-| Data access | [`test_services.py`](test_services.py), [`test_checkpoint.py`](test_checkpoint.py), [`test_archive_store.py`](test_archive_store.py), [`test_rss_parser.py`](test_rss_parser.py) |
+| 종류별 환경 연관성 | [`test_environment_relevance.py`](test_environment_relevance.py): 계획/보고 계약, 리소스 없는 가치·SDK 사례, 3개 언어 표시, Archive 원문 보존과 구독자 역할 평가 |
+| Data access | [`test_services.py`](test_services.py), [`test_runtime_inventory.py`](test_runtime_inventory.py), [`test_checkpoint.py`](test_checkpoint.py), [`test_archive_store.py`](test_archive_store.py), [`test_rss_parser.py`](test_rss_parser.py) |
 | 결정론적 평가 | [`test_archive_evaluation.py`](test_archive_evaluation.py), [`test_quality_evaluator.py`](test_quality_evaluator.py), [`test_quality_campaign.py`](test_quality_campaign.py) |
 | Security/config | [`test_security.py`](test_security.py), [`test_config.py`](test_config.py), [`test_enterprise_config.py`](test_enterprise_config.py) |
+| 공개 저장소 위생 | [`test_repository_hygiene.py`](test_repository_hygiene.py) |
 
 [`conftest.py`](conftest.py)는 `sample_rss_xml`, `sample_update`, `sample_analysis_result`처럼 여러
 test가 공유하는 realistic fixture를 제공합니다.
@@ -55,5 +57,4 @@ CI와 같은 coverage gate가 필요하면 project addopts를 유지하거나 �
 - local suite 통과는 live identity, quota, private network, deployed Agent version을 검증하지
   않습니다. 운영 smoke test 결과와 구분해 보고합니다.
 - Quality campaign test는 기간 dataset hash/split, 다층 release gate, A/A paired 비교, 안전 회귀
-  우선순위, case checkpoint/resume, deferred transient retry, dimension-error blocker, fake Hosted
-  snapshot의 report artifact 생성을 네트워크 없이 검증합니다.
+  우선순위, fake Hosted snapshot의 report artifact 생성을 네트워크 없이 검증합니다.

@@ -6,6 +6,7 @@ import pytest
 from structlog.testing import capture_logs
 
 from src.agent import foundry_backend
+from src.agent.scope import AnalysisScope, analysis_scope_context
 from src.config import EVIDENCE_SPECIALIST_ROLES, Settings
 
 _TENANT = "00000000-0000-0000-0000-000000000000"
@@ -208,6 +209,28 @@ class TestSpecialistCollaboration:
         prompts = {call["agent"]: call["prompt"] for call in recorded_calls}
         assert "Azure subscription ID:" not in prompts["azbrief-azure-mcp"]
         assert "Azure subscription ID:" not in prompts["azbrief-azure-api"]
+
+    @pytest.mark.asyncio
+    async def test_bounded_scope_calls_only_the_resource_graph_specialist(
+        self, sdk_present, recorded_calls
+    ):
+        node = foundry_backend.build_specialist_collaboration_node(_settings())
+        scope = AnalysisScope(
+            management_groups=["platform-mg"],
+            resource_groups=["production-rg"],
+        )
+
+        with analysis_scope_context(scope):
+            merged = (await node({"update_context": "ctx", "trace_id": "scope-trace"}))[
+                "update_context"
+            ]
+
+        assert [call["agent"] for call in recorded_calls] == ["azbrief-resource-graph"]
+        assert "Management Groups: platform-mg" in recorded_calls[0]["prompt"]
+        assert "Resource Groups: production-rg" in recorded_calls[0]["prompt"]
+        assert "Azure MCP tenant analysis [partial]" in merged
+        assert "ARM, Cost Management, and Billing analysis [partial]" in merged
+        assert "cannot enforce the subscriber" in merged
 
     @pytest.mark.asyncio
     async def test_failed_specialist_becomes_an_explicit_gap(self, sdk_present, monkeypatch):

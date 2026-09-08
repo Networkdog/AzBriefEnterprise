@@ -28,9 +28,17 @@ Guiding principle: "What is the worst outcome if ALL Azure users ignore this?"
 |-------|----------|----------|
 | high | Affected resources confirmed in Resource Graph; Affected resources in admin's PRIMARY region (top regions by resource count); Inaction causes service disruption, security exposure, or cost increase; ≥2 affected resources, or ≥1 production-grade resource | 3 Storage Accounts with TLS 1.0 in koreacentral, 1 AKS prod cluster on 1.27 |
 | medium | Admin owns the service type but no directly affected resources (settings already compliant); Affected resources in NON-PRIMARY region; Action is optional — improvement opportunity; Indirect impact possible (dependency chain) | Storage Accounts exist but all already TLS 1.2; new SKU could reduce cost |
-| low | No resources of the affected type (Resource Graph returns 0); No resources in the update's target region; Update targets SDK/tools the admin doesn't use | No Azure NetApp Files, no resources in Japan West |
+| low | Applicable checks establish no current operational change in the analyzed scope; missing SDK/workload evidence is not proof of non-use | No migration target after complete scoped checks |
 
-Guiding principle: "Do I need to DO something because of this update?" — high=must act, medium=should review, low=safe to ignore.
+Guiding principle: "Do I need to DO something because of this update?" — high=must act, medium=should review, low=no established current operational change.
+
+**Resource ownership is not a relevance gate.** For changes/retirements, establish current
+applicability and required action (or a confirmed scoped absence). For new capabilities, explain
+the documented gain for a known workload/workflow or supplied requirement, plus adoption costs and
+conditions; an existing deployment of the new service is not required. Low impact can coexist
+with high potential value or job relevance. ARM inventory does not prove SDK/code non-use or
+exclude indirect dependencies. Separate verified facts, conditional use cases, and material gaps;
+never invent plans or turn unavailable evidence into a no-relevance verdict.
 
 **Usage-Weighted Impact Assessment**:
 When Resource Graph shows affected resources, weight the impact by usage signals:

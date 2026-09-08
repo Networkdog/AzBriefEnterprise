@@ -16,6 +16,7 @@ from src.agent.hosted_contract import (
     HostedSubscriber,
     HostedUpdate,
 )
+from src.agent.scope import AnalysisScope
 
 
 def _update() -> HostedUpdate:
@@ -37,7 +38,7 @@ def test_request_round_trip_is_versioned_and_strict():
 
     restored = HOSTED_AGENT_REQUEST_ADAPTER.validate_json(request.model_dump_json())
 
-    assert restored.contract_version == "2"
+    assert restored.contract_version == "3"
     assert restored.operation == "analyze_update"
     assert restored.update.title == "Azure Update"
     assert restored.trace_id == "trace-1"
@@ -62,6 +63,29 @@ def test_customization_request_uses_discriminated_operation():
 
     assert isinstance(restored, HostedCustomizationRequest)
     assert restored.subscriber.email == "admin@example.com"
+
+
+def test_analysis_scope_round_trip_is_strict_and_normalized():
+    request = HostedAnalysisRequest(
+        update=_update(),
+        scope=AnalysisScope(
+            management_groups=["/providers/Microsoft.Management/managementGroups/platform-mg"],
+            subscriptions=["/subscriptions/11111111-1111-1111-1111-111111111111"],
+            resource_groups=[
+                "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/Production-RG/providers/Microsoft.Storage"
+            ],
+        ),
+        trace_id="trace-scope",
+    )
+
+    restored = HOSTED_AGENT_REQUEST_ADAPTER.validate_json(request.model_dump_json())
+
+    assert restored.contract_version == "3"
+    assert restored.scope.management_groups == ("platform-mg",)
+    assert restored.scope.subscriptions == ("11111111-1111-1111-1111-111111111111",)
+    assert restored.scope.resource_groups == (
+        "/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/Production-RG",
+    )
 
 
 def test_evaluation_request_and_result_are_strict():

@@ -46,6 +46,11 @@ def _settings(**overrides) -> Settings:
     return Settings(_env_file=None, **base)
 
 
+def test_analysis_concurrency_must_be_positive():
+    with pytest.raises(ValueError):
+        _settings(max_concurrent_analyses=0)
+
+
 class TestFoundryReadiness:
     """Generic Foundry calls and Hosted specialist readiness are separate gates."""
 
@@ -155,6 +160,8 @@ class TestSpecialistDeploymentContract:
         assert all(manifest.count(f"- name: {name}") == 1 for name in aliases)
         assert "AZBRIEF_PROMPT_PRIMARY_AGENT_NAME" not in manifest
         assert "AZBRIEF_ENRICHMENT_AGENT_ROSTER" not in manifest
+        assert "endpoint: ${AZURE_AI_PROJECT_ENDPOINT}" in manifest
+        assert ".services.ai.azure.com" not in manifest
 
     def test_compiled_template_outputs_specialist_names_and_config_command(self):
         template = json.loads(
@@ -177,6 +184,24 @@ class TestSpecialistDeploymentContract:
         ):
             assert f"AZBRIEF_PROMPT_{role}_AGENT_NAME" in command
 
+    def test_compiled_template_selects_the_acr_pull_role_for_its_permission_mode(self):
+        template = json.loads(
+            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
+        )
+
+        mode = template["parameters"]["containerRegistryRoleAssignmentMode"]
+        assert mode["defaultValue"] == "AbacRepositoryPermissions"
+        assert set(mode["allowedValues"]) == {
+            "AbacRepositoryPermissions",
+            "LegacyRegistryPermissions",
+        }
+        role = template["variables"]["containerRegistryPullRoleName"]
+        serialized_role = json.dumps(role)
+        assert "Container Registry Repository Reader" in serialized_role
+        assert "AcrPull" in serialized_role
+        command = json.dumps(template["outputs"]["grantAcrPullCommand"]["value"])
+        assert "containerRegistryPullRoleName" in command
+
     def test_compiled_template_wires_the_private_archive(self):
         template = json.loads(
             Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
@@ -192,6 +217,104 @@ class TestSpecialistDeploymentContract:
             assert serialized.count(f'"name": "{name}"') == 2
         assert "archivePageUrl" in template["outputs"]
         assert "archiveBlobContainerUrl" in template["outputs"]
+
+    def test_compiled_template_wires_mutable_admin_configuration(self):
+        template = json.loads(
+            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
+        )
+        serialized = json.dumps(template)
+
+        assert serialized.count('"name": "ADMIN_CONFIG_BLOB_URL"') == 2
+        assert "admin-config.json" in serialized
+        assert "adminConfigBlobUrl" in template["outputs"]
+
+    def test_compiled_template_wires_public_feedback_collection(self):
+        template = json.loads(
+            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
+        )
+        serialized = json.dumps(template)
+
+        assert template["parameters"]["feedbackRecipientAddress"]["defaultValue"] == ""
+        for name in (
+            "FEEDBACK_UI_ENABLED",
+            "FEEDBACK_BASE_URL",
+            "FEEDBACK_RECIPIENT_ADDRESS",
+        ):
+            assert serialized.count(f'"name": "{name}"') == 2
+        assert "feedbackPageUrl" in template["outputs"]
+
+    def test_compiled_template_allows_same_origin_admin_posts(self):
+        template = json.loads(
+            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
+        )
+        auth = next(
+            resource
+            for resource in template["resources"]
+            if resource["type"].lower() == "microsoft.app/containerapps/authconfigs"
+        )
+
+        allowed_redirects = auth["properties"]["login"]["allowedExternalRedirectUrls"]
+        assert len(allowed_redirects) == 1
+        assert "https://" in allowed_redirects[0]
+        assert "Microsoft.App/containerApps" in allowed_redirects[0]
+        assert ".configuration.ingress.fqdn" in allowed_redirects[0]
+        assert auth["properties"]["globalValidation"]["unauthenticatedClientAction"] == (
+            "AllowAnonymous"
+        )
+
+    def test_compiled_template_wires_admin_readiness_inventory(self):
+        template = json.loads(
+            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
+        )
+        serialized = json.dumps(template)
+        names = (
+            "ADMIN_READINESS_RESOURCE_GROUP",
+            "ADMIN_READINESS_FOUNDRY_ACCOUNT",
+            "ADMIN_READINESS_FOUNDRY_PROJECT",
+            "ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT",
+            "ADMIN_READINESS_CONTAINER_ENVIRONMENTS",
+            "ADMIN_READINESS_CONTAINER_APPS",
+            "ADMIN_READINESS_CONTAINER_JOBS",
+            "ADMIN_READINESS_PROMPT_AGENTS",
+            "ADMIN_READINESS_SUPPORT_RESOURCES",
+        )
+
+        assert all(serialized.count(f'"name": "{name}"') == 2 for name in names)
+        variables = template["variables"]
+        assert "azureMcpContainerAppName" in variables["azureMcpContainerEnvName"]
+        assert set(variables["adminReadinessPromptAgents"]) == set(SPECIALIST_AGENT_ROLES)
+        support_ids = {resource["id"] for resource in variables["adminReadinessSupportResources"]}
+        assert support_ids == {
+            "managed_identity",
+            "key_vault",
+            "state_storage",
+            "evaluation_storage",
+            "log_analytics",
+            "application_insights",
+            "communication_services",
+            "email_service",
+        }
+        readiness_env_values = [
+            item["value"]
+            for resource in template["resources"]
+            if resource["type"].lower()
+            in {
+                "microsoft.app/containerapps",
+                "microsoft.app/jobs",
+            }
+            for container in resource["properties"]["template"]["containers"]
+            for item in container["env"]
+            if item["name"]
+            in {
+                "ADMIN_READINESS_CONTAINER_ENVIRONMENTS",
+                "ADMIN_READINESS_CONTAINER_APPS",
+                "ADMIN_READINESS_CONTAINER_JOBS",
+                "ADMIN_READINESS_PROMPT_AGENTS",
+                "ADMIN_READINESS_SUPPORT_RESOURCES",
+            }
+        ]
+        assert len(readiness_env_values) == 10
+        assert all("base64(string(" in value for value in readiness_env_values)
 
 
 class TestAdminAllowList:
@@ -211,6 +334,26 @@ class TestAdminAllowList:
         settings = _settings()
         assert settings.admin_ui_enabled is False
         assert settings.admin_require_auth is True
+
+    def test_readiness_inventory_parses_json_environment_values(self, monkeypatch):
+        monkeypatch.setenv("ADMIN_READINESS_CONTAINER_APPS", '["app","mcp"]')
+        monkeypatch.setenv(
+            "ADMIN_READINESS_PROMPT_AGENTS",
+            '{"coordinator":"coord","quality_reviewer":"review"}',
+        )
+        monkeypatch.setenv(
+            "ADMIN_READINESS_SUPPORT_RESOURCES",
+            '[{"id":"vault","name":"kv","resource_type":"Microsoft.KeyVault/vaults","api_version":"2023-07-01"}]',
+        )
+
+        settings = _settings()
+
+        assert settings.get_admin_readiness_container_apps() == ["app", "mcp"]
+        assert settings.get_admin_readiness_prompt_agents() == {
+            "coordinator": "coord",
+            "quality_reviewer": "review",
+        }
+        assert settings.get_admin_readiness_support_resources()[0]["id"] == "vault"
 
 
 class TestArchiveConfiguration:

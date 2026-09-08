@@ -21,7 +21,7 @@ Azure Update 한 건을 근거 기반 `AnalysisResult`로 바꾸는 핵심 계�
 | [`geval.py`](geval.py) | 최종 보고서의 의미적 품질 평가 |
 | [`trajectory.py`](trajectory.py) | 도구 성공률·retry·revision을 보는 결정론적 process 평가 |
 | [`telemetry.py`](telemetry.py) | trace/span과 token/tool observability |
-| [`kql_knowledge.py`](kql_knowledge.py) | 성공 query와 schema 지식의 재사용 |
+| [`kql_knowledge.py`](kql_knowledge.py) | tenant-neutral seed를 읽고 runtime query/schema 지식은 ignored data 경로에 저장 |
 | [`history.py`](history.py) | retirement와 과거 분석 이력 보조 데이터 |
 | [`pattern_memory.py`](pattern_memory.py) | 반복 분석 pattern의 best-effort 로컬 저장 |
 | [`prompts/`](prompts/README.md) | phase, 언어, category별 prompt 조립 |
@@ -106,3 +106,5 @@ Prompt Agent lifecycle과 평가 결과 event는 campaign `trace_id`로 연결�
 - 분석 완료 시 trace에 속한 context-store entry를 정리해 동시 분석의 근거가 섞이지 않게 합니다.
 - history/pattern 저장 실패는 완성된 분석 결과를 버리는 이유가 되지 않습니다.
 - 평가용 진단은 고객 report schema나 canonical archive document에 섞지 않습니다.
+- `kql_knowledge_base.json`에는 일반화된 seed만 commit합니다. 실행 중 발견한 schema/query와 실패
+  오류는 `AZBRIEF_DATA_DIR` 또는 ignored `data/` 아래 runtime cache에 기록합니다.

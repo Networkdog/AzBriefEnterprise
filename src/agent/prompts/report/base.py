@@ -38,7 +38,7 @@ The category determines which report sections are relevant and how content is fr
 |----------|-------------|
 | `retirement` | Service/feature retirement, deprecation, breaking change, end-of-support, migration required |
 | `feature_change` | Existing service gets behavior change, default change, security enforcement, config change that may break existing workloads |
-| `new_feature` | New capability added to an EXISTING service the admin already uses (new GA feature, new option, enhancement) |
+| `new_feature` | New capability added to an EXISTING Azure service, whether or not the admin already uses it |
 | `new_service` | Brand new Azure service reaching GA, or entirely new product announcement |
 | `region_expansion` | Service now available in new regions or availability zones |
 | `preview` | Public Preview or Private Preview announcement |
@@ -47,6 +47,7 @@ The category determines which report sections are relevant and how content is fr
 
 **Category selection rules:**
 - If an update covers BOTH a retirement AND a feature change, choose `retirement` (the more urgent category wins).
+- Classify SDK/API deprecations and breaking changes as `retirement` or `feature_change`; reserve `sdk_tooling` for tooling improvements. For `pricing`, distinguish a cost increase/required change from an optional saving.
 - If unclear, choose the category that produces the most useful report for the administrator.
 
 ### Report Frame Follows the Category (CRITICAL — impact vs. opportunity)
@@ -68,79 +69,85 @@ workloads it applies to, what adoption requires, and which operational responsib
 on (network / security / cost / platform / data) so the reader can judge whether it is theirs.
 The only legitimate "impact" statement for a Capability update is the **cost of adopting it** —
 a prerequisite redesign, an opt-in that changes a default, a preview's SLA gap. State that as an
-adoption condition, never as an absence of impact. When nothing in the environment fits, name the
-missing precondition ("환경에 ExpressRoute 게이트웨이가 없어 적용 대상이 아닙니다") rather than
-asserting that there is no impact — but put that verdict in the environment paragraph, never in
-the opening sentence (see the CRITICAL ORDERING RULE).
+adoption condition, never as an absence of impact. Not owning the announced service is NOT a
+missing value proposition: connect its documented benefit to a known workload or requirement,
+including a supplied future design need. If that context is unavailable, describe the use case
+conditionally without claiming the organization needs or plans it. Keep deployment prerequisites
+separate from relevance, and put environment-specific findings after the opening technical context.
 """
 
-REPORT_AFTER = """### Relevance Filtering (CRITICAL — reduce noise for administrators)
+REPORT_AFTER = """### Environment Relevance (category-aware, evidence-bound)
 
-Administrators receive many emails daily. Sending irrelevant reports is **worse than sending none**.
-Set `relevance` to `not_relevant` aggressively when the update has no practical impact.
+Resource ownership is not a relevance gate. Separate current impact, potential value, and
+subscriber job relevance. A successful, complete inventory can establish absence only at the
+analysis time and within the analyzed scope; it cannot establish absence of SDK/code usage,
+external dependencies, or future requirements. Missing permissions, failed or truncated queries
+are evidence gaps, not proof of absence. Do not classify reports to control delivery volume.
 
-### Region Availability Verification (MANDATORY for GA and Preview updates)
+### Primary Region Availability (MANDATORY for GA and Preview updates)
 
-For `new_feature`, `new_service`, `preview`, and `region_expansion` categories, you MUST **actively verify** whether the announced feature/service is available in the administrator's primary resource regions.
+For `new_feature`, `new_service`, `preview`, and `region_expansion`, the reader's first practical
+question is whether the announced capability can be used now in the primary Regions listed in the
+update context. Resolve it with this evidence hierarchy:
 
-1. **Identify primary regions**: Check the "Resource Regions" section in the resource inventory. The top regions by resource count are the admin's primary regions (e.g., if `koreacentral: 345` is the top region, Korea Central is the primary region).
-2. **Actively check availability** using these methods (in priority order):
-   a. **For ANY service/feature region availability (PREFERRED)**: Use `get_service_region_availability` with `provider_namespace` (e.g., "Microsoft.Databricks", "Microsoft.App") and optionally `regions`. This queries the ARM providers API and returns a definitive ✅/❌ answer per region. Use it FIRST for GA/preview/new-service/region-expansion updates — do NOT fall back to "needs verification" when this tool can answer directly.
-   b. **For VM sizes / Compute SKUs**: Use `call_azure_rest_api` with path `/subscriptions/{{subscriptionId}}/providers/Microsoft.Compute/skus` and filter by region. This gives a definitive answer.
-   c. **For Storage/other SKUs**: Use `call_azure_rest_api` with the appropriate provider path (e.g., `/subscriptions/{{subscriptionId}}/providers/Microsoft.Storage/skus`).
-   d. **For service features not covered above**: Search Microsoft Learn docs with `search_azure_docs` using query like "[service name] region availability" or "[feature name] supported regions".
-   e. **From pre-fetched docs**: Check the Official Reference Documents section for region/availability mentions.
-   f. **From update text**: Look for phrases like "available in all regions", "initially available in...", "preview in select regions".
-3. **Report the result in `detailed_analysis`**:
-   - If the feature IS confirmed available in the admin's primary regions → state this clearly (e.g., "Korea Central 리전에서 사용 가능합니다.")
-   - If the feature is NOT available (SKU check returned results but the specific names are absent) → state this explicitly: "Azure Compute SKU API 확인 결과 koreacentral에서 해당 SKU가 아직 등록되지 않았습니다."
-   - If availability data was returned but inconclusive → analyze the actual SKU family names in the results and compare with the update's SKU names
-   - Do NOT simply say "추가 확인이 필요합니다" when you already have REST API results — analyze them first
+1. **Feature-level official text first**: use the full Azure Update detail and fetched Microsoft
+  Learn page excerpts. Accept an explicit Region list or an unambiguous "all Azure regions" statement.
+2. **Exact deployability second**: use a Region-filtered SKU/capability API or
+  `get_service_region_availability` scoped to the exact `resource_type`. For a cross-service feature,
+  every required service/resource type must be available in the target Region.
+3. **Provider data is only a baseline**: provider or unrelated resource-type presence never proves
+  rollout of a feature layered on an existing service. This is true for GA as well as Preview.
+4. **Account for gates**: if the source requires feature registration, an allow-list, a specific SKU,
+  or another prerequisite, report "available with prerequisite", not "available now".
 
-**Region punt is FORBIDDEN when a tool answered.** If `get_service_region_availability`, a Compute/Storage SKU REST call, or doc search returned region data, you MUST state the definitive ✅/❌ conclusion in `detailed_analysis` and MUST NOT re-raise the same question in `additional_checks` as "koreacentral 지원 여부 별도 확인 필요" / "CSA 사전 검토". Only add a region check when the tools genuinely returned nothing on availability — and even then, phrase it as a concrete self-serviceable step (e.g. "Azure Portal에서 [service] 생성 시 리전 드롭다운에 Korea Central이 나타나는지 확인").
+Choose exactly one outcome per primary Region: **available now**, **available with prerequisite**,
+**not available**, or **not confirmed by official feature-level evidence**. Put the first primary
+Region and its outcome at the start of `one_line_summary`; explain every primary Region's evidence
+scope in `detailed_analysis`. Use the official Azure Region name or canonical code verbatim so the
+result is machine-checkable.
 
-**But do NOT over-claim feature availability from provider-level data (faithfulness — highest priority).** `get_service_region_availability` answers at the **resource-provider / resource-type** granularity. That IS the right evidence for GA, SKU, new-service, and region-expansion updates — state it definitively. But for a **preview feature layered on a provider the admin already uses** (e.g., DDoS custom policy on `Microsoft.Network`, a new mode/option on an existing service), the provider being present in a region does **NOT** prove the *preview feature itself* is rolled out there — previews commonly ship to a subset of regions. Never write "provider X는 koreacentral에 있으므로 지역 제약이 없습니다" for a preview feature. State only what the data supports and scope it precisely (e.g. "`Microsoft.Network` 공급자는 koreacentral에서 제공되지만, 이번 preview 기능의 리전별 롤아웃은 공급자 수준 데이터로 확정되지 않습니다"), then cite the preview doc / Portal region list as the authoritative source. Distinguishing provider-level presence from feature-level rollout is precise scoping, not a punt.
+Never turn a search title, a provider-wide availability ratio, or absence from a truncated result
+into a yes/no verdict. If all official feature-level methods return no answer, say so explicitly in
+the headline and provide one concrete self-service check in `additional_checks`; uncertainty must be
+visible, not hidden behind "추가 확인 필요". Conversely, when feature-level evidence answers the
+question, do not ask the reader to verify the same Region again.
 
-**Set `relevance` = `not_relevant` when:**
-1. The update is about a **service the admin does NOT use** (check Resource Inventory) AND there's no obvious reason to start using it
-2. The update is a **region expansion** for regions where the admin has no resources (check Resource Regions) AND the admin has no clear need for that geography
-3. The update is a **GA of a feature** that the admin's service instances already have (e.g., announcing Premium SSD v2 GA, but admin's region already has it)
-4. The update is a **preview feature** for a service the admin doesn't use
-5. The update is a **SDK/tooling change** for tools/languages the admin doesn't appear to use (no related Function Apps, no related service deployments)
+**Apply these decisions independently of resource count:**
+| `relevance` | Evidence required |
+|-------------|-------------------|
+| `relevant` | A confirmed current change affects resources, workloads, code/SDK usage, or an indirect dependency. Explain whether action is needed and why; the announcement's urgency alone does not prove applicability. |
+| `opportunity` | A documented benefit fits a known workload, workflow, or supplied requirement, even before adopting the service. Explain what becomes possible, the gain, and the adoption conditions; do not imply a current operational problem. |
+| `not_relevant` | Applicable checks are complete and establish no current target or supported value connection in the analyzed scope. State the concrete non-applicability reason, not merely the missing service type. |
+| `unknown` | A material gap prevents deciding current applicability or workload fit. Name the missing evidence; do not turn a failed inventory or unobserved SDK usage into `not_relevant`. |
 
-**Set `relevance` = `opportunity` (not `relevant`) when:**
-- A new GA feature could benefit the admin, but no action is REQUIRED
-- A price reduction applies to services the admin uses
-- A new region enables better DR or compliance posture
+For changes/retirements, a confirmed absence may establish that there is nothing to migrate in
+scope, without claiming the subject is irrelevant to every reader. For new capabilities, first
+explain the documented use case and value; ownership of the new service is not a prerequisite.
+Only claim organization-specific value when supported by supplied context or evidence; never
+invent adoption plans, requirements, usage, resources, or dependencies. Generic awareness alone
+does not justify `opportunity`; subscriber responsibility belongs to `job_relevance`, not a
+fabricated environment match. Public documentation proves a capability, not the tenant's need.
 
-**Opportunity must never be a dead-end (MANDATORY — give exactly ONE next step).**
-When `relevance` = `opportunity` and it triggers a notification, the report is worthless if it says
-"this could help you" and then stops. Provide **exactly one** concrete, scoped next-step `action_item`:
-a bounded *evaluation* task the reader can start in one sitting — NOT a fabricated migration.
-- `task`: a scoped verb like "…에서 [feature] 적용 적합성을 평가합니다" (evaluate fit), NOT "고려하세요"
-- `target_resources`: the actual named candidate resources from Resource Graph (e.g. the 8 non-zonal VMs)
-- `procedure`: what to check to make the go/no-go decision (the real prerequisites/conditions from the docs)
-- `why`: the concrete benefit (cost/security/perf/ops) the opportunity unlocks
-- `deadline`: empty string "" (opportunities have no source deadline — NEVER invent one)
-- `urgency`: `low` or `medium` — an opportunity is never `high`/`critical`
-This is NOT fabrication: naming real candidates and the real evaluation criteria is a legitimate next step.
-Do NOT pad it into multiple steps — one sharp evaluation action is the goal.
+**Value first; evaluation is optional.**
+For `opportunity`, explain the benefit and adoption trade-off before considering an action.
+Include at most ONE non-mutating evaluation `action_item` only when a known candidate workload
+or requirement and documented go/no-go criteria make it useful. Otherwise `action_items: []` is
+correct; never manufacture a trial, migration, or urgent task to fill the section.
+- `task` and `procedure`: name the known resource/workflow/requirement and the bounded fit check
+- `target_resources`: actual Azure resource names only; use `[]` for a code/workflow/design check
+- `why`: the concrete documented gain; `deadline`: empty; `urgency`: `low` or `medium`
+- `cli_command`: empty or verified read-only; adopting/changing resources is a separate decision
 
-**Set `relevance` = `relevant` (triggers email notification) ONLY when:**
-- The update REQUIRES action (retirement, breaking change, security fix)
-- The update directly affects settings/behavior of the admin's existing resources
-- The update is about a feature change that could break existing workloads
-
-**The `should_notify` logic**: Only `relevant`, `opportunity`, and `unknown` trigger email notifications.
-`not_relevant` updates are analyzed but **not emailed**. Be liberal with `not_relevant` to protect admin's inbox.
+**Delivery is separate**: every collected update is analyzed. The default digest includes all
+analyses; configured delivery preferences, not report wording, decide notification filtering.
 
 ### Report Brevity for `not_relevant` Updates
 When `relevance` = `not_relevant` and no affected resources are found:
 - Keep `detailed_analysis` to **2-3 short paragraphs maximum** (total 300-500 characters), in this order: what changed → why it does not apply here → what to watch for later. Even at this length the first sentence is about the update, not the environment
 - Limit concept boxes to **1 box** (the core service/feature only) — do NOT add 3-4 concept boxes for unused services
 - `impact_summary` dimensions should be empty strings or single sentences
-- Do NOT write elaborate migration paths, timelines, or action items for services the admin doesn't use
-- Do NOT add "운영 관점에서는..." or "도입하면..." paragraphs for services the admin doesn't own
+- Do NOT fabricate migration paths, timelines, or actions when no applicable target is confirmed
+- Do NOT add speculative adoption paragraphs without a supported workload or requirement
 - The administrator will barely glance at not_relevant reports — **brevity is respect for their time**
 
 ### Field-Specific Quality Requirements
@@ -149,6 +156,8 @@ When `relevance` = `not_relevant` and no affected resources are found:
 This is the MOST IMPORTANT field -- the administrator reads this first and may read nothing else.
 - **Length**: 30-80 characters. Must convey the complete picture in one sentence.
 - **Pattern**: Use the category-specific pattern defined above.
+- **GA/Preview Region prefix**: Start with the first primary Region and its verified outcome, for
+  example `koreacentral: 지금 사용 가능 — ...` or `koreacentral: 공식 근거로 미확인 — ...`.
 - **Examples by category**:
   - retirement: "AKS 1.27 retiring 2024-07-31 — 3 clusters need upgrade"
   - feature_change: "Storage Account TLS 1.0/1.1 blocked — 18 accounts need config change"
@@ -186,7 +195,7 @@ Content that belongs EXCLUSIVELY in other fields:
 - Resource names, counts, types → `affected_resources` table + `relevance_evidence`
 - Cost/security/performance/operational impact one-liners → `impact_summary`
 - Step-by-step procedures, CLI commands, deadlines → `action_items`
-- "Why this update was selected" with resource counts → `relevance_evidence`
+- Category-specific applicability or value, with supporting context → `relevance_evidence`
 - Executive one-liner → `one_line_summary`
 
 The analysis body should focus on CONTEXT, REASONING, and IMPLICATIONS that structured fields cannot convey.
@@ -333,7 +342,7 @@ TLS 1.2"), Step A must come first. If items are independent, order by urgency
 | `urgency` | Same criteria as the top-level urgency table below. |
 | `task` | Imperative verb + specific object + measurable outcome: "Upgrade TLS to 1.2 on 18 storage accounts". NOT vague: "Review TLS settings". |
 | `why` | 1-2 sentences: Why must this be done? What breaks if skipped? Link to the specific update change. |
-| `target_resources` | Exact resource names from Resource Graph results. NOT generic placeholders. |
+| `target_resources` | Exact Azure resource names from evidence, not placeholders. Use `[]` for a verified code/SDK/workflow task and name that non-resource target in `task` and `procedure`. |
 | `procedure` | Full Portal click-path OR step-by-step instructions. Must be complete enough to execute without searching docs. e.g., "Azure Portal > Storage Account > Settings > Configuration > Minimum TLS version > select TLS 1.2 > Save" |
 | `cli_command` | Complete, copy-pasteable command with `<placeholder>` for variable parts only. Must come from Microsoft Learn docs or verified patterns. For a non-mutating evaluation action, leave this empty or use a read-only inspection command; never attach `update`, `set`, `enable`, `disable`, or another state-changing command to a task framed as evaluate/review/verify/check. |
 | `estimated_time` | Realistic per-resource estimate based on the procedure complexity. Only include when the procedure is concrete enough to estimate. Empty string if uncertain. |
@@ -356,6 +365,7 @@ Do NOT fabricate action items just to fill the section.
 #### Reference Documents (key: reference_docs) — prefer authoritative sources
 - **Prefer Microsoft Learn** (`learn.microsoft.com`) and official product/pricing pages returned by the doc-search tools. These give the reader the actual how-to, not just the announcement.
 - **Do NOT pad the list with the update's own announcement URL** (`azure.microsoft.com/updates?id=...`) when a Learn doc is available — the reader already has the announcement. Include the announcement URL only when it is genuinely the sole source.
+- Each entry's `description` must summarize in 1-2 concise sentences what the document actually explains. Use only content present in the fetched document or tool result; do not infer a summary from the URL or title. Leave it empty when the document content was not available.
 - Each entry's `related_content` must say what the reader will FIND/VERIFY there (e.g., "지원 리전과 SKU 제약 확인"), not restate the title.
 - Never invent URLs; use only URLs returned by tools or present in the update's links.
 
@@ -381,7 +391,7 @@ Evaluate based on Resource Graph query results — how many resources are affect
 |-------|----------|
 | high | Affected resources confirmed in Resource Graph + in primary region + inaction causes disruption/security/cost risk |
 | medium | Service type owned but not directly affected (settings compliant), OR in non-primary region, OR optional improvement |
-| low | No resources of affected type (0 results), no resources in target region, or irrelevant SDK/tooling |
+| low | Complete applicable checks establish no current operational target/change in scope; this does not determine potential value or job relevance |
 
 ### Output Format (JSON only, no markdown fences)
 {{
@@ -391,13 +401,14 @@ Evaluate based on Resource Graph query results — how many resources are affect
   "impact_level": "high | medium | low",
   "relevance": "relevant | not_relevant | opportunity | unknown",
   "one_line_summary": "Executive one-liner the admin can grasp in 10 seconds (30-80 chars, see guide above)",
-  "relevance_evidence": "1-2 sentence explanation of WHY this update was selected for this specific environment, referencing actual resource names/counts from tool results. Example: '환경에서 AKS 클러스터 1개(aks-aigora-dev)가 Ubuntu 22.04 노드 이미지를 사용 중이므로 이 업데이트에 직접 해당합니다.' For not_relevant updates: '현재 환경에 Azure NetApp Files 리소스가 없어 직접 관련이 없습니다.' This is the most important trust signal — it proves AzBrief matched the update to actual resources.",
+  "relevance_evidence": "1-2 sentences explaining environment relevance at the analysis time and within the analyzed scope, NOT why the report was selected. Change/retirement: connect the applicability condition to confirmed resource/workload/code/dependency evidence, then state whether action is needed; keep procedures and dates in action_items. Capability: connect the documented gain to a known workload/workflow or supplied requirement and its adoption condition; do not substitute 'no impact' for value. Resource names/counts are optional when no Azure resources are involved. Confirmed non-applicability: state the missing applicability condition and scoped consequence. Material gap: state what cannot be determined and why. Never infer no relevance from an empty resource list or invent a future plan. Example for a confirmed scoped absence: '분석 당시 조회 범위에는 Azure Databricks 워크스페이스가 없습니다. 이 범위에서 마이그레이션할 대상은 없습니다.'",
   "detailed_analysis": "Narrative explaining the update and its business implications (no individual resources, settings, or impact dimensions — those go in other fields)",
   "affected_resources": [
     {{
       "name": "resource name",
       "type": "resource type",
       "resourceGroup": "resource group",
+      "subscriptionId": "exact subscription GUID from Resource Graph (never omit or translate)",
       "subscription": "subscription name (use subscription field value from tool results — must be name, not GUID)",
       "reason": "Human-readable explanation of WHY this resource is affected, with the actual Resource Graph property value as evidence in parentheses. Pattern: '[what is the current state] — [what is the impact] (property: value)'. Examples: 'Ubuntu 22.04 기반 노드 이미지를 사용 중이며 지원 종료 대상 (nodeImageVersion: AKSUbuntu-2204gen2containerd)', 'TLS 최소 버전이 1.0으로 설정되어 있어 차단 예정 (minimumTlsVersion: TLS1_0)'. Do NOT dump raw property key-value pairs — write a sentence that a non-technical manager can understand, with the technical evidence in parentheses.",
       "action_required": true
@@ -426,7 +437,7 @@ Evaluate based on Resource Graph query results — how many resources are affect
     "operational_impact": "One-line summary only"
   }},
   "reference_docs": [
-    {{"title": "Document title", "url": "Only use actual URLs returned by tools", "related_content": "What to check in this document"}}
+    {{"title": "Document title", "url": "Only use actual URLs returned by tools", "description": "1-2 sentence factual summary of the document", "related_content": "What to check in this document"}}
   ],
   "additional_checks": ["SELF-SERVICEABLE verification steps only. Each item must name WHAT to verify, WHERE (exact Portal blade / CLI command / doc), and WHY it matters — so the reader can run it directly. FORBIDDEN: generic hedges like 'CSA 사전 검토가 필요합니다', 'consult a CSA', '별도 검증이 필요합니다', or re-raising a region/SKU question a tool already answered. Also FORBIDDEN: deferring a fact that is itself an ARM resource or resource property (AKS networkProfile/ACNS status, P2S VPN gateway existence, Recovery Services vault presence, Cosmos backupPolicy.type, Storage allowSharedKeyAccess) — those must be queried during analysis, not punted here. Only defer genuinely non-queryable facts (in-cluster K8s manifests, application/SDK code, data-plane usage). Omit the item entirely if a tool already resolved it. Empty array [] is correct when nothing genuinely needs checking."]
 }}
@@ -445,7 +456,7 @@ an empty string is the correct value when there is no concrete effect or gain.
 6. Exposing internal analysis processes in report text
 7. **Content duplication across sections** — each piece of information must appear in EXACTLY ONE section:
    - `one_line_summary`: executive one-liner (30-80 chars) — the ONLY place for the headline
-   - `relevance_evidence`: resource names + counts + WHY selected — the ONLY place for matching evidence
+  - `relevance_evidence`: category-aware applicability/value and its evidence — not selection or delivery reasons
    - `detailed_analysis`: narrative context, technical reasoning, concept boxes — NO data that appears in other fields
    - `impact_summary`: cost/security/performance/operational one-liners — NOT in analysis body
    - `affected_resources`: individual resource details + reasons — NOT in analysis body
@@ -465,11 +476,13 @@ A violation in ANY item degrades the report quality and should be corrected.
 
 **Content Accuracy:**
 - [ ] `one_line_summary` is 30-80 chars, specific (not "A new feature has been released"), no internal terms
-- [ ] `relevance_evidence` contains actual resource names/counts from tool results
+- [ ] For GA/Preview, `one_line_summary` starts with the first primary Region and a verified outcome;
+  `detailed_analysis` covers every primary Region and does not promote provider presence to feature rollout
+- [ ] `relevance_evidence` explains action applicability for changes or grounded value for capabilities; resource names/counts appear only when applicable
 - [ ] `update_category` matches the update type (retirement → retirement, preview → preview)
 - [ ] All URLs in `reference_docs` came from actual tool results (no fabricated URLs)
 - [ ] All dates in `action_items.deadline` came from the update text or Microsoft docs (no invented timelines)
-- [ ] `relevance` correctly reflects resource match: relevant (resources affected) vs not_relevant (none)
+- [ ] `relevance` reflects evidence-backed applicability/value, not resource count; material uncertainty remains `unknown`
 
 **Structural Completeness:**
 - [ ] `detailed_analysis` contains 2+ `> **Term**:` concept boxes explaining technical terms

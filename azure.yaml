@@ -7,7 +7,7 @@ requiredVersions:
 services:
   azbrief-agents:
     host: azure.ai.project
-    endpoint: https://aif-azbrief-kzfj3xb4.services.ai.azure.com/api/projects/azbrief-agents
+    endpoint: ${AZURE_AI_PROJECT_ENDPOINT}
   azbrief-analysis-hosted:
     host: azure.ai.agent
     project: .

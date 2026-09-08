@@ -16,6 +16,7 @@ entry point입니다.
 | [`evaluate_report.py`](evaluate_report.py) | 단건 rule-based + G-Eval 평가와 반복 rewrite | Azure/Foundry 호출, `eval_runs/` 기록 |
 | [`evaluate_batch.py`](evaluate_batch.py) | category 층화 fleet/holdout 평가 | Azure/Foundry 호출, `eval_runs/` 기록 |
 | [`quality_campaign.py`](quality_campaign.py) | 기간 snapshot, diagnosis/holdout, A/A, Hosted 진단, paired release gate | Azure/Foundry 호출, `eval_runs/` 기록 |
+| [`foundry_evaluation.py`](foundry_evaluation.py) | 완료된 campaign report의 Foundry cloud evaluator 교차 검증 | Foundry eval definition/run 생성, source run 아래 결과 기록 |
 | [`evaluate_archive.py`](evaluate_archive.py) | 10k 불변 버전의 cursor/filter/integrity/PII/latency 평가 | 임시 File backend, `eval_runs/archive_*` 기록 |
 | [`run_quality_loop.py`](run_quality_loop.py) | mock 결과의 빠른 deterministic 품질 loop | 로컬 artifact 가능 |
 | [`optimize_prompt.py`](optimize_prompt.py) | 고정 sample로 한국어 prompt A/B 최적화 | prompt source를 수정할 수 있음 |
@@ -51,6 +52,7 @@ python -m scripts.quality_campaign run --campaign eval_runs/campaign-q3 --tag ba
 python -m scripts.quality_campaign run --campaign eval_runs/campaign-q3 --tag baseline-a --runtime local --split diagnosis --concurrency 1 --use-azd-env --resume-run eval_runs/campaign-q3/runs/<interrupted-run>
 python -m scripts.quality_campaign compare --baseline <baseline-a> --candidate <baseline-b> --mode aa --output eval_runs/aa-noise.json
 python -m scripts.quality_campaign compare --baseline <baseline-run> --candidate <candidate-run> --noise-floor 0.15 --output eval_runs/comparison.json
+python -m scripts.foundry_evaluation --run-dir <campaign>/runs/<completed-run> --use-azd-env
 ```
 
 `summary.json`은 source/worktree, dataset, Agent roster, Hosted contract lineage와 semantic,
@@ -70,6 +72,15 @@ byte도 포함합니다. Campaign manifest의 schema/rubric/threshold/Hosted con
 최종 case 오류, critical flaw, blocked/unverified action뿐 아니라 G-Eval dimension 오류도
 non-compensating blocker이며 candidate 비교에서 증가하면 평균 점수와 관계없이 regression입니다.
 
+`foundry_evaluation`은 성공한 canonical report와 공개 update context만 inline dataset으로 보내고
+email-like 값, raw tenant evidence, subscriber data, private reasoning은 보내지 않습니다. 기본 evaluator는
+`coherence`, `fluency`, `relevance`, `task_adherence`입니다. `indirect_attack`은 지원 리전에서만
+`--evaluators`로 opt-in합니다. 기본 실행은 `run_valid=true`인 완료 run만 받으며, smoke 진단에서만
+`--allow-unvalidated-run`을 사용합니다. Foundry 결과는 독립 보조 신호이고 local faithfulness,
+trajectory, action-safety blocker를 상쇄하지 않습니다. `--eval-id`는 item schema, evaluator 순서,
+data mapping, judge deployment가 현재 요청과 정확히 같은 definition만 재사용하며, 하나라도 다르면
+원격 run을 만들기 전에 fail closed합니다.
+
 아카이브의 pagination과 검색 완전성은 외부 호출 없이 재현합니다.
 
 ```powershell
@@ -79,6 +90,8 @@ non-compensating blocker이며 candidate 비교에서 증가하면 평균 점수
 ## 운영 원칙
 
 - 모든 명령은 `.venv` 활성화 뒤 실행합니다.
+- 일회성 로그 파서, 검증 scratch script와 테스트 산출물은 repository root에 두지 않습니다.
+  재사용 가능한 도구만 이 디렉터리에 추가하고, 임시 코드는 `scripts/.tmp-*` 아래에서 사용합니다.
 - `test_local analyze --jsonl`은 이메일을 건너뛰고 record를 append합니다. 재실행하면 같은 파일에
   누적된다는 점을 고려합니다.
 - live RSS는 최근 약 200건의 rolling window입니다. 과거 기간은 crawler가 만든 local history와

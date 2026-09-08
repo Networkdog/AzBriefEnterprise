@@ -37,6 +37,7 @@ import structlog
 from src.agent.resilience import CircuitBreaker, parse_json_resilient, retry_with_backoff
 from src.config import get_settings
 from src.email.templates import CAPABILITY_CATEGORIES
+from src.i18n.labels import get_labels
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from src.agent.analyzer import AnalysisResult
@@ -105,13 +106,14 @@ _ACTIONABILITY = GEvalDimension(
         "opening the Azure Portal or searching further. Penalize any gap against the rubric."
     ),
     edge_cases=(
-        "If the source data shows ZERO affected resources or no constraint, a report that "
-        "transparently states this and provides only forward monitoring guidance is CORRECT "
-        "— do NOT deduct for 'missing commands'. Do NOT fabricate deadlines or commands. "
-        "For a Capability-family update (카테고리 new_feature / new_service / region_expansion / "
-        "preview / sdk_tooling) the useful answer is an OPPORTUNITY, not an action list: what "
-        "becomes possible, for which named candidate resources, at what adoption cost, and "
-        "whose responsibility it is. Asserting that such an update has no operational impact or "
+        "For changes/retirements, judge confirmed applicability, the required action, and real "
+        "deadlines. A confirmed scoped absence needs no fabricated migration or command; known "
+        "code/SDK usage or dependencies can still require action without ARM resource rows. "
+        "For a Capability-family update (new_feature / new_service / region_expansion / "
+        "preview / sdk_tooling): Value first, evaluation optional. Judge what becomes possible, "
+        "its gain for a known workload/workflow or supplied requirement, and adoption conditions "
+        "and trade-offs. No owned deployment or mandatory trial is required. A conditional public "
+        "use case is not proof of the tenant's need. Asserting that a capability has no operational impact or "
         "no risk if skipped is a tautology (a new capability never changes existing behaviour) "
         "— treat it as a substantive gap, not as helpful reassurance."
     ),
@@ -147,7 +149,11 @@ _FAITHFULNESS = GEvalDimension(
     edge_cases=(
         "Transparently admitting a limit — e.g. 'compatibility in this environment cannot be "
         "confirmed with the currently collected data' — is a POSITIVE faithfulness signal, "
-        "not a deduction."
+        "not a deduction. An empty ARM inventory proves neither no relevance nor no SDK/code "
+        "usage. Check scoped/time-bounded absence separately from indirect dependencies and "
+        "potential value. Flag invented adoption plans, requirements, or tenant usage, and "
+        "failed/truncated queries presented as confirmed absence. Public feature documentation "
+        "supports conditional benefits, not claims that this organization needs them."
     ),
 )
 
@@ -799,7 +805,7 @@ class GEvalJudge:
 
         evidence = getattr(result, "relevance_evidence", "")
         if evidence:
-            parts.append(f"## 관련성 근거\n\n{evidence}")
+            parts.append(f"## {get_labels(language)['relevance_evidence']}\n\n{evidence}")
 
         analysis = getattr(result, "relevance_reason", "")
         if analysis:

@@ -23,6 +23,7 @@ from typing import Optional
 from fastapi import HTTPException, Request
 from structlog import get_logger
 
+from src.admin.configuration import get_admin_configuration
 from src.config import get_settings
 
 logger = get_logger()
@@ -137,7 +138,17 @@ async def require_admin(request: Request) -> AdminPrincipal:
         )
 
     allowed = settings.get_admin_allowed_principals()
-    if not allowed or not (principal.identifiers & allowed):
+    if principal.identifiers & allowed:
+        logger.info("admin_auth_ok", path=request.url.path, principal=principal.display)
+        return principal
+
+    try:
+        allowed = await get_admin_configuration().get_admin_principals()
+    except Exception as exc:
+        logger.error("admin_configuration_read_failed", error=type(exc).__name__)
+        raise HTTPException(status_code=503, detail="Could not read administrator configuration.")
+
+    if not (principal.identifiers & allowed):
         logger.warning(
             "admin_auth_forbidden",
             path=request.url.path,

@@ -149,6 +149,16 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   - **Importance** — the update's inherent significance in the Azure ecosystem
   - **Impact** — the effect on your actual resources, from Resource Graph queries
   - **Job relevance** — the fit to the subscriber's specific role
+- **Category-aware environment relevance** — Changes and retirements explain applicability,
+  required action, and source-backed deadlines. New features and services explain documented value
+  for known workloads or requirements, adoption conditions, and trade-offs; evaluation is optional.
+  Not owning the service does not establish irrelevance or SDK/code non-use. Material gaps remain
+  explicit, and hypothetical use cases never become invented adoption plans. Role/focus profiles
+  are assessed even without affected resources. Archive, single/digest email, and evaluation output
+  share the **Environment Relevance** heading (`환경 연관성` / `環境との関連性`); the existing
+  `relevance_evidence` field and immutable archive documents are unchanged. Updated generation
+  guidance applies to new analyses after the Hosted code and affected Prompt Agent versions deploy;
+  the control-plane release changes the display heading, not historical report text.
 - **Tenant-wide correlation** — Resource Graph queries across every accessible subscription
 - **Verified commands from the docs** — The Learn page an update links to is fetched and its
   `<pre>` command blocks are extracted separately from the prose, so real `az`/PowerShell
@@ -626,7 +636,7 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
   azd env new production
   azd env set AZURE_SUBSCRIPTION_ID '<subscription-id>'
   azd env set AZURE_LOCATION 'koreacentral'
-  azd env set AZURE_RESOURCE_GROUP 'RG-AZBRIEF-ENTERPRISE-2'
+  azd env set AZURE_RESOURCE_GROUP '<resource-group>'
   azd env set AZURE_MCP_CONTAINER_APP_NAME 'ca-azbrief-mcp'
   azd env set FOUNDRY_PROJECT_RESOURCE_ID '<project-arm-resource-id>'
   azd env set SERVICE_MANAGEMENT_REFERENCE ''
@@ -688,6 +698,8 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
   azd deploy azbrief-analysis-hosted --no-prompt
   azd ai agent show --output json
   ```
+  `azure.yaml` resolves the Foundry project through `AZURE_AI_PROJECT_ENDPOINT`; it never embeds a
+  tenant-specific project hostname in the public repository.
 5. **Grant permissions to the Hosted Agent identity** — Find the new Hosted Agent identity
    principal ID through `azd ai agent show --output json` or the Foundry portal. Grant Reader on
    every subscription to be analyzed and only the data-plane roles required by tools such as Log
@@ -712,11 +724,18 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 
 | Goal | Method |
 |-------------|------|
-| Change the run time | Redeploy with `scheduleCronExpression` (UTC cron, default `0 2 * * *`) |
-| Run immediately | Use the deployment output's `runNowCommand` (`az containerapp job start`) or the run button in `/admin` |
+| Add a daily run time | Add an `HH:MM` UTC time under **Automatic runs** in `/admin`; it is stored in the private Admin configuration blob |
+| Change the protected default time | Redeploy with `scheduleCronExpression` (UTC cron, default `0 2 * * *`) |
+| Change the dispatcher cadence | Redeploy with `scheduleDispatcherCronExpression` (default `*/5 * * * *`); this only checks and claims due schedules |
+| Run immediately | Use the run button in `/admin` and select checkpoint, date range, recent count, Update ID, or Azure Update URL. `runNowCommand` starts the Job dispatcher and runs only when a schedule is due |
 | Adjust the maximum duration of one run | Set `jobReplicaTimeoutSeconds` (12 hours by default, 7 days maximum). `RUN_TIME_BUDGET_S` is set automatically to one hour less |
 | Reset the analysis window | Delete the blob at the output's `checkpointBlobUrl` to return to the default 24-hour window |
 | Review execution history | Use Log Analytics or `az containerapp job execution list` |
+
+The dispatcher uses an ETag-protected lease in `admin-config.json`, so overlapping Job executions
+cannot claim the same schedule occurrence. Manual Admin selections never advance the scheduled
+digest checkpoint; a historical or single-update investigation therefore cannot skip work in the
+next automatic digest.
 
 > The Job does not retry (`replicaRetryLimit: 0`). A failed execution did not move the checkpoint,
 > so the next schedule covers the same window again without paying for the same analysis twice in
@@ -807,17 +826,31 @@ AzBrief never constructs a direct Azure OpenAI/OpenAI chat client.
 
 ## Admin console
 
-Use `https://<container-app>/admin` to inspect configuration status, subscribers, recent Azure
-updates, and run history, or to start analysis immediately.
+Use `https://<container-app>/admin` to inspect a compact configuration checklist, subscribers,
+automatic schedules, recent Azure updates, and run history. Manual analysis accepts the scheduled
+checkpoint, an inclusive date range, the newest N updates, one numeric Update ID, or one Azure
+Update URL. The Admin and Archive shells keep bounded main content centered in wide browser
+viewports while remaining fluid on mobile. Admin operations use distinct full-width panels; each
+mutation button stays in the same bordered action surface as its inputs, with the resulting list
+under a separate subsection heading. Manual runs default to analysis and Archive persistence
+without email delivery; selecting **Digest email** opts in to delivery, while dry-run only resolves
+targets and cannot request email. Run diagnostics expose counts, Archive/checkpoint/delivery state,
+and a bounded error. A recent update can populate the manual-run URL directly. Console-managed
+subscriber profiles can be edited in place; deployment-defined subscribers remain protected.
+Management tables keep the action column first so mobile operators can act before horizontal
+scrolling through secondary fields.
 
 | Path | Description |
 |------|------|
 | `GET /admin` | Admin console (server-rendered, no external resources, nonce-based CSP) |
 | `GET /api/admin/status` | Effective configuration summary without secrets |
-| `GET /api/admin/subscribers` | Subscriber list |
+| `GET /api/admin/subscribers` · `POST /api/admin/subscribers` | List or add subscribers |
+| `PUT /api/admin/subscribers/{email}` · `DELETE /api/admin/subscribers/{email}` | Edit or remove a console-managed subscriber |
+| `GET /api/admin/schedules` | Protected deployment cron plus Admin-managed daily UTC times |
+| `POST /api/admin/schedules` · `DELETE /api/admin/schedules/{time}` | Add or remove a managed daily UTC time |
 | `GET /api/admin/updates` | Recent Azure updates |
 | `GET /api/admin/runs` · `GET /api/admin/runs/{id}` | Run history and one-run lookup |
-| `POST /api/admin/runs` | Start analysis, limited to one concurrent run |
+| `POST /api/admin/runs` | Start one bounded manual selection, limited to one concurrent run |
 | `POST /mcp` | MCP Streamable HTTP tools for recent updates, Hosted analysis, and digest status |
 
 Container Apps built-in authentication (EasyAuth) handles sign-in. Its sidecar validates the
@@ -861,6 +894,11 @@ browser archive.
 
 Job relevance is subscriber-specific delivery context and remains email-only. It is excluded from
 Archive documents, Blob metadata, list/detail API responses, browser views, and query filters.
+
+Archive details render the canonical narrative with the same restricted Markdown vocabulary used
+by email: paragraphs, headings, lists, blockquotes for `> **Term**:` concept boxes, fenced and inline
+code, bold text, and allow-listed links. The browser creates DOM nodes without `innerHTML`, preserving
+the report structure without executing report-supplied HTML.
 
 | Path | Description |
 |---|---|
@@ -966,7 +1004,7 @@ reports what is still untranslated.
 | `FOUNDRY_PROJECT_ENDPOINT` | Foundry project endpoint | Yes | — |
 | `FOUNDRY_HOSTED_AGENT_NAME` | Complete analysis runtime invoked by Container App and scheduler | Yes¹ | — |
 | `FOUNDRY_HOSTED_AGENT_TIMEOUT_S` | Timeout for one complete Hosted Agent operation | | `1800` |
-| `AZBRIEF_DATA_DIR` | Hosted Agent history/pattern directory; set automatically to `$HOME/.azbrief` | | runtime-managed |
+| `AZBRIEF_DATA_DIR` | Hosted Agent history, pattern, and KQL runtime-cache directory; set automatically to `$HOME/.azbrief` | | runtime-managed |
 | `FOUNDRY_COORDINATOR_AGENT_NAME` | Evidence planning and bounded task revision Prompt Agent | Yes² | — |
 | `FOUNDRY_RESOURCE_GRAPH_AGENT_NAME` | Resource Graph KQL authoring, repair, and result-analysis Prompt Agent | Yes² | — |
 | `FOUNDRY_AZURE_MCP_AGENT_NAME` | Read-only Azure MCP tenant-analysis Prompt Agent | Yes² | — |
@@ -1045,6 +1083,7 @@ GET  /api/archive/analyses/{id}    Validated canonical analysis document
 GET  /admin                        Admin console (Entra ID sign-in)
 GET  /api/admin/status             Effective configuration — no secrets
 GET  /api/admin/subscribers        Subscriber list
+PUT  /api/admin/subscribers/{email} Edit a console-managed subscriber
 GET  /api/admin/updates            Recent Azure updates
 GET  /api/admin/runs               Run history
 GET  /api/admin/runs/{id}          Single run
@@ -1161,6 +1200,11 @@ python -m scripts.evaluate_archive --records 10000
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
 
 ## Project structure
+
+The repository root is reserved for standard project metadata and deployment entry points such as
+`Dockerfile`, `azure.yaml`, and `hosted_agent_main.py`. Reusable developer utilities belong under
+`scripts/`; one-off log parsers, test screenshots, browser dumps, session logs, and deployment logs
+are ignored and must not be committed.
 
 ```
 AzBriefEnterprise/

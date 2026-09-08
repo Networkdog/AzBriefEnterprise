@@ -17,6 +17,8 @@ import asyncio
 import os
 import sys
 import uuid
+from datetime import datetime
+from typing import Optional
 
 from structlog import get_logger
 
@@ -74,11 +76,51 @@ async def run_scheduled_digest(dry_run: bool = False) -> int:
     return 0
 
 
+async def dispatch_scheduled_digest(
+    dry_run: bool = False,
+    now: Optional[datetime] = None,
+) -> int:
+    """Run only when one durable automatic schedule occurrence is due."""
+    from src.admin.configuration import get_admin_configuration
+
+    configuration = get_admin_configuration()
+    try:
+        lease = await configuration.claim_due_automatic_run(now=now)
+    except Exception as exc:
+        logger.error("scheduled_dispatch_claim_failed", error=str(exc))
+        return 1
+
+    if lease is None:
+        logger.info("scheduled_dispatch_idle")
+        return 0
+
+    logger.info(
+        "scheduled_dispatch_claimed",
+        schedule_key=lease.schedule_key,
+        scheduled_for=lease.scheduled_for.isoformat(),
+    )
+    result = 1
+    try:
+        result = await run_scheduled_digest(dry_run=dry_run)
+    except Exception as exc:
+        logger.error("scheduled_dispatch_run_failed", error=str(exc))
+    try:
+        await configuration.release_automatic_run(lease)
+    except Exception as exc:
+        logger.error("scheduled_dispatch_release_failed", error=str(exc))
+        return 1
+    return result
+
+
 def main() -> None:
     """Console entry point for the Container Apps Job."""
     setup_logging(file_enabled=False)
     dry_run = os.environ.get("DRY_RUN", "false").strip().lower() == "true"
-    sys.exit(asyncio.run(run_scheduled_digest(dry_run=dry_run)))
+    dispatch_enabled = (
+        os.environ.get("SCHEDULE_DISPATCH_ENABLED", "false").strip().lower() == "true"
+    )
+    run = dispatch_scheduled_digest if dispatch_enabled else run_scheduled_digest
+    sys.exit(asyncio.run(run(dry_run=dry_run)))
 
 
 if __name__ == "__main__":

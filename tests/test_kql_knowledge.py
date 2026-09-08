@@ -7,6 +7,7 @@ import tempfile
 import pytest
 
 from src.agent import kql_knowledge
+from src.agent.scope import AnalysisScope, analysis_scope_context
 
 
 @pytest.fixture(autouse=True)
@@ -39,6 +40,11 @@ def temp_kb_path():
 class TestKQLKnowledge:
     """Tests for KQL knowledge base module-level functions."""
 
+    def test_checked_in_seed_contains_no_runtime_failures(self):
+        seed = json.loads(kql_knowledge._SEED_PATH.read_text(encoding="utf-8"))
+
+        assert seed["failed_queries"] == []
+
     def test_record_schema(self, temp_kb_path: str):
         """Recording a schema should persist and be retrievable."""
         resource_type = "microsoft.compute/virtualmachines"
@@ -69,6 +75,21 @@ class TestKQLKnowledge:
         kb = kql_knowledge._load()
         assert kb is not None
 
+    def test_runtime_discoveries_do_not_modify_the_checked_in_seed(self, monkeypatch, tmp_path):
+        monkeypatch.setenv("AZBRIEF_DATA_DIR", str(tmp_path))
+        kql_knowledge._cache_path = None
+        kql_knowledge._cache = None
+        seed_before = kql_knowledge._SEED_PATH.read_bytes()
+
+        assert kql_knowledge.get_known_schema("microsoft.storage/storageaccounts")
+        kql_knowledge.record_failed_query("Resources | take nope", "ParserFailure")
+
+        runtime_path = tmp_path / "kql_knowledge_base.json"
+        assert runtime_path.exists()
+        assert kql_knowledge._SEED_PATH.read_bytes() == seed_before
+        runtime = json.loads(runtime_path.read_text(encoding="utf-8"))
+        assert runtime["failed_queries"][-1]["query"] == "Resources | take nope"
+
     def test_schema_case_insensitive(self, temp_kb_path: str):
         """Schema lookups should be case-insensitive on resource type."""
         kql_knowledge.record_schema("Microsoft.Compute/virtualMachines", ["name", "location"])
@@ -89,3 +110,25 @@ class TestKQLKnowledge:
         # After reset, schemas should be empty
         result = kql_knowledge.get_known_schema("microsoft.web/sites")
         assert result == [] or result is None
+
+    def test_bounded_scope_neither_reads_nor_writes_shared_knowledge(self, temp_kb_path: str):
+        resource_type = "microsoft.storage/storageaccounts"
+        canonical_query = "Resources | where type =~ 'microsoft.storage/storageaccounts'"
+        kql_knowledge.record_schema(resource_type, ["properties.minimumTlsVersion"])
+        kql_knowledge.record_successful_query(resource_type, "canonical", canonical_query)
+        before = json.loads(open(temp_kb_path, encoding="utf-8").read())
+
+        with analysis_scope_context(AnalysisScope(management_groups=["platform-mg"])):
+            assert kql_knowledge.build_context_for_prompt() == ""
+            assert kql_knowledge.get_known_schema(resource_type) == []
+            assert kql_knowledge.get_known_queries(resource_type) == []
+            kql_knowledge.record_schema(resource_type, ["properties.scopeSecret"])
+            kql_knowledge.record_successful_query(
+                resource_type,
+                "scoped",
+                canonical_query + " | where name == 'scope-secret'",
+            )
+            kql_knowledge.record_failed_query("Resources | take 7", "scoped failure")
+
+        after = json.loads(open(temp_kb_path, encoding="utf-8").read())
+        assert after == before

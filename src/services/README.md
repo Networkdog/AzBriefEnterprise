@@ -18,6 +18,7 @@ action 우선순위 같은 business decision은 `src/agent`가 소유합니다.
 | [`community_insights.py`](community_insights.py) | Azure Weekly의 topic-matched practitioner caveat cache |
 | [`checkpoint.py`](checkpoint.py) | inert/file/blob watermark store와 forward-only conditional write |
 | [`archive.py`](archive.py) | inert/file/blob canonical analysis store, create-only write, metadata cursor listing |
+| [`runtime_inventory.py`](runtime_inventory.py) | Admin readiness용 ARM resource와 Foundry Agent 최신 version safe projection |
 | [`__init__.py`](__init__.py) | enabled subscription discovery와 process cache |
 
 ## 사용 예시
@@ -58,10 +59,14 @@ billing account가 없다는 뜻으로 바꾸지 않습니다.
 
 ## 불변식
 
-- Azure credential과 SDK/HTTP client는 lazy 생성합니다.
+- Azure credential과 SDK/HTTP client는 lazy 생성하며, 병렬 readiness 조회에서도 shared credential은
+  lock으로 한 번만 초기화합니다.
 - tenant-wide 질문은 enabled accessible subscription을 모두 고려하고 subscription ID/name 근거를
   보존합니다.
 - 서비스 실패를 리소스 부재로 바꾸지 않고 오류 또는 낮은 confidence로 Agent에 전달합니다.
+- runtime inventory는 여러 ARM resource를 병렬 조회하되 각 결과를 독립된 `success/data/error`
+  envelope로 반환하고, Foundry Agent는 이름/version/definition kind/status만 투영합니다. 최종
+  green/red 판정은 Admin 계층이 exact kind와 `ACTIVE` 상태를 함께 확인합니다.
 - page fetch는 allow-list와 HTTP(S) scheme을 검사해 SSRF를 막습니다.
 - checkpoint blob은 HTTPS와 Entra token만 사용하고 ETag로 뒤로 쓰기/동시 writer를 방지합니다.
 - archive blob은 HTTPS/Entra와 `If-None-Match: *`를 사용하고, payload와 search metadata를 한 PUT에

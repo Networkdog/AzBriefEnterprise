@@ -26,6 +26,14 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 - **Evidence before inference**: Ground conclusions in actual tenant resources, configuration, health, policy, cost, and regional availability. AzBrief is environment-aware decision intelligence, not a generic update summarizer.
 - **Action over notification**: Turn findings into safe, specific procedures, commands, deadlines, and risk warnings instead of merely restating announcements.
 - **Coverage without silent filtering**: Analyze every collected update before deciding its importance, impact, or job relevance so risks and opportunities are not discarded prematurely.
+- **Category-aware environment relevance**: `relevance_evidence` means applicability/value within
+  the analysis-time scope, never a selection or delivery justification. Changes/retirements explain
+  confirmed applicability, necessary action, and real deadlines; new capabilities explain documented
+  value for known workloads or supplied requirements and adoption trade-offs, with at most one
+  optional non-mutating evaluation. Resource ownership is not a relevance gate; material evidence
+  gaps remain unknown, and public use cases never become invented tenant plans. Preserve independent
+  role/focus assessment even with no resource rows. Archive/email/judge share the localized
+  Environment Relevance label without renaming the field or rewriting immutable historical content.
 - **One investigation, role-specific delivery**: Reuse the same evidence while adapting the briefing to each subscriber's responsibility and language.
 - **Enterprise extension, not product divergence**: A Foundry Hosted Agent, governed Prompt Agents, Entra-only access, Container Apps control surfaces, private networking, observability, and durable state extend the original AzBrief mission into regulated environments; they do not replace or redefine it.
 - **Trust before autonomy**: Keep evidence traceable, validate executable actions, and fail closed when identity, permissions, or model capabilities are unclear.
@@ -123,8 +131,8 @@ Tools follow a self-contained module pattern:
 ### Memory & Caching
 
 - **Session memoization**: `get_settings()` via `@lru_cache`, `get_resource_summary()` with 5-min TTL thread-safe cache
-- **KQL knowledge persistence**: Discovered schemas and successful queries stored in `kql_knowledge_base.json` and loaded lazily
-- **Hosted writable state**: The code package under `/app` is read-only. `src/hosted_agent.py` sets `AZBRIEF_DATA_DIR=$HOME/.azbrief` before loading history/pattern stores; those optimization writes are best-effort and must never discard a completed analysis
+- **KQL knowledge persistence**: `src/agent/kql_knowledge_base.json` is a tenant-neutral seed only. Runtime schemas, successful queries, and failures are loaded lazily and written under `AZBRIEF_DATA_DIR`; never commit request errors, correlation IDs, or tenant evidence into the seed
+- **Hosted writable state**: The code package under `/app` is read-only. `src/hosted_agent.py` sets `AZBRIEF_DATA_DIR=$HOME/.azbrief` before loading history, pattern, and KQL runtime stores; those optimization writes are best-effort and must never discard a completed analysis
 - **Lazy module loading**: Heavy imports (`langchain`, `openai`, Azure SDKs) deferred via `__getattr__` in `__init__.py`
 
 ---
@@ -255,6 +263,16 @@ bounded by `replicaTimeout` (12 h default, 7 days max), while each remote analys
 job timeout so leftover updates are deferred. `replicaRetryLimit` is **0** because a failed
 execution did not advance the checkpoint and the next schedule safely re-covers the window.
 
+The Job cron is a lightweight dispatcher (`scheduleDispatcherCronExpression`, five minutes by
+default), not the digest schedule itself. It merges the protected deployment cron from
+`SCHEDULE_CRON_EXPRESSION` with Admin-managed daily UTC times in `admin-config.json`, then claims
+one due occurrence with an ETag-protected lease before constructing the analysis runtime. Admin
+manual runs use a bounded `RunSelection` (checkpoint/date range/recent count/Update ID/Update URL),
+allow at most 100 targets, and never advance the scheduled digest checkpoint. Admin manual runs
+default to `send_email=false`; delivery is explicit, and `dry_run=true` cannot request email.
+Run diagnostics expose only the safe `RunRecord` projection. Console-managed subscribers may be
+updated with ETag protection, while deployment subscribers remain immutable and cannot be shadowed.
+
 The checkpoint lives in `src/services/checkpoint.py`: a blob in the state storage account,
 read at run start and advanced **after** a run completes. Two invariants keep it safe — only
 the contiguous-prefix watermark is ever stored, and `advance()` refuses to move backwards
@@ -277,6 +295,16 @@ documents, metadata, query filters, list rows, and detail views; it remains avai
 Metadata truncation is marked and falls back to the full document during listing; Storage bearer
 tokens are sent only to validated Azure Blob container endpoints. The Hosted Agent's bounded local JSONL history
 is planning memory, not the browser archive source of truth.
+The Archive detail renderer must preserve the email narrative's restricted Markdown structure,
+including `> **Term**:` concept boxes, while constructing DOM nodes without `innerHTML`. A Markdown
+feature added to email requires the matching safe Archive rendering path and behavior coverage.
+The Admin and Archive shells keep explicit `width: 100%`, bounded `max-width`, and `margin: 0 auto`
+on their main content so operational panels stay centered on wide viewports without mobile overflow.
+Admin mutation controls keep each command button inside the same bordered action surface as its
+inputs, while status/history tables sit under separately named subsections; do not return to a flat
+sequence of headings, controls, and tables with ambiguous ownership.
+Keep management-table action columns first so mobile operators can reach commands without first
+scrolling horizontally through secondary data.
 
 #### Network isolation (`networkIsolationMode`)
 
@@ -353,7 +381,9 @@ the MCP Entra application role needed to call it.
 Hosted Agent source deploys separately through `azure.yaml` with `codeConfiguration` and
 `azd deploy azbrief-analysis-hosted --no-prompt`; Foundry performs the remote build and creates
 an immutable version. ARM/Bicep creates the account, project, model, and Container Apps control
-plane but cannot create these data-plane versions. The Hosted Agent has its own Entra identity;
+plane but cannot create these data-plane versions. `azure.yaml` resolves the project through
+`${AZURE_AI_PROJECT_ENDPOINT}` and never embeds a tenant-specific Foundry hostname. The Hosted
+Agent has its own Entra identity;
 grant tenant/subscription evidence permissions to that principal, not the Container Apps UAMI.
 Subscription Reader does not grant Azure Billing hierarchy access. Assign Billing Reader (or an
 equivalent read-only billing role) to the Hosted Agent identity at the relevant billing account
@@ -626,6 +656,10 @@ Do **NOT** modify these files unless explicitly asked:
   an exhausted final error stays blocking. Freeze the period and
   holdout before edits, establish A/A noise, compare paired cases, and finish with a full-period
   deployed Hosted run. `5` remains a theoretical ideal, not an automated stop condition.
+16. **Keep the repository root publishable** — reserve it for standard project metadata and required
+  deployment entry points. Reusable utilities belong in `scripts/`; never commit one-off log parsers,
+  session/deployment logs, test screenshots, browser dumps, local agent packs, or scratch validation
+  scripts. Keep generated artifacts covered by `.gitignore`, `.dockerignore`, and `.agentignore`.
 
 ---
 

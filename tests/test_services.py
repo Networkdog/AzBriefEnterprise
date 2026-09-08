@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.agent.scope import AnalysisScope, analysis_scope_context
 from src.services.resource_graph import ResourceGraphQueryBuilder, ResourceGraphService
+
+SUBSCRIPTION_A = "11111111-1111-1111-1111-111111111111"
+SUBSCRIPTION_B = "22222222-2222-2222-2222-222222222222"
 
 
 class TestResourceGraphQueryBuilder:
@@ -117,6 +121,228 @@ class TestResourceGraphServiceInit:
             result = svc.enrich_subscription_names([])
             assert result == []
 
+    def test_scoped_subscription_enrichment_never_discovers_tenant_subscriptions(self):
+        with patch("src.services.resource_graph.get_settings") as mock:
+            settings = MagicMock()
+            settings.azure_subscription_id = None
+            mock.return_value = settings
+            service = ResourceGraphService()
+        service._discover_accessible_subscriptions = MagicMock(
+            side_effect=AssertionError("tenant-wide discovery must not run")
+        )
+        rows = [{"name": "resource", "subscriptionId": SUBSCRIPTION_A}]
+
+        with analysis_scope_context(AnalysisScope(subscriptions=[SUBSCRIPTION_A])):
+            result = service.enrich_subscription_names(rows)
+
+        assert result[0]["subscriptionName"] == SUBSCRIPTION_A
+        service._discover_accessible_subscriptions.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_management_group_and_resource_group_scope_reaches_query_request(self):
+        with patch("src.services.resource_graph.get_settings") as mock:
+            settings = MagicMock()
+            settings.azure_subscription_id = "deployment-sub"
+            mock.return_value = settings
+            service = ResourceGraphService()
+
+        response = MagicMock(data=[], count=0, total_records=0)
+        service._client = MagicMock()
+        service._client.resources.return_value = response
+
+        scope = AnalysisScope(
+            management_groups=["/providers/Microsoft.Management/managementGroups/platform-mg"],
+            resource_groups=["Production-RG"],
+        )
+        with analysis_scope_context(scope):
+            await service.query_resources("Resources | project name, resourceGroup")
+
+        request = service._client.resources.call_args.args[0]
+        assert request.management_groups == ["platform-mg"]
+        assert request.subscriptions is None
+        assert "resourceGroup in~ ('Production-RG')" in request.query
+
+    @pytest.mark.asyncio
+    async def test_all_hierarchy_fields_are_intersected(self):
+        with patch("src.services.resource_graph.get_settings") as mock:
+            settings = MagicMock()
+            settings.azure_subscription_id = None
+            mock.return_value = settings
+            service = ResourceGraphService()
+
+        service._client = MagicMock()
+        service._client.resources.return_value = MagicMock(data=[], count=0, total_records=0)
+        scope = AnalysisScope(
+            management_groups=["platform-mg"],
+            subscriptions=[SUBSCRIPTION_A],
+            resource_groups=["production-rg"],
+        )
+
+        with analysis_scope_context(scope):
+            await service.query_resources("Resources | project name")
+
+        request = service._client.resources.call_args.args[0]
+        assert request.management_groups == ["platform-mg"]
+        assert request.subscriptions is None
+        assert f"subscriptionId in~ ('{SUBSCRIPTION_A}')" in request.query
+        assert "resourceGroup in~ ('production-rg')" in request.query
+
+    @pytest.mark.asyncio
+    async def test_subscription_scope_overrides_the_deployment_default(self):
+        with patch("src.services.resource_graph.get_settings") as mock:
+            settings = MagicMock()
+            settings.azure_subscription_id = "deployment-sub"
+            mock.return_value = settings
+            service = ResourceGraphService()
+
+        response = MagicMock(data=[], count=0, total_records=0)
+        service._client = MagicMock()
+        service._client.resources.return_value = response
+
+        with analysis_scope_context(AnalysisScope(subscriptions=[SUBSCRIPTION_A])):
+            await service.query_resources("Resources | project name")
+
+        request = service._client.resources.call_args.args[0]
+        assert request.subscriptions == [SUBSCRIPTION_A]
+        assert request.management_groups is None
+
+    @pytest.mark.asyncio
+    async def test_scoped_query_rejects_union_that_could_escape_the_boundary(self):
+        with patch("src.services.resource_graph.get_settings") as mock:
+            settings = MagicMock()
+            settings.azure_subscription_id = "sub-1"
+            mock.return_value = settings
+            service = ResourceGraphService()
+
+        with analysis_scope_context(AnalysisScope(resource_groups=["rg-1"])):
+            with pytest.raises(ValueError, match="cannot contain union or join"):
+                await service.query_resources("Resources | union ResourceContainers")
+
+            with pytest.raises(ValueError, match="cannot contain union or join"):
+                await service.query_resources(
+                    "Resources | join kind=leftouter (ResourceContainers) on subscriptionId"
+                )
+
+    @pytest.mark.asyncio
+    async def test_concurrent_scopes_do_not_leak_between_query_requests(self):
+        with patch("src.services.resource_graph.get_settings") as mock:
+            settings = MagicMock()
+            settings.azure_subscription_id = "deployment-sub"
+            mock.return_value = settings
+            service = ResourceGraphService()
+
+        requests = []
+
+        def resources(request):
+            requests.append(request)
+            return MagicMock(data=[], count=0, total_records=0)
+
+        service._client = MagicMock()
+        service._client.resources.side_effect = resources
+
+        async def run(scope):
+            with analysis_scope_context(scope):
+                await service.query_resources("Resources | project name, resourceGroup")
+
+        await asyncio.gather(
+            run(AnalysisScope(subscriptions=[SUBSCRIPTION_A], resource_groups=["rg-a"])),
+            run(AnalysisScope(subscriptions=[SUBSCRIPTION_B], resource_groups=["rg-b"])),
+        )
+
+        observed = {(tuple(request.subscriptions or []), request.query) for request in requests}
+        assert len(observed) == 2
+        assert any(
+            subscriptions == (SUBSCRIPTION_A,) and "'rg-a'" in query
+            for subscriptions, query in observed
+        )
+        assert any(
+            subscriptions == (SUBSCRIPTION_B,) and "'rg-b'" in query
+            for subscriptions, query in observed
+        )
+
+
+class TestAnalysisScope:
+    def test_report_resource_must_match_configured_subscription_and_group(self):
+        scope = AnalysisScope(
+            subscriptions=[SUBSCRIPTION_A.upper()],
+            resource_groups=["Production-RG"],
+        )
+
+        assert scope.contains_resource(
+            {"subscriptionId": SUBSCRIPTION_A, "resourceGroup": "production-rg"}
+        )
+        assert not scope.contains_resource(
+            {"subscriptionId": SUBSCRIPTION_B, "resourceGroup": "production-rg"}
+        )
+        assert not scope.contains_resource(
+            {"subscriptionId": SUBSCRIPTION_A, "resourceGroup": "other-rg"}
+        )
+        assert not scope.contains_resource({"name": "missing-scope-fields"})
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("subscriptions", "11111111-1111-1111-1111-111111111111"),
+            ("subscriptions", ["not-a-guid"]),
+            ("management_groups", ["/"]),
+            ("management_groups", ["bad value"]),
+            ("resource_groups", ["rg' | take 1"]),
+            ("resource_groups", ["ends-with-period."]),
+        ],
+    )
+    def test_invalid_scope_values_fail_closed(self, field, value):
+        with pytest.raises(ValueError):
+            AnalysisScope(**{field: value})
+
+    def test_unicode_resource_group_name_is_supported(self):
+        assert AnalysisScope(resource_groups=["운영-RG"]).resource_groups == ("운영-RG",)
+
+    def test_full_resource_group_id_derives_and_preserves_parent_subscription(self):
+        scope = AnalysisScope(
+            resource_groups=[f"/subscriptions/{SUBSCRIPTION_A}/resourceGroups/Production-RG"]
+        )
+
+        assert scope.subscriptions == (SUBSCRIPTION_A,)
+        assert scope.resource_groups == (
+            f"/subscriptions/{SUBSCRIPTION_A}/resourceGroups/Production-RG",
+        )
+        assert scope.contains_resource(
+            {"subscriptionId": SUBSCRIPTION_A, "resourceGroup": "production-rg"}
+        )
+        assert not scope.contains_resource(
+            {"subscriptionId": SUBSCRIPTION_B, "resourceGroup": "production-rg"}
+        )
+
+    def test_full_resource_group_id_rejects_conflicting_explicit_subscription(self):
+        with pytest.raises(ValueError, match="outside the explicit subscription scope"):
+            AnalysisScope(
+                subscriptions=[SUBSCRIPTION_B],
+                resource_groups=[f"/subscriptions/{SUBSCRIPTION_A}/resourceGroups/Production-RG"],
+            )
+
+    @pytest.mark.asyncio
+    async def test_full_resource_group_id_injects_exact_subscription_pair(self):
+        with patch("src.services.resource_graph.get_settings") as mock:
+            settings = MagicMock()
+            settings.azure_subscription_id = None
+            mock.return_value = settings
+            service = ResourceGraphService()
+        service._client = MagicMock()
+        service._client.resources.return_value = MagicMock(data=[], count=0, total_records=0)
+        scope = AnalysisScope(
+            resource_groups=[f"/subscriptions/{SUBSCRIPTION_A}/resourceGroups/Production-RG"]
+        )
+
+        with analysis_scope_context(scope):
+            await service.query_resources("Resources | project name")
+
+        request = service._client.resources.call_args.args[0]
+        assert request.subscriptions == [SUBSCRIPTION_A]
+        assert (
+            f"subscriptionId =~ '{SUBSCRIPTION_A}' and "
+            "resourceGroup =~ 'Production-RG'" in request.query
+        )
+
 
 class TestResourceGraphServiceCache:
     """Test thread-safe caching."""
@@ -139,6 +365,35 @@ class TestResourceGraphServiceCache:
             assert result["data"][0]["type"] == "cached"
 
         # Cleanup
+        rg_module._resource_types_cache = None
+        rg_module._resource_types_cache_time = 0
+
+    @pytest.mark.asyncio
+    async def test_scoped_summary_never_reuses_or_overwrites_tenant_cache(self):
+        import src.services.resource_graph as rg_module
+
+        cached = {"data": [{"type": "tenant-wide"}], "count": 1}
+        rg_module._resource_types_cache = cached
+        rg_module._resource_types_cache_time = __import__("time").time()
+
+        with patch("src.services.resource_graph.get_settings") as mock:
+            settings = MagicMock()
+            settings.azure_subscription_id = "deployment-sub"
+            mock.return_value = settings
+            service = ResourceGraphService()
+        service._client = MagicMock()
+        service._client.resources.return_value = MagicMock(
+            data=[{"type": "scoped"}],
+            count=1,
+            total_records=1,
+        )
+
+        with analysis_scope_context(AnalysisScope(subscriptions=[SUBSCRIPTION_A])):
+            result = await service.get_resource_types_summary()
+
+        assert result["data"] == [{"type": "scoped"}]
+        assert rg_module._resource_types_cache is cached
+
         rg_module._resource_types_cache = None
         rg_module._resource_types_cache_time = 0
 

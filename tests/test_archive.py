@@ -23,6 +23,7 @@ from src.archive.models import (
 )
 from src.archive.page import render_archive_page
 from src.config import get_settings
+from src.web_fonts import WEB_FONT_CSP_SOURCE, WEB_FONT_URL
 
 UTC = timezone.utc
 
@@ -82,7 +83,11 @@ def _result(update_id: str = "570120") -> AnalysisResult:
         impact_level="medium",
         job_relevance="high",
         one_line_summary="AKS 운영 구성을 확인해야 합니다.",
-        relevance_reason="현재 AKS 클러스터와 관련이 있습니다.",
+        relevance_reason=(
+            "현재 AKS 클러스터와 관련이 있습니다.\n\n"
+            "> **Azure Kubernetes Service (AKS)**: 컨테이너 워크로드를 운영하는 "
+            "관리형 Kubernetes 서비스입니다."
+        ),
         affected_resources=[
             {"name": "aks-prod", "type": "Microsoft.ContainerService/managedClusters"}
         ],
@@ -126,6 +131,17 @@ def test_archive_document_round_trips_as_strict_json():
     assert restored == document
     assert restored.analyzed_at.tzinfo is not None
     assert restored.schema_version == "1"
+    assert restored.hosted_contract_version == "3"
+
+
+def test_archive_v1_still_reads_legacy_hosted_v2_provenance():
+    payload = _document().model_dump(mode="json")
+    payload["hosted_contract_version"] = "2"
+
+    restored = ArchiveDocumentV1.model_validate(payload)
+
+    assert restored.schema_version == "1"
+    assert restored.hosted_contract_version == "2"
 
 
 def test_archive_document_rejects_mismatched_update_identity():
@@ -218,8 +234,53 @@ class TestArchiveAuthorization:
         assert group_reader.id == "u1"
         assert admin_reader.name == "ADMIN@co.com"
 
+    @pytest.mark.asyncio
+    async def test_managed_admin_is_an_archive_reader(self, monkeypatch):
+        class Configuration:
+            async def get_managed_admin_principals(self):
+                return {"managed-admin"}
+
+        _configure(monkeypatch, ARCHIVE_UI_ENABLED="true")
+        monkeypatch.setattr("src.archive.auth.get_admin_configuration", lambda: Configuration())
+
+        principal = await require_archive_reader(
+            _request(**{"X_MS_CLIENT_PRINCIPAL_ID": "managed-admin"})
+        )
+
+        assert principal.id == "managed-admin"
+
 
 class TestArchivePage:
+    def test_default_web_ui_language_is_english(self):
+        page = render_archive_page("n", "enterprise", "reader")
+
+        assert '<html lang="en">' in page
+        assert "Update Archive" in page
+        assert "Analysis records" in page
+
+    def test_filters_expose_optional_guidance_and_shared_control_dimensions(self):
+        page = render_archive_page("n", "enterprise", "reader")
+
+        assert page.count('data-i18n="field_optional"') == 9
+        assert '"field_optional":"Optional"' in page
+        assert '"archive_search_placeholder":"Optional · title, summary, or service"' in page
+        assert '"archive_service_placeholder":"Optional · e.g. Azure Kubernetes Service"' in page
+        assert '"archive_date_placeholder":"Optional · yyyy-mm-dd"' in page
+        assert "--control-height: 40px" in page
+        assert "--command-width: 144px" in page
+        assert "height:var(--control-height); min-height:var(--control-height)" in page
+        assert "font-weight:700; white-space:nowrap" in page
+        assert ".row-title { height:auto; min-height:0;" in page
+        assert ".actions .command,.more { width:var(--command-width); }" in page
+
+    def test_admin_navigation_is_rendered_only_when_enabled(self):
+        disabled = render_archive_page("n", "enterprise", "reader", admin_enabled=False)
+        enabled = render_archive_page("n", "enterprise", "reader", admin_enabled=True)
+
+        assert '<a class="nav-link" href="/admin">Admin</a>' not in disabled
+        assert '<a class="nav-link" href="/admin">Admin</a>' in enabled
+        assert '<a class="nav-link" href="/archive" aria-current="page">Archive</a>' in enabled
+
     def test_page_uses_nonce_and_dom_text_rendering(self):
         page = render_archive_page(
             nonce="N0NCE",
@@ -234,10 +295,31 @@ class TestArchivePage:
         assert "innerHTML" not in page
         assert "textContent" in page
         assert "http://" not in page
+        assert WEB_FONT_URL in page
+        assert page.count("https://") == 1
+        assert "@import" not in page
+        assert "<link" not in page
+        assert "'Apple SD Gothic Neo'" in page
+        assert "'AppleSDGothicNeo-Regular'" in page
+        assert "font-display: swap" in page
+        assert '<a class="skip-link" href="#main-content"' in page
+        assert '<header class="app-header">' in page
+        assert '<span class="brand-mark" aria-hidden="true">AZ</span>' in page
+        assert '<main id="main-content">' in page
+        assert "background-image:linear-gradient" not in page
         assert "advanced-filter" in page
         assert 'aria-expanded="false"' in page
+        assert '<div class="result-head"><h2 data-i18n="archive_results">' in page
+        assert '<h2 id="detail-title" class="detail-title">' in page
+        assert "max-width:960px; margin:0 auto" in page
+        assert "toLocaleString(document.documentElement.lang" in page
+        assert "appendInlineMarkdown" in page
+        assert "renderMarkdown" in page
+        assert "markdown blockquote" in page
+        assert "inline-code" in page
         assert "renderImpact" in page
         assert "renderResources" in page
+        assert "main { width:100%; max-width:1240px; margin:0 auto;" in page
         assert "job_relevance" not in page
         assert "직무연관성" not in page
 
@@ -282,7 +364,9 @@ class TestArchiveRoutes:
         response = client.get("/archive")
         assert response.status_code == 200
         assert response.headers["Cache-Control"] == "private, no-store"
-        assert "frame-ancestors 'none'" in response.headers["Content-Security-Policy"]
+        csp = response.headers["Content-Security-Policy"]
+        assert "frame-ancestors 'none'" in csp
+        assert f"font-src 'self' {WEB_FONT_CSP_SOURCE}" in csp
 
     def test_archive_api_lists_and_reads_without_storage_urls(self, client, monkeypatch):
         document = self._install_service(monkeypatch)
@@ -299,6 +383,9 @@ class TestArchiveRoutes:
         assert listing.headers["Cache-Control"] == "private, no-store"
         assert listing.json()["items"][0]["archive_id"] == document.archive_id
         assert detail.status_code == 200
+        detailed_analysis = detail.json()["result"]["relevance_reason"]
+        assert detailed_analysis == document.result.relevance_reason
+        assert "\n\n> **Azure Kubernetes Service (AKS)**:" in detailed_analysis
         serialized = json.dumps(detail.json()).lower()
         assert "blob.core.windows.net" not in serialized
         assert "subscriber" not in serialized

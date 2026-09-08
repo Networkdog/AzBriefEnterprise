@@ -1,5 +1,7 @@
 """Configuration management for AzBrief Enterprise."""
 
+import base64
+import binascii
 import json
 
 # Load .env file and export to os.environ for Azure SDK
@@ -12,9 +14,10 @@ from typing import Optional
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from src.agent.scope import AnalysisScope
 from src.i18n import DEFAULT_LANGUAGE, is_supported, normalize_language, supported_language_codes
 
 load_dotenv(override=not _os.environ.get("CONTAINER_APP_NAME"))
@@ -81,6 +84,7 @@ class Subscriber(BaseModel):
     name: str
     role: str = ""
     language: str = DEFAULT_LANGUAGE
+    management_groups: list[str] = []  # Management Group IDs (empty = all)
     subscriptions: list[str] = (
         []
     )  # Subscription IDs this subscriber is responsible for (empty = all)
@@ -98,6 +102,22 @@ class Subscriber(BaseModel):
         degrades to a generic guide plus fallback labels for it.
         """
         return normalize_language(v)
+
+    @field_validator("management_groups", "subscriptions", "resource_groups", mode="before")
+    @classmethod
+    def normalize_hierarchy_scope(cls, value, info) -> list[str]:
+        """Apply the same fail-closed Azure scope validation to every config source."""
+        scope = AnalysisScope(**{info.field_name: value})
+        return list(getattr(scope, info.field_name))
+
+    @model_validator(mode="after")
+    def validate_hierarchy_scope(self) -> "Subscriber":
+        """Preserve parent subscriptions and reject conflicting hierarchy fields."""
+        scope = AnalysisScope.from_subscriber(self)
+        self.management_groups = list(scope.management_groups)
+        self.subscriptions = list(scope.subscriptions)
+        self.resource_groups = list(scope.resource_groups)
+        return self
 
 
 class FoundryAgentSpec(BaseModel):
@@ -260,6 +280,7 @@ class Settings(BaseSettings):
     # Batch Analysis Concurrency
     max_concurrent_analyses: int = Field(
         default=3,
+        ge=1,
         description="Maximum number of updates to analyze concurrently in batch mode (1=sequential)",
     )
 
@@ -505,6 +526,13 @@ class Settings(BaseSettings):
     # ── Scheduling & durable state ──────────────────────────────
     # A Container Apps Job runs the scheduled digest and the Container App
     # serves API/Admin/MCP. Both delegate analysis to the Hosted Agent.
+    schedule_cron_expression: str = Field(
+        default="0 2 * * *",
+        description=(
+            "Deployment-owned UTC cron retained as the protected default schedule. "
+            "The Container Apps Job itself runs a short dispatcher cadence."
+        ),
+    )
     checkpoint_blob_url: Optional[str] = Field(
         default=None,
         description=(
@@ -518,6 +546,13 @@ class Settings(BaseSettings):
         description=(
             "Local file holding the digest checkpoint. Development fallback used "
             "only when checkpoint_blob_url is unset."
+        ),
+    )
+    admin_config_blob_url: Optional[str] = Field(
+        default=None,
+        description=(
+            "HTTPS URL of the JSON blob holding Admin-managed subscribers and "
+            "administrator principals. Read and written with the control-plane identity."
         ),
     )
     archive_blob_container_url: Optional[str] = Field(
@@ -537,6 +572,18 @@ class Settings(BaseSettings):
     archive_base_url: Optional[str] = Field(
         default=None,
         description="Public or VNet-local HTTPS base URL used for authenticated archive links.",
+    )
+    feedback_ui_enabled: bool = Field(
+        default=False,
+        description="Serve the public /feedback page and accept durable feedback submissions.",
+    )
+    feedback_base_url: Optional[str] = Field(
+        default=None,
+        description="Public or VNet-local HTTPS base URL used for email feedback links.",
+    )
+    feedback_recipient_address: str = Field(
+        default="",
+        description="Configured mailbox that receives each persisted feedback submission.",
     )
     orchestrator_endpoint: Optional[str] = Field(
         default=None,
@@ -584,6 +631,109 @@ class Settings(BaseSettings):
             "ID). An empty list denies everyone, so the page fails closed."
         ),
     )
+    admin_readiness_resource_group: Optional[str] = Field(
+        default=None,
+        description="Resource group inspected by the Admin readiness dashboard.",
+    )
+    admin_readiness_foundry_account: Optional[str] = Field(
+        default=None,
+        description="Foundry account expected by the Admin readiness dashboard.",
+    )
+    admin_readiness_foundry_project: Optional[str] = Field(
+        default=None,
+        description="Foundry project expected by the Admin readiness dashboard.",
+    )
+    admin_readiness_foundry_model_deployment: Optional[str] = Field(
+        default=None,
+        description="Foundry model deployment expected by the Admin readiness dashboard.",
+    )
+    admin_readiness_container_environments: str = Field(
+        default="",
+        description="Container Apps environments expected by the readiness dashboard.",
+    )
+    admin_readiness_container_apps: str = Field(
+        default="",
+        description="Container Apps expected by the readiness dashboard.",
+    )
+    admin_readiness_container_jobs: str = Field(
+        default="",
+        description="Container Apps Jobs expected by the readiness dashboard.",
+    )
+    admin_readiness_prompt_agents: str = Field(
+        default="",
+        description="Prompt Agent role-to-name map expected by the readiness dashboard.",
+    )
+    admin_readiness_support_resources: str = Field(
+        default="",
+        description="Supporting Azure resources expected by the readiness dashboard.",
+    )
+
+    @staticmethod
+    def _decode_readiness_json(value: str):
+        """Decode plain or Base64 JSON without accepting ad-hoc object syntax."""
+        if not value:
+            return None
+        candidates = [value]
+        try:
+            decoded = base64.b64decode(value, validate=True).decode("utf-8")
+            candidates.append(decoded)
+        except (binascii.Error, TypeError, UnicodeDecodeError, ValueError):
+            pass
+        for candidate in candidates:
+            try:
+                return json.loads(candidate)
+            except (json.JSONDecodeError, TypeError):
+                continue
+        return None
+
+    def get_admin_readiness_container_environments(self) -> list[str]:
+        """Return expected Container Apps environment names."""
+        value = self._decode_readiness_json(self.admin_readiness_container_environments)
+        return (
+            [str(item).strip() for item in value if str(item).strip()]
+            if isinstance(value, list)
+            else []
+        )
+
+    def get_admin_readiness_container_apps(self) -> list[str]:
+        """Return expected Container App names."""
+        value = self._decode_readiness_json(self.admin_readiness_container_apps)
+        return (
+            [str(item).strip() for item in value if str(item).strip()]
+            if isinstance(value, list)
+            else []
+        )
+
+    def get_admin_readiness_container_jobs(self) -> list[str]:
+        """Return expected Container Apps Job names."""
+        value = self._decode_readiness_json(self.admin_readiness_container_jobs)
+        return (
+            [str(item).strip() for item in value if str(item).strip()]
+            if isinstance(value, list)
+            else []
+        )
+
+    def get_admin_readiness_prompt_agents(self) -> dict[str, str]:
+        """Return expected Prompt Agent role-to-name mappings."""
+        value = self._decode_readiness_json(self.admin_readiness_prompt_agents)
+        if not isinstance(value, dict):
+            return {}
+        return {
+            str(role).strip(): str(name).strip()
+            for role, name in value.items()
+            if str(role).strip() and str(name).strip()
+        }
+
+    def get_admin_readiness_support_resources(self) -> list[dict[str, str]]:
+        """Return expected supporting Azure resource descriptors."""
+        value = self._decode_readiness_json(self.admin_readiness_support_resources)
+        if not isinstance(value, list):
+            return []
+        return [
+            {str(key): str(item_value) for key, item_value in item.items()}
+            for item in value
+            if isinstance(item, dict)
+        ]
 
     # ── Analysis archive (enterprise profile) ──────────────────
     archive_ui_enabled: bool = Field(
@@ -630,6 +780,25 @@ class Settings(BaseSettings):
             or parsed.fragment
         ):
             raise ValueError("archive URLs must be plain https URLs without query or fragment")
+        return normalized
+
+    @field_validator("feedback_base_url")
+    @classmethod
+    def validate_feedback_base_url(cls, value: Optional[str]) -> Optional[str]:
+        """Keep feedback links on a plain HTTPS origin."""
+        if value is None or not value.strip():
+            return None
+        normalized = value.strip().rstrip("/")
+        parsed = urlparse(normalized)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("feedback URLs must be plain https URLs without query or fragment")
         return normalized
 
     @field_validator("geval_target_score")

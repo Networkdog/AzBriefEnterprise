@@ -5,7 +5,9 @@ from typing import Annotated, Any, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 
-HOSTED_ANALYSIS_CONTRACT_VERSION = "2"
+from src.agent.scope import AnalysisScope
+
+HOSTED_ANALYSIS_CONTRACT_VERSION = "3"
 
 
 class HostedUpdate(BaseModel):
@@ -34,6 +36,7 @@ class HostedSubscriber(BaseModel):
     name: str
     role: str = ""
     language: str = "ko"
+    management_groups: list[str] = Field(default_factory=list)
     subscriptions: list[str] = Field(default_factory=list)
     resource_groups: list[str] = Field(default_factory=list)
     focus_services: list[str] = Field(default_factory=list)
@@ -45,9 +48,10 @@ class HostedAnalysisRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    contract_version: Literal["2"] = HOSTED_ANALYSIS_CONTRACT_VERSION
+    contract_version: Literal["3"] = HOSTED_ANALYSIS_CONTRACT_VERSION
     operation: Literal["analyze_update"] = "analyze_update"
     update: HostedUpdate
+    scope: AnalysisScope = Field(default_factory=AnalysisScope)
     trace_id: str = Field(min_length=1, max_length=128)
 
 
@@ -56,7 +60,7 @@ class HostedEvaluationRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    contract_version: Literal["2"] = HOSTED_ANALYSIS_CONTRACT_VERSION
+    contract_version: Literal["3"] = HOSTED_ANALYSIS_CONTRACT_VERSION
     operation: Literal["evaluate_update"] = "evaluate_update"
     update: HostedUpdate
     trace_id: str = Field(min_length=1, max_length=128)
@@ -67,7 +71,7 @@ class HostedCustomizationRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    contract_version: Literal["2"] = HOSTED_ANALYSIS_CONTRACT_VERSION
+    contract_version: Literal["3"] = HOSTED_ANALYSIS_CONTRACT_VERSION
     operation: Literal["customize_for_subscriber"] = "customize_for_subscriber"
     update: HostedUpdate
     result: dict[str, Any]
@@ -107,7 +111,7 @@ class HostedAgentResponse(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    contract_version: Literal["2"] = HOSTED_ANALYSIS_CONTRACT_VERSION
+    contract_version: Literal["2", "3"] = HOSTED_ANALYSIS_CONTRACT_VERSION
     operation: Literal["analyze_update", "evaluate_update", "customize_for_subscriber"]
     status: Literal["completed", "failed"]
     result: Optional[dict[str, Any]] = None

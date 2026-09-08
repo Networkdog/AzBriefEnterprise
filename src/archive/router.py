@@ -20,6 +20,8 @@ from src.archive.service import get_archive_service
 from src.config import get_settings
 from src.middleware import rate_limiter
 from src.services.archive import ArchiveCursorError, ArchiveIntegrityError
+from src.web_design import DEFAULT_WEB_UI_LANGUAGE
+from src.web_fonts import WEB_FONT_CSP_SOURCE
 
 logger = get_logger()
 router = APIRouter(tags=["archive"])
@@ -36,13 +38,15 @@ def _page_response(request: Request, principal: AdminPrincipal) -> HTMLResponse:
         nonce=nonce,
         profile="Microsoft Foundry Hosted Agent",
         user=principal.display,
-        language=settings.report_language,
+        language=DEFAULT_WEB_UI_LANGUAGE,
+        admin_enabled=settings.admin_ui_enabled,
     )
     csp = (
         "default-src 'none'; "
         f"style-src 'nonce-{nonce}'; "
         f"script-src 'nonce-{nonce}'; "
         "connect-src 'self'; "
+        f"font-src 'self' {WEB_FONT_CSP_SOURCE}; "
         "img-src 'self' data:; "
         "form-action 'none'; "
         "frame-ancestors 'none'; "

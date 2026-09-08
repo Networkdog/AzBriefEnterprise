@@ -16,8 +16,10 @@ description: 'Write and debug KQL queries for Azure Resource Graph. Use when: KQ
 - Keep similarly named AKS properties semantically distinct: Azure Files/Disk CSI state comes
   from `storageProfile.fileCSIDriver` / `diskCSIDriver`; the Key Vault secrets provider under
   `addonProfiles.azureKeyvaultSecretsProvider` is not a storage CSI signal.
-- Query tenant-wide accessible subscriptions and cite exact IDs. Query ARM resources and
-  properties now; defer only data-plane, application, or in-cluster state.
+- Query tenant-wide accessible subscriptions by default and cite exact IDs. When the runtime supplies
+  a Management Group/Subscription/Resource Group scope, treat it as a hard boundary and never query
+  or report outside it. Query ARM resources and properties now; defer only data-plane, application,
+  or in-cluster state.
 - An empty filtered result does not prove absence. Probe the type, correct filters against
   observed values, and preserve uncertainty when completeness is unresolved. On failure,
   prefer deterministic builder/rule recovery or emit a gap; never cross-fallback roles.
@@ -47,7 +49,13 @@ Resource Graph KQL is a **subset** of full Kusto Query Language. These operation
 ### Mandatory Patterns
 
 - **Type comparisons**: Always use `=~` (case-insensitive): `where type =~ "microsoft.compute/virtualmachines"`
-- **Tenant-scoped**: Queries run across **all accessible subscriptions**, not a single one
+- **Scope-aware**: Queries run across all accessible subscriptions by default. A bounded analysis
+  sets Management Groups/subscriptions on SDK `QueryRequest` and injects the Resource Group predicate
+  immediately after the first Resource Graph table. Fields are intersected; values within a field
+  are ORed. Never remove or broaden those runtime filters during KQL repair.
+- **Exact Resource Group IDs**: A full ARM ID keeps its parent subscription and becomes an exact
+  `(subscriptionId AND resourceGroup)` predicate. Reject `join`/`union` in bounded queries and never
+  read or persist shared KQL knowledge while a bounded scope is active.
 - **`subscriptionId` column**: Always available — use it for subscription-level grouping
 - **Property access**: Use `properties.X` dot notation, e.g., `properties.storageProfile.osDisk.osType`
 
@@ -228,12 +236,14 @@ If 3+ KQL retry iterations produce the same error:
 
 ## KQL Knowledge Base
 
-`src/agent/kql_knowledge_base.json` stores discovered schema information:
+`src/agent/kql_knowledge_base.json` is the checked-in, tenant-neutral schema/query seed:
 
 - `schemas`: resource type → discovered property paths
 - `queries`: successful query patterns for reuse
 - Loaded lazily by `src/agent/kql_knowledge.py`
-- Auto-updated when agent discovers new property paths at runtime
+- Never commit runtime `failed_queries`, correlation IDs, tenant resource names, or request errors
+- Runtime discoveries are written to `AZBRIEF_DATA_DIR/kql_knowledge_base.json`, or the ignored
+  local `data/kql_knowledge_base.json` when that environment variable is unset
 
 ## Troubleshooting
 

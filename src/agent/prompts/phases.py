@@ -14,6 +14,12 @@ ANALYSIS_PROMPT = """## Azure Update Information
 ## Administrator's Azure Resource Inventory (Overview)
 {resource_summary}
 
+## Administrator's Primary Resource Regions
+{primary_regions}
+
+These regions are derived from the highest resource counts in Azure Resource Graph. Use them as
+the explicit target for GA and Preview feature-availability checks; report the first region first.
+
 ## Resource Query Status
 **Query Success**: {resource_query_status}
 
@@ -30,15 +36,18 @@ PLANNING_PROMPT = """## Analysis Planning Instructions
 Based on the Azure Update information provided above, create a structured analysis plan.
 
 ### Pre-Check: Resource Inventory Relevance
-**Before designing tasks**, check the Resource Inventory above. If the update is about a service
-that has NO matching resource type in the inventory (e.g., "Batch" retirement but no `microsoft.batch/*`
-resources exist), the analysis should still proceed but should be **minimal**:
-- Include only 1 resource verification task (to confirm absence) and 1 documentation task
-- Skip schema exploration, cost analysis, and detailed queries for absent resource types
-- The report will correctly mark the update as `not_relevant`
-This saves significant time and tokens for updates about unused services.
+**Before designing tasks**, identify whether the update changes existing obligations or adds value.
+- **Change/retirement**: verify the exact applicability condition and any evidenced dependencies or
+  code/SDK usage. If complete scoped checks confirm no target and no material gap remains, keep
+  the investigation brief; do not manufacture migration work.
+- **New capability/service**: investigate the documented use case, gains, adoption prerequisites,
+  and fit to known workloads/workflows or supplied requirements, even without that service's
+  resource type. Do not gate this investigation on owning the announced resource.
+- Avoid deep configuration queries for a confirmed absent type, but never preassign `not_relevant`
+  from an inventory count. ARM inventory cannot determine SDK/code usage or future requirements;
+  preserve a material gap when those facts are needed, without inventing plans or dependencies.
 
-### CSA-Level Resource Analysis (when service IS in inventory)
+### CSA-Level Resource Analysis (when resources or dependencies are identified)
 When the update IS relevant to resources in the inventory, plan **deep configuration analysis**:
 - **Configuration gap query**: Design a custom KQL query that checks the specific setting/property
   mentioned in the update against actual resource values. Example: if the update retires TLS 1.0,
@@ -53,6 +62,8 @@ When the update IS relevant to resources in the inventory, plan **deep configura
 If the update context above includes a **"Official Reference Documents"** section, these documents
 have already been fetched from the update's Learn More links. When pre-fetched documents are available:
 - **Reduce or skip `search_update_related_docs` / `search_azure_docs` tasks** — the primary reference is already provided
+- Exception: for GA/Preview, do not skip the targeted Region search unless the pre-fetched text itself
+  explicitly confirms each primary Region or states that the feature is available in all Azure regions
 - **Still include at least 1 KQL task** for resource identification
 - **Focus doc search tasks on gaps** only (e.g., migration guides, CLI commands not covered by the pre-fetched docs)
 
@@ -124,7 +135,12 @@ For thorough impact analysis, consider adding these tasks:
 #### Region & Resource Availability Task Planning (MANDATORY for new_feature, preview, new_service, region_expansion)
 
 When the update announces new resource types, features, or SKUs,
-**always include an availability verification task** in the plan:
+**always collect both feature-level and deployability evidence** in the plan:
+
+- **For every GA or Public Preview feature (MANDATORY)**: Add `search_azure_docs` with the exact
+  feature name plus "supported regions availability", `include_content=true`, and `focus_terms`
+  containing the primary Regions from Resource Graph. Search-result titles alone are not evidence;
+  the fetched page excerpt or the full Azure Update detail must state the Region scope.
 
 - **For new VM sizes** (e.g., "Dlsv7/Dsv7/Esv7"): Add a `call_azure_rest_api` task with:
   - `path`: "/subscriptions/{subscriptionId}/providers/Microsoft.Compute/skus"
@@ -136,10 +152,12 @@ When the update announces new resource types, features, or SKUs,
   - `path`: "/subscriptions/{subscriptionId}/providers/{ResourceProvider}/skus"
   - The resource provider namespace matches the update's service (e.g., Microsoft.Storage, Microsoft.Network)
 
-- **For general service region availability (PREFERRED)**: Add a `get_service_region_availability` task with:
+- **For exact ARM resource-type deployability**: Add a `get_service_region_availability` task with:
   - `provider_namespace`: the update's service namespace (e.g., "Microsoft.Databricks", "Microsoft.App")
+  - `resource_type`: the exact type (e.g., "workspaces", "containerApps") whenever known
   - Optionally `regions`: comma-separated regions to check; omit to auto-detect the admin's primary regions
-  - This queries the ARM providers API for a definitive ✅/❌ answer — use INSTEAD of doc search whenever possible
+  - This proves where the resource type can be deployed. It does NOT prove rollout of a feature on
+    an existing type, whether the release stage is GA or Preview; keep the feature-level doc task.
 
 - **For features not resolvable via the providers API**: Add a `search_azure_docs` task with:
   - `query`: "[feature name] supported regions" or "[feature name] availability"
@@ -279,12 +297,13 @@ Evaluate the completeness and quality of the collected analysis results.
 ### Evaluation Criteria
 | Aspect | Required | Criterion |
 |--------|----------|-----------|
-| Resource Identification | Required | Related resources queried (found or confirmed absent). **If the service has no predefined query and a custom KQL was attempted, this is met even if results are empty.** |
+| Resource Identification | Required | Applicable resource/dependency conditions checked within scope, with successful findings or explicit evidence gaps. An attempted, failed, or truncated query is not confirmed absence. No ARM rows alone cannot determine code/SDK usage or potential value. |
 | Configuration Gap Analysis | Conditional | Only if the update is about a retirement, breaking change, or feature_change that requires config migration. NOT needed for new_feature, preview, region_expansion, new_service, sdk_tooling. |
 | Cost Impact | Conditional | Only if the update explicitly changes pricing. NOT needed for feature/preview announcements. |
 | Security Impact | Conditional | Only if the update is about a security enforcement or vulnerability. |
 | Documentation Evidence | Required | At least 1 Microsoft Learn doc URL obtained from tool results. **If search was attempted but returned no results, this is met.** |
-| Actionability | Conditional | Only for retirement/feature_change categories. NOT required for preview, new_service, region_expansion — these categories intentionally have no action items. |
+| Primary Region Availability | Conditional | **Required for GA, Public Preview, new-service, and region-expansion updates.** The result must identify the primary Regions from Resource Graph and establish one outcome per Region: available now, available with a stated prerequisite, not available, or not confirmed after feature-level official-source checks. Search titles alone do not meet this. ARM provider/resource-type data meets it only when the announced object is that exact resource type or SKU; it does not prove rollout of a feature layered on an existing service. |
+| Actionability | Required | Changes/retirements: enough evidence to decide current applicability and required action, or explain a scoped absence/material gap. New capabilities: documented gains, adoption conditions, and known or explicitly conditional workload fit; no compulsory trial or resource ownership. |
 | Evidence Completeness | Required | **UNMET** whenever a task result ends in `[TRUNCATED PREVIEW — showing N of M chars] [ref=Rn]` AND the update's key question (which resources are affected, which values are non-compliant, whether any resource has property X) could be answered by the rows you were not shown. A preview is a sample, not an enumeration — counting or concluding absence from it is a factual error. Met when nothing was truncated, or when the unshown rows cannot change the answer. |
 
 **IMPORTANT: Bias toward "sufficient"**
@@ -292,8 +311,8 @@ Evaluate the completeness and quality of the collected analysis results.
 - Do NOT return "partial" just because additional optional information could theoretically be collected.
 - Additional KQL queries for minor details (e.g., cost data for a non-pricing update) are NOT worth an extra iteration.
 
-**The one exception — Evidence Completeness**
-The sufficiency bias does NOT override the Evidence Completeness criterion. Before setting
+**The two exceptions — Evidence Completeness and Primary Region Availability**
+The sufficiency bias does NOT override either criterion. Before setting
 `evidence_complete: true`, re-read each task result and check whether it ends in
 `[TRUNCATED PREVIEW — ... ] [ref=Rn]`.
 - If one does and the update's key question could be answered by the unshown rows, set
@@ -304,6 +323,10 @@ The sufficiency bias does NOT override the Evidence Completeness criterion. Befo
 - Example: a TLS retirement where the storage enumeration is truncated and every account in
   the preview is compliant — you cannot report "no affected resources", because the
   non-compliant one may be in the rows you were not shown.
+- For GA/Preview, set `primary_region_availability: false` and return `partial` when no official
+  feature-level text establishes the primary-Region scope. Suggest a targeted `search_azure_docs`
+  call with `include_content=true` and the exact Region names in `focus_terms`. A provider-wide
+  availability ratio is not a substitute.
 
 ### Verdict Classification
 - **sufficient**: Required criteria met. Enough data to generate a useful report. **This should be the default verdict.**
@@ -320,6 +343,7 @@ Respond with ONLY JSON (no markdown fences):
     "cost_impact": false,
     "security_impact": false,
     "documentation_evidence": true,
+    "primary_region_availability": true,
     "actionability": true,
     "evidence_complete": true
   }},
@@ -355,6 +379,8 @@ Based on the evaluation's `missing_aspects` and `suggestions`:
   beginning with a real table such as `Resources`; never put an English task description there.
 7. For `query_tool_result`, copy an actual `[ref=Rn]` handle from Existing Task Results. A specialist
   claim ID such as `resource_graph-2` or `azure_mcp-2` is not a stored-result ref.
+8. For a missing GA/Preview Region verdict, use `search_azure_docs` with the exact feature name,
+  `include_content=true`, and primary Region names in `focus_terms`; do not repeat a generic search.
 
 ### Output Format
 Respond with ONLY a JSON array of NEW tasks (no markdown fences):

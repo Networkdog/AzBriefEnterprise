@@ -10,6 +10,13 @@ Hosted Agent 내부의 `src/agent/history.py` JSONL은 bounded cross-update memo
 Archive는 여러 reader가 공유하는 공용 원본이므로 중요성과 환경 영향도만 보존·표시·필터링합니다.
 직무연관성은 subscriber 개인화 결과가 이메일로 전달될 때만 의미가 있으므로 Archive 문서,
 metadata, query API와 화면에 포함하지 않습니다.
+구독자 hierarchy scope로 추가 실행한 분석도 email-only variant입니다. 공용 canonical 원본의
+불변성과 PII 격리를 위해 Archive에 저장하거나 scoped email에서 해당 원본으로 링크하지 않습니다.
+
+상세의 `relevance_evidence`는 **환경 연관성 / Environment Relevance / 環境との関連性**으로
+표시합니다. 변경·종료의 적용/조치 필요성 또는 신규 역량의 가치/도입 조건을 설명하는 필드이며
+보고서를 선택한 이유가 아닙니다. 리소스 행이 없어도 섹션은 표시합니다. 제목 변경은 저장 schema나
+과거 원문을 바꾸지 않으며, 분석 시점·조회 범위를 명시하는 새 생성 지침은 새 분석부터 적용됩니다.
 
 ## 파일과 책임
 
@@ -19,7 +26,8 @@ metadata, query API와 화면에 포함하지 않습니다.
 | [`service.py`](service.py) | 문서 생성, reverse timestamp ID, 저장소 호출, browser deep link |
 | [`auth.py`](auth.py) | EasyAuth principal과 Admin/archive reader allow-list 인가 |
 | [`router.py`](router.py) | `/archive`, `/api/archive/analyses` 목록·상세 route와 CSP/no-store |
-| [`page.py`](page.py) | 외부 asset 없는 responsive 검색·상세 browser shell |
+| [`page.py`](page.py) | 공통 light 운영 shell을 사용하는 responsive 검색·상세 browser UI |
+| [`../web_design.py`](../web_design.py) | Admin/Archive 공통 visual token, header/navigation, focus, responsive primitive |
 | [`../services/archive.py`](../services/archive.py) | inert/File/Blob data-access backend와 metadata projection |
 
 ## 저장 계약
@@ -52,9 +60,22 @@ Archive backend가 구성됐는데 저장이 실패하면 run은 `failed`가 되
 
 - `ARCHIVE_UI_ENABLED=false`이면 page와 API 모두 404입니다.
 - browser는 로그인하지 않았으면 `/.auth/login/aad`로 이동하고 JSON API는 401을 반환합니다.
-- reader는 `ARCHIVE_ALLOWED_PRINCIPALS ∪ ADMIN_ALLOWED_PRINCIPALS`입니다. 빈 집합은 deny-all입니다.
+- reader는 `ARCHIVE_ALLOWED_PRINCIPALS ∪ ADMIN_ALLOWED_PRINCIPALS ∪ managed Admin`입니다.
+	빈 집합은 deny-all입니다.
 - Blob URL, SAS, access token은 API에 반환하지 않습니다.
-- 분석 text는 `textContent`와 구조화 DOM으로만 렌더합니다. HTML/Markdown을 실행하지 않습니다.
+- 분석 Markdown은 heading, paragraph, list, blockquote, fenced/inline code, bold, link를 구조화
+	DOM으로 렌더합니다. HTML은 실행하지 않고 `innerHTML`을 사용하지 않습니다.
+- Header와 main content는 같은 제한 폭으로 중앙 정렬하며 mobile에서는 viewport 폭에 맞춥니다.
+- Admin과 같은 neutral canvas/white surface/teal command shell을 사용합니다. Desktop 검색은 고밀도
+	grid이고 mobile 고급 filter는 `aria-expanded` toggle로 노출합니다. 상세 문서는 960px로 제한합니다.
+- Archive browser UI는 report language와 독립적으로 English를 기본값으로 사용합니다. 모든 filter는
+	visible Optional 표식과 예시 placeholder를 제공하며 input/select와 command는 공통 40px 높이를
+	사용합니다. Desktop command는 같은 역할 폭 144px로 한 줄 label을 유지하고, mobile action row는
+	세 칸을 균등 분배합니다. 분석 제목 button은 내용에 따라 높이가 늘어나므로 긴 제목도 잘리지 않습니다.
+- Page `h1`은 하나이며 결과와 상세 문서 제목은 `h2`입니다. Skip link와 모든 control의 visible
+	keyboard focus를 유지하고, Admin link는 Admin UI가 활성화된 경우에만 표시합니다.
+- Apple local font를 우선하고 고정 Pretendard WOFF2 한 개만 CSP에서 허용하며 실패 시 시스템
+  폰트로 fallback합니다. 외부 stylesheet나 JavaScript는 로드하지 않습니다.
 - 외부 링크는 허용된 HTTPS Microsoft/GitHub/Azure Weekly domain만 anchor로 만듭니다.
 - Storage bearer token은 검증된 Azure cloud의 Blob container endpoint에만 전송합니다.
 

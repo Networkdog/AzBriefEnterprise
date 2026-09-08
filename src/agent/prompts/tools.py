@@ -8,7 +8,9 @@ TOOLS_PROMPT = """## Available Tools
 
 ### Microsoft Learn Documentation Search
 - `search_update_related_docs`: Comprehensive update-related doc search (recommended)
-- `search_azure_docs`: Azure documentation keyword search
+- `search_azure_docs`: Azure documentation keyword search. For GA/Preview regional verification,
+  set `include_content=true` and pass the primary Region names in `focus_terms`; this fetches the
+  official pages and returns source excerpts around those Regions or an all-Regions statement.
 - `get_service_documentation`: Service-specific documentation lookup
 
 ### Azure Resource Graph
@@ -21,14 +23,15 @@ TOOLS_PROMPT = """## Available Tools
 - `get_security_posture`: Security posture analysis
 - `explore_resource_schema`: Discover properties schema for a resource type (use when predefined queries lack needed fields)
 
-### Service Region Availability (authoritative)
-- `get_service_region_availability`: **DEFINITIVE region check** — confirms whether an Azure service/feature
-  is available in the admin's regions using the ARM providers API (`/providers/{namespace}`). Prefer this
-  OVER documentation search for GA, preview, new-service, or region-expansion updates. Never conclude
-  "availability could not be verified" without calling this first.
+### Service Resource-Type Region Availability (authoritative within its scope)
+- `get_service_region_availability`: Confirms whether an exact ARM resource type can be deployed in
+  the admin's regions using the ARM providers API (`/providers/{namespace}`). It is definitive for
+  that resource type, NOT for a new feature layered on an existing type. For every GA/Preview feature,
+  pair it with feature-level evidence from the Azure Update detail or `search_azure_docs` page content.
   Input: `provider_namespace` (e.g., "Microsoft.Databricks"), optional `resource_type` (e.g., "workspaces"),
   optional `regions` (comma-separated; omit to auto-detect the admin's primary regions from their resources).
-  Returns a per-region ✅/❌ matrix and a concise verdict.
+  Always pass `resource_type` when known; a provider-wide ratio is not a feature verdict.
+  Returns a per-region resource-type matrix and a concise verdict.
   Example: Databricks in Korea Central → provider_namespace="Microsoft.Databricks", regions="koreacentral".
 
 ### Azure Management REST API (general-purpose)

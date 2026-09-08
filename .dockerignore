@@ -9,6 +9,8 @@
 .github/
 .azure/
 .venv/
+.agent_configs/
+.playwright-mcp/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -22,9 +24,13 @@ infra/
 scripts/
 logs/
 logs*.txt
+session_logs.txt
+azd-*.log
 out/
 eval_runs/
 data/
 *.jsonl
 *.bak
 .tmp_*
+/admin-*.png
+/archive-*.png

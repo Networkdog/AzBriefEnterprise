@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "12673387830141632901"
+      "templateHash": "1566566142753789445"
     },
     "description": "AzBrief Enterprise — Microsoft Foundry Hosted Agent analysis runtime + Container Apps control plane and scheduler + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
@@ -277,6 +277,13 @@
         "description": "Comma-separated allow-list of admin principals (UPN/email or object ID). Required for the Admin Page to serve anything."
       }
     },
+    "archiveAllowedPrincipals": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Comma-separated allow-list of Archive Page readers (UPN/email, object ID, or group ID). Administrators are readers automatically."
+      }
+    },
     "emailDataLocation": {
       "type": "string",
       "defaultValue": "Korea",
@@ -320,7 +327,14 @@
       "type": "string",
       "defaultValue": "0 2 * * *",
       "metadata": {
-        "description": "Cron expression, in UTC, for the daily digest job. Default: 02:00 UTC every day."
+        "description": "Protected default automatic-run cron in UTC. Admin-managed daily times are added to this schedule. Default: 02:00 UTC every day."
+      }
+    },
+    "scheduleDispatcherCronExpression": {
+      "type": "string",
+      "defaultValue": "*/5 * * * *",
+      "metadata": {
+        "description": "Cron expression for the lightweight schedule dispatcher. It claims due schedules from durable Admin configuration before starting analysis."
       }
     },
     "jobReplicaTimeoutSeconds": {
@@ -388,21 +402,28 @@
     "foundryProjectName": "[format('{0}-agents', parameters('baseName'))]",
     "containerEnvName": "[format('cae-{0}-{1}', parameters('baseName'), variables('shortSuffix'))]",
     "containerAppName": "[format('ca-{0}', parameters('baseName'))]",
+    "azureMcpContainerAppName": "[format('ca-{0}-mcp', parameters('baseName'))]",
+    "azureMcpContainerEnvName": "[format('{0}-env', variables('azureMcpContainerAppName'))]",
     "communicationServiceName": "[format('acs-{0}-{1}', parameters('baseName'), variables('shortSuffix'))]",
     "emailServiceName": "[format('acs-email-{0}-{1}', parameters('baseName'), variables('shortSuffix'))]",
     "schedulerJobName": "[format('caj-{0}', parameters('baseName'))]",
     "storageAccountName": "[take(format('st{0}{1}', toLower(replace(parameters('baseName'), '-', '')), variables('shortSuffix')), 24)]",
+    "evaluationStorageAccountName": "[take(format('steval{0}{1}', toLower(replace(parameters('baseName'), '-', '')), variables('shortSuffix')), 24)]",
     "vnetName": "[format('vnet-{0}-{1}', parameters('baseName'), variables('shortSuffix'))]",
     "perimeterName": "[format('nsp-{0}-{1}', parameters('baseName'), variables('shortSuffix'))]",
     "perimeterProfileName": "azbrief",
     "stateContainerName": "azbrief-state",
     "checkpointBlobUrl": "[format('https://{0}.blob.{1}/{2}/checkpoint.json', variables('storageAccountName'), environment().suffixes.storage, variables('stateContainerName'))]",
+    "adminConfigBlobUrl": "[format('https://{0}.blob.{1}/{2}/admin-config.json', variables('storageAccountName'), environment().suffixes.storage, variables('stateContainerName'))]",
+    "archiveContainerName": "azbrief-archive",
+    "archiveBlobContainerUrl": "[format('https://{0}.blob.{1}/{2}', variables('storageAccountName'), environment().suffixes.storage, variables('archiveContainerName'))]",
     "roleIds": {
       "keyVaultSecretsUser": "4633458b-17de-408a-b874-0445c86b69e6",
       "foundryUser": "53ca6127-db72-4b80-b1b0-d745d6d5456d",
       "reader": "acdd72a7-3385-48ef-bd42-f606fba81ae7",
       "acrPull": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
       "storageBlobDataContributor": "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+      "storageBlobDataOwner": "b7e6dc6d-f1e8-4753-8033-0f276bb0955b",
       "monitoringMetricsPublisher": "3913510d-42f4-4e42-8a64-420c390055eb"
     },
     "hasRegistry": "[not(empty(parameters('containerRegistryServer')))]",
@@ -428,6 +449,7 @@
     ],
     "adminAuthConfigured": "[and(not(empty(parameters('adminEntraClientId'))), not(empty(parameters('adminEntraClientSecret'))))]",
     "adminUiEnabled": "[and(variables('adminAuthConfigured'), not(empty(parameters('adminAllowedPrincipals'))))]",
+    "archiveUiEnabled": "[and(variables('adminAuthConfigured'), or(not(empty(parameters('archiveAllowedPrincipals'))), not(empty(parameters('adminAllowedPrincipals')))))]",
     "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', variables('foundryAccountName'), variables('foundryProjectName'))]",
     "foundryCoordinatorAgentName": "[format('{0}-coordinator', parameters('baseName'))]",
     "foundryResourceGraphAgentName": "[format('{0}-resource-graph', parameters('baseName'))]",
@@ -435,6 +457,72 @@
     "foundryAzureApiAgentName": "[format('{0}-azure-api', parameters('baseName'))]",
     "foundryReportWriterAgentName": "[format('{0}-report-writer', parameters('baseName'))]",
     "foundryQualityReviewerAgentName": "[format('{0}-quality-reviewer', parameters('baseName'))]",
+    "adminReadinessPromptAgents": {
+      "coordinator": "[variables('foundryCoordinatorAgentName')]",
+      "resource_graph": "[variables('foundryResourceGraphAgentName')]",
+      "azure_mcp": "[variables('foundryAzureMcpAgentName')]",
+      "azure_api": "[variables('foundryAzureApiAgentName')]",
+      "report_writer": "[variables('foundryReportWriterAgentName')]",
+      "quality_reviewer": "[variables('foundryQualityReviewerAgentName')]"
+    },
+    "adminReadinessSupportResources": [
+      {
+        "id": "managed_identity",
+        "label": "User-assigned managed identity",
+        "name": "[variables('managedIdentityName')]",
+        "resource_type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "api_version": "2023-01-31"
+      },
+      {
+        "id": "key_vault",
+        "label": "Key Vault",
+        "name": "[variables('keyVaultName')]",
+        "resource_type": "Microsoft.KeyVault/vaults",
+        "api_version": "2023-07-01"
+      },
+      {
+        "id": "state_storage",
+        "label": "State Storage",
+        "name": "[variables('storageAccountName')]",
+        "resource_type": "Microsoft.Storage/storageAccounts",
+        "api_version": "2023-05-01"
+      },
+      {
+        "id": "evaluation_storage",
+        "label": "Evaluation Storage",
+        "name": "[variables('evaluationStorageAccountName')]",
+        "resource_type": "Microsoft.Storage/storageAccounts",
+        "api_version": "2023-05-01"
+      },
+      {
+        "id": "log_analytics",
+        "label": "Log Analytics",
+        "name": "[variables('logAnalyticsName')]",
+        "resource_type": "Microsoft.OperationalInsights/workspaces",
+        "api_version": "2023-09-01"
+      },
+      {
+        "id": "application_insights",
+        "label": "Application Insights",
+        "name": "[variables('appInsightsName')]",
+        "resource_type": "Microsoft.Insights/components",
+        "api_version": "2020-02-02"
+      },
+      {
+        "id": "communication_services",
+        "label": "Communication Services",
+        "name": "[variables('communicationServiceName')]",
+        "resource_type": "Microsoft.Communication/communicationServices",
+        "api_version": "2023-04-01"
+      },
+      {
+        "id": "email_service",
+        "label": "Email Communication Services",
+        "name": "[variables('emailServiceName')]",
+        "resource_type": "Microsoft.Communication/emailServices",
+        "api_version": "2023-04-01"
+      }
+    ],
     "runTimeBudgetSeconds": "[sub(parameters('jobReplicaTimeoutSeconds'), 3600)]"
   },
   "resources": [
@@ -588,9 +676,9 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', variables('foundryAccountName')))]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[2])]",
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[0])]",
         "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[1])]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[0])]"
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[2])]"
       ]
     },
     {
@@ -687,6 +775,54 @@
       "dependsOn": [
         "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[4])]",
         "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', variables('storageAccountName')))]"
+      ]
+    },
+    {
+      "condition": "[variables('vnetMode')]",
+      "type": "Microsoft.Network/privateEndpoints",
+      "apiVersion": "2024-05-01",
+      "name": "[format('pe-{0}', variables('evaluationStorageAccountName'))]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "properties": {
+        "subnet": {
+          "id": "[variables('privateEndpointSubnetId')]"
+        },
+        "privateLinkServiceConnections": [
+          {
+            "name": "blob",
+            "properties": {
+              "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
+              "groupIds": [
+                "blob"
+              ]
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
+        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
+      ]
+    },
+    {
+      "condition": "[variables('vnetMode')]",
+      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+      "apiVersion": "2024-05-01",
+      "name": "[format('{0}/{1}', format('pe-{0}', variables('evaluationStorageAccountName')), 'default')]",
+      "properties": {
+        "privateDnsZoneConfigs": [
+          {
+            "name": "blob",
+            "properties": {
+              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[4])]"
+            }
+          }
+        ]
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', variables('evaluationStorageAccountName')))]",
+        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[4])]"
       ]
     },
     {
@@ -945,6 +1081,63 @@
       ]
     },
     {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageAccountName'), 'default', variables('archiveContainerName'))]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageAccountName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts",
+      "apiVersion": "2023-05-01",
+      "name": "[variables('evaluationStorageAccountName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "sku": {
+        "name": "Standard_LRS"
+      },
+      "kind": "StorageV2",
+      "properties": {
+        "minimumTlsVersion": "TLS1_2",
+        "supportsHttpsTrafficOnly": true,
+        "allowBlobPublicAccess": false,
+        "allowSharedKeyAccess": false,
+        "publicNetworkAccess": "[if(variables('vnetMode'), 'Disabled', 'Enabled')]",
+        "networkAcls": {
+          "defaultAction": "[if(variables('vnetMode'), 'Deny', 'Allow')]",
+          "bypass": "AzureServices"
+        }
+      }
+    },
+    {
+      "type": "Microsoft.CognitiveServices/accounts/projects/connections",
+      "apiVersion": "2025-06-01",
+      "name": "[format('{0}/{1}/{2}', variables('foundryAccountName'), variables('foundryProjectName'), variables('evaluationStorageAccountName'))]",
+      "properties": {
+        "category": "AzureStorageAccount",
+        "target": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName')), '2023-05-01').primaryEndpoints.blob]",
+        "authType": "AAD",
+        "isSharedToAll": true,
+        "metadata": {
+          "ApiType": "Azure",
+          "ResourceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
+          "location": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName')), '2023-05-01', 'full').location]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', format('pe-{0}', variables('evaluationStorageAccountName')), 'default')]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects/capabilityHosts', variables('foundryAccountName'), variables('foundryProjectName'), 'caphostproj')]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), variables('roleIds').storageBlobDataOwner))]",
+        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), variables('roleIds').foundryUser))]"
+      ]
+    },
+    {
       "type": "Microsoft.App/managedEnvironments",
       "apiVersion": "2024-03-01",
       "name": "[variables('containerEnvName')]",
@@ -1035,8 +1228,36 @@
                   "value": "1800"
                 },
                 {
+                  "name": "SCHEDULE_CRON_EXPRESSION",
+                  "value": "[parameters('scheduleCronExpression')]"
+                },
+                {
+                  "name": "SCHEDULE_DISPATCH_ENABLED",
+                  "value": "true"
+                },
+                {
                   "name": "CHECKPOINT_BLOB_URL",
                   "value": "[variables('checkpointBlobUrl')]"
+                },
+                {
+                  "name": "ADMIN_CONFIG_BLOB_URL",
+                  "value": "[variables('adminConfigBlobUrl')]"
+                },
+                {
+                  "name": "ARCHIVE_BLOB_CONTAINER_URL",
+                  "value": "[variables('archiveBlobContainerUrl')]"
+                },
+                {
+                  "name": "ARCHIVE_BASE_URL",
+                  "value": "[format('https://{0}.{1}', variables('containerAppName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('containerEnvName')), '2024-03-01').defaultDomain)]"
+                },
+                {
+                  "name": "ARCHIVE_UI_ENABLED",
+                  "value": "[string(variables('archiveUiEnabled'))]"
+                },
+                {
+                  "name": "ARCHIVE_ALLOWED_PRINCIPALS",
+                  "value": "[parameters('archiveAllowedPrincipals')]"
                 },
                 {
                   "name": "RUN_TIME_BUDGET_S",
@@ -1073,6 +1294,42 @@
                 {
                   "name": "ADMIN_ALLOWED_PRINCIPALS",
                   "value": "[parameters('adminAllowedPrincipals')]"
+                },
+                {
+                  "name": "ADMIN_READINESS_RESOURCE_GROUP",
+                  "value": "[resourceGroup().name]"
+                },
+                {
+                  "name": "ADMIN_READINESS_FOUNDRY_ACCOUNT",
+                  "value": "[variables('foundryAccountName')]"
+                },
+                {
+                  "name": "ADMIN_READINESS_FOUNDRY_PROJECT",
+                  "value": "[variables('foundryProjectName')]"
+                },
+                {
+                  "name": "ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT",
+                  "value": "[parameters('modelDeploymentName')]"
+                },
+                {
+                  "name": "ADMIN_READINESS_CONTAINER_ENVIRONMENTS",
+                  "value": "[base64(string(createArray(variables('containerEnvName'), variables('azureMcpContainerEnvName'))))]"
+                },
+                {
+                  "name": "ADMIN_READINESS_CONTAINER_APPS",
+                  "value": "[base64(string(createArray(variables('containerAppName'), variables('azureMcpContainerAppName'))))]"
+                },
+                {
+                  "name": "ADMIN_READINESS_CONTAINER_JOBS",
+                  "value": "[base64(string(createArray(variables('schedulerJobName'))))]"
+                },
+                {
+                  "name": "ADMIN_READINESS_PROMPT_AGENTS",
+                  "value": "[base64(string(variables('adminReadinessPromptAgents')))]"
+                },
+                {
+                  "name": "ADMIN_READINESS_SUPPORT_RESOURCES",
+                  "value": "[base64(string(variables('adminReadinessSupportResources')))]"
                 },
                 {
                   "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
@@ -1128,7 +1385,8 @@
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'acs-connection-string')]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'admin-entra-client-secret')]",
-        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'orchestrator-api-key')]"
+        "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'orchestrator-api-key')]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor))]"
       ]
     },
     {
@@ -1160,6 +1418,9 @@
           }
         },
         "login": {
+          "allowedExternalRedirectUrls": [
+            "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01').configuration.ingress.fqdn)]"
+          ],
           "preserveUrlFragmentsForLogins": false
         }
       },
@@ -1187,7 +1448,7 @@
           "replicaTimeout": "[parameters('jobReplicaTimeoutSeconds')]",
           "replicaRetryLimit": 0,
           "scheduleTriggerConfig": {
-            "cronExpression": "[parameters('scheduleCronExpression')]",
+            "cronExpression": "[parameters('scheduleDispatcherCronExpression')]",
             "parallelism": 1,
             "replicaCompletionCount": 1
           },
@@ -1245,8 +1506,36 @@
                   "value": "1800"
                 },
                 {
+                  "name": "SCHEDULE_CRON_EXPRESSION",
+                  "value": "[parameters('scheduleCronExpression')]"
+                },
+                {
+                  "name": "SCHEDULE_DISPATCH_ENABLED",
+                  "value": "true"
+                },
+                {
                   "name": "CHECKPOINT_BLOB_URL",
                   "value": "[variables('checkpointBlobUrl')]"
+                },
+                {
+                  "name": "ADMIN_CONFIG_BLOB_URL",
+                  "value": "[variables('adminConfigBlobUrl')]"
+                },
+                {
+                  "name": "ARCHIVE_BLOB_CONTAINER_URL",
+                  "value": "[variables('archiveBlobContainerUrl')]"
+                },
+                {
+                  "name": "ARCHIVE_BASE_URL",
+                  "value": "[format('https://{0}.{1}', variables('containerAppName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('containerEnvName')), '2024-03-01').defaultDomain)]"
+                },
+                {
+                  "name": "ARCHIVE_UI_ENABLED",
+                  "value": "[string(variables('archiveUiEnabled'))]"
+                },
+                {
+                  "name": "ARCHIVE_ALLOWED_PRINCIPALS",
+                  "value": "[parameters('archiveAllowedPrincipals')]"
                 },
                 {
                   "name": "RUN_TIME_BUDGET_S",
@@ -1283,6 +1572,42 @@
                 {
                   "name": "ADMIN_ALLOWED_PRINCIPALS",
                   "value": "[parameters('adminAllowedPrincipals')]"
+                },
+                {
+                  "name": "ADMIN_READINESS_RESOURCE_GROUP",
+                  "value": "[resourceGroup().name]"
+                },
+                {
+                  "name": "ADMIN_READINESS_FOUNDRY_ACCOUNT",
+                  "value": "[variables('foundryAccountName')]"
+                },
+                {
+                  "name": "ADMIN_READINESS_FOUNDRY_PROJECT",
+                  "value": "[variables('foundryProjectName')]"
+                },
+                {
+                  "name": "ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT",
+                  "value": "[parameters('modelDeploymentName')]"
+                },
+                {
+                  "name": "ADMIN_READINESS_CONTAINER_ENVIRONMENTS",
+                  "value": "[base64(string(createArray(variables('containerEnvName'), variables('azureMcpContainerEnvName'))))]"
+                },
+                {
+                  "name": "ADMIN_READINESS_CONTAINER_APPS",
+                  "value": "[base64(string(createArray(variables('containerAppName'), variables('azureMcpContainerAppName'))))]"
+                },
+                {
+                  "name": "ADMIN_READINESS_CONTAINER_JOBS",
+                  "value": "[base64(string(createArray(variables('schedulerJobName'))))]"
+                },
+                {
+                  "name": "ADMIN_READINESS_PROMPT_AGENTS",
+                  "value": "[base64(string(variables('adminReadinessPromptAgents')))]"
+                },
+                {
+                  "name": "ADMIN_READINESS_SUPPORT_RESOURCES",
+                  "value": "[base64(string(variables('adminReadinessSupportResources')))]"
                 },
                 {
                   "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
@@ -1361,6 +1686,37 @@
         "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
         "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), variables('roleIds').foundryUser)]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roleIds').foundryUser)]",
+        "principalId": "[reference(resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), '2025-06-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]",
+        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').foundryUser))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), variables('roleIds').storageBlobDataOwner)]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roleIds').storageBlobDataOwner)]",
+        "principalId": "[reference(resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), '2025-06-01', 'full').identity.principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]"
       ]
     },
     {
@@ -1535,6 +1891,26 @@
         "[resourceId('Microsoft.Network/networkSecurityPerimeters', variables('perimeterName'))]",
         "[resourceId('Microsoft.Network/networkSecurityPerimeters/profiles', variables('perimeterName'), variables('perimeterProfileName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+      ]
+    },
+    {
+      "condition": "[variables('perimeterMode')]",
+      "type": "Microsoft.Network/networkSecurityPerimeters/resourceAssociations",
+      "apiVersion": "2024-07-01",
+      "name": "[format('{0}/{1}', variables('perimeterName'), 'assoc-evaluation-storage')]",
+      "properties": {
+        "privateLinkResource": {
+          "id": "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]"
+        },
+        "profile": {
+          "id": "[resourceId('Microsoft.Network/networkSecurityPerimeters/profiles', variables('perimeterName'), variables('perimeterProfileName'))]"
+        },
+        "accessMode": "[parameters('perimeterAccessMode')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
+        "[resourceId('Microsoft.Network/networkSecurityPerimeters', variables('perimeterName'))]",
+        "[resourceId('Microsoft.Network/networkSecurityPerimeters/profiles', variables('perimeterName'), variables('perimeterProfileName'))]"
       ]
     },
     {
@@ -1734,6 +2110,13 @@
       },
       "value": "[if(variables('adminUiEnabled'), format('{0}/admin', format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01').configuration.ingress.fqdn)), '(disabled — supply adminEntraClientId, adminEntraClientSecret and adminAllowedPrincipals)')]"
     },
+    "archivePageUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "Archive Page URL. Administrators and explicitly allowed archive readers can browse canonical analyses."
+      },
+      "value": "[if(variables('archiveUiEnabled'), format('{0}/archive', format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01').configuration.ingress.fqdn)), '(disabled — configure Entra sign-in and an archive or admin allow-list)')]"
+    },
     "foundryProjectEndpoint": {
       "type": "string",
       "metadata": {
@@ -1793,9 +2176,16 @@
     "scheduleCronExpression": {
       "type": "string",
       "metadata": {
-        "description": "Cron expression (UTC) the scheduler job runs on."
+        "description": "Protected default automatic-run cron expression (UTC)."
       },
       "value": "[parameters('scheduleCronExpression')]"
+    },
+    "scheduleDispatcherCronExpression": {
+      "type": "string",
+      "metadata": {
+        "description": "Cron expression (UTC) used to poll durable automatic schedules."
+      },
+      "value": "[parameters('scheduleDispatcherCronExpression')]"
     },
     "checkpointBlobUrl": {
       "type": "string",
@@ -1804,10 +2194,24 @@
       },
       "value": "[variables('checkpointBlobUrl')]"
     },
+    "adminConfigBlobUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "Private JSON blob holding Admin-managed subscribers, principals, and schedules."
+      },
+      "value": "[variables('adminConfigBlobUrl')]"
+    },
+    "archiveBlobContainerUrl": {
+      "type": "string",
+      "metadata": {
+        "description": "Private Blob container holding immutable canonical analysis versions."
+      },
+      "value": "[variables('archiveBlobContainerUrl')]"
+    },
     "runNowCommand": {
       "type": "string",
       "metadata": {
-        "description": "Command that starts a digest run immediately instead of waiting for the schedule."
+        "description": "Command that starts the scheduler Job immediately. In dispatcher mode, analysis starts only when an automatic schedule is due."
       },
       "value": "[format('az containerapp job start --name {0} --resource-group {1}', variables('schedulerJobName'), resourceGroup().name)]"
     },
@@ -1851,7 +2255,7 @@
       "metadata": {
         "description": "Post-deployment checklist."
       },
-      "value": "[format('1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd project endpoint, run configureHostedAgentCommand, run provisionAgentsCommand and its --check, then deploy {0} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals to switch the Admin Page on. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', parameters('foundryHostedAgentName'))]"
+      "value": "[format('1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd project endpoint, run configureHostedAgentCommand, run provisionAgentsCommand and its --check, then deploy {0} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals and/or archiveAllowedPrincipals to enable the authenticated browser surfaces. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', parameters('foundryHostedAgentName'))]"
     }
   }
 }

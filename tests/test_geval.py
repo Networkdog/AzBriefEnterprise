@@ -322,7 +322,7 @@ def test_render_report_markdown_has_all_sections(sample_result, sample_update):
     md = judge.render_report_markdown(sample_result, sample_update)
     assert "# TLS 1.0/1.1 retirement" in md
     assert "한 줄 요약" in md
-    assert "관련성 근거" in md
+    assert "환경 연관성" in md
     assert "상세 분석" in md
     assert "영향받는 리소스" in md
     assert "sthottierpoc" in md

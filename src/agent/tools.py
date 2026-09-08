@@ -1070,9 +1070,6 @@ class FindRelatedResourcesTool(BaseTool):
         for row in rows:
             by_type.setdefault(str(row.get("type", "?")), []).append(row)
 
-        subscriptions = {str(r.get("subscriptionId", "")) for r in rows if r.get("subscriptionId")}
-        multi_sub = len(subscriptions) > 1
-
         lines = [
             f"Found {len(rows)} resources matching keywords: {keywords} "
             f"({len(by_type)} resource types).",
@@ -1090,9 +1087,8 @@ class FindRelatedResourcesTool(BaseTool):
                     str(row.get("name", "?")),
                     str(row.get("location", "?")),
                     f"rg={row.get('resourceGroup', '?')}",
+                    f"sub={row.get('subscriptionId', '?')}",
                 ]
-                if multi_sub:
-                    parts.append(f"sub={row.get('subscriptionId', '?')}")
                 lines.append(f"- {' | '.join(parts)}")
         return "\n".join(lines)
 
@@ -1173,7 +1169,7 @@ class GetServiceResourceDetailsTool(BaseTool):
         for i, resource in enumerate(data[:20], 1):  # Limit to 20
             output_lines.append(f"### {i}. {resource.get('name', 'Unknown')}")
             for key, value in resource.items():
-                if key in ("name", "subscriptionId") or value is None:
+                if key == "name" or value is None:
                     continue
                 # Show subscriptionName as "subscription"
                 if key == "subscriptionName":
@@ -1400,6 +1396,65 @@ Resources
 # ============================================================================
 
 
+_AVAILABILITY_FOCUS_TERMS = (
+    "all azure regions",
+    "all regions",
+    "available regions",
+    "regional availability",
+    "region availability",
+    "supported regions",
+)
+
+
+def _focused_availability_excerpt(
+    content: str,
+    focus_terms: list[str],
+    max_chars: int = 1800,
+) -> str:
+    """Return source context around a target Region or an all-Region statement."""
+    if not content:
+        return ""
+
+    normalized_chars: list[str] = []
+    source_positions: list[int] = []
+    for index, char in enumerate(content):
+        if char.isalnum():
+            normalized_chars.append(char.lower())
+            source_positions.append(index)
+    normalized_content = "".join(normalized_chars)
+
+    def locate(terms: list[str]) -> list[int]:
+        positions: list[int] = []
+        for term in terms:
+            normalized_term = "".join(char.lower() for char in term if char.isalnum())
+            if not normalized_term:
+                continue
+            offset = normalized_content.find(normalized_term)
+            if offset >= 0:
+                positions.append(source_positions[offset])
+        return positions
+
+    positions = locate(focus_terms)
+    if not positions:
+        positions = locate(list(_AVAILABILITY_FOCUS_TERMS))
+    if not positions:
+        return ""
+
+    windows: list[tuple[int, int]] = []
+    for position in sorted(set(positions))[:6]:
+        start = max(0, position - 350)
+        end = min(len(content), position + 900)
+        if windows and start <= windows[-1][1]:
+            windows[-1] = (windows[-1][0], max(windows[-1][1], end))
+        else:
+            windows.append((start, end))
+
+    excerpt = "\n...\n".join(content[start:end].strip() for start, end in windows)
+    if len(excerpt) > max_chars:
+        excerpt = excerpt[:max_chars].rstrip() + "\n... (excerpt truncated)"
+    return excerpt
+
+
 class SearchAzureDocsInput(BaseModel):
     """Input for searching Azure documentation."""
 
@@ -1409,6 +1464,20 @@ class SearchAzureDocsInput(BaseModel):
     service_name: Optional[str] = Field(
         default=None,
         description="Specific Azure service name (e.g., 'Storage', 'Virtual Machines')",
+    )
+    include_content: bool = Field(
+        default=False,
+        description=(
+            "Fetch official page content when a search-result description is insufficient. "
+            "Set true for feature-level regional availability verification."
+        ),
+    )
+    focus_terms: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Terms to retain from fetched pages, such as the administrator's primary Azure "
+            "regions. Used only when include_content is true."
+        ),
     )
 
 
@@ -1443,7 +1512,13 @@ class SearchAzureDocsTool(BaseTool):
         """Sync execution not supported."""
         raise NotImplementedError("Use async version")
 
-    async def _arun(self, query: str, service_name: Optional[str] = None) -> str:
+    async def _arun(
+        self,
+        query: str,
+        service_name: Optional[str] = None,
+        include_content: bool = False,
+        focus_terms: Optional[list[str]] = None,
+    ) -> str:
         """Search Azure documentation asynchronously."""
         try:
             result = await self._service.search_azure_docs(
@@ -1462,6 +1537,42 @@ class SearchAzureDocsTool(BaseTool):
                 output_lines.append(f"- URL: {doc.get('url', '')}")
                 output_lines.append(f"- Description: {doc.get('description', 'No description')}")
                 output_lines.append("")
+
+            if include_content:
+                pages = await asyncio.gather(
+                    *[
+                        self._service.fetch_page_content(doc.get("url", ""), max_chars=50_000)
+                        for doc in result["results"][:3]
+                        if doc.get("url")
+                    ],
+                    return_exceptions=True,
+                )
+                output_lines.append("## Feature-level regional availability evidence")
+                output_lines.append(
+                    "Target terms: " + (", ".join(focus_terms or []) or "all/supported regions")
+                )
+                evidence_found = False
+                for page in pages:
+                    if not isinstance(page, dict):
+                        continue
+                    excerpt = _focused_availability_excerpt(
+                        page.get("content", ""),
+                        focus_terms or [],
+                    )
+                    if not excerpt:
+                        continue
+                    evidence_found = True
+                    output_lines.append(f"### {page.get('title', 'Official documentation')}")
+                    output_lines.append(f"- URL: {page.get('url', '')}")
+                    output_lines.append("- Targeted source excerpt:")
+                    output_lines.append(excerpt)
+                    output_lines.append("")
+                if not evidence_found:
+                    output_lines.append(
+                        "No target-region or all-regions availability statement was found in "
+                        "the fetched official pages. Do not infer feature availability from the "
+                        "search result titles alone."
+                    )
 
             return "\n".join(output_lines)
         except Exception as e:
@@ -3083,7 +3194,7 @@ class GetServiceRegionAvailabilityInput(BaseModel):
         description=(
             "Azure resource provider namespace to check "
             "(e.g., 'Microsoft.Databricks', 'Microsoft.App', 'Microsoft.DBforPostgreSQL'). "
-            "This is the authoritative source of truth for the regions a service supports."
+            "This is authoritative for ARM resource-type deployability, not feature rollout."
         )
     )
     resource_type: str = Field(
@@ -3104,20 +3215,20 @@ class GetServiceRegionAvailabilityInput(BaseModel):
 
 
 class GetServiceRegionAvailabilityTool(BaseTool):
-    """Check whether an Azure service is available in specific regions.
+    """Check whether Azure resource types are deployable in specific regions.
 
     Uses the ARM ``providers/{namespace}`` API, which returns the authoritative
-    list of supported locations per resource type — far more accurate than doc
-    search for answering "is service X available in region Y?".
+    list of supported locations per resource type. It does not establish rollout
+    of a feature layered on an existing resource type.
     """
 
     name: str = "get_service_region_availability"
-    description: str = """Checks whether an Azure service/feature is available in specific regions — the DEFINITIVE answer.
+    description: str = """Checks whether an exact Azure ARM resource type is deployable in specific regions.
 
     Uses the Azure Resource Manager providers API (`/providers/{namespace}`), which returns the
-    authoritative list of supported regions per resource type. Prefer this OVER documentation search
-    whenever an update announces a new service, feature, SKU, or region expansion and you need to
-    confirm availability in the administrator's regions.
+    authoritative list of supported regions per resource type. This is definitive only for the exact
+    resource type. It does not prove that a GA or Preview feature layered on that type has rolled out;
+    pair it with the Azure Update detail or fetched Microsoft Learn feature documentation.
 
     Examples:
     - "Is Azure Databricks available in Korea Central?"
@@ -4090,12 +4201,14 @@ class QueryToolResultTool(BaseTool):
     ) -> str:
         """Search or sample a stored tool result."""
         from src.agent.context_store import get_result_store
+        from src.agent.foundry_backend import current_foundry_invocation_context
 
-        stored = get_result_store().get(ref)
+        trace_id, _ = current_foundry_invocation_context()
+        stored = get_result_store().get(ref, trace_id=trace_id)
         if stored is None:
             return (
-                f"No stored result for ref '{ref}'. Refs appear as [ref=R7] at the end of a "
-                "truncated tool result and are dropped once memory is reclaimed. "
+                f"No stored result owned by this analysis for ref '{ref}'. Refs appear as "
+                "[ref=R7] at the end of a truncated tool result and are dropped once memory is reclaimed. "
                 "Re-run the original tool with a narrower query instead."
             )
 
