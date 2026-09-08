@@ -176,6 +176,18 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   action is reviewed as `advisory_review`: no CLI or rollback is required, and an incomplete
   go/no-go check can be `caution` but cannot be blocked merely for lacking a command. Commands
   and state-changing Portal procedures remain fail-closed.
+- **Editorial email layout** — White paper on a pale neutral canvas, ink `#182b32` and teal
+  `#08746b`, without dark navy hero panels or rounded, shadowed cards. Single reports and digest
+  details share a title, takeaway, independent three-axis strip, and two-column operational facts.
+  The digest separates analyzed high/medium/low counts from skipped items, retains every supplied
+  item, and links full, numbered contents titles to details and back. Mobile layouts label metrics
+  and stack resource fields without losing reasons, grouping, or Portal identity. All report fonts
+  increase by 1px (body 13px). Shared 6px semantic vertical accents emphasize level/verification
+  badges, takeaways, concept boxes, and additional checks; visible status text and existing colors
+  are preserved, while neutral dividers remain thin. The 640px inline/MSO baseline grows to 760px
+  at 800px and 900px at 1100px where media queries
+  are supported. See [src/email/README.md](src/email/README.md) for rendering invariants. This is a
+  presentation change, not a new Markdown vocabulary, analysis behavior, transport, or Archive schema.
 - **Role-based reports** — Same update, different perspective per subscriber
 - **Multilingual** — Per-subscriber language from a pluggable registry (Korean, English and
   Japanese ship curated style guides; any other language still renders through fallback
@@ -1105,6 +1117,22 @@ missing configuration returns 503, a missing key returns 401, and an invalid key
 python -m pytest tests/ -o "addopts=" -q      # full suite
 python -c "import src"                        # import check — must pass before committing
 ```
+
+### Offline email design preview
+
+[scripts/preview_email.py](scripts/preview_email.py) renders **SYNTHETIC** data in ko/en/ja:
+single report and digest, each with full styles and an inline-only version with `<style>` blocks
+removed — 12 HTML files in total. It mocks transport settings and retirement history, never
+initializes an email transport, and makes no Azure calls or email deliveries.
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.preview_email --output-dir out/email-editorial-preview --language all
+```
+
+[tests/test_email_editorial.py](tests/test_email_editorial.py) covers the shared structure,
+navigation, counts, full titles, resource identity, action verification, palette contrast, and
+offline previews. These checks do not establish full-suite, browser, or email-client validation.
 
 ### Container image
 

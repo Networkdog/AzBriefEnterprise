@@ -16,30 +16,29 @@ from src.feedback.models import FeedbackSubmission
 if TYPE_CHECKING:  # analyzer imports this module's package at runtime
     from src.agent.analyzer import AzureUpdateAnalyzer
 from src.email.templates import (
-    _CLIENT_COMPAT_STYLE,
-    _DARK_MODE_STYLE,
-    _RESPONSIVE_STYLE,
+    EMAIL_COLORS,
     FONT_STACK_SANS,
+    HTML_DIGEST_TEMPLATE,
     HTML_EMAIL_TEMPLATE,
     escape_email_text,
     format_action_items_html,
     format_additional_checks_html,
     format_affected_resources_html,
-    format_archive_link_html,
     format_batch_context_html,
+    format_digest_intro_html,
     format_digest_table_header_html,
     format_digest_update_card_html,
-    format_feedback_link_html,
+    format_email_footer_html,
+    format_email_masthead_html,
+    format_email_section_html,
     format_impact_section_html,
     format_quick_decision_html,
     format_reference_docs_html,
     format_relevance_evidence_html,
+    format_report_header_html,
     format_timeline_html,
-    get_importance_colors,
     get_importance_level,
     get_labels,
-    get_relevance_colors,
-    get_urgency_colors,
     markdown_to_html,
     safe_archive_url,
     safe_email_href,
@@ -259,8 +258,6 @@ class EmailService:
         urgency_value = (
             result.urgency.value if hasattr(result, "urgency") and result.urgency else "medium"
         )
-        urgency_colors = get_urgency_colors(urgency_value)
-
         # One line summary
         one_line = (
             result.one_line_summary
@@ -268,35 +265,18 @@ class EmailService:
             else update.title[:80]
         )
 
-        # Urgency-aware summary background
-        urgency_summary_bgs = {
-            "critical": "#fef2f2",
-            "high": "#fff7ed",
-            "medium": "#f0f4f8",
-            "low": "#f0fdf4",
-        }
-
         # Build HTML content from professional template
         relevance_value = (
             result.relevance.value if hasattr(result.relevance, "value") else str(result.relevance)
         )
-        relevance_colors = get_relevance_colors(relevance_value, language)
         update_category = getattr(result, "update_category", "new_feature")
 
         html_content = HTML_EMAIL_TEMPLATE.format(
-            # Language
             html_lang=get_language(language).lang_attr,
-            # Urgency styling
-            urgency_bg_color=urgency_colors["bg_color"],
-            urgency_badge=urgency_colors["badge"],
-            urgency_summary_bg=urgency_summary_bgs.get(urgency_value, "#f0f4f8"),
-            # Relevance badge
-            relevance_bg_color=relevance_colors["bg_color"],
-            relevance_text_color=relevance_colors["text_color"],
-            relevance_border_color=relevance_colors["border_color"],
-            relevance_label=relevance_colors["label"],
-            # Summary
-            one_line_summary=escape_email_text(one_line),
+            document_title=escape_email_text(update.title),
+            preheader=escape_email_text(one_line),
+            masthead_html=format_email_masthead_html(L["email_report_label"]),
+            report_header_html=format_report_header_html(update, result, language, archive_url),
             # 환경 연관성
             relevance_evidence_html=format_relevance_evidence_html(
                 getattr(result, "relevance_evidence", ""),
@@ -312,22 +292,13 @@ class EmailService:
                 if batch_stats
                 else ""
             ),
-            archive_link_html=format_archive_link_html(archive_url, language),
-            feedback_link_html=format_feedback_link_html(feedback_url, language),
             # Quick decision card
             quick_decision_html=format_quick_decision_html(result, language),
-            # Update info
-            title=escape_email_text(update.title),
-            update_type=escape_email_text(update.update_type or "Info"),
-            published_date=(
-                update.published_date.strftime("%Y-%m-%d") if update.published_date else "-"
-            ),
-            link=safe_email_href(update.link) or "#",
-            service_tags_html=self._build_service_tags_html(
-                update.azure_services if hasattr(update, "azure_services") else []
-            ),
             # Analysis
-            analysis_summary=markdown_to_html(result.relevance_reason or "", strip_headings=True),
+            analysis_section_html=format_email_section_html(
+                L["analysis_summary"],
+                markdown_to_html(result.relevance_reason or "", strip_headings=True),
+            ),
             # Key dates timeline
             timeline_html=format_timeline_html(
                 result.action_items if hasattr(result, "action_items") else [],
@@ -361,16 +332,11 @@ class EmailService:
                 result.additional_checks if hasattr(result, "additional_checks") else [],
                 language,
             ),
-            # Template labels
-            label_update_type=L["update_type"],
-            label_analysis_summary=L["analysis_summary"],
-            label_detail_link=L["detail_link"],
-            label_disclaimer_title=L["disclaimer_title"],
-            label_disclaimer_body=L["disclaimer_body"],
-            label_footer_generated=L["footer_generated"],
-            label_footer_basis=L["footer_basis"],
-            # Footer
-            generated_at=datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            footer_html=format_email_footer_html(
+                language,
+                datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+                feedback_url,
+            ),
         )
 
         # Build subject (urgency prefix for critical/high, relevance suffix for context)
@@ -409,34 +375,6 @@ class EmailService:
             "html_content": html_content,
             "plain_content": plain_content,
         }
-
-    @staticmethod
-    def _build_service_tags_html(services: list[str]) -> str:
-        """Build inline service tag badges for the email header.
-
-        Args:
-            services: List of Azure service names
-
-        Returns:
-            HTML string with service tags; empty string if no services.
-        """
-        if not services:
-            return ""
-        tags = []
-        for svc in services[:4]:
-            safe_service = escape_email_text(svc)
-            tags.append(
-                f'<span style="display: inline-block; background-color: #1a2d47; '
-                f"color: #8db4d8; padding: 2px 8px; border-radius: 3px; "
-                f"font-size: 10px; font-weight: 600; margin-right: 4px; "
-                f'margin-top: 6px; letter-spacing: 0.2px;">{safe_service}</span>'
-            )
-        if len(services) > 4:
-            tags.append(
-                f'<span style="display: inline-block; color: #5b7a96; '
-                f'font-size: 10px; margin-top: 6px;">+{len(services) - 4}</span>'
-            )
-        return f'<div style="margin-top: 2px;">{"".join(tags)}</div>'
 
     def _build_plain_text(
         self,
@@ -1050,57 +988,42 @@ class EmailService:
         rows_html = ""
         for item in countdowns[:8]:  # Limit to 8
             days = item.get("days_remaining")
-            title = escape_email_text(item.get("title", "")[:60])
+            title = escape_email_text(item.get("title", ""))
             count = item.get("affected_resource_count", 0)
             status = item.get("migration_status", "not_started")
-            rd = item.get("retirement_date", "")
 
             # Color based on urgency
             if days is not None and days <= 30:
-                day_color = "#dc2626"
-                day_bg = "#fef2f2"
+                day_color = EMAIL_COLORS["danger"]
             elif days is not None and days <= 90:
-                day_color = "#d97706"
-                day_bg = "#fffbeb"
+                day_color = EMAIL_COLORS["warning"]
             else:
-                day_color = "#16a34a"
-                day_bg = "#f0fdf4"
+                day_color = EMAIL_COLORS["success"]
 
             day_text = f"D-{days}" if days is not None and days >= 0 else "TBD"
             if days is not None and days < 0:
                 day_text = f"D+{abs(days)}"
-                day_color = "#dc2626"
-                day_bg = "#fef2f2"
+                day_color = EMAIL_COLORS["danger"]
 
             status_label = {
-                "not_started": "⬜",
-                "in_progress": "🟨",
-                "completed": "✅",
-            }.get(status, "⬜")
+                "not_started": L["migration_not_started"],
+                "in_progress": L["migration_in_progress"],
+                "completed": L["migration_completed"],
+            }.get(status, L["migration_not_started"])
 
             rows_html += f"""<tr>
-                <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #eee;">
-                    <span style="display: inline-block; background: {day_bg}; color: {day_color}; padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 10px;">{day_text}</span>
+                <td width="80" style="padding: 14px 12px 14px 0; vertical-align: top; font-size: 17px; font-weight: 700; color: {day_color}; border-bottom: 1px solid {EMAIL_COLORS['line']};">{day_text}</td>
+                <td style="padding: 14px 0; border-bottom: 1px solid {EMAIL_COLORS['line']}; overflow-wrap: anywhere;">
+                    <p style="margin: 0; font-size: 13px; font-weight: 600; color: {EMAIL_COLORS['ink']}; line-height: 1.8;">{title}</p>
+                    <p style="margin: 6px 0 0; font-size: 12px; color: {EMAIL_COLORS['muted']};">{L['col_resource']}: {escape_email_text(count)} &middot; {status_label}</p>
                 </td>
-                <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #eee; color: #333;">{title}</td>
-                <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #eee; text-align: center; color: #555;">{count}</td>
-                <td style="padding: 6px 8px; font-size: 11px; border-bottom: 1px solid #eee; text-align: center;">{status_label}</td>
             </tr>"""
 
-        return f"""<tr>
-            <td class="azb-pad" style="padding: 16px 32px 12px 32px; border-bottom: 1px solid #e2e7ed;">
-                <p style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #dc2626; text-transform: uppercase; letter-spacing: 0.3px;">⏰ {retirement_title}</p>
-                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border: 1px solid #e2e7ed; border-radius: 6px; overflow: hidden;">
-                    <tr style="background-color: #f1f5f9;">
-                        <th style="padding: 6px 8px; font-size: 10px; font-weight: 600; color: #64748b; text-align: left;">D-Day</th>
-                        <th style="padding: 6px 8px; font-size: 10px; font-weight: 600; color: #64748b; text-align: left;">Update</th>
-                        <th style="padding: 6px 8px; font-size: 10px; font-weight: 600; color: #64748b; text-align: center;">Resources</th>
-                        <th style="padding: 6px 8px; font-size: 10px; font-weight: 600; color: #64748b; text-align: center;">Status</th>
-                    </tr>
-                    {rows_html}
-                </table>
-            </td>
-        </tr>"""
+        return format_email_section_html(
+            retirement_title,
+            '<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" '
+            f'class="azb-countdown" style="table-layout: fixed; border-collapse: collapse;">{rows_html}</table>',
+        )
 
     def _build_update_detail_html(
         self,
@@ -1125,26 +1048,7 @@ class EmailService:
             HTML rows to embed inside the digest table.
         """
         L = get_labels(language)
-        urgency_value = (
-            result.urgency.value if hasattr(result.urgency, "value") else str(result.urgency)
-        )
-        urgency_colors = get_urgency_colors(urgency_value)
-        relevance_value = (
-            result.relevance.value if hasattr(result.relevance, "value") else str(result.relevance)
-        )
-        relevance_colors = get_relevance_colors(relevance_value, language)
         update_category = getattr(result, "update_category", "new_feature")
-
-        one_line = (
-            result.one_line_summary
-            if hasattr(result, "one_line_summary") and result.one_line_summary
-            else update.title[:80]
-        )
-        safe_title = escape_email_text(update.title)
-        safe_one_line = escape_email_text(one_line)
-        safe_update_type = escape_email_text(update.update_type or "Info")
-        safe_update_link = safe_email_href(update.link) or "#"
-        published = update.published_date.strftime("%Y-%m-%d") if update.published_date else "-"
 
         # Build each section via existing helpers
         analysis_html = markdown_to_html(result.relevance_reason or "", strip_headings=True)
@@ -1177,47 +1081,14 @@ class EmailService:
         )
         refs_html = format_reference_docs_html(result.reference_docs, language)
 
-        return f"""
-                    <!-- ══ Update #{index} detail ══ -->
-                    <tr>
-                        <td style="padding: 0;">
-                            <a name="azbrief-detail-{index}" id="azbrief-detail-{index}"></a>
-                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="border-top: 3px solid {urgency_colors['bg_color']};">
-                                <!-- Detail header -->
-                                <tr>
-                                    <td class="azb-detail-hdr azb-pad" style="background-color: #1e3a5f; padding: 14px 32px 12px 32px;">
-                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-stack">
-                                            <tr>
-                                                <td>
-                                                    <span style="display: inline-block; background-color: {urgency_colors['bg_color']}; color: #fff; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 700; letter-spacing: 0.3px;">{urgency_colors['badge']}</span>
-                                                    <span style="display: inline-block; background-color: {relevance_colors['bg_color']}; color: {relevance_colors['text_color']}; border: 1px solid {relevance_colors['border_color']}; padding: 2px 8px; border-radius: 3px; font-size: 10px; font-weight: 600; margin-left: 4px;">{relevance_colors['label']}</span>
-                                                </td>
-                                                <td align="right" class="azb-detail-subtitle azb-stack-tail" style="color: #9bb3cf; font-size: 10px;">{L['update_type']}: {safe_update_type} &middot; {published}</td>
-                                            </tr>
-                                        </table>
-                                        <p style="margin: 8px 0 0 0; color: #ffffff; font-size: 14px; font-weight: 600; line-height: 1.4;">{safe_title}</p>
-                                        <p class="azb-detail-subtitle" style="margin: 4px 0 0 0; color: #c0cfe0; font-size: 11px; line-height: 1.4;">{safe_one_line}</p>
-                                        <p style="margin: 6px 0 0 0;"><a href="{safe_update_link}" class="azb-link" style="color: #7db8e8; font-size: 10px; text-decoration: none;">{L['detail_link']}</a></p>
-                                        {format_archive_link_html(archive_url, language)}
-                                    </td>
-                                </tr>
-                                <!-- Analysis body -->
-                                <tr>
-                                    <td class="azb-section azb-pad" style="padding: 18px 32px 14px 32px;">
-                                        <p class="azb-heading" style="margin: 0 0 8px 0; font-size: 14px; font-weight: 700; color: #1a1a1a; text-transform: uppercase; letter-spacing: 0.3px;">{L['analysis_summary']}</p>
-                                        <div class="azb-text" style="font-size: 12px; color: #333; line-height: 1.7;">{analysis_html}</div>
-                                    </td>
-                                </tr>
-                                {relevance_html}
-                                {timeline_html}
-                                {impact_html}
-                                {resources_html}
-                                {actions_html}
-                                {checks_html}
-                                {refs_html}
-                            </table>
-                        </td>
-                    </tr>"""
+        return f"""<tr><td class="azb-digest-detail" style="padding: 0;">
+<a name="azbrief-detail-{index}" id="azbrief-detail-{index}"></a>
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="table-layout: fixed; border-top: 2px solid {EMAIL_COLORS['ink']};">
+{format_report_header_html(update, result, language, archive_url, index)}
+{format_quick_decision_html(result, language)}
+{format_email_section_html(L['analysis_summary'], analysis_html)}
+{relevance_html}{timeline_html}{impact_html}{resources_html}{actions_html}{checks_html}{refs_html}
+</table></td></tr>"""
 
     def build_digest_content(
         self,
@@ -1293,23 +1164,6 @@ class EmailService:
         if len(subject) > 120:
             subject = subject[:119] + "\u2026"
 
-        # --- Determine overall urgency color ---
-        if high_count > 0:
-            overall_urgency = "high"
-            for it in high_items:
-                if it.get("result"):
-                    urg = (
-                        it["result"].urgency.value if hasattr(it["result"].urgency, "value") else ""
-                    )
-                    if urg == "critical":
-                        overall_urgency = "critical"
-                        break
-        elif medium_count > 0:
-            overall_urgency = "medium"
-        else:
-            overall_urgency = "low"
-        urgency_colors = get_urgency_colors(overall_urgency)
-
         # --- Ordered list: sorted by importance → impact → job_relevance (high first) ---
         analyzed_items = []
         for group in [high_items, medium_items, low_items]:
@@ -1381,72 +1235,30 @@ class EmailService:
         retirement_html = "" if scoped_delivery else self._build_retirement_countdown_html(language)
 
         # --- Assemble full HTML ---
-        html_content = f"""<!DOCTYPE html>
-<html lang="{language}">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="color-scheme" content="light only">
-    <title>{L['digest_title']}</title>
-{_DARK_MODE_STYLE}{_CLIENT_COMPAT_STYLE}{_RESPONSIVE_STYLE}</head>
-<body class="azb-body" style="margin: 0; padding: 0; font-family: {FONT_STACK_SANS}; background-color: #f3f5f8; line-height: 1.6; -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%;">
-    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-body" style="background-color: #f3f5f8;">
-        <tr>
-            <td align="center" class="azb-outer" style="padding: 20px 10px 28px 10px;">
-                <!--[if mso]><table role="presentation" cellspacing="0" cellpadding="0" border="0" width="640" align="center"><tr><td><![endif]-->
-                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" align="center" class="azb-card" style="max-width: 640px; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.06);">
-
-                    <!-- Accent bar -->
-                    <tr><td style="background-color: {urgency_colors['bg_color']}; height: 4px; font-size: 0; line-height: 0;">&nbsp;</td></tr>
-
-                    <!-- Header -->
-                    <tr>
-                        <td class="azb-header azb-pad" style="background-color: #0f1b2d; padding: 20px 32px 16px 32px;">
-                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
-                                <tr>
-                                    <td style="vertical-align: middle;">
-                                        <span style="color: #ffffff; font-size: 20px; font-weight: 700; letter-spacing: -0.3px;">AzBrief</span>
-                                    </td>
-                                    <td align="right" style="vertical-align: middle;">
-                                        <span class="azb-text-secondary" style="color: #7a8fa3; font-size: 11px;">{escape_email_text(date_range)}</span>
-                                    </td>
-                                </tr>
-                            </table>
-                            <p style="margin: 10px 0 0 0; color: #ffffff; font-size: 16px; font-weight: 600;">{L['digest_title']}</p>
-                        </td>
-                    </tr>
-
-                    <!-- Retirement countdown (if any active retirements) -->
-                    {retirement_html}
-
-                    <!-- Update summary table (sorted by importance, linked to details) -->
-                    <tr>
-                        <td class="azb-pad" style="padding: 18px 32px 16px 32px;">
-                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-panel" style="border: 1px solid #d0d7de; border-radius: 6px; border-collapse: separate; overflow: hidden;">
-                                {cards_html}
-                            </table>
-                        </td>
-                    </tr>
-
-                    <!-- Per-update detailed analysis -->
-                    {details_html}
-
-                    <!-- Footer -->
-                    <tr>
-                        <td class="azb-footer azb-pad" style="background-color: #f8f9fb; padding: 14px 32px; border-top: 1px solid #e2e7ed;">
-                            {format_feedback_link_html(feedback_url, language)}
-                            <p style="margin: 0; font-size: 10px; color: #a0a8b4; line-height: 1.6;">{L['disclaimer_title']}: {L['disclaimer_body']}</p>
-                            <p style="margin: 6px 0 0 0; font-size: 10px; color: #b8bfc8;">{L['footer_generated']} &middot; AzBrief AI Agent &middot; {L['footer_basis']} &middot; {generated_at}</p>
-                        </td>
-                    </tr>
-
-                </table>
-                <!--[if mso]></td></tr></table><![endif]-->
-            </td>
-        </tr>
-    </table>
-</body>
-</html>"""
+        summary_table = (
+            '<a name="azbrief-summary" id="azbrief-summary"></a>'
+            '<table cellspacing="0" cellpadding="0" border="0" width="100%" '
+            'class="azb-digest-table" style="table-layout: fixed; border-collapse: collapse;">'
+            f"{cards_html}</table>"
+        )
+        html_content = HTML_DIGEST_TEMPLATE.format(
+            html_lang=get_language(language).lang_attr,
+            document_title=escape_email_text(L["digest_title"]),
+            preheader=escape_email_text(L["digest_total"].format(total=len(items))),
+            masthead_html=format_email_masthead_html(L["email_report_label"], date_range),
+            digest_intro_html=format_digest_intro_html(
+                len(items),
+                high_count,
+                medium_count,
+                low_count - len(non_analyzed),
+                len(non_analyzed),
+                language,
+            ),
+            summary_table_html=format_email_section_html(L["email_contents"], summary_table),
+            retirement_html=retirement_html,
+            details_html=details_html,
+            footer_html=format_email_footer_html(language, generated_at, feedback_url),
+        )
 
         plain_content = self._build_digest_plain_text(
             items,

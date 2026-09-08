@@ -15,6 +15,7 @@ pytest로 검증합니다. 대부분 외부 Azure/Foundry 호출을 mock해 빠�
 | KQL과 Azure evidence | [`test_kql_sanitize.py`](test_kql_sanitize.py), [`test_kql_retry.py`](test_kql_retry.py), [`test_impact_tools.py`](test_impact_tools.py), [`test_billing.py`](test_billing.py) |
 | 제어면 | [`test_api.py`](test_api.py), [`test_admin.py`](test_admin.py), [`test_admin_readiness.py`](test_admin_readiness.py), [`test_archive.py`](test_archive.py), [`test_mcp_server.py`](test_mcp_server.py), [`test_orchestrator.py`](test_orchestrator.py), [`test_scheduler.py`](test_scheduler.py) |
 | 전달과 언어 | [`test_email.py`](test_email.py), [`test_i18n.py`](test_i18n.py), [`test_quality_evaluator.py`](test_quality_evaluator.py) |
+| 편집형 이메일 | [test_email_editorial.py](test_email_editorial.py): 공통 문서 구조, 링크·anchor, 건너뜀 분리 집계, 전체 제목, 리소스 식별 정보, 액션 검증 표시, 색상 대비와 오프라인 미리보기 |
 | 종류별 환경 연관성 | [`test_environment_relevance.py`](test_environment_relevance.py): 계획/보고 계약, 리소스 없는 가치·SDK 사례, 3개 언어 표시, Archive 원문 보존과 구독자 역할 평가 |
 | Data access | [`test_services.py`](test_services.py), [`test_runtime_inventory.py`](test_runtime_inventory.py), [`test_checkpoint.py`](test_checkpoint.py), [`test_archive_store.py`](test_archive_store.py), [`test_rss_parser.py`](test_rss_parser.py) |
 | 결정론적 평가 | [`test_archive_evaluation.py`](test_archive_evaluation.py), [`test_quality_evaluator.py`](test_quality_evaluator.py), [`test_quality_campaign.py`](test_quality_campaign.py) |
@@ -31,6 +32,18 @@ test가 공유하는 realistic fixture를 제공합니다.
 ```powershell
 & .\.venv\Scripts\Activate.ps1; python -m pytest tests\test_hosted_contract.py tests\test_hosted_client.py -o "addopts=" -q
 ```
+
+이메일 변경은 기존 회귀와 편집형 레이아웃 계약을 함께 검사합니다.
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m pytest tests/test_email.py tests/test_email_editorial.py -o "addopts=" -q
+```
+
+[test_email_editorial.py](test_email_editorial.py)는 지정된 텍스트·배경 조합의 대비가 **4.5:1 이상**인지,
+합성 ko/en/ja 단건·digest의 전체 스타일/inline-only HTML 12개가 전송 client 초기화 없이
+생성되는지도 확인합니다. 구조와 오프라인 동작 검사는 전체 suite, 브라우저 레이아웃 또는
+실제 이메일 client 검증을 대신하지 않습니다. 완료하지 않은 검증의 통과 건수를 기록하지 않습니다.
 
 전체 suite는 project default coverage option을 명시적으로 제거하고 첫 실패에서 멈출 수 있습니다.
 

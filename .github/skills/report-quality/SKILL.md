@@ -74,6 +74,8 @@ python -m scripts.run_quality_loop
 | `src/email/templates.py` | HTML email rendering — design scoring |
 | `src/email/service.py` | Email builder — assembles final output |
 | `tests/test_quality_evaluator.py` | Unit tests for scoring logic |
+| [scripts/preview_email.py](../../../scripts/preview_email.py) | Synthetic ko/en/ja single/digest previews, full-style and inline-only, without Azure calls or email delivery |
+| [tests/test_email_editorial.py](../../../tests/test_email_editorial.py) | Editorial structure, links/anchors, count/identity preservation, verification display, contrast, and offline preview tests |
 
 ---
 
@@ -90,7 +92,7 @@ AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·
 ### 독자 계층 분리 원칙
 같은 보고서 안에서 C-Level 요약과 엔지니어 세부 내용을 분리:
 - **one_line_summary**: C-Level / 매니저 — 3초 판단
-- **quick_decision card**: 관리자 — 10초 상황 파악
+- **quick_decision 운영 정보**: 관리자 — 범위·조치·일정·작업량을 2열로 빠르게 확인
 - **detailed_analysis + concept boxes**: 엔지니어 — 기술적 맥락 이해
 - **action_items**: 실무자 — 즉시 실행 가능한 절차
 
@@ -127,18 +129,21 @@ AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·
 
 **구조 표준**:
 ```
-1. Status Header (3초 스캔) → one_line_summary + urgency badge + three-axis badges (중요성/영향도/직무연관성)
-2. Quick Decision Card → 영향 범위, 조치 필요 여부, 기한, 작업량
-3. Environment Relevance → 변경의 적용/조치 필요성 또는 신규 기능의 가치/도입 조건과 근거
-4. Detailed Analysis → 기술 맥락, concept boxes, 환경 연관성
-5. Key Dates Timeline → retirement/feature_change 시 마일스톤 시각화
-6. Impact Analysis → cost/security/performance/operational 차원
-7. Affected Resources → 리소스 테이블 (구독/리소스그룹/사유)
-8. Action Items → 단계별 절차, CLI, 기한, 미조치 위험
-9. Reference Docs → Microsoft Learn 링크
-10. Additional Checks → CSA 검토 필요 항목
-11. Footer → 면책 고지, 생성 시각
+1. Masthead + White Header → 전체 제목·출처, 핵심 요약, 독립적인 중요성/영향도/직무연관성 strip
+2. Operational Facts → 영향 범위, 조치 필요 여부, 기한, 작업량의 2열 정보
+3. Detailed Analysis → 기술 맥락, concept boxes, 환경 설명
+4. Environment Relevance → 변경의 적용/조치 또는 신규 가치/도입 조건과 근거
+5. Key Dates → retirement/feature_change의 날짜·작업 2열 목록
+6. Impact / Opportunity → cost/security/performance/operational 차원별 정의 행
+7. Affected Resources → 전체 사유와 그룹별 리소스·구독·리소스 그룹·종류
+8. Action Sheets (01…) → 맥락, 절차, 고정폭 CLI, 일정, 가드레일·검증 표시
+9. Additional Checks → 추가 확인 항목
+10. Numbered References → 문서 링크, 내용 요약, 보고서별 확인 지점
+11. Footer → 면책 고지, 피드백, 생성 시각
 ```
+
+단건과 digest 상세는 같은 section formatter와 기존 조건부 표시 기준을 사용합니다.
+Digest의 공통 masthead·집계·목차·종료 countdown은 상세 앞에, footer는 문서 끝에 둡니다.
 
 ### Category 3: Language Quality (20점)
 
@@ -186,11 +191,26 @@ AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·
 | `html_email_quality` | 5 | 테이블 레이아웃, AzBrief 브랜딩, 템플릿 변수 해소 |
 
 **이메일 디자인 원칙**:
-- **색상으로 상태 표현**: Critical(빨강), High(주황), Medium(노랑), Low(초록) 일관 사용
-- **상단에 Health Status 한 줄**: 독자가 3초 안에 오늘 상황이 좋은지 나쁜지 파악
-- **리소스 목록 전체 표시**: 영향 리소스를 모두 보여줌 (truncation 없음)
+- **편집형 지면**: `EMAIL_COLORS`의 흰 지면, 잉크색 `#182b32`, 청록색 `#08746b`, 옅은 중성 바탕.
+     짙은 남색 hero·둥근 그림자 카드 대신 제목, 핵심 요약, 독립적인 3축 평가와 운영 정보를 구분
+- **공통 위계**: 단건과 digest 상세가 공통 header/section formatter를 사용. Section은 위 구분선이
+     있는 15px `h2`, 본문은 13px·주요 블록 행간 1.8~1.85. 모든 보고서 글꼴을 1px씩 키워
+     `FONT_SIZE_PX`는 11/12/13/15/17/21/25/29px, `display=25`, `hero=29`, 모바일 main hero는 25px
+- **상태는 텍스트와 색상으로 표현**: 중요성·영향도·직무연관성을 합치지 않고 각 높음/보통/낮음
+     label을 유지. 종료 countdown도 이모지 대신 현지화된 이행 상태 텍스트 사용
+- **의미를 전달하는 세로 강조선**: 등급·검증 배지, 핵심 요약, concept box, 추가 확인에 공통
+     `SEMANTIC_ACCENT_WIDTH_PX = 6`을 적용해 기존 2/3px보다 강조하고 배지 위아래 padding은 각각
+     4px로 확대. 상태 텍스트·기존 색상과 텍스트 대비 **4.5:1 이상**은 보존하고 중성 구분선은 얇게 유지
+- **전체 목차와 리소스 식별 정보**: 제목을 자르지 않고 상세·목차 복귀 링크를 유지. 모바일은
+     전체 너비 제목 아래 세 평가 셀을 놓고 리소스 열은 이름표가 있는 셀로 쌓되 사유·그룹·Portal 링크 보존
+- **반응형 fallback**: inline/MSO 640px, 화면 800px에서 760px·1100px에서 900px. `azb-pad` 여백은
+     기본 32px, 1100px 이상 48px, 640px 이하 20px, 400px 이하 16px이며 inline-only는 32px 유지.
+     영향 label은 HTML/CSS 너비·최소 너비 96px와 nowrap/keep-all을 유지하고 desktop 2×2로 나누지 않음
 - **CTA 링크 포함**: Microsoft 공식 문서, Azure Portal 경로 (검증된 것만)
 - **이모지 금지**: 보고서 본문에는 이모지 미사용 (이메일 제목줄은 허용)
+
+표시 재설계는 Markdown 문법, 분석 동작, 안전한 링크·액션 검증 정책, 전송, Archive 스키마나
+평가 배점을 바꾸지 않습니다. 스타일 문서 변경으로 bounded Foundry Runtime Guidance를 수정하지 않습니다.
 
 ---
 
@@ -322,14 +342,15 @@ action/resource 배열을 기계 평가에서 일괄 감점하지 않으며, 근
 ## AzBrief-Specific Report Standards
 
 ### 중요도 분류 (Digest 보고서)
-일괄 분석(digest) 보고서에서는 **모든 업데이트를 분석**하고 중요도별로 분류:
+일괄 분석(digest) HTML의 집계는 **분석 완료 항목**의 중요도를 세며 영향도·직무연관성과
+구분합니다. 건너뜀은 낮음 건수에 더하지 않고 별도로 표시합니다. 예:
 ```
-총 RSS 업데이트: 23건
-중요 (high): 3건 — 직접 영향, 즉시 조치 필요
-보통 (medium): 8건 — 관련 있음, 검토 권장
-참고 (low): 12건 — 직접 관련 없음, 참고용
+전체 목록: 24건
+분석 완료: 23건 — high 3 / medium 8 / low 12
+건너뜀: 1건 — 별도 집계, 목록에는 유지
 ```
-요약 항목에서 중요도에 따라 색상 배지로 구분하며, 제목 클릭 시 하단 상세 분석으로 이동.
+모든 입력 항목을 목차에 남깁니다. 분석 항목은 번호와 전체 제목에서 상세 anchor로 이동하고,
+상세의 복귀 링크로 목차에 돌아옵니다. 이 표시는 기존 분석·전달 정책을 바꾸지 않습니다.
 
 ### Resource Graph 매칭 근거 필수
 각 영향 리소스 항목에 **왜 이 리소스가 선택됐는지** Resource Graph 속성값 기반 근거를 포함:
@@ -358,6 +379,20 @@ reason: "nodeImageVersion: AKSUbuntu-2204gen2containerd-202604.01.0 — Ubuntu 2
 | 리소스 목록 | 전체 표시 | 관리자가 전수 확인 필요 |
 | CTA | 텍스트 링크 "→" | 이미지 차단 환경 대비 |
 | 제목 라인 | `[AzBrief] [긴급] 요약 | 날짜` | 오픈율 최적화 |
+
+### 오프라인 디자인 검증
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.preview_email --output-dir out/email-editorial-preview --language all
+python -m pytest tests/test_email.py tests/test_email_editorial.py -o "addopts=" -q
+```
+
+미리보기는 전송 설정·종료 이력을 mock한 **SYNTHETIC** ko/en/ja 단건·digest HTML 12개
+(전체 스타일/inline-only)를 만들며 Azure 호출이나 이메일 발송은 없습니다. 편집형 테스트는
+구조·탐색·집계·전체 제목·리소스 식별·검증 표시와 지정된 색상 대비 **4.5:1 이상**을 검사합니다.
+Focused 통과나 합성 미리보기를 전체 suite·브라우저·실제 메일 client 검증 또는 분석 품질 향상으로
+보고하지 않습니다. 완료한 검증만 별도로 기록합니다.
 
 ---
 

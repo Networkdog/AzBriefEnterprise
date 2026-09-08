@@ -428,9 +428,45 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 - Access via `get_settings()` (cached with `@lru_cache`)
 - Optional services degrade gracefully
 
+### Email Rendering
+
+- Keep `HTML_EMAIL_TEMPLATE` and `HTML_DIGEST_TEMPLATE` on the shared `_EMAIL_DOCUMENT_START` /
+  `_EMAIL_DOCUMENT_END` shell and masthead/header/section/footer/intro formatters. `EMAIL_COLORS`
+  defines white paper, ink `#182b32`, teal `#08746b`, and a pale neutral canvas; never restore dark
+  navy heroes or rounded, shadowed cards.
+- All report fonts increase by 1px: `FONT_SIZE_PX` steps 11/12/13/15/17/21/25/29, with body 13px,
+  `display=25`, `hero=29`, and mobile main hero 25px. Shared section headings are ruled 15px `h2`;
+  prose blocks retain 1.8–1.85 line height.
+- Use shared `SEMANTIC_ACCENT_WIDTH_PX = 6` (up from 2/3px) for level/verification badges, the
+  summary takeaway, concept boxes, and additional checks; increase badge top/bottom padding to 4px.
+  Preserve visible status text, existing colors, thin neutral dividers, and text contrast **≥4.5:1**.
+- Keep the 640px inline/MSO baseline, 760px at 800px and 900px at 1100px. `azb-pad` gutters are 32px
+  by default, 48px at ≥1100px, 20px at ≤640px, and 16px at ≤400px; inline-only stays 32px. Impact
+  labels retain HTML/CSS width and min-width 96px with nowrap/keep-all, never a desktop 2×2 split.
+- Single reports and digest details share the white hero, takeaway, independent three-axis strip,
+  and two-column operational facts. Digest HTML counts analyzed tiers separately from skipped rows,
+  keeps every supplied item, and uses full numbered titles with detail/back anchors. Mobile metrics
+  and stacked resource cells retain labels, complete reasons, grouping, and Portal identity.
+- Number action sheets from `01`; preserve context, procedure, dark monospaced commands, schedule,
+  guardrails, verification, and safe links. Additional checks precede numbered references; countdowns
+  use two-column D-day/item lists and localized status text, not emoji.
+- This is presentation-only: no new Markdown vocabulary, analysis behavior, transport, or Archive
+  schema. Leave bounded Foundry Runtime Guidance byte-identical for styling-only documentation work.
+  See [src/email/README.md](../src/email/README.md) and the [email template skill](skills/email-template/SKILL.md).
+
 ---
 
 ## Testing
+
+### Offline Email Preview
+
+After activating the virtual environment, run
+`python -m scripts.preview_email --output-dir out/email-editorial-preview --language all`.
+It writes 12 **SYNTHETIC** ko/en/ja single/digest full-style and inline-only HTML files, with mocked
+transport settings/history and no Azure calls or email delivery. Pair the existing email tests with
+[tests/test_email_editorial.py](../tests/test_email_editorial.py) for structure, anchors, counts,
+identity, verification display, contrast ≥4.5:1, and offline preview coverage. Focused checks are not
+full-suite, browser, or real email-client validation; report only completed verification.
 
 ### Local Test CLI
 ```bash
@@ -850,10 +886,13 @@ Past mistakes and workarounds discovered during development.
 
 - **The 개요 opened with the environment's verdict because the prompt told it to (2026-08).** A reader flagged reports whose `detailed_analysis` began with "현재 환경에는 이 기능을 적용할 **ExpressRoute virtual network gateway**가 없습니다." — the reader learns the conclusion of an analysis whose subject has not been named yet. This was **not** model drift: `base.py`'s self-check literally prescribed it ("Applies to the `not_relevant` case too: *현재 환경에는 이 기능을 적용할 리소스가 없습니다*"), `ko.py` §3 sanctioned it ("영향받는 리소스가 없을 때만 … 로 열어도 됩니다"), and `REPORT_BEFORE`'s Capability rule supplied the ExpressRoute wording. All three contradicted the `CRITICAL ORDERING RULE` ("Never present … before explaining the update itself") sitting 100 lines away — the same contradictory-instruction failure mode as the earlier ko anti-hedge bug. Measured before fixing: **27/332 corpus docs (8.1%)** open with an environment verdict, of which 13 are `not_relevant` and 14 `opportunity` (where "즉시 조치할 항목이 없습니다" is also the already-banned Capability tautology). Fix: deleted the three sanctioning passages, stated the positive rule once in the ordering block, and pinned the Capability precondition sentence to the environment paragraph. Layer-2 net added to `translation_avoidance` next to the existing announcement-frame check — the regex requires **both** an environment-scope subject *and* an absence predicate, calibrated both ways: it flags all 28 corpus instances (including the "기준으로는" variant the first draft missed) and the reader's live sentence, with 0 hits on the recommended rewrites. A broader "any 환경-subject opening" variant was rejected: +1 real catch but it false-positives on the legitimate "현재 환경의 Storage Account 22개 중 3개가 TLS 1.0을 허용합니다". 649 tests pass. Honest limit: prompt-text changes are verified by assembly + unit tests only; no quality claim without a live scored run.
 
-- **The email report is now responsive — hybrid layout, not media queries alone (2026-08).** The card was a hardcoded `width="640"` table, so on a phone the whole report scaled down (unreadable 6-7px text) or scrolled sideways. Fixed with the three-layer hybrid that email HTML requires, because no single mechanism works everywhere: (1) **fluid card** `width="100%"` + `max-width: 640px` — the only layer that survives clients which strip `<head><style>` (Gmail app with a non-Gmail account), (2) **`_RESPONSIVE_STYLE`** `@media` blocks at 640px/400px in `<head>` for the layout changes fluid width cannot express, and (3) an **MSO ghost table** (`<!--[if mso]><table width="640">`) around the card, because Windows Outlook's Word engine ignores *both* `@media` and `max-width` and would otherwise stretch the card across a maximized window. Media queries must key off **classes** (`azb-pad`, `azb-stack`/`azb-stack-tail`, `azb-col-metric`, `azb-col-reason`, `azb-qd`, `azb-outer`) — `!important` cannot override an inline `style=""` attribute without a selector, and every section `<td>` in this codebase carries its padding inline. The digest also gained `_CLIENT_COMPAT_STYLE`, which it had never included despite embedding the same section formatters (so `.azb-cli` long commands had no `word-break` there). **Live-verified in a real browser** at 375px (card 348px, `scrollWidth` 360 < 375 → no horizontal scroll, gutters 12px, quick-decision cells `display:block`, summary badge stacked) and 1200px (card exactly 640px, gutters back to 32px, quick-decision back to `table-cell` → no desktop regression). Lesson: for email, verify the *rendered* box metrics at several widths — asserting the CSS text is present only proves the rule shipped, not that the layout reflows.
-  - `tests/test_email.py` is still uncollectable at HEAD (it imports `_split_procedure`, which does not exist — pre-existing TDD work), so the new responsive tests were validated by running identical bodies against the real `conftest` fixtures in a throwaway test file (3 passed) before being written into `test_email.py`; the rest of the suite is green (649 passed with `--ignore=tests/test_email.py`).
-  - **Sending a real test email found a defect the box-metric assertions missed.** Below 400px the impact-dimension label rendered as a vertical strip (보/안) because `.azb-impact-label { display: block }` on a single `<td>` triggers CSS anonymous-table-cell fixup: the sibling stays `table-cell`, so the block cell shrinks to zero-width and the Korean label wraps per character. Never make one `<td>` in a row `display: block` — stack **all** cells in the row (as `.azb-qd` does) or keep the row a table and just let the column shrink (`width: 1%` + `white-space: nowrap`, which is what shipped). Only a rendered screenshot caught it; every numeric assertion still passed.
-  - **Responsive is not only about shrinking.** `min-width` queries grow the card (640 → 760 @800px → 900 @1100px) so desktop width goes to content instead of the gray backdrop, and at 1100px the `azb-impact` rows pair up 2×2 (`display: inline-table` on `<tr>` — safe here because it is progressive enhancement: clients that ignore it keep the stacked rows). Measured on the digest: document height 3828px @640 → 3597px @1280. The **900px cap is a readability limit, not a technical one** — Korean glyphs are full-width, so 640px ≈ 44 chars/line and 900px ≈ 62; past that the line length costs more than the recovered space is worth.
+- **Email responsiveness requires fallback and rendered checks (2026-08).** CSS assertions prove
+  that rules shipped, not that clients apply them. Preserve inline defaults, matching `azb-*`
+  selectors, and balanced MSO wrappers; inspect both full-style and inline-only output at several
+  widths. Current sizes and gutters are defined in [Email Rendering](#email-rendering), not by
+  measurements or test totals from the previous design.
+  - Stack all cells of a responsive resource/action row together: making only one `<td>` a block
+    can collapse its width. Impact label/value rows remain tabular with the 96px label safeguards.
 
 - **"Before this existed you had to X" is now a mandatory part of a Capability-family report (2026-08).** A reader asked that reports introducing a new feature or service say what an administrator had to do to get the same outcome while the capability did not exist, and what replaces it now. The rule was already in `report/base.py` section 1 as one soft bullet ("If this is a new capability, explain what was impossible before") — soft enough that reports routinely skipped it. Promoted to MANDATORY, scoped to `new_feature` / `new_service` / `preview`, with the "before" enumerated concretely (a self-operated component, a manual procedure, a third-party product, an accepted limitation), a no-fabrication clause (take it from the docs or update text; when the prior workaround is genuinely unknown, name the limitation the capability removes instead of guessing), and an explicit **anti-template** clause — position and wording must vary, because a fixed "previously X, now Y" sentence in every report is the same monotony defect the ko style guide already fights. Mirrored as the problem statement in `report/categories.py` (`new_feature`/`new_service` item 1, `preview` item 2) and as a phrasing rule with worked GOOD/BAD examples in `languages/{ko,en,ja}.py` — one place per file, not repeated, given the measured dilution cost (~+1.1 defects/1k Korean chars per ~1.6K prompt chars). Honest limit: this is a prompt-text change, verified only by assembly (`build_system_prompt` per language + `build_report_prompt(category=...)`) and 649 passing tests; no quality claim without a live scored run.
 

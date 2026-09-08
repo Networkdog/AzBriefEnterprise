@@ -166,6 +166,18 @@ digest를 팀 구성원의 받은 편지함으로 전달합니다.
   미수행 badge가 붙습니다. 상태를 변경하지 않는 평가는 `advisory_review`로 검토하므로 CLI나
   rollback이 필수가 아닙니다. go/no-go 확인이 불완전하면 `caution`이 될 수 있지만 명령이 없다는
   이유만으로 차단되지는 않습니다. 명령과 상태를 바꾸는 Portal 절차는 계속 fail closed합니다.
+- **편집형 이메일 레이아웃** — 옅은 중성 바탕과 흰 지면에 잉크색 `#182b32`, 청록색 `#08746b`를
+  사용하며, 짙은 남색 제목 패널이나 둥근 그림자 카드는 쓰지 않습니다. 단건과 digest 상세는
+  제목, 핵심 요약, 독립적인 3축 평가, 2열 운영 정보를 공유합니다. Digest는 분석 완료 항목의
+  높음/보통/낮음 집계와 건너뜀을 분리하고 전달받은 모든 항목을 남깁니다. 번호가 있는 목차의
+  제목은 자르지 않으며 상세 이동·목차 복귀 링크를 제공합니다. 모바일에서는 평가 축 이름을
+  표시하고 리소스 필드를 쌓되 사유·그룹·Portal 식별 정보를 유지합니다. 모든 보고서 글꼴을
+  1px씩 키워 본문은 13px로 표시합니다. 등급·검증 배지, 핵심 요약, concept box, 추가 확인에는
+  공통 6px 세로 강조선을 사용합니다. 상태 텍스트와 기존 색상은 보존하고 중성 구분선은 얇게
+  유지합니다.
+  640px inline/MSO 기본 너비는 media query 지원 시 화면 800px에서 760px, 1100px에서 900px로
+  확장됩니다. 렌더링 불변식은 [src/email/README.md](src/email/README.md)를 참고하십시오.
+  표시 방식만 바뀌며 Markdown 문법, 분석 동작, 전송 경로, Archive 스키마는 추가·변경하지 않습니다.
 - **역할 기반 보고서** — 같은 업데이트를 구독자의 역할에 맞는 관점으로 제공합니다.
 - **다국어** — 플러그형 registry에서 구독자별 언어를 선택합니다. 한국어, 영어, 일본어는
   엄선된 style guide를 제공하며, 다른 언어도 fallback label과 생성된 style guide로 렌더링합니다.
@@ -1060,6 +1072,22 @@ Machine-facing 분석/orchestration route는 `API_KEY`가 설정된 경우 `X-AP
 python -m pytest tests/ -o "addopts=" -q      # full suite
 python -c "import src"                        # import check — must pass before committing
 ```
+
+### 오프라인 이메일 디자인 미리보기
+
+[scripts/preview_email.py](scripts/preview_email.py)는 **SYNTHETIC 합성 데이터**로 ko/en/ja의
+단건·digest를 렌더링합니다. 전체 스타일 버전과 `<style>` 블록을 제거한 inline-only 버전을
+각각 만들어 HTML 12개를 저장합니다. 전송 설정과 종료 이력을 mock하고 이메일 전송 client를
+초기화하지 않으므로 Azure 호출이나 이메일 발송이 없습니다.
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.preview_email --output-dir out/email-editorial-preview --language all
+```
+
+[tests/test_email_editorial.py](tests/test_email_editorial.py)는 공통 구조, 탐색 링크, 집계,
+전체 제목, 리소스 식별 정보, 액션 검증 표시, 색상 대비와 오프라인 미리보기를 검사합니다.
+이 검사가 전체 suite, 브라우저 또는 실제 이메일 client 검증을 대신하지는 않습니다.
 
 ### 컨테이너 이미지
 

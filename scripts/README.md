@@ -11,6 +11,7 @@ entry point입니다.
 | Module | 용도 | 부작용 |
 |---|---|---|
 | [`test_local.py`](test_local.py) | 설정, RSS, resource 요약, 단건/기간 분석 | Azure/Foundry 조회; `--jsonl` 없으면 이메일 경로 사용 가능 |
+| [preview_email.py](preview_email.py) | SYNTHETIC ko/en/ja 단건·digest 디자인 미리보기 | 로컬 HTML만 저장; Azure 호출·이메일 발송·전송 client 초기화 없음 |
 | [`crawl_azure_updates.py`](crawl_azure_updates.py) | rolling RSS 밖의 update history archive 갱신 | Git 제외 `data/`에 파일 기록 |
 | [`provision_foundry_agents.py`](provision_foundry_agents.py) | 여섯 specialist Prompt Agent 생성·검사·삭제 | 기본/`--delete`는 원격 변경; `--dry-run`, `--check`는 비변경 |
 | [`evaluate_report.py`](evaluate_report.py) | 단건 rule-based + G-Eval 평가와 반복 rewrite | Azure/Foundry 호출, `eval_runs/` 기록 |
@@ -29,6 +30,19 @@ entry point입니다.
 & .\.venv\Scripts\Activate.ps1; python -m scripts.test_local resources
 & .\.venv\Scripts\Activate.ps1; python -m scripts.test_local analyze --latest --jsonl results_local.jsonl
 ```
+
+이메일 디자인은 실제 공지·고객 데이터가 아닌 **SYNTHETIC 합성 데이터**로 오프라인 점검합니다.
+전송 설정과 종료 이력을 mock하고, 각 언어의 단건·digest마다 전체 스타일과 `<style>` 블록을
+제거한 inline-only 버전을 생성합니다. `--language all`은 ko/en/ja HTML 총 12개를 저장하며
+Azure 호출이나 이메일 발송은 하지 않습니다.
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.preview_email --output-dir out/email-editorial-preview --language all
+```
+
+`--language`는 `ko`, `en`, `ja`도 받습니다. 출력 디렉터리를 생략하면 임시 디렉터리를 만듭니다.
+합성 미리보기는 전송 성공, 전체 suite 또는 브라우저·이메일 client 검증의 근거가 아닙니다.
 
 보고서 하나를 HTML까지 생성하고 최대 3회 개선합니다.
 

@@ -363,7 +363,7 @@ class TestEmailContentBuilding:
 
     @pytest.mark.parametrize("builder", ["single", "digest"])
     def test_font_sizes_follow_the_type_scale(self, sample_update, sample_analysis_result, builder):
-        """Every rendered size is a step on the 12px-body scale."""
+        """Every rendered size is a step on the 13px-body scale."""
         service = EmailService()
         if builder == "single":
             html = service.build_email_content(
@@ -386,17 +386,29 @@ class TestEmailContentBuilding:
         assert f"font-size: {FONT_SIZE_PX['heading']}px" in html
 
     def test_type_scale_is_ordered_and_body_is_the_email_default(self):
-        """The scale keeps its hierarchy and anchors body copy at 12px."""
+        """The scale keeps its hierarchy and anchors body copy at 13px."""
         assert FONT_SIZE_PX == {
-            "meta": 10,
-            "secondary": 11,
-            "body": 12,
-            "heading": 14,
-            "title": 16,
-            "masthead": 20,
+            "meta": 11,
+            "secondary": 12,
+            "body": 13,
+            "heading": 15,
+            "title": 17,
+            "masthead": 21,
+            "display": 25,
+            "hero": 29,
         }
         steps = [
-            FONT_SIZE_PX[k] for k in ("meta", "secondary", "body", "heading", "title", "masthead")
+            FONT_SIZE_PX[k]
+            for k in (
+                "meta",
+                "secondary",
+                "body",
+                "heading",
+                "title",
+                "masthead",
+                "display",
+                "hero",
+            )
         ]
         assert steps == sorted(steps)
         assert len(set(steps)) == len(steps)
