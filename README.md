@@ -182,9 +182,10 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   The digest separates analyzed high/medium/low counts from skipped items, retains every supplied
   item, and links full, numbered contents titles to details and back. Mobile layouts label metrics
   and stack resource fields without losing reasons, grouping, or Portal identity. All report fonts
-  increase by 1px (body 13px). Shared 6px semantic vertical accents emphasize level/verification
-  badges, takeaways, concept boxes, and additional checks; visible status text and existing colors
-  are preserved, while neutral dividers remain thin. The 640px inline/MSO baseline grows to 760px
+  increase by 1px (body 13px), with `Microsoft GothicNeo` preferred before
+  `AppleSDGothicNeo-Regular` for Korean text. Shared 4px semantic vertical accents emphasize
+  level/verification badges, takeaways, concept boxes, and additional checks; visible status text
+  and existing colors are preserved, while neutral dividers remain thin. The 640px inline/MSO baseline grows to 760px
   at 800px and 900px at 1100px where media queries
   are supported. See [src/email/README.md](src/email/README.md) for rendering invariants. This is a
   presentation change, not a new Markdown vocabulary, analysis behavior, transport, or Archive schema.

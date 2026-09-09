@@ -428,12 +428,13 @@ class TestEmailContentBuilding:
     def test_font_stacks_cover_every_platform(self):
         """Each stack names a preinstalled family for every target platform."""
         preferred_korean_fonts = (
-            "'AppleSDGothicNeo-Regular'",
             "'Microsoft GothicNeo'",
+            "'AppleSDGothicNeo-Regular'",
             "'맑은 고딕'",
         )
         preferred_positions = [FONT_STACK_SANS.index(family) for family in preferred_korean_fonts]
         assert preferred_positions == sorted(preferred_positions)
+        assert FONT_STACK_SANS.startswith(", ".join(preferred_korean_fonts))
 
         for family in (
             "'Segoe UI'",  # Windows

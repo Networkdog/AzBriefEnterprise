@@ -71,8 +71,8 @@ shadowed cards. Shared section headings are ruled 15px `h2` elements; prose bloc
 text with 1.8–1.85 line height. Single reports and digest details share a white hero, takeaway,
 independent importance/impact/job-relevance strip, and two-column operational facts.
 
-Use shared `SEMANTIC_ACCENT_WIDTH_PX = 6` (up from 2/3px) for level and verification badges,
-the summary takeaway, concept boxes, and additional checks. Increase badge top/bottom padding to
+Use shared `SEMANTIC_ACCENT_WIDTH_PX = 4` for level and verification badges,
+the summary takeaway, concept boxes, and additional checks. Retain badge top/bottom padding at
 4px. Preserve visible status text, existing colors, thin neutral dividers, and text contrast
 **≥4.5:1**.
 
@@ -132,7 +132,7 @@ degrade to plain text in one channel.
 2. **Head styles enhance the baseline** — `_CLIENT_COMPAT_STYLE` supplies resets and `_RESPONSIVE_STYLE` supplies media queries; neither replaces inline defaults
 3. **CSS classes for responsive targeting** — retain matching `azb-*` classes so media queries can override inline styles. `azb-card` is the width hook, not a rounded-card design
 4. **No custom dark-mode overrides** — `_DARK_MODE_STYLE` is intentionally inert and the document declares `light only`; client auto-dark-mode remains client-controlled
-5. **`_CLIENT_COMPAT_STYLE` constant (Outlook/Windows hardening)** — head `<style>` block with `table { mso-table-lspace/rspace: 0pt }` (removes Outlook Word-engine cell spacing), `img` resets, and `word-break` for `.azb-cli`/`.azb-code`. Windows Outlook honors `<head>` styles (Gmail strips them, but Gmail needs no `mso-*`). Use `_CLIENT_COMPAT_STYLE_ESCAPED` in `.format()` contexts. Keep the system-only Korean font order as **`'AppleSDGothicNeo-Regular'`, `'Microsoft GothicNeo'`, `'맑은 고딕'`**, followed by compatibility aliases and cross-platform fallbacks
+5. **`_CLIENT_COMPAT_STYLE` constant (Outlook/Windows hardening)** — head `<style>` block with `table { mso-table-lspace/rspace: 0pt }` (removes Outlook Word-engine cell spacing), `img` resets, and `word-break` for `.azb-cli`/`.azb-code`. Windows Outlook honors `<head>` styles (Gmail strips them, but Gmail needs no `mso-*`). Use `_CLIENT_COMPAT_STYLE_ESCAPED` in `.format()` contexts. Keep the system-only Korean font order as **`'Microsoft GothicNeo'`, `'AppleSDGothicNeo-Regular'`, `'맑은 고딕'`**, followed by compatibility aliases and cross-platform fallbacks
 6. **`_RESPONSIVE_STYLE` constant (hybrid responsive layout)** — see "Responsive Layout" below. Use `_RESPONSIVE_STYLE_ESCAPED` in `.format()` contexts
 7. **Table-based layout** — do not rely on flexbox or grid
 8. **No JavaScript** — email clients strip all scripts

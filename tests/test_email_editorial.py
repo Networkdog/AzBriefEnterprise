@@ -93,7 +93,7 @@ def test_semantic_color_bars_are_prominent_including_inline_fallback(report_mark
     soup = BeautifulSoup(report_markup(kind, language), "html.parser")
     for style in soup.find_all("style"):
         style.decompose()
-    assert SEMANTIC_ACCENT_WIDTH_PX == 6
+    assert SEMANTIC_ACCENT_WIDTH_PX == 4
     for selector in (
         ".azb-badge-high, .azb-badge-medium, .azb-badge-low",
         ".azb-verify",
@@ -104,7 +104,7 @@ def test_semantic_color_bars_are_prominent_including_inline_fallback(report_mark
         elements = soup.select(selector)
         assert elements, selector
         for element in elements:
-            assert re.search(r"border-left:\s*6px solid #[0-9a-f]{6}", element["style"])
+            assert re.search(r"border-left:\s*4px solid #[0-9a-f]{6}", element["style"])
             assert element.get_text(strip=True)
     for badge in soup.select(".azb-verify, [class^='azb-badge-']"):
         assert re.search(r"padding:\s*4px (4|8)px", badge["style"])

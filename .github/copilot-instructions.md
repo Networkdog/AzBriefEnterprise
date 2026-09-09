@@ -437,8 +437,11 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 - All report fonts increase by 1px: `FONT_SIZE_PX` steps 11/12/13/15/17/21/25/29, with body 13px,
   `display=25`, `hero=29`, and mobile main hero 25px. Shared section headings are ruled 15px `h2`;
   prose blocks retain 1.8–1.85 line height.
-- Use shared `SEMANTIC_ACCENT_WIDTH_PX = 6` (up from 2/3px) for level/verification badges, the
-  summary takeaway, concept boxes, and additional checks; increase badge top/bottom padding to 4px.
+- Keep the system-only Korean font priority as `Microsoft GothicNeo`,
+  `AppleSDGothicNeo-Regular`, then `맑은 고딕`; retain the remaining cross-platform fallbacks and
+  never add remote webfonts.
+- Use shared `SEMANTIC_ACCENT_WIDTH_PX = 4` for level/verification badges, the
+  summary takeaway, concept boxes, and additional checks; retain badge top/bottom padding at 4px.
   Preserve visible status text, existing colors, thin neutral dividers, and text contrast **≥4.5:1**.
 - Keep the 640px inline/MSO baseline, 760px at 800px and 900px at 1100px. `azb-pad` gutters are 32px
   by default, 48px at ≥1100px, 20px at ≤640px, and 16px at ≤400px; inline-only stays 32px. Impact

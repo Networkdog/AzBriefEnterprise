@@ -98,10 +98,10 @@ python -m pytest tests/test_email.py tests/test_email_editorial.py -o "addopts="
   본문은 13px, `display=25`, `hero=29`이며 main hero는 화면 640px 이하에서 25px입니다.
   공통 section 제목은 위 구분선이 있는 15px `h2`, 주요 본문 블록 행간은 1.8~1.85입니다.
 - 등급·검증 배지, 핵심 요약, concept box, 추가 확인의 세로 강조선에는 공통
-  `SEMANTIC_ACCENT_WIDTH_PX = 6`을 적용해 기존 2/3px보다 뚜렷하게 표시합니다. 배지의 위아래
-  padding은 각각 4px로 늘립니다. 상태 텍스트·기존 색상과 텍스트 대비 **4.5:1 이상**을 유지하고
+  `SEMANTIC_ACCENT_WIDTH_PX = 4`를 적용합니다. 배지의 위아래
+  padding은 각각 4px를 유지합니다. 상태 텍스트·기존 색상과 텍스트 대비 **4.5:1 이상**을 유지하고
   중성 구분선은 기존의 얇은 두께를 유지합니다.
-- 한글 시스템 글꼴은 `AppleSDGothicNeo-Regular`, `Microsoft GothicNeo`, `맑은 고딕` 순으로
+- 한글 시스템 글꼴은 `Microsoft GothicNeo`, `AppleSDGothicNeo-Regular`, `맑은 고딕` 순으로
   우선하며 웹폰트는 사용하지 않습니다.
 - 단건과 digest 상세는 흰 hero, 핵심 요약, 독립적인 중요성·영향도·직무연관성 strip과 2열
   운영 정보를 공유합니다. 운영 정보는 모바일에서 세로로 쌓습니다.

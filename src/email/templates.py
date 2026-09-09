@@ -94,7 +94,7 @@ EMAIL_COLORS: dict[str, str] = {
     "success": "#206344",
 }
 
-SEMANTIC_ACCENT_WIDTH_PX = 6
+SEMANTIC_ACCENT_WIDTH_PX = 4
 
 # ============================================================================
 # Dark mode — DISABLED
@@ -659,7 +659,7 @@ def format_feedback_link_html(feedback_url: str, language: str = "ko") -> str:
 
 # System fonts only: email clients block webfonts, and bundled families are not installed.
 FONT_STACK_SANS = (
-    "'AppleSDGothicNeo-Regular', 'Microsoft GothicNeo', '맑은 고딕', "
+    "'Microsoft GothicNeo', 'AppleSDGothicNeo-Regular', '맑은 고딕', "
     "'Apple SD Gothic Neo', 'Malgun Gothic', 'Segoe UI', -apple-system, "
     "BlinkMacSystemFont, Roboto, 'Noto Sans CJK KR', 'Helvetica Neue', Arial, sans-serif"
 )
