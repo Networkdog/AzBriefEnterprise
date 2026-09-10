@@ -38,8 +38,9 @@ def _page_response(request: Request, principal: AdminPrincipal) -> HTMLResponse:
         nonce=nonce,
         profile="Microsoft Foundry Hosted Agent",
         user=principal.display,
-        language=DEFAULT_WEB_UI_LANGUAGE,
+        language=request.query_params.get("lang", DEFAULT_WEB_UI_LANGUAGE),
         admin_enabled=settings.admin_ui_enabled,
+        feedback_enabled=settings.feedback_ui_enabled,
     )
     csp = (
         "default-src 'none'; "
@@ -63,7 +64,10 @@ async def _authorize_page(request: Request):
     if not settings.archive_ui_enabled:
         raise HTTPException(status_code=404, detail="Not Found")
     if settings.archive_require_auth and extract_principal(request) is None:
-        return RedirectResponse(url=_sign_in_path(request.url.path), status_code=302)
+        target = request.url.path
+        if request.url.query:
+            target += "?" + request.url.query
+        return RedirectResponse(url=_sign_in_path(target), status_code=302)
     return await require_archive_reader(request)
 
 

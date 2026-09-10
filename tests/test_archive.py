@@ -3,6 +3,7 @@
 import base64
 import json
 from datetime import datetime, timezone
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -118,7 +119,7 @@ def _document(update_id: str = "570120") -> ArchiveDocumentV1:
             update_type="General Availability",
         ),
         result=ArchiveAnalysisResultV1.model_validate(
-            _result(update_id).model_dump(mode="json", exclude={"job_relevance"})
+            _result(update_id).model_dump(mode="json", exclude={"job_relevance", "visual_assets"})
         ),
     )
 
@@ -298,7 +299,8 @@ class TestArchivePage:
         assert WEB_FONT_URL in page
         assert page.count("https://") == 1
         assert "@import" not in page
-        assert "<link" not in page
+        assert '<link rel="icon" href="data:image/svg+xml,' in page
+        assert 'rel="stylesheet"' not in page
         assert "'Apple SD Gothic Neo'" in page
         assert "'AppleSDGothicNeo-Regular'" in page
         assert "font-display: swap" in page
@@ -311,7 +313,7 @@ class TestArchivePage:
         assert 'aria-expanded="false"' in page
         assert '<div class="result-head"><h2 data-i18n="archive_results">' in page
         assert '<h2 id="detail-title" class="detail-title">' in page
-        assert "max-width:960px; margin:0 auto" in page
+        assert "max-width:1120px; margin:0 auto" in page
         assert "toLocaleString(document.documentElement.lang" in page
         assert "appendInlineMarkdown" in page
         assert "renderMarkdown" in page
@@ -322,6 +324,23 @@ class TestArchivePage:
         assert "main { width:100%; max-width:1240px; margin:0 auto;" in page
         assert "job_relevance" not in page
         assert "직무연관성" not in page
+
+    def test_filter_history_requests_and_report_tools_are_wired(self):
+        page = render_archive_page("nonce", "enterprise", "reader", feedback_enabled=True)
+
+        assert 'id="advanced-filters" class="filter-advanced" hidden' in page
+        assert 'aria-controls="advanced-filters"' in page
+        assert 'id="active-filters"' in page
+        assert "history.pushState({},'',browserUrl())" in page
+        assert "new AbortController()" in page
+        assert "request !== state.listRequest" in page
+        assert "request !== state.detailRequest" in page
+        assert "if (state.listKey !== browserUrl()) await load(true)" in page
+        assert 'id="detail-outline"' in page
+        assert 'id="copy-link"' in page
+        assert "report:'archive:' + id" in page
+        assert 'href="/feedback"' in page
+        assert 'href="/feedback"' not in render_archive_page("nonce", "enterprise", "reader")
 
 
 class TestArchiveRoutes:
@@ -354,6 +373,26 @@ class TestArchiveRoutes:
         response = client.get("/archive", follow_redirects=False)
         assert response.status_code == 302
         assert response.headers["location"].startswith("/.auth/login/aad")
+
+    def test_archive_sign_in_preserves_filter_and_language_query(self, client, monkeypatch):
+        _configure(monkeypatch, ARCHIVE_UI_ENABLED="true", ARCHIVE_REQUIRE_AUTH="true")
+
+        response = client.get(
+            "/archive", params={"q": "Storage", "lang": "ko"}, follow_redirects=False
+        )
+
+        assert response.status_code == 302
+        query = parse_qs(urlsplit(response.headers["location"]).query)
+        assert query["post_login_redirect_uri"] == ["/archive?q=Storage&lang=ko"]
+
+    def test_archive_page_language_is_independent_of_report_language(self, client, monkeypatch):
+        _configure(monkeypatch, ARCHIVE_UI_ENABLED="true", ARCHIVE_REQUIRE_AUTH="false")
+
+        response = client.get("/archive", params={"lang": "ko"})
+
+        assert response.status_code == 200
+        assert '<html lang="ko">' in response.text
+        assert "업데이트 아카이브" in response.text
 
     def test_archive_page_has_private_csp_response(self, client, monkeypatch):
         _configure(

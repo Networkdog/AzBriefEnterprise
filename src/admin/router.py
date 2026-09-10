@@ -298,6 +298,7 @@ async def admin_page(request: Request):
         profile=_backend_label(settings),
         user=principal.display,
         archive_enabled=settings.archive_ui_enabled,
+        feedback_enabled=settings.feedback_ui_enabled,
     )
     csp = (
         "default-src 'none'; "

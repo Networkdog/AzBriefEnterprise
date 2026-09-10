@@ -170,15 +170,26 @@ digest를 팀 구성원의 받은 편지함으로 전달합니다.
   사용하며, 짙은 남색 제목 패널이나 둥근 그림자 카드는 쓰지 않습니다. 단건과 digest 상세는
   제목, 핵심 요약, 독립적인 3축 평가, 2열 운영 정보를 공유합니다. Digest는 분석 완료 항목의
   높음/보통/낮음 집계와 건너뜀을 분리하고 전달받은 모든 항목을 남깁니다. 번호가 있는 목차의
-  제목은 자르지 않으며 상세 이동·목차 복귀 링크를 제공합니다. 모바일에서는 평가 축 이름을
-  표시하고 리소스 필드를 쌓되 사유·그룹·Portal 식별 정보를 유지합니다. 모든 보고서 글꼴을
-  1px씩 키워 본문은 13px로 표시하며 한글은 `Microsoft GothicNeo`,
-  `AppleSDGothicNeo-Regular` 순으로 우선 적용합니다. 등급·검증 배지, 핵심 요약, concept box,
+  제목은 자르지 않으며 상세 이동·목차 복귀 링크를 제공합니다. 비례를 지킨 8px 막대와 색면 위의
+  48px 건수는 분석 완료 항목만 시각화합니다. 36px 발행물 이름, 별도 번호 열을 가진 17px 목차 제목,
+  전체 폭 청록색 장 구분대로 위계를 나눕니다. 데스크톱 본문은 제목 24%·내용 76% 그리드와 21px
+  섹션 제목·핵심 문장을 사용하고, 좁은 화면과 CSS 제거 상태에서는 세로로 쌓습니다.
+  Inline-only/MSO에서는 전체 너비 제목 아래
+  평가축 이름과 값을 놓고, media query 지원 데스크톱에서는 제목과 3축을 나란히 표시합니다.
+  모바일에서는 평가 축 이름을
+  표시하고 리소스 필드를 쌓되 사유·그룹·Portal 식별 정보를 유지합니다. 본문은 13px를 유지하고
+  36px·48px 표시 단계를 별도로 사용합니다. 이메일 글꼴은
+  `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif` 순서로 적용하고
+  코드 블록은 기존 고정폭 글꼴을 유지합니다. 등급·검증 배지, 핵심 요약, concept box,
   추가 확인에는 공통 4px 세로 강조선을 사용합니다. 상태 텍스트와 기존 색상은 보존하고 중성
   구분선은 얇게 유지합니다.
   640px inline/MSO 기본 너비는 media query 지원 시 화면 800px에서 760px, 1100px에서 900px로
-  확장됩니다. 렌더링 불변식은 [src/email/README.md](src/email/README.md)를 참고하십시오.
-  표시 방식만 바뀌며 Markdown 문법, 분석 동작, 전송 경로, Archive 스키마는 추가·변경하지 않습니다.
+  확장됩니다. 공식 Microsoft Learn 문서에 설명이 있는 PNG/JPEG/GIF가 있으면 단건 보고서에
+  원문 링크·대체 텍스트·캡션을 갖춘 스크린샷을 최대 2개 표시할 수 있습니다. Digest는 업데이트당
+  1개, 전체 4개로 제한합니다. 렌더러는 Microsoft 외 호스트, 지원하지 않는 형식, 자격 증명·포트,
+  HTTPS가 아닌 주소를 거부합니다. 이 시각 자료는 전달 전용이라 불변 Archive v1에 저장하지 않으며,
+  메일 client가 원격 이미지를 차단해도 전체 텍스트 보고서는 그대로 읽을 수 있습니다. 렌더링
+  불변식은 [src/email/README.md](src/email/README.md)를 참고하십시오.
 - **역할 기반 보고서** — 같은 업데이트를 구독자의 역할에 맞는 관점으로 제공합니다.
 - **다국어** — 플러그형 registry에서 구독자별 언어를 선택합니다. 한국어, 영어, 일본어는
   엄선된 style guide를 제공하며, 다른 언어도 fallback label과 생성된 style guide로 렌더링합니다.
@@ -810,19 +821,23 @@ OpenAI/OpenAI chat client를 만들지 않습니다.
 `https://<container-app>/admin`에서 조밀한 구성 상태 목록, 구독자, 자동 실행 일정, 최근 Azure
 업데이트와 실행 이력을 확인할 수 있습니다. 수동 분석 대상은 예약 checkpoint, 양 끝 날짜를
 포함하는 기간, 최근 N개, 숫자 Update 번호 한 개 또는 Azure Update URL 한 개로 지정합니다.
-Admin과 Archive shell은 넓은 browser에서 제한된 main content를 중앙에 두고 mobile에서는 유동
-폭을 유지합니다. Admin 작업은 서로 구분되는 full-width panel을 사용합니다. 변경 버튼은 관련
+Admin, Archive, Feedback은 밝은 운영 화면, 일정한 높이의 입력란, 반응형 탐색, 로컬 Lucide 아이콘과
+고정 버전 웹 글꼴을 공유합니다. 넓은 화면에서는 제한된 본문을 중앙에 둡니다. Admin은 섹션 탐색으로
+작업 영역 하나씩 표시하며 선택한 섹션을 URL fragment에 유지합니다. 변경 버튼은 관련
 입력과 같은 테두리 작업면 안에 두고, 결과 목록은 별도 하위 제목 아래에 표시합니다. 수동 실행은
 기본적으로 분석과 Archive 저장만 수행하고 이메일은 보내지 않습니다. **Digest 이메일 발송**을
 선택해야 전달하며, 드라이런은 대상만 확인하므로 발송과 동시에 요청할 수 없습니다. 실행 진단은
 처리 수, Archive/checkpoint/전달 상태와 제한된 오류를 표시합니다. 최근 업데이트는 URL 입력으로
 바로 가져올 수 있습니다. 관리 콘솔에서 만든 구독자는 제자리에서 수정할 수 있고 배포 구독자는
 계속 보호됩니다. 관리 표는 작업 열을 첫 열에 두므로 mobile 운영자는 부가 필드를 가로로
-스크롤하기 전에도 진단·수정·삭제·선택 명령을 사용할 수 있습니다.
+스크롤하기 전에도 진단·수정·삭제·선택 명령을 사용할 수 있습니다. 작업 열은 가로 스크롤 중에도
+고정됩니다. 구독자, 접근 목록, 업데이트, 실행 이력에는 현재 목록 검색을 제공하며 실행 이력은
+상태별 필터도 지원합니다. 새로고침 실패는 해당 영역에 명시합니다. 수동 실행은 다른 대상 모드의
+입력란을 비활성화하며, 시작일이 종료일보다 늦으면 제출 전에 차단합니다.
 
 | 경로 | 설명 |
 |------|------|
-| `GET /admin` | 관리자 콘솔(server-rendered, 외부 리소스 없음, nonce 기반 CSP) |
+| `GET /admin` | 관리자 콘솔(server-rendered, 원격 스크립트 없음, 고정 글꼴, nonce 기반 CSP) |
 | `GET /api/admin/status` | Secret을 제외한 유효 구성 요약 |
 | `GET /api/admin/subscribers` · `POST /api/admin/subscribers` | 구독자 조회 또는 추가 |
 | `PUT /api/admin/subscribers/{email}` · `DELETE /api/admin/subscribers/{email}` | 관리형 구독자 수정 또는 삭제 |
@@ -869,6 +884,14 @@ heading, 목록, `> **용어**:` 형식의 용어 설명 박스, fenced/inline c
 지원합니다. Browser는 `innerHTML` 없이 DOM node를 생성하므로 보고서 구조는 보존하되 본문에
 포함된 HTML을 실행하지 않습니다.
 
+검색 도구 모음은 고급 필터를 필요할 때 펼치고, 적용한 필터를 개별 제거할 수 있습니다. 검색 조건은
+URL에 저장되어 새로고침, 로그인 후 복귀, 상세에서 목록으로 돌아갈 때 유지됩니다. 같은 페이지에서
+복귀하면 불러온 행과 포커스도 복원합니다. 목록·상세 요청은 별도로 관리해 늦은 응답이 현재 화면을
+덮지 않게 합니다. 목록에는 열 이름, 분석 시각, 불러온 건수, 빈 결과·로딩·재시도 상태를 표시합니다.
+건수는 확인하지 않은 저장소 전체 건수가 아닌 현재 불러온 기록 수입니다. 상세에는 목차, 링크 복사,
+불변 Archive ID만 전달하는 선택적 보고서 피드백 링크가 있습니다. `?lang=ko` 또는 `?lang=ja`는
+저장된 보고서를 번역하지 않고 화면 레이블만 변경합니다.
+
 | 경로 | 설명 |
 |---|---|
 | `GET /archive` · `GET /archive/{archive_id}` | Nonce 기반 CSP를 적용한 반응형 browser shell |
@@ -892,6 +915,33 @@ VNet 안에서만 열립니다. Blob URL, SAS token, storage credential은 API r
 evaluator는 금지 PII key와 nested free text의 email-like 값을 모두 검사합니다.
 
 <p align="right">(<a href="#azbrief-enterprise">맨 위로</a>)</p>
+
+## 피드백과 웹 미리보기
+
+`FEEDBACK_UI_ENABLED`를 켜면 `/feedback`에서 버그, 개선 요청, 보고서 컨텍스트를 기존 비공개
+저장 우선 API로 접수합니다. 탐색 링크는 활성화된 화면에만 표시되며 Admin과 Archive의 인가 조건은
+그대로 적용됩니다. 폼은 입력을 지우지 않는 한국어·영어·일본어 전환, 인라인 검증, 문자 수, 미제출
+내용의 이탈 경고를 제공합니다. 초안은 페이지 메모리에만 있으며 브라우저 저장소에는 기록하지 않습니다.
+요청 제한이나 저장 실패 시 입력을 유지합니다. 접수 후 번호를 보여주고 알림 메일 실패를 저장 실패와
+구분합니다. 추가 제출은 **새 피드백 작성**으로 시작합니다.
+
+Azure 호출이나 이메일 발송 없이 세 화면을 미리 확인합니다.
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.preview_web --port 8765
+```
+
+`http://127.0.0.1:8765/admin`, `/archive`, `/feedback`에서 확인합니다. 루프백 전용 **SYNTHETIC**
+미리보기는 이메일 합성 예제를 재사용하고 Archive v1을 검증합니다. 관리 변경은 메모리에만 반영하며,
+실분석은 차단하고 피드백 접수는 모의 응답으로 처리해 영구 저장하지 않습니다.
+[브라우저 검증](tests/browser/control_surfaces.cjs)은 탐색, 요청 경합, 검증, 접수증과
+1440/768/390/320px 레이아웃을 다룹니다. 실행 방법은 [테스트 문서](tests/README.md)에 있습니다.
+
+디자인 참고: [IBM Carbon 데이터 표](https://carbondesignsystem.com/components/data-table/usage/),
+[Red Hat PatternFly 도구 모음](https://www.patternfly.org/components/toolbar/design-guidelines/),
+[GitHub 이슈 필터](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/filtering-and-searching-issues-and-pull-requests).
+아이콘 출처와 라이선스는 [서드파티 고지](src/THIRD_PARTY_NOTICES.md)에 있습니다.
 
 ## 분석 동작 방식
 
@@ -1089,6 +1139,13 @@ python -m scripts.preview_email --output-dir out/email-editorial-preview --langu
 [tests/test_email_editorial.py](tests/test_email_editorial.py)는 공통 구조, 탐색 링크, 집계,
 전체 제목, 리소스 식별 정보, 액션 검증 표시, 색상 대비와 오프라인 미리보기를 검사합니다.
 이 검사가 전체 suite, 브라우저 또는 실제 이메일 client 검증을 대신하지는 않습니다.
+
+[tests/browser/email_reports.cjs](tests/browser/email_reports.cjs)는 이 로컬 미리보기의 72개
+Playwright 레이아웃을 반복 검사합니다. 실제 뷰포트 크기, 문서·배지 경계, 정보 보존과
+목차·상세 왕복을 확인하고 대표 스크린샷을 미리보기 파일 옆에 저장합니다. 전후 미리보기를
+`out/`에 보존하고 화면을 평가한 뒤 발견한 결함을 수정해 `passed=true`가 될 때까지 반복합니다.
+브라우저 검사는 실제 Outlook/Gmail이나 독해 속도 측정을 대신하지 않습니다.
+디자인 근거와 루프는 [src/email/README.md](src/email/README.md)에 설명되어 있습니다.
 
 ### 컨테이너 이미지
 

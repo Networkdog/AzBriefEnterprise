@@ -14,6 +14,7 @@ from src.agent.analyzer import (
     ImpactSummary,
     RelevanceStatus,
     UrgencyLevel,
+    _collect_source_visuals,
 )
 from src.rss.parser import AzureUpdate
 
@@ -43,6 +44,35 @@ def _make_state(raw_analysis: str) -> dict:
         "analysis_result": {"raw_analysis": raw_analysis},
         "update": {"title": "Test Update"},
     }
+
+
+def test_collect_source_visuals_keeps_one_unique_image_per_document():
+    contents = [
+        {
+            "title": "First guide",
+            "url": "https://learn.microsoft.com/first",
+            "visuals": [
+                {"url": "https://learn.microsoft.com/first.png", "alt": "First screenshot"},
+                {"url": "https://learn.microsoft.com/second.png", "alt": "Second screenshot"},
+            ],
+        },
+        {
+            "title": "Second guide",
+            "url": "https://learn.microsoft.com/second",
+            "visuals": [
+                {"url": "https://learn.microsoft.com/first.png", "alt": "Duplicate"},
+                {"url": "https://learn.microsoft.com/third.png", "alt": "Third screenshot"},
+            ],
+        },
+    ]
+
+    visuals = _collect_source_visuals(contents)
+
+    assert [visual["url"] for visual in visuals] == [
+        "https://learn.microsoft.com/first.png",
+        "https://learn.microsoft.com/third.png",
+    ]
+    assert visuals[1]["source_title"] == "Second guide"
 
 
 def _parse(raw_analysis: str, **update_kwargs) -> AnalysisResult:

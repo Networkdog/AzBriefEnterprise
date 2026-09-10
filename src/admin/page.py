@@ -9,7 +9,12 @@ from __future__ import annotations
 
 from html import escape
 
-from src.web_design import CONTROL_SURFACE_BASE_CSS
+from src.web_design import (
+    CONTROL_SURFACE_BASE_CSS,
+    CONTROL_SURFACE_FAVICON,
+    CONTROL_SURFACE_ICONS,
+    CONTROL_SURFACE_SCRIPT,
+)
 from src.web_fonts import WEB_FONT_FACE_CSS, WEB_FONT_STACK
 
 # `__NONCE__` is substituted per request. Placeholders use double underscores
@@ -21,6 +26,7 @@ _PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>AzBrief Admin Console</title>
+__WEB_FAVICON__
 <style nonce="__NONCE__">
 __WEB_FONT_FACE__
 __CONTROL_SURFACE_BASE__
@@ -206,12 +212,22 @@ body { background: var(--canvas); color: var(--ink); color-scheme: light; }
 .app-header { padding: 0; border-top: 3px solid var(--primary);
   border-bottom: 1px solid var(--line); background: var(--surface); }
 main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 28px 24px 56px; }
-.panel { --section-accent: var(--primary); margin: 0 0 12px; overflow: hidden;
-  border: 1px solid var(--line); border-top: 1px solid var(--line);
-  border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm); }
-.panel-header { min-height: 50px; padding: 0 14px; border-bottom: 1px solid var(--line);
+.workspace-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 28px; }
+.section-nav { position: sticky; top: 92px; align-self: start; display: grid; gap: 4px; }
+.section-nav a { display: flex; align-items: center; gap: 10px; min-height: 42px;
+  padding: 10px 12px; border-radius: var(--radius-sm); color: var(--muted);
+  text-decoration: none; font-size: 13px; font-weight: 650; }
+.section-nav a:hover { color: var(--ink); background: var(--surface-strong); }
+.section-nav a[aria-current="location"] { background: var(--primary-soft);
+  color: var(--primary); box-shadow: inset 3px 0 var(--primary); }
+.section-nav .nav-index { color: inherit; font-size: 10px; font-variant-numeric: tabular-nums; }
+.workspace-content { min-width: 0; }
+.panel { --section-accent: var(--primary); margin: 0 0 24px; overflow: visible;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.panel-header { min-height: 50px; padding: 0 0 12px; border-bottom: 1px solid var(--line);
   justify-content: flex-start; background: var(--surface); }
-.panel-header h2 { color: var(--ink); font-size: 14px; font-weight: 800; }
+.panel-header { background: transparent; }
+.panel-header h2 { color: var(--ink); font-size: 17px; font-weight: 750; }
 .panel-caption { flex: 1; margin-right: 0; color: var(--muted); }
 .panel-toggle { position: relative; width: 34px; min-height: 34px; flex-basis: 34px;
   margin-left: auto; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-sm);
@@ -219,16 +235,14 @@ main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 28px 24px 56px; 
 .panel-header > button:not(.panel-toggle) { margin-left: auto; }
 .panel-header > button:not(.panel-toggle) + .panel-toggle { margin-left: 0; }
 .panel-toggle:hover { border-color: var(--line-strong); background: var(--surface-subtle); }
-.panel-toggle::before { content: ""; position: absolute; top: 11px; left: 12px;
-  width: 7px; height: 7px; border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor; transform: rotate(45deg); }
-.panel-toggle[aria-expanded="false"]::before { top: 13px; transform: rotate(-45deg); }
-.panel-body { padding: 16px; }
+.panel-toggle .ui-icon { transition: transform .16s ease; }
+.panel-toggle[aria-expanded="false"] .ui-icon { transform: rotate(-90deg); }
+.panel-body { padding: 16px 0; }
 .action-surface { margin: 0 0 16px; padding: 14px; border: 1px solid var(--line);
   border-radius: var(--radius-sm); background: var(--surface-subtle); }
 .action-row { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .subsection-heading { min-height: 28px; margin-bottom: 7px; }
-.subsection-heading h3 { color: var(--muted); font-size: 11px; letter-spacing: .04em;
+.subsection-heading h3 { color: var(--muted); font-size: 11px; letter-spacing: 0;
   text-transform: uppercase; }
 .readiness-summary { padding: 11px 12px; border: 1px solid var(--line);
   border-left: 3px solid var(--line-strong); background: var(--surface-subtle); }
@@ -288,17 +302,50 @@ input[type=checkbox], input[type=radio] { accent-color: var(--primary); }
 .run-error { border-left-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
 .empty { color: var(--muted); }
 td.empty { padding: 16px 11px; text-align: left; }
+.table-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  padding: 10px 0; }
+.table-search { position: relative; width: 280px; max-width: 100%; }
+.table-search .ui-icon { position: absolute; left: 10px; top: 11px; color: var(--muted); }
+.table-search input[type="search"] { padding-left: 35px; font-weight: 400; }
+.table-toolbar select { width: 150px; }
+.table-count { margin-left: auto; color: var(--muted); font-size: 12px;
+  font-variant-numeric: tabular-nums; }
+.table-wrap { border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.table-wrap table { border: 0; }
+.action-table th:first-child, .action-table td:first-child { position: sticky; left: 0;
+  z-index: 1; background: var(--surface); box-shadow: 1px 0 var(--line); }
+.action-table th:first-child { background: var(--surface-subtle); }
+.table-wrap:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.page-actions .source { font-variant-numeric: tabular-nums; }
+@media (max-width: 1100px) {
+  .workspace-layout { grid-template-columns: 154px minmax(0, 1fr); gap: 20px; }
+  #status-sections { grid-template-columns: 1fr; }
+  .manage-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 820px) {
+  .workspace-layout { grid-template-columns: 1fr; gap: 16px; }
+  .section-nav { position: static; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
+    padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .section-nav a { min-width: 0; justify-content: center; padding: 8px 6px;
+    white-space: normal; font-size: 12px; }
+  .section-nav .nav-index { display: none; }
+}
 @media (max-width: 640px) {
   main { padding: 20px 14px 40px; }
   .page-intro h1 { font-size: 21px; }
-  .panel-header { padding: 0 11px; }
-  .panel-body { padding: 12px; }
+  .panel-header { padding: 0 0 12px; flex-wrap: wrap; }
+  .panel-body { padding: 12px 0; }
   .action-surface { padding: 12px; }
   .panel-caption { max-width: 160px; }
+  .page-actions { width: 100%; justify-content: space-between; }
+  .table-search { width: 100%; }
+  .manage-form { grid-template-columns: 1fr; }
+  .manage-form .wide { grid-column: auto; }
 }
 </style>
 </head>
 <body>
+__WEB_ICONS__
 <a class="skip-link" href="#main-content">Skip to main content</a>
 <header class="app-header">
   <div class="app-bar">
@@ -309,6 +356,7 @@ td.empty { padding: 16px 11px; text-align: left; }
     <nav class="primary-nav" aria-label="Primary views">
       <a class="nav-link" href="/admin" aria-current="page">Admin</a>
       __ARCHIVE_LINK__
+      __FEEDBACK_LINK__
     </nav>
     <div class="shell-identity"><span class="shell-profile">__PROFILE__</span><span class="shell-user">__USER__</span></div>
   </div>
@@ -316,7 +364,18 @@ td.empty { padding: 16px 11px; text-align: left; }
 <main id="main-content">
   <div class="page-intro">
     <div><p class="page-kicker">Control plane</p><h1>Admin console</h1></div>
+    <div class="page-actions"><span id="refresh-status" class="source" role="status"></span><button id="refresh-all" class="secondary" type="button" data-icon="refresh-cw">Refresh all</button></div>
   </div>
+  <div class="workspace-layout">
+  <nav id="section-nav" class="section-nav" aria-label="Console sections">
+    <a href="#status" data-section="status" aria-current="location"><span class="nav-index">01</span>Overview</a>
+    <a href="#run" data-section="run"><span class="nav-index">02</span>Manual runs</a>
+    <a href="#schedule" data-section="schedule"><span class="nav-index">03</span>Schedules</a>
+    <a href="#subscriber" data-section="subscriber"><span class="nav-index">04</span>Subscribers</a>
+    <a href="#administrator" data-section="administrator"><span class="nav-index">05</span>Access</a>
+    <a href="#updates" data-section="updates"><span class="nav-index">06</span>Azure updates</a>
+  </nav>
+  <div class="workspace-content">
   <section class="panel panel-status" aria-labelledby="status-title">
     <div class="panel-header">
       <h2 id="status-title">Configuration status</h2>
@@ -413,7 +472,7 @@ td.empty { padding: 16px 11px; text-align: left; }
   <section class="panel panel-run" aria-labelledby="run-title">
     <div class="panel-header"><h2 id="run-title">Manual run</h2></div>
     <div class="panel-body">
-      <div class="action-surface" aria-label="Manual run settings">
+      <form id="run-form" class="action-surface" aria-label="Manual run settings">
         <div class="controls">
           <label><span class="field-heading"><span>Target</span><span class="field-requirement required">Required</span></span><select id="run-mode" required aria-required="true">
             <option value="checkpoint">After checkpoint</option>
@@ -452,9 +511,9 @@ td.empty { padding: 16px 11px; text-align: left; }
           <span class="msg" id="msg" role="status"></span>
           <label class="inline-check"><input type="checkbox" id="send-email"> Send digest email</label>
           <label class="inline-check"><input type="checkbox" id="dry"> Dry run</label>
-          <button id="run">Start run</button>
+          <button id="run" type="submit">Start run</button>
         </div>
-      </div>
+      </form>
       <div class="subsection-heading"><h3>Run history</h3><span id="run-summary" class="source"></span></div>
       <div class="table-wrap"><table class="action-table">
         <thead><tr><th>Details</th><th>Run ID</th><th>Status</th><th>Selection</th><th>Targets</th><th>Analyzed</th>
@@ -471,8 +530,11 @@ td.empty { padding: 16px 11px; text-align: left; }
       </div>
     </div>
   </section>
+  </div>
+  </div>
 </main>
 <script nonce="__NONCE__">
+__WEB_SCRIPT__
 const $ = (id) => document.getElementById(id);
 const text = (v) => (v === null || v === undefined || v === '') ? '—' : String(v);
 let timeBasis = 'local';
@@ -509,7 +571,68 @@ function fill(tbody, rows, colspan, emptyText) {
     td.colSpan = colspan; td.className = 'empty'; td.textContent = emptyText;
     tr.appendChild(td); tbody.appendChild(tr); return;
   }
-  rows.forEach((r) => tbody.appendChild(r));
+  rows.forEach((tableRow) => { tableRow.dataset.tableRow = 'true'; tbody.appendChild(tableRow); });
+  filterTable(tbody.id);
+}
+
+function activateSection(key, focusHeading = false) {
+  const target = document.querySelector('[data-panel-key="' + key + '"]');
+  if (!target) return;
+  document.querySelectorAll('section.panel').forEach(panel => { panel.hidden = panel !== target; });
+  document.querySelectorAll('[data-section]').forEach(link => {
+    if (link.dataset.section === key) {
+      link.setAttribute('aria-current', 'location');
+      link.scrollIntoView({block: 'nearest', inline: 'nearest'});
+    }
+    else link.removeAttribute('aria-current');
+  });
+  if (target.classList.contains('collapsed')) target.querySelector('.panel-toggle').click();
+  if (focusHeading) { const heading = target.querySelector('h2'); heading.tabIndex = -1; heading.focus(); }
+}
+
+function filterTable(id) {
+  const search = $(id + '-search');
+  if (!search) return;
+  const query = search.value.trim().toLocaleLowerCase();
+  const rows = Array.from($(id).querySelectorAll('[data-table-row]'));
+  const status = id === 'runs' ? $('runs-filter').value : '';
+  let visible = 0;
+  rows.forEach(tableRow => {
+    tableRow.hidden = !tableRow.textContent.toLocaleLowerCase().includes(query)
+      || Boolean(status && tableRow.dataset.status !== status);
+    if (!tableRow.hidden) visible += 1;
+  });
+  $(id + '-count').textContent = visible + ' / ' + rows.length;
+  $(id).querySelector('[data-search-empty]')?.remove();
+  if (rows.length && !visible) {
+    const tableRow = document.createElement('tr'); tableRow.dataset.searchEmpty = 'true';
+    const cell = document.createElement('td'); cell.colSpan = rows[0].cells.length;
+    cell.className = 'empty'; cell.textContent = 'No matches.';
+    tableRow.append(cell); $(id).append(tableRow);
+  }
+}
+
+function initializeTableFilters() {
+  [['runs', 'Search runs'], ['subs', 'Search subscribers'], ['admins', 'Search access list'],
+    ['updates', 'Search updates']].forEach(([id, title]) => {
+    const wrapper = $(id).closest('.table-wrap'); wrapper.tabIndex = 0;
+    wrapper.setAttribute('role', 'region'); wrapper.setAttribute('aria-label', title.replace('Search ', ''));
+    const toolbar = document.createElement('div'); toolbar.className = 'table-toolbar';
+    const field = document.createElement('label'); field.className = 'table-search';
+    const input = document.createElement('input'); input.type = 'search'; input.id = id + '-search';
+    input.placeholder = title; input.setAttribute('aria-label', title);
+    input.addEventListener('input', () => filterTable(id));
+    field.append(uiIcon('search'), input); toolbar.append(field);
+    if (id === 'runs') {
+      const select = document.createElement('select'); select.id = 'runs-filter';
+      select.setAttribute('aria-label', 'Run status');
+      [['', 'All statuses'], ['queued', 'Queued'], ['running', 'Running'], ['completed', 'Completed'],
+        ['failed', 'Failed']].forEach(([value, title]) => { select.add(new Option(title, value)); });
+      select.addEventListener('change', () => filterTable(id)); toolbar.append(select);
+    }
+    const count = document.createElement('span'); count.id = id + '-count'; count.className = 'table-count';
+    count.setAttribute('role', 'status'); toolbar.append(count); wrapper.before(toolbar);
+  });
 }
 
 function setPanelCaption(panelKey, value) {
@@ -533,11 +656,10 @@ function initializeCollapsiblePanels() {
 
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'panel-toggle secondary';
-    button.textContent = '−'; button.setAttribute('aria-expanded', 'true');
+    button.append(uiIcon('chevron-down')); button.setAttribute('aria-expanded', 'true');
     button.setAttribute('aria-controls', body.id);
     const updateButton = (collapsed) => {
       const action = collapsed ? 'expand' : 'collapse';
-      button.textContent = collapsed ? '+' : '−';
       button.setAttribute('aria-expanded', String(!collapsed));
       button.setAttribute('aria-label', heading.textContent + ' ' + action);
       button.title = heading.textContent + ' ' + action;
@@ -760,6 +882,7 @@ function updateRunFields() {
     field.hidden = !active;
     field.querySelectorAll('input, select').forEach((control) => {
       const required = active && mode !== 'checkpoint';
+      control.disabled = !active;
       control.required = required;
       control.setAttribute('aria-required', String(required));
     });
@@ -789,6 +912,7 @@ function resetSubscriberEditor(message) {
 }
 
 function editSubscriber(subscriber) {
+  activateSection('subscriber');
   $('sub-form').dataset.editingEmail = subscriber.email;
   $('sub-email').value = subscriber.email; $('sub-name').value = subscriber.name;
   $('sub-role').value = subscriber.role || ''; $('sub-language').value = subscriber.language;
@@ -841,7 +965,11 @@ function renderRunDetail(run) {
 
 async function showRunDetail(runId, button) {
   button.disabled = true;
-  try { renderRunDetail(await api('/api/admin/runs/' + encodeURIComponent(runId))); }
+  try {
+    renderRunDetail(await api('/api/admin/runs/' + encodeURIComponent(runId)));
+    $('run-detail-title').tabIndex = -1; $('run-detail-title').focus();
+    $('run-detail-close').onclick = () => { $('run-detail').hidden = true; button.focus(); };
+  }
   catch (e) {
     $('run-detail').hidden = false; $('run-detail-error').hidden = false;
     $('run-detail-error').textContent = 'Could not load run details: ' + e.message;
@@ -913,6 +1041,7 @@ async function loadRuns() {
     );
     const action = document.createElement('td');
     const button = tableButton('View', () => showRunDetail(r.run_id, button));
+    tr.dataset.status = r.status;
     action.appendChild(button); tr.prepend(action); return tr;
   }), 10, 'No runs found.');
 }
@@ -998,6 +1127,7 @@ async function loadUpdates() {
     const tr = row([displayedDateTime(u.published_date), u.title, u.update_type]);
     const action = document.createElement('td');
     action.appendChild(tableButton('Select', () => {
+      activateSection('run'); history.replaceState(null, '', '#run');
       const runPanel = document.querySelector('.panel-run');
       if (runPanel.classList.contains('collapsed')) runPanel.querySelector('.panel-toggle').click();
       $('run-mode').value = 'update_url'; updateRunFields(); $('update-url').value = u.link;
@@ -1014,7 +1144,12 @@ $('dry').addEventListener('change', () => {
   if ($('dry').checked) $('send-email').checked = false;
 });
 
-$('run').addEventListener('click', async () => {
+$('run-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!$('run-form').reportValidity()) return;
+  if ($('run-mode').value === 'date_range' && $('start-date').value > $('end-date').value) {
+    $('msg').textContent = 'Start date must be on or before the end date.'; $('end-date').focus(); return;
+  }
   const btn = $('run'); btn.disabled = true; $('msg').textContent = 'Starting run…';
   try {
     const mode = $('run-mode').value;
@@ -1105,14 +1240,44 @@ $('admin-form').addEventListener('submit', async (event) => {
 });
 
 async function refresh() {
-  try { await loadRuns(); } catch (e) { /* transient */ }
+  if (document.hidden || document.querySelector('.panel-run').hidden) return;
+  try { await loadRuns(); }
+  catch (error) { $('run-summary').textContent = 'Refresh failed. Last results retained.'; }
+}
+
+async function refreshAll() {
+  $('refresh-all').disabled = true; $('refresh-status').textContent = 'Refreshing...';
+  const jobs = [[loadStatus, 'status', null, 0], [loadRuns, 'run', 'runs', 10],
+    [loadSchedules, 'schedule', 'schedules', 5], [loadSubs, 'subscriber', 'subs', 6],
+    [loadAdmins, 'administrator', 'admins', 3], [loadUpdates, 'updates', 'updates', 4]];
+  const results = await Promise.all(jobs.map(async ([load, key, table, columns]) => {
+    try { await load(); return true; }
+    catch (error) {
+      const message = 'Could not load data. Refresh to retry.';
+      const caption = document.querySelector('[data-panel-key="' + key + '"] .panel-caption');
+      if (caption) caption.textContent = 'Unavailable';
+      if (table && !$(table).querySelector('[data-table-row]')) fill($(table), [], columns, message);
+      if (!table) { $('status-summary').className = 'readiness-summary bad'; $('status-summary').textContent = message; }
+      return false;
+    }
+  }));
+  const failures = results.filter(result => !result).length;
+  $('refresh-status').textContent = failures ? failures + ' sections unavailable'
+    : 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+  $('refresh-all').disabled = false;
 }
 
 (async function init() {
   initializeCollapsiblePanels(); updateRunFields(); setTimeBasis('local', false);
-  await Promise.allSettled([
-    loadStatus(), loadRuns(), loadSchedules(), loadSubs(), loadAdmins(), loadUpdates()
-  ]);
+  initializeTableFilters(); decorateIcons();
+  document.querySelectorAll('[data-section]').forEach(link => link.addEventListener('click', () => {
+    activateSection(link.dataset.section, true);
+  }));
+  window.addEventListener('hashchange', () => activateSection(location.hash.slice(1), true));
+  const initial = location.hash.slice(1);
+  activateSection(['status', 'run', 'schedule', 'subscriber', 'administrator', 'updates'].includes(initial) ? initial : 'status');
+  $('refresh-all').addEventListener('click', refreshAll);
+  await refreshAll();
   setInterval(refresh, 10000);
 })();
 </script>
@@ -1126,6 +1291,7 @@ def render_admin_page(
     profile: str,
     user: str,
     archive_enabled: bool = False,
+    feedback_enabled: bool = False,
 ) -> str:
     """Render the admin console HTML for one request.
 
@@ -1138,12 +1304,17 @@ def render_admin_page(
         A complete HTML document.
     """
     archive_link = '<a class="nav-link" href="/archive">Archive</a>' if archive_enabled else ""
+    feedback_link = '<a class="nav-link" href="/feedback">Feedback</a>' if feedback_enabled else ""
     return (
         _PAGE.replace("__NONCE__", escape(nonce, quote=True))
         .replace("__WEB_FONT_FACE__", WEB_FONT_FACE_CSS)
         .replace("__CONTROL_SURFACE_BASE__", CONTROL_SURFACE_BASE_CSS)
+        .replace("__WEB_ICONS__", CONTROL_SURFACE_ICONS)
+        .replace("__WEB_FAVICON__", CONTROL_SURFACE_FAVICON)
+        .replace("__WEB_SCRIPT__", CONTROL_SURFACE_SCRIPT)
         .replace("__WEB_FONT_STACK__", WEB_FONT_STACK)
         .replace("__PROFILE__", escape(profile))
         .replace("__ARCHIVE_LINK__", archive_link)
+        .replace("__FEEDBACK_LINK__", feedback_link)
         .replace("__USER__", escape(user))
     )

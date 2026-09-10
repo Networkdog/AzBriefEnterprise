@@ -80,7 +80,7 @@ def _document(archive_id: str, update_id: str = "570120") -> ArchiveDocumentV1:
         source=ArchiveSource.API_ANALYZE,
         update=_update(update_id).to_dict(),
         result=ArchiveAnalysisResultV1.model_validate(
-            _result(update_id).model_dump(mode="json", exclude={"job_relevance"})
+            _result(update_id).model_dump(mode="json", exclude={"job_relevance", "visual_assets"})
         ),
     )
 
@@ -216,9 +216,16 @@ class TestArchiveService:
             id_factory=lambda: "a" * 32,
         )
 
+        result = _result()
+        result.visual_assets = [
+            {
+                "url": "https://learn.microsoft.com/azure/media/example.png",
+                "alt": "Example screenshot",
+            }
+        ]
         receipt = await service.archive_analysis(
             _update(),
-            _result(),
+            result,
             ArchiveSource.SCHEDULED_DIGEST,
             run_id="run-1",
         )
@@ -229,6 +236,7 @@ class TestArchiveService:
         assert document.run_id == "run-1"
         assert document.hosted_agent_name == "azbrief-analysis-hosted"
         assert not ({"subscriber", "recipient", "email"} & set(document.model_dump()))
+        assert "visual_assets" not in document.result.model_dump()
 
     def test_detail_url_requires_the_archive_ui_to_be_enabled(self):
         disabled = ArchiveService(

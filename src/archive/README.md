@@ -27,7 +27,7 @@ metadata, query API와 화면에 포함하지 않습니다.
 | [`auth.py`](auth.py) | EasyAuth principal과 Admin/archive reader allow-list 인가 |
 | [`router.py`](router.py) | `/archive`, `/api/archive/analyses` 목록·상세 route와 CSP/no-store |
 | [`page.py`](page.py) | 공통 light 운영 shell을 사용하는 responsive 검색·상세 browser UI |
-| [`../web_design.py`](../web_design.py) | Admin/Archive 공통 visual token, header/navigation, focus, responsive primitive |
+| [`../web_design.py`](../web_design.py) | Admin/Archive/Feedback 공통 token, header/navigation, 로컬 아이콘, focus, responsive primitive |
 | [`../services/archive.py`](../services/archive.py) | inert/File/Blob data-access backend와 metadata projection |
 
 ## 저장 계약
@@ -66,12 +66,19 @@ Archive backend가 구성됐는데 저장이 실패하면 run은 `failed`가 되
 - 분석 Markdown은 heading, paragraph, list, blockquote, fenced/inline code, bold, link를 구조화
 	DOM으로 렌더합니다. HTML은 실행하지 않고 `innerHTML`을 사용하지 않습니다.
 - Header와 main content는 같은 제한 폭으로 중앙 정렬하며 mobile에서는 viewport 폭에 맞춥니다.
-- Admin과 같은 neutral canvas/white surface/teal command shell을 사용합니다. Desktop 검색은 고밀도
-	grid이고 mobile 고급 filter는 `aria-expanded` toggle로 노출합니다. 상세 문서는 960px로 제한합니다.
+- Admin/Feedback과 같은 neutral canvas/white surface/teal command shell을 사용합니다. 검색과 서비스는
+	기본 도구 모음에 두고 고급 필터는 `aria-expanded` toggle로 펼칩니다. 상세는 1120px 이내에서
+	목차와 본문을 나란히 배치하고 모바일에서는 목차를 위로 이동합니다.
 - Archive browser UI는 report language와 독립적으로 English를 기본값으로 사용합니다. 모든 filter는
 	visible Optional 표식과 예시 placeholder를 제공하며 input/select와 command는 공통 40px 높이를
-	사용합니다. Desktop command는 같은 역할 폭 144px로 한 줄 label을 유지하고, mobile action row는
-	세 칸을 균등 분배합니다. 분석 제목 button은 내용에 따라 높이가 늘어나므로 긴 제목도 잘리지 않습니다.
+	사용합니다. 도구 모음 버튼은 내용에 맞는 폭을 사용하고 mobile action row는 세 칸을 균등 분배합니다.
+	분석 제목은 새 탭으로도 열 수 있는 실제 링크이며 내용에 따라 줄바꿈합니다.
+- URL filter는 새로고침·로그인·상세 복귀 시 유지하고 같은 페이지에서 복귀하면 불러온 행과 포커스도
+	복원합니다. 목록/상세 요청은 별도 취소·순서 guard로 늦은 응답을 무시합니다.
+- 건수는 불러온 기록 수이며 storage 전체 건수로 표시하지 않습니다. 빈 결과, 추가 scan 가능,
+	로딩, 오류와 재시도 상태를 구분합니다. 날짜 범위 역전은 제출 전에 차단합니다.
+- 상세의 링크 복사와 목차는 저장 문서를 변경하지 않습니다. 활성화된 Feedback 링크는 언어와
+	`archive:<불변 ID>`만 전달하며 보고서 본문이나 구독자 정보를 URL에 넣지 않습니다.
 - Page `h1`은 하나이며 결과와 상세 문서 제목은 `h2`입니다. Skip link와 모든 control의 visible
 	keyboard focus를 유지하고, Admin link는 Admin UI가 활성화된 경우에만 표시합니다.
 - Apple local font를 우선하고 고정 Pretendard WOFF2 한 개만 CSP에서 허용하며 실패 시 시스템

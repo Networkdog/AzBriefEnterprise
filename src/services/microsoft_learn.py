@@ -1,7 +1,7 @@
 """Microsoft Learn documentation search service."""
 
 from typing import Any, Optional
-from urllib.parse import urlencode, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 
 import httpx
 from structlog import get_logger
@@ -17,6 +17,18 @@ ALLOWED_FETCH_DOMAINS = frozenset(
         "techcommunity.microsoft.com",
         "devblogs.microsoft.com",
         "github.com",
+    }
+)
+
+_EMAIL_VISUAL_EXTENSIONS = frozenset({".gif", ".jpeg", ".jpg", ".png"})
+_DECORATIVE_IMAGE_LABELS = frozenset(
+    {
+        "icon",
+        "logo",
+        "microsoft logo",
+        "note",
+        "tip",
+        "warning",
     }
 )
 
@@ -38,6 +50,52 @@ def _is_allowed_url(url: str) -> bool:
         return hostname in ALLOWED_FETCH_DOMAINS
     except Exception:
         return False
+
+
+def _extract_email_visuals(main: Any, page_url: str, page_title: str) -> list[dict[str, str]]:
+    """Extract bounded, descriptive image candidates from trusted documentation."""
+    visuals: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+
+    for image in main.find_all("img"):
+        raw_url = str(image.get("src") or image.get("data-src") or "").strip()
+        image_url = urljoin(page_url, raw_url)
+        parsed = urlparse(image_url)
+        extension = parsed.path.lower().rsplit(".", 1)
+        suffix = f".{extension[-1]}" if len(extension) == 2 else ""
+        if (
+            not raw_url
+            or parsed.scheme != "https"
+            or not _is_allowed_url(image_url)
+            or suffix not in _EMAIL_VISUAL_EXTENSIONS
+            or image_url in seen_urls
+        ):
+            continue
+
+        alt = " ".join(str(image.get("alt") or "").split())
+        figure = image.find_parent("figure")
+        caption_element = figure.find("figcaption") if figure else None
+        caption = (
+            " ".join(caption_element.get_text(" ", strip=True).split()) if caption_element else ""
+        )
+        label = (caption or alt).strip()
+        if not label or label.casefold() in _DECORATIVE_IMAGE_LABELS:
+            continue
+
+        visuals.append(
+            {
+                "url": image_url,
+                "alt": alt or label,
+                "caption": caption,
+                "source_url": page_url,
+                "source_title": page_title,
+            }
+        )
+        seen_urls.add(image_url)
+        if len(visuals) == 3:
+            break
+
+    return visuals
 
 
 class MicrosoftLearnService:
@@ -369,7 +427,7 @@ class MicrosoftLearnService:
             max_chars: Maximum characters of content to return
 
         Returns:
-            Dict with title, url, content (plain text), and sections,
+            Dict with title, url, content, sections, and trusted visual candidates,
             or None if fetch failed or URL not allowed
         """
         # SSRF protection: validate URL against allowed domains
@@ -420,6 +478,8 @@ class MicrosoftLearnService:
                 ["nav", "header", "footer", "aside", "script", "style", "button", "form", "svg"]
             ):
                 tag.decompose()
+
+            visuals = _extract_email_visuals(main, str(response.url), title)
 
             # Remove Learn page UI noise (share buttons, feedback, etc.)
             for tag in main.find_all(
@@ -500,6 +560,7 @@ class MicrosoftLearnService:
                 "url": url,
                 "content": content,
                 "sections": sections[:15],
+                "visuals": visuals,
             }
 
         except Exception as e:
@@ -524,7 +585,7 @@ class MicrosoftLearnService:
             max_chars_per_page: Maximum content chars per page
 
         Returns:
-            List of page content dicts (title, url, content, sections)
+            List of page content dicts (title, url, content, sections, visuals)
         """
         import asyncio as _asyncio
 

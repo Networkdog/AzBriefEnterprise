@@ -19,6 +19,7 @@ from src.email.templates import (
     format_affected_resources_html,
     format_impact_section_html,
     format_reference_docs_html,
+    format_visual_assets_html,
     get_labels,
     get_urgency_colors,
     markdown_to_html,
@@ -74,6 +75,80 @@ class TestEmailContentBuilding:
 
         assert "최소 TLS 버전을 설정하는 방법을 설명합니다." in content["plain_content"]
         assert "확인 내용: TLS 1.2 전환 절차 확인" in content["plain_content"]
+
+    def test_email_includes_trusted_visual_with_text_fallback(
+        self, sample_update, sample_analysis_result
+    ):
+        sample_analysis_result.visual_assets = [
+            {
+                "url": "https://learn.microsoft.com/azure/storage/media/portal-setting.png",
+                "alt": "Storage configuration pane",
+                "caption": "Azure Portal에서 최소 TLS 버전을 선택하는 화면",
+                "source_url": "https://learn.microsoft.com/azure/storage/configure-tls",
+                "source_title": "Configure minimum TLS version",
+            }
+        ]
+
+        content = EmailService().build_email_content(
+            sample_update, sample_analysis_result, language="ko"
+        )
+
+        assert "시각 자료" in content["html_content"]
+        assert (
+            'src="https://learn.microsoft.com/azure/storage/media/portal-setting.png"'
+            in content["html_content"]
+        )
+        assert 'alt="Storage configuration pane"' in content["html_content"]
+        assert 'width="576"' in content["html_content"]
+        assert "Azure Portal에서 최소 TLS 버전을 선택하는 화면" in content["plain_content"]
+        assert "https://learn.microsoft.com/azure/storage/configure-tls" in content["plain_content"]
+
+    def test_visual_renderer_rejects_untrusted_or_unsupported_images(self):
+        html = format_visual_assets_html(
+            [
+                {"url": "https://attacker.example/screenshot.png", "alt": "Attack"},
+                {"url": "data:image/png;base64,AAAA", "alt": "Inline"},
+                {"url": "https://learn.microsoft.com/azure/icon.svg", "alt": "Vector"},
+                {
+                    "url": "https://learn.microsoft.com/azure/screenshot.png?viewer=unique",
+                    "alt": "Tracked",
+                },
+            ]
+        )
+
+        assert html == ""
+
+    def test_digest_limits_visuals_to_four_and_one_per_update(
+        self, sample_update, sample_analysis_result
+    ):
+        sample_analysis_result.visual_assets = [
+            {
+                "url": "https://attacker.example/ignored.png",
+                "alt": "Rejected screenshot",
+            },
+            {
+                "url": "https://learn.microsoft.com/azure/storage/media/one.png",
+                "alt": "First screenshot",
+            },
+            {
+                "url": "https://learn.microsoft.com/azure/storage/media/two.png",
+                "alt": "Second screenshot",
+            },
+        ]
+        items = [
+            {
+                "update": sample_update,
+                "result": sample_analysis_result.model_copy(deep=True),
+                "skip_reason": "",
+            }
+            for _ in range(6)
+        ]
+
+        content = EmailService().build_digest_content(items, language="en")
+
+        assert content["html_content"].count('class="azb-visual"') == 4
+        assert "Rejected screenshot" not in content["html_content"]
+        assert content["html_content"].count("Second screenshot") == 0
 
     def test_single_report_links_to_shared_archive_in_html_and_text(
         self, sample_update, sample_analysis_result
@@ -317,13 +392,21 @@ class TestEmailContentBuilding:
         # Windows Korean system font present in the fallback stack
         assert "Malgun Gothic" in html
 
-    def test_email_uses_preinstalled_system_fonts_only(self, sample_update, sample_analysis_result):
-        """Font stack covers Windows/macOS/iOS/Linux/Android with no webfont."""
+    @pytest.mark.parametrize("builder", ["single", "digest"])
+    def test_email_uses_preinstalled_system_fonts_only(
+        self, sample_update, sample_analysis_result, builder: str
+    ):
+        """Email builders use the shared system-font stack without loading webfonts."""
         service = EmailService()
-        html = service.build_email_content(sample_update, sample_analysis_result, language="ko")[
-            "html_content"
-        ]
-        assert FONT_STACK_SANS in html
+        if builder == "single":
+            html = service.build_email_content(
+                sample_update, sample_analysis_result, language="ko"
+            )["html_content"]
+        else:
+            html = service.build_digest_content(
+                [{"update": sample_update, "result": sample_analysis_result}], language="ko"
+            )["html_content"]
+        assert f"font-family: {FONT_STACK_SANS};" in html
         # Email clients block downloaded fonts, and bundled (non-system) Korean
         # fonts such as AppleSDGothicNeoR00 are not installed by any OS.
         assert "@font-face" not in html
@@ -396,6 +479,8 @@ class TestEmailContentBuilding:
             "masthead": 21,
             "display": 25,
             "hero": 29,
+            "cover": 36,
+            "stat": 48,
         }
         steps = [
             FONT_SIZE_PX[k]
@@ -408,6 +493,8 @@ class TestEmailContentBuilding:
                 "masthead",
                 "display",
                 "hero",
+                "cover",
+                "stat",
             )
         ]
         assert steps == sorted(steps)
@@ -425,27 +512,11 @@ class TestEmailContentBuilding:
         assert html.count("azb-col-metric") >= 6
         assert get_labels("ko")["col_job_relevance"] in html
 
-    def test_font_stacks_cover_every_platform(self):
-        """Each stack names a preinstalled family for every target platform."""
-        preferred_korean_fonts = (
-            "'Microsoft GothicNeo'",
-            "'AppleSDGothicNeo-Regular'",
-            "'맑은 고딕'",
+    def test_font_stacks_follow_email_policy(self):
+        """Prose uses the requested font order while code remains monospaced."""
+        assert FONT_STACK_SANS == (
+            "'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif"
         )
-        preferred_positions = [FONT_STACK_SANS.index(family) for family in preferred_korean_fonts]
-        assert preferred_positions == sorted(preferred_positions)
-        assert FONT_STACK_SANS.startswith(", ".join(preferred_korean_fonts))
-
-        for family in (
-            "'Segoe UI'",  # Windows
-            "-apple-system",  # macOS / iOS / iPadOS
-            "'Apple SD Gothic Neo'",  # macOS / iOS / iPadOS (Korean)
-            "'Malgun Gothic'",  # Windows (Korean)
-            "Roboto",  # Android / Chrome OS
-            "'Noto Sans CJK KR'",  # Linux / Android (Korean)
-        ):
-            assert family in FONT_STACK_SANS
-        assert FONT_STACK_SANS.endswith("sans-serif")
 
         for family in (
             "Consolas",  # Windows
@@ -532,6 +603,12 @@ class TestTemplateHelpers:
                 "title": "<i>phish</i>",
                 "url": "https://attacker.example/phish",
                 "related_content": "<object data=evil>",
+            }
+        ]
+        sample_analysis_result.visual_assets = [
+            {
+                "url": "https://attacker.example/screenshot.png",
+                "alt": '<img src=x onerror="alert(1)">',
             }
         ]
 

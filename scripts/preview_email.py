@@ -52,6 +52,8 @@ _COPY = {
         "reference": "Azure Storage 최소 TLS 버전 구성",
         "description": "최소 TLS 버전 설정과 클라이언트 연결 확인 방법을 다루는 참고 문서입니다.",
         "context": "설정 확인 절차와 제한 사항을 확인합니다.",
+        "visual_alt": "Azure Portal에서 Storage 계정의 최소 TLS 버전을 구성하는 화면",
+        "visual_caption": "Storage 계정의 Configuration 화면에서 최소 TLS 버전을 선택합니다.",
         "opportunity": "새 네트워크 기능의 적용 가능성 검토",
         "opportunity_summary": "예제 워크로드에 필요한 운영 조건을 먼저 확인한 뒤 새 기능의 적용 가능성을 비교합니다.",
         "low": "현재 범위 밖의 서비스 변경",
@@ -83,6 +85,8 @@ _COPY = {
         "reference": "Configure a minimum TLS version for Azure Storage",
         "description": "Reference documentation for minimum TLS configuration and client connection checks.",
         "context": "Review the configuration procedure and its constraints.",
+        "visual_alt": "Azure portal pane for configuring a Storage account's minimum TLS version",
+        "visual_caption": "Select the minimum TLS version on the Storage account Configuration pane.",
         "opportunity": "Evaluating a new networking capability",
         "opportunity_summary": "Establish the sample workload's operational requirements before comparing the new capability.",
         "low": "A service change outside the current scope",
@@ -114,6 +118,8 @@ _COPY = {
         "reference": "Azure Storage の最小 TLS バージョンを構成する",
         "description": "最小 TLS バージョンの構成とクライアント接続の確認に関する参考ドキュメントです。",
         "context": "設定の確認手順と制約を調べます。",
+        "visual_alt": "Azure Portal で Storage アカウントの最小 TLS バージョンを構成する画面",
+        "visual_caption": "Storage アカウントの Configuration 画面で最小 TLS バージョンを選択します。",
         "opportunity": "新しいネットワーク機能の適用可能性",
         "opportunity_summary": "サンプル環境の運用要件を整理し、新機能の適用可能性を比較します。",
         "low": "現在のスコープ外のサービス変更",
@@ -192,6 +198,19 @@ def build_demo_items(language: str) -> list[dict]:
                 "url": doc_url,
                 "description": text["description"],
                 "related_content": text["context"],
+            }
+        ],
+        visual_assets=[
+            {
+                "url": (
+                    "https://learn.microsoft.com/en-us/azure/storage/common/media/"
+                    "transport-layer-security-configure-minimum-version/"
+                    "configure-minimum-version-portal.png"
+                ),
+                "alt": text["visual_alt"],
+                "caption": text["visual_caption"],
+                "source_url": doc_url,
+                "source_title": text["reference"],
             }
         ],
         should_notify=True,

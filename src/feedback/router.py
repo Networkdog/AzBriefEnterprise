@@ -52,7 +52,14 @@ async def feedback_page(
     """Serve the public feedback form."""
     _require_feedback_enabled()
     nonce = secrets.token_urlsafe(16)
-    content = render_feedback_page(nonce=nonce, language=lang, report_reference=report)
+    settings = get_settings()
+    content = render_feedback_page(
+        nonce=nonce,
+        language=lang,
+        report_reference=report,
+        admin_enabled=settings.admin_ui_enabled,
+        archive_enabled=settings.archive_ui_enabled,
+    )
     csp = (
         "default-src 'none'; "
         f"style-src 'nonce-{nonce}'; "

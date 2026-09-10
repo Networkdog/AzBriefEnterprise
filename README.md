@@ -180,15 +180,26 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   `#08746b`, without dark navy hero panels or rounded, shadowed cards. Single reports and digest
   details share a title, takeaway, independent three-axis strip, and two-column operational facts.
   The digest separates analyzed high/medium/low counts from skipped items, retains every supplied
-  item, and links full, numbered contents titles to details and back. Mobile layouts label metrics
-  and stack resource fields without losing reasons, grouping, or Portal identity. All report fonts
-  increase by 1px (body 13px), with `Microsoft GothicNeo` preferred before
-  `AppleSDGothicNeo-Regular` for Korean text. Shared 4px semantic vertical accents emphasize
+  item, and links full, numbered contents titles to details and back. A proportional 8px bar and
+  48px counters on tinted panels visualize analyzed counts without including skipped items.
+  A 36px publication wordmark, 17px contents titles with separate number cells, and full-width teal
+  chapter bands establish a clear hierarchy. Desktop body sections use a 24% heading / 76% content
+  grid with 21px headings and takeaways; narrow and inline-only layouts stack both parts.
+  Titles stay full-width above labeled metrics in inline-only/MSO output; media-query desktops
+  place the title and three metrics side by side. Mobile layouts label metrics
+  and stack resource fields without losing reasons, grouping, or Portal identity. Body text stays
+  at 13px with separate 36px/48px display steps. Email text uses
+  `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif` in that order;
+  code blocks retain their monospace stack. Shared 4px semantic vertical accents emphasize
   level/verification badges, takeaways, concept boxes, and additional checks; visible status text
   and existing colors are preserved, while neutral dividers remain thin. The 640px inline/MSO baseline grows to 760px
   at 800px and 900px at 1100px where media queries
-  are supported. See [src/email/README.md](src/email/README.md) for rendering invariants. This is a
-  presentation change, not a new Markdown vocabulary, analysis behavior, transport, or Archive schema.
+  are supported. When an official Microsoft Learn article contains a descriptive PNG/JPEG/GIF,
+  the report may add up to two source-linked screenshots with alt text and captions; digests keep
+  at most one per update and four overall. The renderer rejects non-Microsoft hosts, unsupported
+  formats, credentials, ports, and non-HTTPS sources. These delivery-only visuals do not enter the
+  immutable Archive v1 schema, and the complete text report remains usable when a mail client blocks
+  remote images. See [src/email/README.md](src/email/README.md) for rendering invariants.
 - **Role-based reports** — Same update, different perspective per subscriber
 - **Multilingual** — Per-subscriber language from a pluggable registry (Korean, English and
   Japanese ship curated style guides; any other language still renders through fallback
@@ -842,8 +853,10 @@ AzBrief never constructs a direct Azure OpenAI/OpenAI chat client.
 Use `https://<container-app>/admin` to inspect a compact configuration checklist, subscribers,
 automatic schedules, recent Azure updates, and run history. Manual analysis accepts the scheduled
 checkpoint, an inclusive date range, the newest N updates, one numeric Update ID, or one Azure
-Update URL. The Admin and Archive shells keep bounded main content centered in wide browser
-viewports while remaining fluid on mobile. Admin operations use distinct full-width panels; each
+Update URL. Admin, Archive, and Feedback share a light operations shell, fixed-height controls,
+responsive navigation, local Lucide icons, and the pinned browser font policy. Bounded main content
+stays centered in wide viewports. Admin section navigation opens one workspace at a time and keeps
+the selected section in the URL fragment. Each
 mutation button stays in the same bordered action surface as its inputs, with the resulting list
 under a separate subsection heading. Manual runs default to analysis and Archive persistence
 without email delivery; selecting **Digest email** opts in to delivery, while dry-run only resolves
@@ -851,11 +864,14 @@ targets and cannot request email. Run diagnostics expose counts, Archive/checkpo
 and a bounded error. A recent update can populate the manual-run URL directly. Console-managed
 subscriber profiles can be edited in place; deployment-defined subscribers remain protected.
 Management tables keep the action column first so mobile operators can act before horizontal
-scrolling through secondary fields.
+scrolling through secondary fields. The action column stays pinned while scrolling. Subscribers,
+access entries, updates, and runs have local search; run history also has a status filter.
+Refresh reports unavailable sections explicitly. Manual-run validation ignores disabled inputs
+from other target modes and rejects inverted date ranges before submitting.
 
 | Path | Description |
 |------|------|
-| `GET /admin` | Admin console (server-rendered, no external resources, nonce-based CSP) |
+| `GET /admin` | Admin console (server-rendered, no remote scripts, pinned font, nonce-based CSP) |
 | `GET /api/admin/status` | Effective configuration summary without secrets |
 | `GET /api/admin/subscribers` · `POST /api/admin/subscribers` | List or add subscribers |
 | `PUT /api/admin/subscribers/{email}` · `DELETE /api/admin/subscribers/{email}` | Edit or remove a console-managed subscriber |
@@ -913,6 +929,15 @@ by email: paragraphs, headings, lists, blockquotes for `> **Term**:` concept box
 code, bold text, and allow-listed links. The browser creates DOM nodes without `innerHTML`, preserving
 the report structure without executing report-supplied HTML.
 
+The search toolbar keeps advanced filters collapsed until needed, displays removable active
+filters, and stores filters in the URL. Reload, sign-in redirects, and return from detail preserve
+the search context; loaded rows and focus are reused on in-page return. Independent request guards
+prevent stale list/detail responses from replacing the current view. Results expose column labels,
+analysis timestamps, loaded counts, empty/loading states, and retryable errors. Counts describe
+loaded records, not an unverified storage total. Detail has section navigation, a copy-link action,
+and an optional report-feedback link carrying only the immutable Archive ID. `?lang=ko` or `?lang=ja`
+localizes the browser labels without translating stored reports.
+
 | Path | Description |
 |---|---|
 | `GET /archive` · `GET /archive/{archive_id}` | Responsive browser shell with nonce-based CSP |
@@ -937,6 +962,34 @@ Storage bearer tokens are sent only to validated Azure Blob container endpoints.
 evaluator checks both forbidden PII keys and email-like values in nested free text.
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
+
+## Feedback and web preview
+
+When `FEEDBACK_UI_ENABLED` is enabled, `/feedback` accepts a bug, improvement request, or report
+context through the existing private-storage-first API. Navigation links only appear for enabled
+surfaces; opening Admin or Archive still requires its normal authorization. The form supports
+English, Korean, and Japanese without clearing entered text, inline validation, character counts,
+and an unsaved-input warning. Drafts stay in page memory, never browser storage. Rate-limit or
+storage failures retain input. Accepted submissions show a receipt ID and distinguish failed email
+notification from failed storage; a new submission requires the **New feedback** action.
+
+Preview all three surfaces without Azure calls or email delivery:
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.preview_web --port 8765
+```
+
+Open `http://127.0.0.1:8765/admin`, `/archive`, or `/feedback`. This loopback-only **SYNTHETIC**
+preview reuses the email design fixtures, validates Archive v1 projections, and keeps management
+edits in memory. Live runs are blocked; feedback receipts are simulated and nothing is persisted.
+The [browser checks](tests/browser/control_surfaces.cjs) cover navigation, query races, validation,
+receipts, and 1440/768/390/320px layouts. See [tests](tests/README.md) for execution details.
+
+Design references: [IBM Carbon data tables](https://carbondesignsystem.com/components/data-table/usage/),
+[Red Hat PatternFly toolbars](https://www.patternfly.org/components/toolbar/design-guidelines/),
+and [GitHub issue filters](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/filtering-and-searching-issues-and-pull-requests).
+Icon attribution is in [third-party notices](src/THIRD_PARTY_NOTICES.md).
 
 ## How the analysis works
 
@@ -1134,6 +1187,13 @@ python -m scripts.preview_email --output-dir out/email-editorial-preview --langu
 [tests/test_email_editorial.py](tests/test_email_editorial.py) covers the shared structure,
 navigation, counts, full titles, resource identity, action verification, palette contrast, and
 offline previews. These checks do not establish full-suite, browser, or email-client validation.
+
+[tests/browser/email_reports.cjs](tests/browser/email_reports.cjs) repeats a 72-layout Playwright
+matrix over those local previews, checking actual viewport sizes, document/badge bounds, content
+parity, and contents/detail navigation. It saves representative screenshots beside file previews.
+Keep before/after previews under `out/`, review screenshots, correct observed defects, and repeat
+until `passed=true`; browser checks are not real Outlook/Gmail or measured reading-speed validation.
+The design rationale and loop are documented in [src/email/README.md](src/email/README.md).
 
 ### Container image
 

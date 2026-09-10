@@ -2,8 +2,9 @@
 
 [프로젝트 README](../../README.md) > [`src`](../README.md) > `admin`
 
-Container Apps의 EasyAuth가 검증한 Entra principal을 인가하고, 외부 asset 없이 server-rendered
-관리 콘솔과 제한된 운영 API를 제공합니다. Archive UI가 활성화되면 header에서 `/archive`로
+Container Apps의 EasyAuth가 검증한 Entra principal을 인가하고, 원격 스크립트 없이 server-rendered
+관리 콘솔과 제한된 운영 API를 제공합니다. 고정 Pretendard 글꼴 외에는 로컬 자산만 사용합니다.
+Archive와 Feedback UI가 활성화되면 공통 header에서 각 화면으로
 이동할 수 있지만, reader 인가는 `src/archive/auth.py`의 별도 allow-list 계약을 따릅니다.
 
 ## 파일
@@ -69,7 +70,12 @@ allow-list와 입력 검증은 그 뒤에도 그대로 적용됩니다.
 - Main content는 `width: 100%`와 `max-width`를 함께 사용하고 넓은 viewport에서 좌우 중앙에 둡니다.
 - 각 운영 영역은 고유 heading이 있는 full-width panel입니다. Mutation 버튼은 관련 입력과 같은
   `action-surface`의 작업 띠에 두고, 결과 table은 이름이 있는 subsection으로 분리합니다.
-- 가로 스크롤이 필요한 관리 table은 작업 열을 첫 열에 두어 mobile에서도 명령을 먼저 노출합니다.
+  섹션 탐색은 URL hash에 저장하며 한 번에 하나의 작업 영역만 표시합니다.
+- 구독자·접근 목록·업데이트·실행 이력은 현재 로드한 행을 검색하며 실행 이력은 상태 필터도 지원합니다.
+  초기 조회 실패를 무한 로딩으로 남기지 않고 전체 새로고침으로 재시도합니다.
+- 수동 실행은 실제 form의 native validation을 사용합니다. 다른 대상 모드의 input은 숨김과 함께
+  `disabled` 처리하여 이전 min/max/URL 검증이 현재 제출을 막지 않게 합니다.
+- 가로 스크롤이 필요한 관리 table은 작업 열을 첫 열에 고정하여 mobile에서도 명령을 먼저 노출합니다.
 - run 기록은 메모리 관측 정보입니다. 처리 완료의 내구성 source of truth는 checkpoint입니다.
 - Admin 수동 선택은 예약 checkpoint와 격리되며 한 요청에서 최대 100개 업데이트만 허용합니다.
 - 실행 이력의 진단은 safe `RunRecord` projection만 사용해 Archive 실패, 전달, checkpoint, bounded

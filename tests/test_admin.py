@@ -173,6 +173,29 @@ class TestRequireAdmin:
 
 
 class TestAdminPage:
+    def test_offline_preview_uses_validated_synthetic_archive_and_no_live_runs(self):
+        from scripts.preview_web import create_app
+        from src.archive.models import ArchiveDocumentV1, ArchivePage
+
+        with TestClient(create_app()) as client:
+            for path in ("/admin", "/archive", "/feedback"):
+                response = client.get(path)
+                assert response.status_code == 200
+                assert "SYNTHETIC PREVIEW" in response.text
+                assert "default-src 'none'" in response.headers["content-security-policy"]
+            listing = ArchivePage.model_validate(client.get("/api/archive/analyses").json())
+            assert len(listing.items) == 25
+            assert listing.has_more
+            detail = client.get("/api/archive/analyses/" + listing.items[0].archive_id).json()
+            assert ArchiveDocumentV1.model_validate(detail).report_language == "en"
+            assert "job_relevance" not in str(detail)
+            assert (
+                client.post(
+                    "/api/admin/runs", json={"mode": "recent", "recent_count": 1}
+                ).status_code
+                == 409
+            )
+
     def test_shared_control_surface_design_uses_accessible_light_tokens(self):
         assert "--canvas: #f4f6f7" in CONTROL_SURFACE_BASE_CSS
         assert "--surface: #ffffff" in CONTROL_SURFACE_BASE_CSS
@@ -181,6 +204,14 @@ class TestAdminPage:
         assert "--link: #0b64a0" in CONTROL_SURFACE_BASE_CSS
         assert "outline: 2px solid var(--focus)" in CONTROL_SURFACE_BASE_CSS
         assert "prefers-reduced-motion: reduce" in CONTROL_SURFACE_BASE_CSS
+
+    def test_shared_shell_keeps_navigation_and_focus_usable_on_mobile(self):
+        assert "flex-wrap: wrap" in CONTROL_SURFACE_BASE_CSS
+        assert ".primary-nav { order: 3; width: 100%" in CONTROL_SURFACE_BASE_CSS
+        assert "max-width: 44%" in CONTROL_SURFACE_BASE_CSS
+        assert "textarea:focus-visible" in CONTROL_SURFACE_BASE_CSS
+        assert "animation: none !important" in CONTROL_SURFACE_BASE_CSS
+        assert "font-variant-numeric: tabular-nums" in CONTROL_SURFACE_BASE_CSS
 
     def test_webfont_policy_is_pinned_and_uses_apple_local_first(self):
         assert PRETENDARD_VERSION == "1.3.9"
@@ -214,7 +245,8 @@ class TestAdminPage:
         assert WEB_FONT_URL in html
         assert html.count("https://") == 1
         assert "@import" not in html
-        assert "<link" not in html
+        assert '<link rel="icon" href="data:image/svg+xml,' in html
+        assert 'rel="stylesheet"' not in html
         assert "'Apple SD Gothic Neo'" in html
         assert "'AppleSDGothicNeo-Regular'" in html
         assert "font-display: swap" in html
@@ -278,7 +310,8 @@ class TestAdminPage:
         assert 'aria-label="Manual run settings"' in html
         assert "runPanel.classList.contains('collapsed')" in html
         assert 'aria-labelledby="schedule-title"' in html
-        assert '<button id="run">Start run</button>' in html
+        assert '<form id="run-form" class="action-surface"' in html
+        assert '<button id="run" type="submit">Start run</button>' in html
         assert '<button id="schedule-add" type="submit">Add schedule</button>' in html
         assert 'id="schedule-basis-local"' in html
         assert 'name="schedule-basis" value="local" checked' in html
@@ -334,6 +367,22 @@ class TestAdminPage:
         assert "td.empty { padding: 16px 11px; text-align: left; }" in html
         assert "innerHTML" not in html
 
+    def test_workspace_navigation_filters_and_run_validation_are_wired(self):
+        page = render_admin_page("nonce", "enterprise", "admin", feedback_enabled=True)
+
+        assert 'href="/feedback"' in page
+        assert 'aria-label="Console sections"' in page
+        assert page.count('data-section="') == 6
+        assert "window.addEventListener('hashchange'" in page
+        assert "function filterTable(id)" in page
+        assert "tr.dataset.status = r.status" in page
+        assert "$('run-form').reportValidity()" in page
+        assert "$('start-date').value > $('end-date').value" in page
+        assert "Could not load data. Refresh to retry." in page
+        assert 'id="ui-icon-search"' in page
+        assert 'data-icon="refresh-cw"' in page
+        assert 'href="/feedback"' not in render_admin_page("nonce", "enterprise", "admin")
+
     def test_fields_expose_requirements_placeholders_and_shared_dimensions(self):
         html = render_admin_page(nonce="n", profile="enterprise", user="admin")
 
@@ -345,6 +394,7 @@ class TestAdminPage:
         assert 'placeholder="Optional • date and time"' in html
         assert 'aria-required="true"' in html
         assert "control.required = required" in html
+        assert "control.disabled = !active" in html
         assert "--control-height: 40px" in CONTROL_SURFACE_BASE_CSS
         assert "--command-width: 144px" in CONTROL_SURFACE_BASE_CSS
         assert "--time-basis-width: 320px" in CONTROL_SURFACE_BASE_CSS

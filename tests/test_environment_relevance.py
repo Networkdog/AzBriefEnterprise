@@ -181,7 +181,9 @@ def test_archive_retains_original_evidence_and_schema(
     sample_analysis_result: AnalysisResult,
 ) -> None:
     original_text = "현재 환경에 Azure Databricks 워크스페이스 리소스가 없어 직접 영향이 없습니다."
-    payload = sample_analysis_result.model_dump(mode="json", exclude={"job_relevance"})
+    payload = sample_analysis_result.model_dump(
+        mode="json", exclude={"job_relevance", "visual_assets"}
+    )
     payload["relevance_evidence"] = original_text
     archived = ArchiveAnalysisResultV1.model_validate(payload)
     restored = ArchiveAnalysisResultV1.model_validate_json(archived.model_dump_json())

@@ -12,6 +12,7 @@ entry point입니다.
 |---|---|---|
 | [`test_local.py`](test_local.py) | 설정, RSS, resource 요약, 단건/기간 분석 | Azure/Foundry 조회; `--jsonl` 없으면 이메일 경로 사용 가능 |
 | [preview_email.py](preview_email.py) | SYNTHETIC ko/en/ja 단건·digest 디자인 미리보기 | 로컬 HTML만 저장; Azure 호출·이메일 발송·전송 client 초기화 없음 |
+| [preview_web.py](preview_web.py) | SYNTHETIC Admin/Archive/Feedback 브라우저 미리보기 | 루프백 서버, 메모리 내 관리 변경, 모의 접수증; 실분석·이메일 발송·영구 저장 없음 |
 | [`crawl_azure_updates.py`](crawl_azure_updates.py) | rolling RSS 밖의 update history archive 갱신 | Git 제외 `data/`에 파일 기록 |
 | [`provision_foundry_agents.py`](provision_foundry_agents.py) | 여섯 specialist Prompt Agent 생성·검사·삭제 | 기본/`--delete`는 원격 변경; `--dry-run`, `--check`는 비변경 |
 | [`evaluate_report.py`](evaluate_report.py) | 단건 rule-based + G-Eval 평가와 반복 rewrite | Azure/Foundry 호출, `eval_runs/` 기록 |
@@ -43,6 +44,18 @@ python -m scripts.preview_email --output-dir out/email-editorial-preview --langu
 
 `--language`는 `ko`, `en`, `ja`도 받습니다. 출력 디렉터리를 생략하면 임시 디렉터리를 만듭니다.
 합성 미리보기는 전송 성공, 전체 suite 또는 브라우저·이메일 client 검증의 근거가 아닙니다.
+
+웹 화면은 같은 합성 예제를 재사용하는 루프백 전용 서버에서 확인합니다.
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.preview_web --port 8765
+```
+
+`http://127.0.0.1:8765/admin`, `/archive`, `/feedback`를 엽니다. 포트가 사용 중이면 `--port`를
+바꾸십시오. 관리 변경은 메모리 내에서만 반영되며 서버 재시작 때 초기화합니다. Archive는 실제 v1
+스키마로 검증한 30개 합성 기록을 제공하고, run 요청은 409로 차단합니다. 피드백 접수증은 모의
+응답으로 저장하지 않습니다. 미리보기 서버를 외부에 배포하거나 운영 인증 검증의 근거로 쓰지 않습니다.
 
 보고서 하나를 HTML까지 생성하고 최대 3회 개선합니다.
 

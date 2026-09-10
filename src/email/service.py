@@ -37,11 +37,14 @@ from src.email.templates import (
     format_relevance_evidence_html,
     format_report_header_html,
     format_timeline_html,
+    format_visual_assets_html,
+    format_visual_assets_text,
     get_importance_level,
     get_labels,
     markdown_to_html,
     safe_archive_url,
     safe_email_href,
+    safe_email_image_src,
 )
 from src.feedback.service import build_feedback_page_url
 from src.i18n import get_language
@@ -56,6 +59,21 @@ EmailClient = None
 def _escape_braces(s: str) -> str:
     """Escape curly braces in strings to prevent format() errors in f-strings."""
     return s.replace("{", "{{").replace("}", "}}")
+
+
+def _select_email_visual_assets(visual_assets: list, limit: int) -> list[dict[str, str]]:
+    """Select accepted visual assets before applying a report-level budget."""
+    selected: list[dict[str, str]] = []
+    for asset in visual_assets or []:
+        if (
+            isinstance(asset, dict)
+            and str(asset.get("alt") or "").strip()
+            and safe_email_image_src(asset.get("url", ""))
+        ):
+            selected.append(asset)
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def _save_html_to_out(html_content: str, filename: str) -> Optional[str]:
@@ -299,6 +317,9 @@ class EmailService:
                 L["analysis_summary"],
                 markdown_to_html(result.relevance_reason or "", strip_headings=True),
             ),
+            visual_assets_section_html=format_visual_assets_html(
+                getattr(result, "visual_assets", []), language
+            ),
             # Key dates timeline
             timeline_html=format_timeline_html(
                 result.action_items if hasattr(result, "action_items") else [],
@@ -438,6 +459,10 @@ class EmailService:
                 "",
             ]
         )
+
+        visual_text = format_visual_assets_text(getattr(result, "visual_assets", []), language)
+        if visual_text:
+            lines.extend(["-" * 40, visual_text, ""])
 
         # Impact details
         if hasattr(result, "impact_details") and result.impact_details:
@@ -1032,6 +1057,7 @@ class EmailService:
         index: int,
         language: str = "ko",
         archive_url: str = "",
+        visual_assets: Optional[list[dict[str, str]]] = None,
     ) -> str:
         """Build the full analysis detail section for one update inside a digest.
 
@@ -1080,6 +1106,7 @@ class EmailService:
             language,
         )
         refs_html = format_reference_docs_html(result.reference_docs, language)
+        visuals_html = format_visual_assets_html(visual_assets or [], language, max_assets=1)
 
         return f"""<tr><td class="azb-digest-detail" style="padding: 0;">
 <a name="azbrief-detail-{index}" id="azbrief-detail-{index}"></a>
@@ -1087,7 +1114,7 @@ class EmailService:
 {format_report_header_html(update, result, language, archive_url, index)}
 {format_quick_decision_html(result, language)}
 {format_email_section_html(L['analysis_summary'], analysis_html)}
-{relevance_html}{timeline_html}{impact_html}{resources_html}{actions_html}{checks_html}{refs_html}
+{visuals_html}{relevance_html}{timeline_html}{impact_html}{resources_html}{actions_html}{checks_html}{refs_html}
 </table></td></tr>"""
 
     def build_digest_content(
@@ -1218,14 +1245,21 @@ class EmailService:
         # --- Build per-update detail sections (all analyzed updates) ---
         details_html = ""
         detail_idx = 0
+        visual_budget = 4
         for item in analyzed_items:
             detail_idx += 1
+            result_visuals = list(getattr(item["result"], "visual_assets", []) or [])
+            detail_visuals = (
+                _select_email_visual_assets(result_visuals, 1) if visual_budget > 0 else []
+            )
+            visual_budget -= len(detail_visuals)
             details_html += self._build_update_detail_html(
                 item["update"],
                 item["result"],
                 detail_idx,
                 language,
                 item.get("archive_url", ""),
+                detail_visuals,
             )
 
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1254,7 +1288,9 @@ class EmailService:
                 len(non_analyzed),
                 language,
             ),
-            summary_table_html=format_email_section_html(L["email_contents"], summary_table),
+            summary_table_html=format_email_section_html(
+                L["email_contents"], summary_table, full_width=True
+            ),
             retirement_html=retirement_html,
             details_html=details_html,
             footer_html=format_email_footer_html(language, generated_at, feedback_url),
@@ -1328,6 +1364,7 @@ class EmailService:
         # --- Detailed analysis per update ---
         lines.extend(["", "=" * 60, ""])
         detail_idx = 0
+        visual_budget = 4
         for item in items:
             result = item.get("result")
             if not result or item.get("skip_reason"):
@@ -1345,6 +1382,14 @@ class EmailService:
             )
             if result.relevance_reason:
                 lines.extend([result.relevance_reason, ""])
+            result_visuals = list(getattr(result, "visual_assets", []) or [])
+            detail_visuals = (
+                _select_email_visual_assets(result_visuals, 1) if visual_budget > 0 else []
+            )
+            visual_text = format_visual_assets_text(detail_visuals, language, max_assets=1)
+            if visual_text:
+                lines.extend([visual_text, ""])
+                visual_budget -= 1
             if hasattr(result, "impact_details") and result.impact_details:
                 if result.impact_details.cost_impact:
                     lines.append(f"  {L['cost']}: {result.impact_details.cost_impact}")

@@ -12,7 +12,7 @@ from typing import Annotated, Any, Literal, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, StateGraph
-from pydantic import BaseModel, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr
 from structlog import get_logger
 from typing_extensions import TypedDict
 
@@ -92,6 +92,38 @@ def _normalize_reference_urls(refs: list) -> list[dict]:
         elif isinstance(doc, str):
             normalized.append({"title": "Reference", "url": clean_url(doc)})
     return normalized
+
+
+def _collect_source_visuals(contents: list[dict], limit: int = 2) -> list[dict[str, str]]:
+    """Select a small, deterministic set of visuals from fetched official documents."""
+    selected: list[dict[str, str]] = []
+    seen_urls: set[str] = set()
+    for document in contents:
+        for candidate in document.get("visuals") or []:
+            if not isinstance(candidate, dict):
+                continue
+            url = clean_url(str(candidate.get("url") or ""))
+            alt = str(candidate.get("alt") or "").strip()
+            if not url or not alt or url in seen_urls:
+                continue
+            selected.append(
+                {
+                    "url": url,
+                    "alt": alt,
+                    "caption": str(candidate.get("caption") or "").strip(),
+                    "source_url": clean_url(
+                        str(candidate.get("source_url") or document.get("url") or "")
+                    ),
+                    "source_title": str(
+                        candidate.get("source_title") or document.get("title") or ""
+                    ).strip(),
+                }
+            )
+            seen_urls.add(url)
+            break
+        if len(selected) >= limit:
+            break
+    return selected
 
 
 def generate_trace_id() -> str:
@@ -303,6 +335,9 @@ class AnalysisResult(BaseModel):
     action_items: list[ActionItem] = []  # structured action items
     recommendations: list[str]  # backward compatibility
     reference_docs: list[dict[str, str]]
+    visual_assets: list[dict[str, str]] = Field(
+        default_factory=list
+    )  # trusted delivery-only Learn images
     additional_checks: list[str] = []  # additional verification items
     should_notify: bool
     _evidence_resource_summary: str = PrivateAttr(default="")
@@ -2973,6 +3008,7 @@ class AzureUpdateAnalyzer:
         # Prepare update context (used by all phases)
         # Build Learn More section if links are available
         learn_more_section = ""
+        source_visual_assets: list[dict[str, str]] = []
         if update.learn_more_links:
             # Reuse learn service from the shared tools to avoid creating duplicate httpx clients
             learn_tool = next((t for t in self.tools if t.name == "search_azure_docs"), None)
@@ -2993,6 +3029,7 @@ class AzureUpdateAnalyzer:
                     max_chars_per_page=3000,
                 )
                 if contents:
+                    source_visual_assets = _collect_source_visuals(contents)
                     parts = [
                         "\n## Official Reference Documents (pre-fetched from Azure Update page)\n"
                     ]
@@ -3172,6 +3209,7 @@ class AzureUpdateAnalyzer:
         self._last_geval = None
         if self.settings.geval_runtime_enabled and self.settings.geval_enabled:
             result = await self._critic_pass(result, update, final_state)
+        result.visual_assets = source_visual_assets
 
         # Multi-layer safety gate on action items. Action items are the only
         # part of the report a reader may execute verbatim against a production
@@ -3778,6 +3816,7 @@ class AzureUpdateAnalyzer:
             action_items=action_items if action_items else original.action_items,
             recommendations=recommendations,
             reference_docs=customized.get("reference_docs", original.reference_docs),
+            visual_assets=original.visual_assets,
             additional_checks=customized.get("additional_checks", original.additional_checks),
             should_notify=should_notify,
         )

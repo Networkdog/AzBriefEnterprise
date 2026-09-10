@@ -306,6 +306,19 @@ sequence of headings, controls, and tables with ambiguous ownership.
 Keep management-table action columns first so mobile operators can reach commands without first
 scrolling horizontally through secondary data.
 
+Admin, Archive, and Feedback share `src/web_design.py` tokens, a sticky responsive header,
+local Lucide icons (license in `src/THIRD_PARTY_NOTICES.md`), and `src/web_fonts.py` font policy.
+Keep enabled-surface navigation separate from authorization. Admin uses one hash-addressed
+section at a time, local table search, pinned action columns, explicit refresh failures, and
+native run-form validation; inactive target inputs must be disabled, not merely hidden.
+Archive preserves URL filters across sign-in/reload/detail return, labels loaded counts accurately,
+guards list/detail request races independently, and retains safe Markdown, report outline, and
+Archive-ID-only feedback links. Feedback drafts stay in page memory; language changes and failed
+submissions retain input, and a receipt separates accepted storage from notification failure.
+Use `python -m scripts.preview_web --port 8765` for loopback-only synthetic checks, never a live
+tenant for styling tests. `tests/browser/control_surfaces.cjs` is a standalone Playwright page
+function covering workflows and 1440/768/390/320px layouts. Keep generated screenshots in `out/`.
+
 #### Network isolation (`networkIsolationMode`)
 
 | Mode | What it does |
@@ -434,12 +447,17 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
   `_EMAIL_DOCUMENT_END` shell and masthead/header/section/footer/intro formatters. `EMAIL_COLORS`
   defines white paper, ink `#182b32`, teal `#08746b`, and a pale neutral canvas; never restore dark
   navy heroes or rounded, shadowed cards.
-- All report fonts increase by 1px: `FONT_SIZE_PX` steps 11/12/13/15/17/21/25/29, with body 13px,
-  `display=25`, `hero=29`, and mobile main hero 25px. Shared section headings are ruled 15px `h2`;
-  prose blocks retain 1.8–1.85 line height.
-- Keep the system-only Korean font priority as `Microsoft GothicNeo`,
-  `AppleSDGothicNeo-Regular`, then `맑은 고딕`; retain the remaining cross-platform fallbacks and
-  never add remote webfonts.
+- Keep the 13px body scale and explicit `cover=36` / `stat=48` display steps. The wordmark and
+  main title use 36px; mobile overrides are 29px/25px. Contents use 17px titles, 13px summaries
+  and separate 29px number cells. Takeaways and section headings use 21px; prose retains
+  1.8–1.85 line height. Digest figures and chapter numbers use 48px tabular numerals;
+  counts fall back uniformly to 29px at three digits. Keep letter spacing at zero.
+- `format_email_section_html()` uses a 24% label / 76% content rail at >=800px. Its inline/MSO
+  default stacks full-width tables; `full_width=True` keeps contents wide. The masthead also
+  stacks by default and uses 44%/56% columns only with desktop media queries.
+- Keep the shared email `FONT_STACK_SANS` exactly as
+  `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif`.
+  Never add remote webfonts; preserve the monospace stack for commands and code blocks.
 - Use shared `SEMANTIC_ACCENT_WIDTH_PX = 4` for level/verification badges, the
   summary takeaway, concept boxes, and additional checks; retain badge top/bottom padding at 4px.
   Preserve visible status text, existing colors, thin neutral dividers, and text contrast **≥4.5:1**.
@@ -447,14 +465,26 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
   by default, 48px at ≥1100px, 20px at ≤640px, and 16px at ≤400px; inline-only stays 32px. Impact
   labels retain HTML/CSS width and min-width 96px with nowrap/keep-all, never a desktop 2×2 split.
 - Single reports and digest details share the white hero, takeaway, independent three-axis strip,
-  and two-column operational facts. Digest HTML counts analyzed tiers separately from skipped rows,
-  keeps every supplied item, and uses full numbered titles with detail/back anchors. Mobile metrics
-  and stacked resource cells retain labels, complete reasons, grouping, and Portal identity.
+  and two-column operational facts on a pale inset surface. Digest HTML counts analyzed tiers
+  separately from skipped rows on three tinted statistic panels; its 8px proportional bar uses
+  analyzed counts only, omits zero
+  segments, and never substitutes for the visible count labels. Keep every supplied item and use
+  full numbered titles with detail/back anchors. A full-width teal chapter band pairs a 48px
+  number with the return link using contrast-checked `on_accent` text. Inline-only/MSO contents
+  put full-width titles above three labeled metrics;
+  media-query desktops use 52% title / 16% per metric. Never restore a narrow fallback title column.
+  Mobile metrics and resource cells retain labels, complete reasons, grouping, and Portal identity.
 - Number action sheets from `01`; preserve context, procedure, dark monospaced commands, schedule,
   guardrails, verification, and safe links. Additional checks precede numbered references; countdowns
   use two-column D-day/item lists and localized status text, not emoji.
-- This is presentation-only: no new Markdown vocabulary, analysis behavior, transport, or Archive
-  schema. Leave bounded Foundry Runtime Guidance byte-identical for styling-only documentation work.
+- Optional email visuals come only from descriptive PNG/JPEG/GIF images extracted from fetched
+  Microsoft Learn article bodies; the LLM never invents their URLs. Require HTTPS, an explicit
+  Microsoft host allow-list, non-empty alt text, a caption fallback, and a source-document link.
+  Single reports show at most two; digests show at most one per update and four total. Preserve the
+  complete text report when images are absent or blocked. `visual_assets` is delivery-only and must
+  be excluded explicitly from immutable Archive v1 projections.
+- Styling-only changes add no Markdown vocabulary, analysis behavior, transport, or Archive schema.
+  Leave bounded Foundry Runtime Guidance byte-identical for styling-only documentation work.
   See [src/email/README.md](../src/email/README.md) and the [email template skill](skills/email-template/SKILL.md).
 
 ---
@@ -470,6 +500,13 @@ transport settings/history and no Azure calls or email delivery. Pair the existi
 [tests/test_email_editorial.py](../tests/test_email_editorial.py) for structure, anchors, counts,
 identity, verification display, contrast ≥4.5:1, and offline preview coverage. Focused checks are not
 full-suite, browser, or real email-client validation; report only completed verification.
+Use `tests/browser/email_reports.cjs` against these local previews to repeat the 72-layout
+matrix (ko/en/ja, single/digest, full/inline-only, 1440/768/640/390/320/844px). Require `passed=true`,
+inspect screenshots in `out/`, repair observed defects, and repeat before accepting a design.
+Check actual text bounds for the wordmark, figures, chapter/contents numbers and badges, plus
+desktop rail alignment. Passing geometry checks do not establish aesthetic improvement:
+compare same-size before/after images and explain which reference elements changed the composition.
+Do not infer actual reading-speed or Outlook/Gmail-client improvements from synthetic checks.
 
 ### Local Test CLI
 ```bash

@@ -531,3 +531,45 @@ class TestMicrosoftLearnService:
         result = await svc._fallback_search("xyznonexistent")
         assert result["count"] > 0
         await svc.close()
+
+    @pytest.mark.asyncio
+    async def test_fetch_page_content_extracts_only_descriptive_trusted_visuals(self):
+        """Learn pages expose bounded email visuals without external or decorative images."""
+        from src.services.microsoft_learn import MicrosoftLearnService
+
+        response = MagicMock(
+            status_code=200,
+            url="https://learn.microsoft.com/azure/storage/example",
+            text="""
+                <main>
+                  <h1>Configure storage</h1>
+                  <figure>
+                    <img src="media/example/portal-setting.png" alt="Storage configuration pane">
+                    <figcaption>Set the minimum TLS version in the Azure portal.</figcaption>
+                  </figure>
+                  <img src="https://evil.example/screenshot.png" alt="External image">
+                  <img src="/media/example/info.svg" alt="icon">
+                  <p>Configuration guidance.</p>
+                </main>
+            """,
+        )
+        client = AsyncMock()
+        client.is_closed = False
+        client.get.return_value = response
+        service = MicrosoftLearnService()
+        service._client = client
+
+        result = await service.fetch_page_content(
+            "https://learn.microsoft.com/azure/storage/example"
+        )
+
+        assert result is not None
+        assert result["visuals"] == [
+            {
+                "url": "https://learn.microsoft.com/azure/storage/media/example/portal-setting.png",
+                "alt": "Storage configuration pane",
+                "caption": "Set the minimum TLS version in the Azure portal.",
+                "source_url": "https://learn.microsoft.com/azure/storage/example",
+                "source_title": "Configure storage",
+            }
+        ]
