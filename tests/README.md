@@ -23,7 +23,7 @@ pytest로 검증합니다. 대부분 외부 Azure/Foundry 호출을 mock해 빠�
 | Security/config | [`test_security.py`](test_security.py), [`test_config.py`](test_config.py), [`test_enterprise_config.py`](test_enterprise_config.py) |
 | 고객 배포 | [test_customer_deployment.py](test_customer_deployment.py): 독립 폴더·가짜 CLI 기반 대상 격리, MCP 리전/인증, Agent 게시 gate, 이미지/포트 전환·되돌림, 스케줄 설정 보존, 버튼·폼 계약 |
 | 공개 저장소 위생 | [`test_repository_hygiene.py`](test_repository_hygiene.py) |
-| 웹 사용자 흐름 | [browser/control_surfaces.cjs](browser/control_surfaces.cjs): 합성 서버에서 탐색·필터 URL·요청 경합·폼 검증·접수증·반응형 경계 |
+| 웹 사용자 흐름 | [browser/control_surfaces.cjs](browser/control_surfaces.cjs): 탐색·필터 URL·요청 경합·반응형 검사. Feedback 절은 이전 컨트롤을 전제로 하므로 현행 폼에 맞춘 수정 필요 |
 
 [`conftest.py`](conftest.py)는 `sample_rss_xml`, `sample_update`, `sample_analysis_result`처럼 여러
 test가 공유하는 realistic fixture를 제공합니다.
@@ -76,6 +76,12 @@ HTTP만 허용합니다. ko/en/ja·single/digest·full/inline-only·1440/768/640
 runner에서도 호출할 수 있으며 기본 주소는 `http://127.0.0.1:8765`입니다.
 임시 데이터 변경은 미리보기에만 발생합니다. 429와 알림 실패는 브라우저 route mock으로 재현합니다.
 스크린샷은 별도로 `out/`에 생성하고 읽어 확인하며, 이 함수의 DOM 검사만으로 시각 검증을 주장하지 않습니다.
+
+현재 Feedback은 전용 헤더·native form 검증·상태 메시지를 쓰며, 언어는 URL query로 선택합니다.
+브라우저 스크립트의 Feedback 절은 제거된 언어 전환, 접수증, 새 제출 컨트롤을 여전히 참조합니다.
+따라서 이 스크립트 전체를 현재 화면의 검증 완료 근거로 삼지 말고 해당 assertion을 먼저 맞춰야
+합니다. [test_feedback.py](test_feedback.py)와 Admin의 합성 미리보기 테스트는 현재 서버 응답과
+renderer 호출을 검증하지만 이 브라우저 상호작용 검사를 대신하지 않습니다.
 
 전체 suite는 project default coverage option을 명시적으로 제거하고 첫 실패에서 멈출 수 있습니다.
 

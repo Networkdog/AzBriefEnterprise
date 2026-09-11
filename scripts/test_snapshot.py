@@ -15,7 +15,6 @@ from typing import Optional
 
 from scripts.resource_snapshot import SnapshotResourceGraphService, SnapshotRuntime
 
-
 _AZD_ENV_ALIASES = {
     "FOUNDRY_PROJECT_ENDPOINT": (
         "FOUNDRY_PROJECT_ENDPOINT",
@@ -27,9 +26,7 @@ _AZD_ENV_ALIASES = {
     "FOUNDRY_AZURE_MCP_AGENT_NAME": ("AZBRIEF_PROMPT_AZURE_MCP_AGENT_NAME",),
     "FOUNDRY_AZURE_API_AGENT_NAME": ("AZBRIEF_PROMPT_AZURE_API_AGENT_NAME",),
     "FOUNDRY_REPORT_WRITER_AGENT_NAME": ("AZBRIEF_PROMPT_REPORT_WRITER_AGENT_NAME",),
-    "FOUNDRY_QUALITY_REVIEWER_AGENT_NAME": (
-        "AZBRIEF_PROMPT_QUALITY_REVIEWER_AGENT_NAME",
-    ),
+    "FOUNDRY_QUALITY_REVIEWER_AGENT_NAME": ("AZBRIEF_PROMPT_QUALITY_REVIEWER_AGENT_NAME",),
     "AZURE_TENANT_ID": ("AZURE_TENANT_ID",),
 }
 
@@ -158,9 +155,7 @@ def _print_metadata(service: SnapshotResourceGraphService) -> None:
 async def _show_resources(service: SnapshotResourceGraphService) -> None:
     type_result, region_result = await asyncio.gather(
         service.get_resource_types_summary(),
-        service.query_resources(
-            "Resources | summarize count() by location | order by count_ desc"
-        ),
+        service.query_resources("Resources | summarize count() by location | order by count_ desc"),
     )
     print("\nTop resource types")
     for row in type_result["data"][:30]:

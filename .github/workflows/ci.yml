@@ -5,6 +5,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".github/workflows/ci.yml"
       - "src/**"
       - "tests/**"
       - "scripts/**"
@@ -15,6 +16,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - ".github/workflows/ci.yml"
       - "src/**"
       - "tests/**"
       - "scripts/**"
@@ -23,8 +25,8 @@ on:
       - "azure.yaml"
       - "infra/**"
 
-    permissions:
-      contents: read
+permissions:
+  contents: read
 
 jobs:
   lint-and-test:

@@ -45,6 +45,7 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 - [멀티 에이전트 파이프라인](#멀티-에이전트-파이프라인)
 - [관리자 콘솔](#관리자-콘솔)
 - [분석 아카이브](#분석-아카이브)
+- [피드백과 웹 미리보기](#피드백과-웹-미리보기)
 - [분석 동작 방식](#분석-동작-방식)
 - [구독자별 보고서](#구독자별-보고서)
 - [구성](#구성)
@@ -463,16 +464,25 @@ Admin의 "run now"와 외부 API가 시작한 실행도 같은 `execute_run()`�
 
 ## 빠른 시작
 
+새 고객 설치는 [고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md)를 따릅니다. 이 절은 로컬 개발용이며
+여기서 만드는 루트 `.env`를 고객 설정에 재사용하지 않습니다.
+
 로컬 개발에서는 Azure CLI identity로 Microsoft Foundry 프로젝트에 이미 배포된 Agent를
 호출합니다. Azure OpenAI/OpenAI endpoint 또는 API key fallback은 없습니다.
 
-```bash
+Windows(PowerShell):
+
+```powershell
 git clone https://github.com/Networkdog/AzBriefEnterprise.git
-cd AzBriefEnterprise
-python -m venv .venv && .venv/Scripts/Activate.ps1  # or: source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
+Set-Location AzBriefEnterprise
+python -m venv .venv
+& .\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
+
+Linux/macOS에서는 가상환경 생성 후 `source .venv/bin/activate`로 활성화하고 의존성을 설치한 뒤
+`.env.example`에서 로컬 `.env`를 만듭니다.
 
 `.env`에는 최소한 다음 값을 설정합니다.
 
@@ -512,6 +522,11 @@ python -m scripts.test_local analyze --latest --jsonl results.jsonl  # export, s
 python -m scripts.test_local resources                               # view your resource summary
 ```
 
+`test_local analyze`는 로컬 analyzer를 구성해 영속 Prompt Agent를 호출하므로 배포된 Hosted
+Agent의 동작을 검증하지 않습니다. `python -m scripts.smoke_hosted_agent`는 배포된 Hosted 계약으로
+읽기 전용 분석 한 건을 실행합니다. 모델 사용 비용은 발생하지만 이메일은 보내지 않으며 제어면의
+archive 저장까지 검증하지는 않습니다.
+
 > **과거 날짜 범위:** 실시간 Azure Update RSS 피드는 최근 약 200개 항목만 제공하므로 오래된 달은
 > 직접 조회해도 결과가 없습니다. 날짜 범위 분석(`--from`/`--to`)에서는 AzBrief가 로컬에서
 > 수집한 이력 archive(`data/azure_updates_history.jsonl`)를 실시간 피드와 ID 기준으로 중복 제거해
@@ -524,7 +539,7 @@ python -m scripts.test_local resources                               # view your
 ### 원클릭 배포
 
 Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + Admin + MCP), 일일 digest를
-실행하는 Container Apps Job, Key Vault, 상태 저장소, Communication Services로 구성된 Azure
+실행하는 Container Apps Job, Key Vault, 상태·archive 저장소, 별도 평가 저장소, Communication Services로 구성된 Azure
 기반과 제어면을 배포합니다. Prompt Agent와 Hosted Agent는 Foundry 데이터 평면 객체이므로
 배포 후 단계에서 별도로 배포합니다.
 
@@ -547,15 +562,18 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 | Foundry project | `{baseName}-agents` | Hosted Agent와 Prompt Agent의 데이터 평면 작업 공간 |
 | Model deployment | 고객이 승인한 모델과 버전 | 리전·SKU·capacity 단위·할당량 확인 필요. 원본 ARM 기본값이 호환성을 보장하지는 않음 |
 | Key Vault | `kv-{baseName}-{suffix}` | RBAC 전용, 모든 런타임 secret 보관 |
-| Storage account + `azbrief-state` container | `st{baseName}{suffix}` | Checkpoint blob, **`allowSharedKeyAccess: false`** |
+| 상태·archive 저장소 | `st{baseName}{suffix}` | Private `azbrief-state`·`azbrief-archive` container, **`allowSharedKeyAccess: false`** |
+| 평가 저장소 + Foundry AAD connection | `steval{baseName}{suffix}` | 평가 산출물용 별도 Entra 전용 Blob 계정. 고객 archive와 분리 |
 | Container Apps Environment | `cae-{baseName}-{suffix}` | 기본값에서 VNet 통합 |
-| Container App | `ca-{baseName}` | 제어면 API + `/admin` + `/archive` + 인증된 `/mcp` |
+| Container App | `ca-{baseName}` | 제어면 API, `/admin`, `/archive`, `/feedback`, 인증된 `/mcp` |
 | Container Apps Job | `caj-{baseName}` | 인수 전에는 수동. 인수 후 cron, Hosted 호출, archive, checkpoint, email |
 | Hosted Agent(후속 `azd deploy`) | `{baseName}-analysis-hosted` | 전체 LangGraph 분석과 구독자 맞춤화, 전용 Entra identity |
-| Container App authConfig | `current` | Client ID를 제공했을 때만 생성되는 Entra ID 로그인 |
+| Container App authConfig | `current` | 인증 설정을 제공했을 때 구성하는 Entra ID 로그인 |
 | Communication Services + Email | `acs-{baseName}-{suffix}` | Azure 관리 도메인 자동 연결 |
 | Log Analytics + Application Insights | `log-` / `appi-` | 구조화 로그와 tracing |
 | 제어면 role assignment | 5개 | Key Vault Secrets User · Storage Blob Data Contributor · Foundry User · Monitoring Metrics Publisher · RG Reader |
+| Foundry project role assignment | 2개 | Foundry 계정의 Foundry User, 평가 저장소에만 Storage Blob Data Owner |
+| Azure MCP Server(후속 `Mcp` 단계) | `ca-{baseName}-mcp` | 별도 Entra 인증 읽기 전용 서버, identity, project connection |
 
 **보안 설계(안전한 기본값):**
 
@@ -583,8 +601,8 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 
 | 값 | 변경 내용 | 선택 기준 |
 |----|----------------|------------|
-| `vnetInjection` **(기본값)** | Foundry agent compute가 위임 subnet에 주입되고, Container Apps environment가 같은 VNet에 연결되며, Foundry·Key Vault·상태 계정은 **Private Endpoint로만** 접근할 수 있습니다 | 트래픽이 VNet 밖으로 나가면 안 되는 엔터프라이즈 환경의 기본 선택 |
-| `perimeter` | Endpoint는 공개로 유지하지만 Foundry·Key Vault·Log Analytics·상태 계정을 **Network Security Perimeter** 안에 배치해 유출 경로를 차단합니다 | 새 VNet을 만들 수 없거나 PaaS 경계만 필요할 때 |
+| `vnetInjection` **(기본값)** | Foundry agent compute가 위임 subnet에 주입되고, Container Apps environment가 같은 VNet에 연결되며, Foundry·Key Vault·상태/archive 저장소·평가 저장소에 **Private Endpoint**를 사용합니다 | 엔터프라이즈 기본값. Foundry와 VNet은 같은 리전이어야 함 |
+| `perimeter` | Endpoint는 공개로 유지하되 Foundry·Key Vault·Log Analytics·상태/archive 저장소·평가 저장소를 **Network Security Perimeter**에 연결합니다 | 새 VNet을 만들 수 없거나 PaaS 경계만 필요할 때. 기본 Learning mode는 차단 없이 기록만 수행 |
 | `public` | Endpoint를 공개하고 Entra token, API key, 허용 목록만 경계로 사용합니다 | 평가·데모 환경 전용 |
 
 > **`vnetInjection`이 기본값인 이유:** Foundry network injection은 **계정을 만들 때만** 구성할
@@ -599,21 +617,25 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 | Foundry agent subnet | `snet-foundry-agent` (`/24`) | `Microsoft.App/environments`에 위임하며 Foundry 계정 하나가 독점 |
 | Container Apps subnet | `snet-container-apps` (`/24`) | Workload profiles environment용으로 `Microsoft.App/environments`에 위임 |
 | Private endpoint subnet | `snet-private-endpoints` (`/27`) | 위임 없음 |
-| Private DNS zone 5개 | `privatelink.services.ai.azure.com` · `privatelink.openai.azure.com` · `privatelink.cognitiveservices.azure.com` · `privatelink.vaultcore.azure.net` · `privatelink.blob.core.windows.net` | VNet에 연결 |
-| Private Endpoint 3개 | `pe-aif-…` · `pe-kv-…` · `pe-st…` | Foundry(`account`) · Key Vault(`vault`) · Storage(`blob`) |
+| Private DNS zone 5개 | `privatelink.services.ai.azure.com` · `privatelink.openai.azure.com` · `privatelink.cognitiveservices.azure.com` · `privatelink.vaultcore.azure.net` · `privatelink.blob.core.windows.net` | VNet에 연결. 상태·평가 저장소가 Blob zone을 공유 |
+| Private Endpoint 4개 | `pe-aif-…` · `pe-kv-…` · `pe-st…` · `pe-steval…` | Foundry(`account`) · Key Vault(`vault`) · 상태/archive 저장소(`blob`) · 평가 저장소(`blob`) |
 | Foundry project capability host | `caphostproj` | Network-injected account에 필요 |
 
 - **주소 공간은 RFC1918이어야 합니다.** Foundry agent subnet은 `10.0.0.0/8`,
   `172.16-31.0.0/12`, `192.168.0.0/16` 밖의 범위를 거부합니다.
-- **Key Vault와 상태 계정은 `publicNetworkAccess: Disabled`를 사용합니다.** Container App과
+- **Key Vault·상태/archive 저장소·평가 저장소는 `publicNetworkAccess: Disabled`를 사용합니다.** Container App과
   scheduler Job은 managed identity로 Private Endpoint를 통해 secret과 checkpoint를 읽고
   씁니다. Template이 선언한 secret 쓰기는 trusted-service exception을 통해 계속 동작합니다.
 - **기존 VNet을 사용할 때는** 세 subnet이 모두 존재하고 필요한 위임이 설정돼 있어야 합니다.
-  Template은 자신이 소유하지 않은 subnet policy를 덮어쓰지 않습니다.
+  VNet은 Foundry 계정과 같은 리전이어야 하며, template은 자신이 소유하지 않은 subnet policy를
+  덮어쓰지 않습니다.
 - **`internalIngressOnly: true`를 사용하면** ingress가 VNet 전용이 되고 environment 기본
   도메인을 가리키는 Private DNS zone이 자동으로 만들어집니다. Scheduler는 app ingress가
   아니라 Foundry Hosted Agent endpoint를 직접 호출하므로 **일일 실행은 계속 동작합니다.**
-  `/admin`, `/archive`, `/api/*`, `/mcp`는 VNet 안에서만 접근할 수 있습니다.
+  `/admin`, `/archive`, `/feedback`, `/api/*`, `/mcp`는 VNet 안에서만 접근할 수 있습니다.
+- **별도 Azure MCP Server는 Entra 인증을 적용한 공개 HTTPS로 유지됩니다.** 기반 템플릿의
+  VNet·Private Endpoint 설정이 이 서버의 ingress까지 비공개로 바꾸지는 않습니다. 고객이 모든
+  endpoint의 비공개 구성을 요구한다면 배포 인수 전에 이 제약을 해결해야 합니다.
 
 **`perimeter`가 추가로 만드는 리소스**
 
@@ -624,12 +646,13 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 | Inbound rule(subscription) | `inbound-subscriptions` | Container App이 Foundry를 호출할 수 있도록 기본값은 배포 subscription |
 | Inbound rule(IP) | `inbound-ip` | `perimeterInboundIpRanges`가 채워졌을 때만 생성 |
 | Outbound rule(FQDN) | `outbound-fqdn` | 기본값은 `azure.microsoft.com`, `learn.microsoft.com` |
-| Resource association 4개 | `assoc-foundry` · `assoc-keyvault` · `assoc-loganalytics` · `assoc-storage` | |
+| Resource association 5개 | `assoc-foundry` · `assoc-keyvault` · `assoc-loganalytics` · `assoc-storage` · `assoc-evaluation-storage` | |
 | Diagnostic setting | `nsp-access-logs` | `NSPAccessLogs`를 Log Analytics로 전송 |
 
 - **기본 mode는 `Learning`(Transition)** 으로 요청을 차단하지 않고 기록합니다.
   `NSPAccessLogs` table에서 차단됐을 요청을 검토한 뒤 `perimeterAccessMode: Enforced`로
-  재배포하거나 output의 `enforcePerimeterCommand`를 실행하십시오.
+  재배포합니다. Output의 `enforcePerimeterCommand`는 Foundry association 하나만 변경하므로
+  나머지 association은 각각 검토한 변경이 필요합니다.
 - Container Apps와 Communication Services는 아직 NSP에 onboard되지 않았습니다. 이 앞단은
   계속 ingress IP 제한과 API key로 보호합니다.
 
@@ -790,8 +813,9 @@ OpenAI/OpenAI chat client를 만들지 않습니다.
 `https://<container-app>/admin`에서 조밀한 구성 상태 목록, 구독자, 자동 실행 일정, 최근 Azure
 업데이트와 실행 이력을 확인할 수 있습니다. 수동 분석 대상은 예약 checkpoint, 양 끝 날짜를
 포함하는 기간, 최근 N개, 숫자 Update 번호 한 개 또는 Azure Update URL 한 개로 지정합니다.
-Admin, Archive, Feedback은 밝은 운영 화면, 일정한 높이의 입력란, 반응형 탐색, 로컬 Lucide 아이콘과
-고정 버전 웹 글꼴을 공유합니다. 넓은 화면에서는 제한된 본문을 중앙에 둡니다. Admin은 섹션 탐색으로
+Admin과 Archive는 밝은 운영 화면, 일정한 높이의 입력란, 반응형 탐색, 로컬 Lucide 아이콘과
+고정 버전 웹 글꼴을 공유합니다. Feedback은 디자인 token·글꼴 정책을 재사용하지만 관리 탐색 없이
+독립 폼 전용 헤더를 사용합니다. 넓은 화면에서는 제한된 본문을 중앙에 둡니다. Admin은 섹션 탐색으로
 작업 영역 하나씩 표시하며 선택한 섹션을 URL fragment에 유지합니다. 변경 버튼은 관련
 입력과 같은 테두리 작업면 안에 두고, 결과 목록은 별도 하위 제목 아래에 표시합니다. 수동 실행은
 기본적으로 분석과 Archive 저장만 수행하고 이메일은 보내지 않습니다. **Digest 이메일 발송**을
@@ -888,11 +912,12 @@ evaluator는 금지 PII key와 nested free text의 email-like 값을 모두 검�
 ## 피드백과 웹 미리보기
 
 `FEEDBACK_UI_ENABLED`를 켜면 `/feedback`에서 버그, 개선 요청, 보고서 컨텍스트를 기존 비공개
-저장 우선 API로 접수합니다. 탐색 링크는 활성화된 화면에만 표시되며 Admin과 Archive의 인가 조건은
-그대로 적용됩니다. 폼은 입력을 지우지 않는 한국어·영어·일본어 전환, 인라인 검증, 문자 수, 미제출
-내용의 이탈 경고를 제공합니다. 초안은 페이지 메모리에만 있으며 브라우저 저장소에는 기록하지 않습니다.
-요청 제한이나 저장 실패 시 입력을 유지합니다. 접수 후 번호를 보여주고 알림 메일 실패를 저장 실패와
-구분합니다. 추가 제출은 **새 피드백 작성**으로 시작합니다.
+저장 우선 API로 접수합니다. 이는 공개 제출 경로이며 Admin·Archive·저장된 피드백에 대한 접근
+권한이 아닙니다. 독립 폼의 언어는 `?lang=en`, `?lang=ko`, `?lang=ja`로 지정하며 기본은 영어입니다.
+브라우저의 필수 입력·길이·이메일 검증을 사용하고 요청 중에는 제출 버튼을 비활성화합니다.
+요청 실패 시 입력을 유지하며, 저장 성공 시 폼을 초기화하고 처음 전달된 report reference를
+복원합니다. 상태 메시지는 알림 실패와 제출 실패를 구분합니다. API는 접수 ID를 반환하지만
+현재 화면에는 별도 접수증 화면, 언어 전환 컨트롤, 문자 수, 이탈 경고, **새 피드백 작성** 버튼이 없습니다.
 
 Azure 호출이나 이메일 발송 없이 세 화면을 미리 확인합니다.
 
@@ -904,8 +929,11 @@ python -m scripts.preview_web --port 8765
 `http://127.0.0.1:8765/admin`, `/archive`, `/feedback`에서 확인합니다. 루프백 전용 **SYNTHETIC**
 미리보기는 이메일 합성 예제를 재사용하고 Archive v1을 검증합니다. 관리 변경은 메모리에만 반영하며,
 실분석은 차단하고 피드백 접수는 모의 응답으로 처리해 영구 저장하지 않습니다.
-[브라우저 검증](tests/browser/control_surfaces.cjs)은 탐색, 요청 경합, 검증, 접수증과
-1440/768/390/320px 레이아웃을 다룹니다. 실행 방법은 [테스트 문서](tests/README.md)에 있습니다.
+[브라우저 검증](tests/browser/control_surfaces.cjs)은 탐색·요청 경합과 1440/768/390/320px
+레이아웃을 다루지만, Feedback 절은 제거된 언어 전환·접수증 컨트롤을 아직 전제로 합니다.
+현재 Feedback 화면의 검증 근거로 사용하기 전에 해당 assertion을 갱신해야 합니다. Python 단위
+테스트와 합성 미리보기 검사만으로 브라우저 레이아웃 검증을 주장하지 않습니다.
+실행 방법은 [테스트 문서](tests/README.md)에 있습니다.
 
 디자인 참고: [IBM Carbon 데이터 표](https://carbondesignsystem.com/components/data-table/usage/),
 [Red Hat PatternFly 도구 모음](https://www.patternfly.org/components/toolbar/design-guidelines/),
@@ -1012,7 +1040,7 @@ Prompt 예산보다 큰 도구 결과도 버리지 않습니다. 전체 텍스�
 | `ARCHIVE_REQUIRE_AUTH` | EasyAuth principal 요구 여부. `false`는 로컬 개발 전용입니다 | | `true` |
 | `ARCHIVE_ALLOWED_PRINCIPALS` | 쉼표로 구분한 reader UPN/object/group ID. Admin도 포함됩니다 | | — |
 | `RUN_TIME_BUDGET_S` | 한 실행의 wall-clock 예산. Job replica timeout보다 짧아야 합니다 | | `39600` |
-| `MAX_CONCURRENT_ANALYSES` | 병렬로 분석하는 업데이트 수 | | `3` |
+| `MAX_CONCURRENT_ANALYSES` | 병렬로 분석하는 업데이트 수 | | 로컬 `3`; 고객 템플릿의 `maxConcurrentAnalyses`는 `1` |
 | `ORCHESTRATOR_ENDPOINT` | 외부 scheduler가 호출하는 Container App URL(HTTPS 전용) | | — |
 | `ORCHESTRATOR_API_KEY` | 외부 scheduler가 `X-API-Key`로 전달하는 key | | — |
 | `API_KEY` | `/api/*`와 `/mcp`용 key. 설정하지 않으면 MCP는 503을 반환합니다 | 예³ | — |
@@ -1148,6 +1176,12 @@ az bicep build --file infra/enterprise/main.bicep \
 
 Deploy 버튼이 JSON을 가리키므로 컴파일된 template이 Bicep source와 다르면 CI가 실패합니다.
 
+CI workflow 자체를 변경해도 검사가 실행되며, `contents: read` 권한은 workflow 최상위에 선언합니다.
+배포 전에는 `src/`, `tests/`, `scripts/` 전체에 Black, isort, Flake8 검사를 실행하고,
+import와 coverage 40% 기준을 포함한 전체 pytest를 확인합니다. 이 로컬 검사는 운영 런타임
+빌드나 고객 환경의 ARM, 네트워크, 신원, 분석, 이메일 인수 검증을 대신하지 않습니다.
+동일한 검사 절차는 [workflow 가이드](.github/workflows/README.md)에 있습니다.
+
 ### 보고서 품질
 
 ```bash
@@ -1227,6 +1261,7 @@ AzBriefEnterprise/
 │   ├── middleware.py           # API key auth + per-IP rate limiting
 │   ├── admin/                  # Admin console (auth, page, router)
 │   ├── archive/                # versioned contracts, reader auth, API, responsive browser
+│   ├── feedback/               # public submission form, private storage, optional notification
 │   ├── agent/                  # LangGraph agent, tools, prompts
 │   │   ├── analyzer.py         # Plan-Execute-Evaluate state machine
 │   │   ├── foundry_backend.py  # Prompt Agent adapter + specialist collaboration
@@ -1241,12 +1276,20 @@ AzBriefEnterprise/
 │   ├── i18n/                   # Language registry (single source of truth)
 │   ├── rss/                    # Azure Update RSS parser
 │   ├── email/                  # EmailService + HTML templates
+│   ├── web_design.py           # shared web tokens and Admin/Archive navigation primitives
+│   ├── web_fonts.py            # browser font and CSP policy
 │   └── services/               # Azure data access (incl. checkpoint.py + archive.py)
 ├── infra/
 │   ├── enterprise/main.bicep           # source of truth — edit here
 │   ├── enterprise/modules/             # modules inlined into the compiled template
-│   └── azbrief-enterprise-deploy.json  # compiled ARM template (Deploy button)
-├── scripts/                    # Local CLI, crawler, Foundry agent provisioning, quality eval
+│   ├── azure-mcp-server/               # separate authenticated Azure MCP deployment
+│   ├── azbrief-enterprise-deploy.json  # compiled ARM template (Deploy button)
+│   ├── createUiDefinition.json        # guided Portal form paired with the ARM template
+│   └── CUSTOMER_DEPLOYMENT.md         # prerequisites, setup, acceptance, upgrades and recovery
+├── scripts/                    # Customer setup, local CLI, provisioning, quality evaluation
+│   ├── setup_customer.ps1      # customer-scoped staged setup and schedule activation
+│   ├── deploy_hosted_agent.ps1 # guarded Hosted Agent package/deployment/smoke
+│   └── deploy_dev.ps1          # guarded paired App/Job image upgrades after initial setup
 ├── tests/
 ├── hosted_agent_main.py        # root bootstrap referenced by azure.yaml
 ├── azure.yaml                  # Foundry Hosted Agent direct-code deployment
@@ -1268,6 +1311,8 @@ dependency, cache, 실행 산출물 디렉터리는 아래 별도 정책을 따�
 |---|---|---|
 | `src` | [`src/README.md`](src/README.md) | 제어면과 Hosted Agent Python package 지도 |
 | `src/admin` | [`src/admin/README.md`](src/admin/README.md) | EasyAuth, 허용 목록, nonce CSP, 수동 실행 |
+| `src/archive` | [src/archive/README.md](src/archive/README.md) | 불변 canonical 문서, 인가된 검색과 보고서 상세 |
+| `src/feedback` | [src/feedback/README.md](src/feedback/README.md) | 공개 독립 제출 폼, 비공개 저장, 선택적 알림 |
 | `src/agent` | [`src/agent/README.md`](src/agent/README.md) | LangGraph, Foundry adapter, 도구, 복원력, 안전성, 평가 |
 | `src/agent/prompts` | [`src/agent/prompts/README.md`](src/agent/prompts/README.md) | 단계별 prompt 조립 |
 | `src/agent/prompts/languages` | [`src/agent/prompts/languages/README.md`](src/agent/prompts/languages/README.md) | 언어별 style guide와 translation note |
@@ -1277,7 +1322,7 @@ dependency, cache, 실행 산출물 디렉터리는 아래 별도 정책을 따�
 | `src/i18n/labels` | [`src/i18n/labels/README.md`](src/i18n/labels/README.md) | Canonical 및 번역된 UI label bundle |
 | `src/rss` | [`src/rss/README.md`](src/rss/README.md) | Live RSS, 이력 병합, URL 정규화 |
 | `src/services` | [`src/services/README.md`](src/services/README.md) | Azure/public API data access와 checkpoint |
-| `scripts` | [`scripts/README.md`](scripts/README.md) | 로컬 분석, provisioning, evaluation, optimization CLI |
+| `scripts` | [`scripts/README.md`](scripts/README.md) | 고객 설정, 두 런타임 배포, 로컬 분석, provisioning과 evaluation |
 | `tests` | [`tests/README.md`](tests/README.md) | 영역별 pytest suite와 fixture |
 
 ### 인프라와 저장소 운영
@@ -1322,7 +1367,7 @@ README를 추가하면 현재 `.gitignore` 정책에 따라 추적되지 않거�
 | `data/` | Update 이력과 로컬 analysis/pattern/retirement state | Crawler/runtime이 생성하며 필요한 source data만 별도 정책으로 관리 |
 | `logs/` | 구조화된 로컬 실행 log | 진단 뒤 보존 정책에 따라 삭제 |
 | `eval_runs/` | Report, HTML, G-Eval score artifact | 재현 가능한 평가 output이며 commit 금지 |
-| `out/` | Best-effort email preview | 전달 성공의 source of truth로 사용하지 않음 |
+| `out/` | 합성 웹·이메일 미리보기, screenshot, 테스트 log, 검토된 배포 package | 생성 산출물로 commit하지 않음. 고객 배포·전달 성공의 증거와 구분 |
 | `.pytest_cache/`, `__pycache__/`, `.coverage`, `htmlcov/` | Test/interpreter cache와 coverage | 언제든 다시 생성 가능 |
 | `*.egg-info/`, `build/`, `dist/` | Packaging artifact | Source distribution 중 다시 생성 |
 | `docs/` | 현재 무시되는 로컬 문서/실험 공간 | 제품 문서는 추적되는 README 또는 명시적인 docs 정책으로 이동 |

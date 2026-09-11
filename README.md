@@ -45,6 +45,7 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 - [Multi-agent pipeline](#multi-agent-pipeline)
 - [Admin console](#admin-console)
 - [Analysis archive](#analysis-archive)
+- [Feedback and web preview](#feedback-and-web-preview)
 - [How the analysis works](#how-the-analysis-works)
 - [Per-subscriber reports](#per-subscriber-reports)
 - [Configuration](#configuration)
@@ -485,16 +486,25 @@ records are for observability; the checkpoint alone owns processing state that m
 
 ## Quick Start
 
+For a new customer installation, use the [customer deployment guide](infra/CUSTOMER_DEPLOYMENT.md).
+This section is for local development; its root `.env` must not be reused by customer setup.
+
 Local development uses your Azure CLI identity to invoke agents already published in a
 Microsoft Foundry project. There is no Azure OpenAI/OpenAI endpoint or API key fallback.
 
-```bash
+Windows (PowerShell):
+
+```powershell
 git clone https://github.com/Networkdog/AzBriefEnterprise.git
-cd AzBriefEnterprise
-python -m venv .venv && .venv/Scripts/Activate.ps1  # or: source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
+Set-Location AzBriefEnterprise
+python -m venv .venv
+& .\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+Copy-Item .env.example .env
 ```
+
+On Linux/macOS, activate with `source .venv/bin/activate` after creating the virtual environment,
+then install the requirements and create the local `.env` from `.env.example`.
 
 Set at minimum in `.env`:
 
@@ -534,6 +544,11 @@ python -m scripts.test_local analyze --latest --jsonl results.jsonl  # export, s
 python -m scripts.test_local resources                               # view your resource summary
 ```
 
+`test_local analyze` constructs the local analyzer and calls the persisted Prompt Agents. It
+does not prove the deployed Hosted Agent works. Use `python -m scripts.smoke_hosted_agent` for
+one read-only analysis through the deployed Hosted contract; it incurs model usage but sends no
+email and does not test control-plane archive persistence.
+
 > **Historical date ranges:** The live Azure Update RSS feed only exposes a rolling window of
 > the most recent ~200 items, so months that have aged out return nothing when queried
 > directly. For date-range analysis (`--from`/`--to`), AzBrief merges a locally crawled
@@ -548,7 +563,8 @@ python -m scripts.test_local resources                               # view your
 
 Deploys the Azure foundation and control plane: a Foundry account and project with a model
 deployment, the Container App (API + Admin + MCP), the Container Apps Job that drives the
-daily digest, Key Vault, state storage, and Communication Services. Prompt Agents and the
+daily digest, Key Vault, state/archive storage, separate evaluation storage, and Communication
+Services. Prompt Agents and the
 Hosted Agent are Foundry data-plane objects and are deployed in the post-deployment steps.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
@@ -571,15 +587,18 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 | Foundry project | `{baseName}-agents` | Data-plane workspace for the Hosted Agent and Prompt Agents |
 | Model deployment | Customer-approved model/version | Confirm region, SKU, capacity-unit mapping and quota; raw ARM defaults are not a compatibility guarantee |
 | Key Vault | `kv-{baseName}-{suffix}` | RBAC-only store for all runtime secrets |
-| Storage account + `azbrief-state` container | `st{baseName}{suffix}` | Checkpoint blob, **`allowSharedKeyAccess: false`** |
+| State/archive storage | `st{baseName}{suffix}` | Private `azbrief-state` and `azbrief-archive` containers, **`allowSharedKeyAccess: false`** |
+| Evaluation storage + Foundry AAD connection | `steval{baseName}{suffix}` | Separate Entra-only Blob account for evaluation artifacts, not customer archives |
 | Container Apps Environment | `cae-{baseName}-{suffix}` | VNet-integrated by default |
-| Container App | `ca-{baseName}` | Control-plane API + `/admin` + authenticated `/mcp` |
+| Container App | `ca-{baseName}` | Control-plane API, `/admin`, `/archive`, `/feedback`, and authenticated `/mcp` |
 | Container Apps Job | `caj-{baseName}` | Manual until acceptance; then cron, Hosted invocation, checkpoint, and email |
 | Hosted Agent (subsequent `azd deploy`) | `{baseName}-analysis-hosted` | Complete LangGraph analysis and subscriber customization with a dedicated Entra identity |
-| Container App authConfig | `current` | Entra ID sign-in, created only when a client ID is supplied |
+| Container App authConfig | `current` | Entra ID sign-in when authentication is configured |
 | Communication Services + Email | `acs-{baseName}-{suffix}` | Azure-managed domain connected automatically |
 | Log Analytics + Application Insights | `log-` / `appi-` | Structured logs and tracing |
 | Control-plane role assignments | 5 assignments | Key Vault Secrets User · Storage Blob Data Contributor · Foundry User · Monitoring Metrics Publisher · RG Reader |
+| Foundry project role assignments | 2 assignments | Foundry User on the account and Storage Blob Data Owner on evaluation storage only |
+| Azure MCP Server (subsequent `Mcp` stage) | `ca-{baseName}-mcp` | Separate Entra-authenticated read-only server, identity, and project connection |
 
 **Security design (safe defaults):**
 
@@ -606,8 +625,8 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 
 | Value | What changes | When to choose it |
 |----|----------------|------------|
-| `vnetInjection` **(default)** | Foundry agent compute is injected into a delegated subnet, the Container Apps environment joins the same VNet, and Foundry, Key Vault, and the state account are available **only through private endpoints** | Enterprise default for environments where traffic must remain inside the VNet |
-| `perimeter` | Endpoints remain public, but Foundry, Key Vault, Log Analytics, and the state account are enclosed in a **Network Security Perimeter** to block exfiltration paths | When a new VNet is not possible or only a PaaS boundary is required |
+| `vnetInjection` **(default)** | Foundry agent compute is injected into a delegated subnet, the Container Apps environment joins the same VNet, and Foundry, Key Vault, state/archive storage, and evaluation storage use **private endpoints** | Enterprise default; Foundry and the VNet must share a region |
+| `perimeter` | Endpoints remain public, but Foundry, Key Vault, Log Analytics, state/archive storage, and evaluation storage join a **Network Security Perimeter** | When a new VNet is not possible or only a PaaS boundary is required; default Learning mode logs without blocking |
 | `public` | Endpoints are public, with Entra tokens, the API key, and allow-lists as the only boundaries | Evaluation and demonstration environments only |
 
 > **Why `vnetInjection` is the default:** Foundry network injection can be configured **only when
@@ -622,21 +641,25 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 | Foundry agent subnet | `snet-foundry-agent` (`/24`) | Delegated to `Microsoft.App/environments` and exclusive to one Foundry account |
 | Container Apps subnet | `snet-container-apps` (`/24`) | Delegated to `Microsoft.App/environments` for the workload-profiles environment |
 | Private endpoint subnet | `snet-private-endpoints` (`/27`) | No delegation |
-| Five Private DNS zones | `privatelink.services.ai.azure.com` · `privatelink.openai.azure.com` · `privatelink.cognitiveservices.azure.com` · `privatelink.vaultcore.azure.net` · `privatelink.blob.core.windows.net` | Linked to the VNet |
-| Three Private Endpoints | `pe-aif-…` · `pe-kv-…` · `pe-st…` | Foundry (`account`) · Key Vault (`vault`) · Storage (`blob`) |
+| Five Private DNS zones | `privatelink.services.ai.azure.com` · `privatelink.openai.azure.com` · `privatelink.cognitiveservices.azure.com` · `privatelink.vaultcore.azure.net` · `privatelink.blob.core.windows.net` | Linked to the VNet; state and evaluation storage share the Blob zone |
+| Four Private Endpoints | `pe-aif-…` · `pe-kv-…` · `pe-st…` · `pe-steval…` | Foundry (`account`) · Key Vault (`vault`) · state/archive storage (`blob`) · evaluation storage (`blob`) |
 | Foundry project capability host | `caphostproj` | Required for a network-injected account |
 
 - **The address space must be RFC1918.** The Foundry agent subnet rejects ranges outside
   `10.0.0.0/8`, `172.16-31.0.0/12`, and `192.168.0.0/16`.
-- **Key Vault and the state account use `publicNetworkAccess: Disabled`.** The Container App and
+- **Key Vault, state/archive storage, and evaluation storage use `publicNetworkAccess: Disabled`.** The Container App and
   scheduler Job use managed identity to read and write secrets and checkpoints through private
   endpoints. Template-declared secret writes continue through the trusted-service exception.
 - **When using an existing VNet,** all three subnets must already exist with the required
-  delegations. The template does not overwrite subnet policies it does not own.
+  delegations, and the VNet must be in the Foundry account's region. The template does not
+  overwrite subnet policies it does not own.
 - **With `internalIngressOnly: true`,** ingress becomes VNet-only and a Private DNS zone that points
   to the environment's default domain is created automatically. The scheduler calls the Foundry
   Hosted Agent endpoint directly rather than app ingress, so **the daily run still works**.
-  `/admin`, `/api/*`, and `/mcp` are accessible only inside the VNet.
+  `/admin`, `/archive`, `/feedback`, `/api/*`, and `/mcp` are accessible only inside the VNet.
+- **The separate Azure MCP server remains public HTTPS with Entra authentication.** The foundation's
+  VNet/private endpoint settings do not make that server's ingress private. Resolve any
+  all-private-endpoint customer requirement before deployment acceptance.
 
 **Additional resources created by `perimeter`**
 
@@ -647,12 +670,13 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 | Inbound rule (subscription) | `inbound-subscriptions` | Defaults to the deployment subscription so the Container App can call Foundry |
 | Inbound rule (IP) | `inbound-ip` | Created only when `perimeterInboundIpRanges` is populated |
 | Outbound rule (FQDN) | `outbound-fqdn` | Defaults to `azure.microsoft.com` and `learn.microsoft.com` |
-| Four resource associations | `assoc-foundry` · `assoc-keyvault` · `assoc-loganalytics` · `assoc-storage` | |
+| Five resource associations | `assoc-foundry` · `assoc-keyvault` · `assoc-loganalytics` · `assoc-storage` · `assoc-evaluation-storage` | |
 | Diagnostic setting | `nsp-access-logs` | Sends `NSPAccessLogs` to Log Analytics |
 
 - **The default mode is `Learning` (Transition),** which records without blocking. Review calls
   that would have been denied in the `NSPAccessLogs` table, then redeploy with
-  `perimeterAccessMode: Enforced` or run the output's `enforcePerimeterCommand`.
+  `perimeterAccessMode: Enforced`. The output's `enforcePerimeterCommand` updates only the
+  Foundry association; the other associations need their own reviewed update.
 - Container Apps and Communication Services are not yet onboarded to the NSP. Ingress IP
   restrictions and the API key continue to protect that front end.
 
@@ -821,9 +845,10 @@ AzBrief never constructs a direct Azure OpenAI/OpenAI chat client.
 Use `https://<container-app>/admin` to inspect a compact configuration checklist, subscribers,
 automatic schedules, recent Azure updates, and run history. Manual analysis accepts the scheduled
 checkpoint, an inclusive date range, the newest N updates, one numeric Update ID, or one Azure
-Update URL. Admin, Archive, and Feedback share a light operations shell, fixed-height controls,
-responsive navigation, local Lucide icons, and the pinned browser font policy. Bounded main content
-stays centered in wide viewports. Admin section navigation opens one workspace at a time and keeps
+Update URL. Admin and Archive share a light operations shell, fixed-height controls,
+responsive navigation, local Lucide icons, and the pinned browser font policy. Feedback reuses
+the design tokens and font policy with its own standalone form header, without management
+navigation. Bounded main content stays centered in wide viewports. Admin section navigation opens one workspace at a time and keeps
 the selected section in the URL fragment. Each
 mutation button stays in the same bordered action surface as its inputs, with the resulting list
 under a separate subsection heading. Manual runs default to analysis and Archive persistence
@@ -934,12 +959,14 @@ evaluator checks both forbidden PII keys and email-like values in nested free te
 ## Feedback and web preview
 
 When `FEEDBACK_UI_ENABLED` is enabled, `/feedback` accepts a bug, improvement request, or report
-context through the existing private-storage-first API. Navigation links only appear for enabled
-surfaces; opening Admin or Archive still requires its normal authorization. The form supports
-English, Korean, and Japanese without clearing entered text, inline validation, character counts,
-and an unsaved-input warning. Drafts stay in page memory, never browser storage. Rate-limit or
-storage failures retain input. Accepted submissions show a receipt ID and distinguish failed email
-notification from failed storage; a new submission requires the **New feedback** action.
+context through the existing private-storage-first API. This is a public submission surface,
+not access to Admin, Archive, or stored feedback. The standalone form supports English, Korean,
+and Japanese through `?lang=en`, `?lang=ko`, or `?lang=ja`, with English as the default. It has
+native required/length/email validation and disables submission while a request is in flight.
+Request failures retain input. Successful storage resets the form and restores the original
+report reference, while the status message distinguishes notification failure from submission
+failure. The API returns a receipt ID; the current page does not display a separate receipt screen,
+language switcher, character counters, unsaved-input warning, or **New feedback** action.
 
 Preview all three surfaces without Azure calls or email delivery:
 
@@ -951,8 +978,11 @@ python -m scripts.preview_web --port 8765
 Open `http://127.0.0.1:8765/admin`, `/archive`, or `/feedback`. This loopback-only **SYNTHETIC**
 preview reuses the email design fixtures, validates Archive v1 projections, and keeps management
 edits in memory. Live runs are blocked; feedback receipts are simulated and nothing is persisted.
-The [browser checks](tests/browser/control_surfaces.cjs) cover navigation, query races, validation,
-receipts, and 1440/768/390/320px layouts. See [tests](tests/README.md) for execution details.
+The [browser checks](tests/browser/control_surfaces.cjs) include navigation, query races and
+1440/768/390/320px layouts, but their Feedback section still targets the retired language-switch
+and receipt controls. Update those assertions before using that script as evidence for the
+current Feedback page. The focused Python tests and synthetic preview checks do not establish
+browser layout coverage. See [tests](tests/README.md) for execution details.
 
 Design references: [IBM Carbon data tables](https://carbondesignsystem.com/components/data-table/usage/),
 [Red Hat PatternFly toolbars](https://www.patternfly.org/components/toolbar/design-guidelines/),
@@ -1059,7 +1089,7 @@ reports what is still untranslated.
 | `ARCHIVE_REQUIRE_AUTH` | Require an EasyAuth principal (local dev only when `false`) | | `true` |
 | `ARCHIVE_ALLOWED_PRINCIPALS` | Comma-separated reader UPN/object/group IDs; Admins are included | | — |
 | `RUN_TIME_BUDGET_S` | Wall-clock budget for one run; keep below the job replica timeout | | `39600` |
-| `MAX_CONCURRENT_ANALYSES` | Updates analyzed in parallel | | `3` |
+| `MAX_CONCURRENT_ANALYSES` | Updates analyzed in parallel | | `3` locally; `1` via the customer template's `maxConcurrentAnalyses` |
 | `ORCHESTRATOR_ENDPOINT` | Container App URL an external scheduler calls (https only) | | — |
 | `ORCHESTRATOR_API_KEY` | Key an external scheduler presents as `X-API-Key` | | — |
 | `API_KEY` | Key for `/api/*` and `/mcp`; MCP returns 503 when unset | Yes³ | — |
@@ -1195,6 +1225,12 @@ az bicep build --file infra/enterprise/main.bicep \
 CI fails when the compiled template drifts from the Bicep source, because the Deploy button
 points at the JSON.
 
+CI also runs when its own workflow changes and declares `contents: read` at the workflow root.
+Before deployment, check Black, isort, and Flake8 across `src/`, `tests/`, and `scripts/`, then
+import and the full pytest suite with the 40% coverage gate. These local checks do not replace
+production-runtime builds or customer ARM, network, identity, analysis, and email acceptance.
+See the [workflow guide](.github/workflows/README.md) for the matching checks.
+
 ### Report quality
 
 ```bash
@@ -1275,6 +1311,7 @@ AzBriefEnterprise/
 │   ├── middleware.py           # API key auth + per-IP rate limiting
 │   ├── admin/                  # Admin console (auth, page, router)
 │   ├── archive/                # versioned contracts, reader auth, API, responsive browser
+│   ├── feedback/               # public submission form, private storage, optional notification
 │   ├── agent/                  # LangGraph agent, tools, prompts
 │   │   ├── analyzer.py         # Plan-Execute-Evaluate state machine
 │   │   ├── foundry_backend.py  # Prompt Agent adapter + specialist collaboration
@@ -1289,12 +1326,20 @@ AzBriefEnterprise/
 │   ├── i18n/                   # Language registry (single source of truth)
 │   ├── rss/                    # Azure Update RSS parser
 │   ├── email/                  # EmailService + HTML templates
+│   ├── web_design.py           # shared web tokens and Admin/Archive navigation primitives
+│   ├── web_fonts.py            # browser font and CSP policy
 │   └── services/               # Azure data access (incl. checkpoint.py + archive.py)
 ├── infra/
 │   ├── enterprise/main.bicep           # source of truth — edit here
 │   ├── enterprise/modules/             # modules inlined into the compiled template
-│   └── azbrief-enterprise-deploy.json  # compiled ARM template (Deploy button)
-├── scripts/                    # Local CLI, crawler, Foundry agent provisioning, quality eval
+│   ├── azure-mcp-server/               # separate authenticated Azure MCP deployment
+│   ├── azbrief-enterprise-deploy.json  # compiled ARM template (Deploy button)
+│   ├── createUiDefinition.json        # guided Portal form paired with the ARM template
+│   └── CUSTOMER_DEPLOYMENT.md         # prerequisites, setup, acceptance, upgrades and recovery
+├── scripts/                    # Customer setup, local CLI, provisioning, quality evaluation
+│   ├── setup_customer.ps1      # customer-scoped staged setup and schedule activation
+│   ├── deploy_hosted_agent.ps1 # guarded Hosted Agent package/deployment/smoke
+│   └── deploy_dev.ps1          # guarded paired App/Job image upgrades after initial setup
 ├── tests/
 ├── hosted_agent_main.py        # root bootstrap referenced by azure.yaml
 ├── azure.yaml                  # Foundry Hosted Agent direct-code deployment
@@ -1317,6 +1362,8 @@ separate policy below.
 |---|---|---|
 | `src` | [`src/README.md`](src/README.md) | Map of the control-plane and Hosted Agent Python package |
 | `src/admin` | [`src/admin/README.md`](src/admin/README.md) | EasyAuth, allow-list, nonce CSP, and manual runs |
+| `src/archive` | [src/archive/README.md](src/archive/README.md) | Immutable canonical documents, authorized search and report details |
+| `src/feedback` | [src/feedback/README.md](src/feedback/README.md) | Public standalone submission form, private storage and optional notification |
 | `src/agent` | [`src/agent/README.md`](src/agent/README.md) | LangGraph, Foundry adapter, tools, resilience, safety, and evaluation |
 | `src/agent/prompts` | [`src/agent/prompts/README.md`](src/agent/prompts/README.md) | Phase-specific prompt assembly |
 | `src/agent/prompts/languages` | [`src/agent/prompts/languages/README.md`](src/agent/prompts/languages/README.md) | Per-language style guides and translation notes |
@@ -1326,7 +1373,7 @@ separate policy below.
 | `src/i18n/labels` | [`src/i18n/labels/README.md`](src/i18n/labels/README.md) | Canonical and translated UI label bundles |
 | `src/rss` | [`src/rss/README.md`](src/rss/README.md) | Live RSS, history merge, and URL normalization |
 | `src/services` | [`src/services/README.md`](src/services/README.md) | Azure/public API data access and checkpoint |
-| `scripts` | [`scripts/README.md`](scripts/README.md) | Local analysis, provisioning, evaluation, and optimization CLIs |
+| `scripts` | [`scripts/README.md`](scripts/README.md) | Customer setup, paired deployments, local analysis, provisioning and evaluation |
 | `tests` | [`tests/README.md`](tests/README.md) | Pytest suites and fixtures by area |
 
 ### Infrastructure and repository operations
@@ -1372,7 +1419,7 @@ their purpose is documented only here.
 | `data/` | Update history and local analysis/pattern/retirement state | Generated by crawler/runtime; manage only required source data under a separate policy |
 | `logs/` | Structured local run logs | Remove according to retention policy after diagnosis |
 | `eval_runs/` | Report, HTML, and G-Eval score artifacts | Reproducible evaluation output; never commit |
-| `out/` | Best-effort email preview | Do not use as the source of truth for delivery success |
+| `out/` | Synthetic web/email previews, screenshots, test logs and reviewed deployment packages | Generated, not committed; not proof of customer deployment or delivery success |
 | `.pytest_cache/`, `__pycache__/`, `.coverage`, `htmlcov/` | Test/interpreter caches and coverage | Safe to regenerate at any time |
 | `*.egg-info/`, `build/`, `dist/` | Packaging artifacts | Regenerated during source distribution |
 | `docs/` | Currently ignored local documentation/experiment space | Move product documentation to tracked READMEs or an explicit docs policy |

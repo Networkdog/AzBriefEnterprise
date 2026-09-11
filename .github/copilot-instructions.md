@@ -159,11 +159,11 @@ Tools follow a self-contained module pattern:
 ## Project Structure
 
 ```
-AzBrief/
+AzBriefEnterprise/
 ├── src/                          # Main application package
 │   ├── __init__.py               # Version
 │   ├── config.py                 # pydantic-settings (env → Settings)
-│   ├── main.py                   # Container Apps control plane (API + /admin + /mcp)
+│   ├── main.py                   # Container Apps control plane (API/Admin/Archive/Feedback/MCP)
 │   ├── mcp_server.py             # Authenticated MCP Streamable HTTP tools
 │   ├── hosted_agent.py           # Foundry Hosted Agent entry point; full analysis runtime
 │   ├── scheduler.py              # Container Apps Job control-plane entry point
@@ -195,14 +195,23 @@ AzBrief/
 │   │   ├── page.py               # Server-rendered console HTML (nonce CSP)
 │   │   └── router.py             # /admin + /api/admin/* routes
 │   ├── archive/                  # Immutable analysis contract + reader auth/API/browser
+│   ├── feedback/                 # Public submission form + private storage/notification
+│   ├── web_design.py             # Shared tokens and Admin/Archive navigation primitives
+│   ├── web_fonts.py              # Browser font and CSP policy
 │   ├── orchestrator.py           # Orchestrated digest runs
 │   ├── services/                 # Azure SDK service classes (data access only)
 │   │   └── checkpoint.py         # Durable digest checkpoint (blob / file / inert)
 │   │   └── archive.py            # Immutable archive backends (blob / file / inert)
-├── scripts/                      # Local test CLI + Foundry agent provisioning
+├── scripts/                      # Customer deployment, local CLI and Foundry provisioning
+│   ├── setup_customer.ps1        # Explicit customer stages from ARM setup outputs
+│   ├── deploy_hosted_agent.ps1   # Guarded Hosted deployment and smoke
+│   ├── deploy_dev.ps1            # Guarded App/Job image upgrades after bootstrap
 │   ├── quality_campaign.py       # Frozen period, A/A, holdout, layered release gates
 ├── infra/                        # IaC
 │   ├── azbrief-enterprise-deploy.json # ARM template (Deploy button) — compiled output
+│   ├── createUiDefinition.json       # Paired Portal input form
+│   ├── CUSTOMER_DEPLOYMENT.md        # Customer prerequisites, setup and acceptance
+│   ├── azure-mcp-server/            # Separate read-only MCP deployment unit
 │   ├── enterprise/main.bicep          # Source of truth — edit here, then compile
 │   └── enterprise/modules/            # Bicep modules inlined into the compiled template
 ├── .github/
@@ -242,6 +251,8 @@ Key Vault references. Never grant Hosted evidence permissions to the Container A
 identity. Local/mocked checks are not customer ARM validation or proof of delivery. Pin the CI
 Bicep compiler to the version that generated the checked-in ARM, and test setup on Windows.
 The guided VNet profile must bind Foundry and the VNet to the same deployment region.
+Keep CI `contents: read` permissions at the workflow root, never inside an event. Include the CI
+file itself in both push/PR path filters and retain its deployment-contract regression assertions.
 
 This repository ships **one** topology. There is no Automation Account, no Function App and
 no fat wheel. Analysis runs in a Foundry Hosted Agent; Container Apps hosts only control-plane
@@ -322,25 +333,31 @@ sequence of headings, controls, and tables with ambiguous ownership.
 Keep management-table action columns first so mobile operators can reach commands without first
 scrolling horizontally through secondary data.
 
-Admin, Archive, and Feedback share `src/web_design.py` tokens, a sticky responsive header,
-local Lucide icons (license in `src/THIRD_PARTY_NOTICES.md`), and `src/web_fonts.py` font policy.
+Admin and Archive share a sticky responsive navigation header and local Lucide icons
+(license in `src/THIRD_PARTY_NOTICES.md`). Feedback reuses `src/web_design.py` tokens and
+`src/web_fonts.py` font policy in a standalone form with its own header, not management navigation.
 Keep enabled-surface navigation separate from authorization. Admin uses one hash-addressed
 section at a time, local table search, pinned action columns, explicit refresh failures, and
 native run-form validation; inactive target inputs must be disabled, not merely hidden.
 Archive preserves URL filters across sign-in/reload/detail return, labels loaded counts accurately,
 guards list/detail request races independently, and retains safe Markdown, report outline, and
-Archive-ID-only feedback links. Feedback drafts stay in page memory; language changes and failed
-submissions retain input, and a receipt separates accepted storage from notification failure.
+Archive-ID-only feedback links. Feedback language is selected by URL query; its current page has
+no language switcher, character counters, unsaved-input warning, or separate receipt screen.
+Native form validation and the in-flight submit lock remain. Failed requests retain input;
+successful storage resets the form and restores its original report reference. Status messages
+distinguish notification failure from failed storage, while receipt IDs remain in API responses.
 Use `python -m scripts.preview_web --port 8765` for loopback-only synthetic checks, never a live
 tenant for styling tests. `tests/browser/control_surfaces.cjs` is a standalone Playwright page
-function covering workflows and 1440/768/390/320px layouts. Keep generated screenshots in `out/`.
+function covering workflows and 1440/768/390/320px layouts, but its Feedback section still targets
+retired controls and must be updated before claiming current browser coverage. Keep generated
+screenshots in `out/` and do not substitute Python renderer tests for browser interaction checks.
 
 #### Network isolation (`networkIsolationMode`)
 
 | Mode | What it does |
 |------|--------------|
-| `vnetInjection` (**default**) | Foundry `networkInjections` (`scenario: 'agent'`) into a `/24` subnet delegated to `Microsoft.App/environments`, Container Apps workload-profile environment on a second delegated subnet, private endpoints + private DNS for Foundry, Key Vault and the state storage account, all switched to `publicNetworkAccess: 'Disabled'` |
-| `perimeter` | Network Security Perimeter around the Foundry account, Key Vault, Log Analytics and the state storage account, plus an `NSPAccessLogs` diagnostic setting. Defaults to `Learning` (Transition) mode |
+| `vnetInjection` (**default**) | Foundry `networkInjections` (`scenario: 'agent'`) into a `/24` subnet delegated to `Microsoft.App/environments`, Container Apps workload-profile environment on a second delegated subnet, and four private endpoints with private DNS for Foundry, Key Vault, state/archive storage and evaluation storage. Their public network access is disabled by default; Foundry and the VNet share a region |
+| `perimeter` | Five associations for the Foundry account, Key Vault, Log Analytics, state/archive storage and evaluation storage, plus an `NSPAccessLogs` diagnostic setting. Defaults to `Learning` (Transition), which logs without blocking |
 | `public` | Public endpoints; Entra auth, the API key and `allowedIpRanges` are the only boundary. Evaluation use only |
 
 Constraints that are easy to get wrong:

@@ -120,16 +120,14 @@ async def test_resource_summary_and_nested_projection(snapshot_dir: Path) -> Non
     service = SnapshotResourceGraphService(snapshot_dir)
 
     summary = await service.get_resource_types_summary()
-    detail = await service.query_resources(
-        """
+    detail = await service.query_resources("""
         Resources
         | where type =~ 'Microsoft.Storage/storageAccounts'
         | extend tls = tostring(properties.minimumTlsVersion)
         | extend privateEndpoints = array_length(properties.privateEndpointConnections)
         | project name, subscriptionId, location, tls, privateEndpoints, skuName = sku.name
         | order by name asc
-        """
-    )
+        """)
 
     assert summary["data"] == [
         {"type": "microsoft.storage/storageaccounts", "count_": 2},

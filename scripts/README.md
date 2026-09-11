@@ -10,12 +10,13 @@ entry point입니다.
 
 | Module | 용도 | 부작용 |
 |---|---|---|
-| [setup_customer.ps1](setup_customer.ps1) | ARM 출력 기반 고객 환경 구성, MCP/Agent 게시, 초기 이미지 전환, 준비 검사·스케줄 활성화 | 단계별 로컬/원격 변경. `-WhatIf`는 변경 없음; `Verify`는 읽기 전용이며 모델·이메일 호출 없음 |
+| [setup_customer.ps1](setup_customer.ps1) | ARM 출력 기반 고객 환경 구성, MCP/Agent 게시, 초기 이미지 전환, 준비 검사·스케줄 활성화 | 단계별 로컬/원격 변경. 일반 `-WhatIf`도 ARM은 조회하며 완전 오프라인은 `-SetupFile ... -WhatIf`만 해당. `Verify`는 읽기 전용이며 모델·이메일 호출 없음 |
 | [deploy_dev.ps1](deploy_dev.ps1) | 이미 기동한 App/Job의 동일 digest 업그레이드와 실패 시 되돌림 | ACR 빌드와 두 리소스 이미지 갱신. 새 설치의 포트 전환에는 사용하지 않음 |
 | [deploy_hosted_agent.ps1](deploy_hosted_agent.ps1) | 검토된 Hosted 패키지의 검사·게시·smoke | Foundry 버전 생성 및 명시적 모델 smoke 호출 |
 | [`test_local.py`](test_local.py) | 설정, RSS, resource 요약, 단건/기간 분석 | Azure/Foundry 조회; `--jsonl` 없으면 이메일 경로 사용 가능 |
+| [smoke_hosted_agent.py](smoke_hosted_agent.py) | 배포된 Hosted 계약으로 단건 분석·trace 요약 확인 | 모델 비용 발생. 이메일·제어면 archive 저장 없음 |
 | [preview_email.py](preview_email.py) | SYNTHETIC ko/en/ja 단건·digest 디자인 미리보기 | 로컬 HTML만 저장; Azure 호출·이메일 발송·전송 client 초기화 없음 |
-| [preview_web.py](preview_web.py) | SYNTHETIC Admin/Archive/Feedback 브라우저 미리보기 | 루프백 서버, 메모리 내 관리 변경, 모의 접수증; 실분석·이메일 발송·영구 저장 없음 |
+| [preview_web.py](preview_web.py) | SYNTHETIC Admin/Archive/Feedback 브라우저 미리보기 | 루프백 서버, 메모리 내 관리 변경, 모의 저장·알림 상태; 실분석·이메일 발송·영구 저장 없음 |
 | [`crawl_azure_updates.py`](crawl_azure_updates.py) | rolling RSS 밖의 update history archive 갱신 | Git 제외 `data/`에 파일 기록 |
 | [`provision_foundry_agents.py`](provision_foundry_agents.py) | 여섯 specialist Prompt Agent 생성·검사·삭제 | 기본/`--delete`는 원격 변경; `--dry-run`, `--check`는 비변경 |
 | [`evaluate_report.py`](evaluate_report.py) | 단건 rule-based + G-Eval 평가와 반복 rewrite | Azure/Foundry 호출, `eval_runs/` 기록 |
@@ -34,6 +35,9 @@ entry point입니다.
 `Verify` → 고객 인수 → `EnableSchedule -AcceptOperationalChecks` 순서입니다. 공개 ARM 출력의
 명령 문자열을 `Invoke-Expression`으로 실행하지 않습니다. 초기 실패 시 자동 진행하지 않으며
 `Application`의 되돌림 요청도 실제 리소스 상태를 확인한 뒤 다음 작업을 결정합니다.
+단계별 사전 조건과 완료 의미는 고객 가이드의 **Setup Stages** 표를 기준으로 확인합니다.
+`AcceptOperationalChecks`는 고객 운영자의 인수 확인이며 실제 분석·메일 테스트를 대신 실행하는
+옵션이 아닙니다.
 
 ```powershell
 & .\.venv\Scripts\Activate.ps1; python -m scripts.test_local config
@@ -41,6 +45,10 @@ entry point입니다.
 & .\.venv\Scripts\Activate.ps1; python -m scripts.test_local resources
 & .\.venv\Scripts\Activate.ps1; python -m scripts.test_local analyze --latest --jsonl results_local.jsonl
 ```
+
+`test_local analyze`는 로컬 `AzureUpdateAnalyzer`에서 Prompt Agent를 호출합니다. 배포된 Hosted
+Agent를 검증할 때는 `python -m scripts.smoke_hosted_agent`를 사용하되, 이 smoke만으로 App/Job의
+archive·checkpoint·메일 경로까지 검증했다고 판단하지 않습니다.
 
 이메일 디자인은 실제 공지·고객 데이터가 아닌 **SYNTHETIC 합성 데이터**로 오프라인 점검합니다.
 전송 설정과 종료 이력을 mock하고, 각 언어의 단건·digest마다 전체 스타일과 `<style>` 블록을
@@ -64,8 +72,10 @@ python -m scripts.preview_web --port 8765
 
 `http://127.0.0.1:8765/admin`, `/archive`, `/feedback`를 엽니다. 포트가 사용 중이면 `--port`를
 바꾸십시오. 관리 변경은 메모리 내에서만 반영되며 서버 재시작 때 초기화합니다. Archive는 실제 v1
-스키마로 검증한 30개 합성 기록을 제공하고, run 요청은 409로 차단합니다. 피드백 접수증은 모의
-응답으로 저장하지 않습니다. 미리보기 서버를 외부에 배포하거나 운영 인증 검증의 근거로 쓰지 않습니다.
+스키마로 검증한 30개 합성 기록을 제공하고, run 요청은 409로 차단합니다. 피드백은 모의 접수 API
+응답을 상태 메시지로 표시하며 실제로 저장하지 않습니다. 현재의 세 인자 Feedback renderer와
+전용 헤더를 사용하고 `SYNTHETIC PREVIEW` 표시는 유지합니다. 미리보기 서버를 외부에 배포하거나
+운영 인증 검증의 근거로 쓰지 않습니다.
 
 보고서 하나를 HTML까지 생성하고 최대 3회 개선합니다.
 

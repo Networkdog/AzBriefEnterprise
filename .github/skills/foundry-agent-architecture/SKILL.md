@@ -68,6 +68,10 @@ gates. Never treat foundation success or a bootstrap image as a completed instal
 The real application and scheduler must share an immutable digest before scheduling is enabled.
 These are deployment procedures, not new Prompt Agent runtime instructions.
 
+Local preparation also checks the CI workflow schema, its self-change triggers, full-source
+Black/isort/Flake8, imports, and full pytest with the 40% coverage gate. Passing these checks does
+not prove the production-runtime build, hosted CI, or customer-specific operational acceptance.
+
 1. Read the [current assessment](./references/assessment.md) and the current official Microsoft Foundry Agent documentation.
 2. Identify the controlling path, not only configuration wiring:
    - `src/hosted_agent.py`

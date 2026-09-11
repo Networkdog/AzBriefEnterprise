@@ -27,7 +27,7 @@ metadata, query API와 화면에 포함하지 않습니다.
 | [`auth.py`](auth.py) | EasyAuth principal과 Admin/archive reader allow-list 인가 |
 | [`router.py`](router.py) | `/archive`, `/api/archive/analyses` 목록·상세 route와 CSP/no-store |
 | [`page.py`](page.py) | 공통 light 운영 shell을 사용하는 responsive 검색·상세 browser UI |
-| [`../web_design.py`](../web_design.py) | Admin/Archive/Feedback 공통 token, header/navigation, 로컬 아이콘, focus, responsive primitive |
+| [`../web_design.py`](../web_design.py) | 공통 token·focus·responsive primitive와 Admin/Archive header/navigation·로컬 아이콘. Feedback은 별도 헤더 사용 |
 | [`../services/archive.py`](../services/archive.py) | inert/File/Blob data-access backend와 metadata projection |
 
 ## 저장 계약
@@ -66,7 +66,8 @@ Archive backend가 구성됐는데 저장이 실패하면 run은 `failed`가 되
 - 분석 Markdown은 heading, paragraph, list, blockquote, fenced/inline code, bold, link를 구조화
 	DOM으로 렌더합니다. HTML은 실행하지 않고 `innerHTML`을 사용하지 않습니다.
 - Header와 main content는 같은 제한 폭으로 중앙 정렬하며 mobile에서는 viewport 폭에 맞춥니다.
-- Admin/Feedback과 같은 neutral canvas/white surface/teal command shell을 사용합니다. 검색과 서비스는
+- Admin과 같은 neutral canvas/white surface/teal command shell을 사용하고 Feedback과는 디자인
+	token을 공유합니다. 검색과 서비스는
 	기본 도구 모음에 두고 고급 필터는 `aria-expanded` toggle로 펼칩니다. 상세는 1120px 이내에서
 	목차와 본문을 나란히 배치하고 모바일에서는 목차를 위로 이동합니다.
 - Archive browser UI는 report language와 독립적으로 English를 기본값으로 사용합니다. 모든 filter는

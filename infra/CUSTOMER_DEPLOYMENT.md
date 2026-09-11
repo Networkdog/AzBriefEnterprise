@@ -9,6 +9,26 @@ script installs the real image on port 8000 with `/health`, then enables schedul
 readiness checks and explicit operational acceptance. A foundation success, HTTP 200, or a Job
 exit code alone is not proof that analysis, archive storage, and email work.
 
+## Setup Stages
+
+Run every stage from the same reviewed customer checkout with explicit `SubscriptionId`,
+`ResourceGroup`, `DeploymentName`, and `Environment`. The normal `-WhatIf` path still reads ARM
+outputs; it previews the target and stage without proving live readiness. Only
+`-SetupFile <file> -WhatIf` uses a local `customerSetup` object without Azure reads.
+
+| Stage | Required before running | What completion establishes |
+|---|---|---|
+| `Configure` | Succeeded current foundation deployment, correct default CLI tenant/subscription, clean customer clone without a root `.env` | Named azd bindings match the non-secret ARM setup contract; no application is deployed by this stage |
+| `Mcp` | `Configure`, private Foundry connectivity, approved Graph/resource permissions | Separate pinned read-only MCP deployment and authenticated project connection; existing connections are not force-replaced |
+| `Agents` | MCP URL recorded, clean reviewed source, model and Foundry access | Import/full tests and roster check pass, and the intended Hosted name is active; evidence permissions and analysis acceptance remain separate |
+| `Application` | Manual Job, approved immutable ACR digest and App/Job managed-identity pull access | Paired image and bootstrap port/probe changes are submitted and read back; revision health is checked in `Verify` |
+| `Verify` | New App revision Healthy/Running, same App/Job digest, configured customer environment | Runtime/roster/health checks pass without model calls or email; it does not prove a canonical archive write or recipient inbox delivery |
+| `EnableSchedule` | `Verify` plus operator-owned analysis/archive/auth/email acceptance and `-AcceptOperationalChecks` | Readiness is rechecked and the scheduled Job configuration is read back; the first real digest still needs observation |
+
+`-AcceptOperationalChecks` is the operator's explicit attestation, not an automated execution of
+the acceptance checklist. Failures stop the current stage; earlier successful resource changes
+are not globally rolled back. Preserve the stage output and inspect partial state before retrying.
+
 ## Before The Button
 
 | Required decision | Customer action |
@@ -77,7 +97,7 @@ for the checked-out manifest. Bicep compilation for this change was checked with
 Hosted source deployment uses remote build and does not require local Docker.
 
 ```powershell
-git clone --branch '<reviewed-release-ref>' https://github.com/Networkdog/AzBriefEnterprise.git AzBriefEnterprise-customer
+git clone --branch '<reviewed-release-tag>' https://github.com/Networkdog/AzBriefEnterprise.git AzBriefEnterprise-customer
 Set-Location AzBriefEnterprise-customer
 python -m venv .venv
 & .\.venv\Scripts\Activate.ps1
@@ -92,6 +112,8 @@ Do **not** create a root `.env` in this customer clone. The setup script refuses
 settings could redirect SDK calls into a development tenant. It verifies the default Azure CLI
 account, reads only the selected deployment, and passes the explicit environment to azd.
 `az` and `azd` have separate sign-in state. Do not share one shell across customer deployments.
+The clone command above expects a branch or tag, not a commit SHA. When pinning a commit, check
+out that reviewed commit explicitly before configuring the customer environment.
 
 ```powershell
 $customer = @{
@@ -265,3 +287,7 @@ commit is pushed. Preview the form in the [Portal UI sandbox](https://portal.azu
 and perform one clean customer-like staging deployment before claiming end-to-end deployment
 success. Local/mocked tests cannot establish subscription policy, quota, Graph consent, private
 DNS, remote build, RBAC propagation, or email receipt.
+
+Review the known workflow constraints in the [CI guide](../.github/workflows/README.md) and the
+current Feedback browser-test limitation in the [test guide](../tests/README.md). A locally green
+test run is not a GitHub Actions execution result or current browser interaction coverage.

@@ -117,8 +117,10 @@ def _matching_delimiter(text: str, start: int, opening: str, closing: str) -> in
 
 
 def _is_boundary(text: str, position: int) -> bool:
-    return position < 0 or position >= len(text) or not (
-        text[position].isalnum() or text[position] == "_"
+    return (
+        position < 0
+        or position >= len(text)
+        or not (text[position].isalnum() or text[position] == "_")
     )
 
 
@@ -339,7 +341,11 @@ def _eval_function(name: str, arguments: list[str], row: dict[str, Any]) -> Any:
     if name == "iff":
         if len(arguments) != 3:
             raise SnapshotError("InvalidQuery: iff() requires three arguments")
-        return _eval_value(arguments[1], row) if _eval_expression(arguments[0], row) else _eval_value(arguments[2], row)
+        return (
+            _eval_value(arguments[1], row)
+            if _eval_expression(arguments[0], row)
+            else _eval_value(arguments[2], row)
+        )
     if name == "case":
         if len(arguments) < 3:
             raise SnapshotError("InvalidQuery: case() requires condition/value pairs and a default")
@@ -468,8 +474,12 @@ def _compare(left: Any, right: Any, operator: str) -> bool:
             raise SnapshotError(f"InvalidQuery: invalid regex {right_text!r}") from exc
     left_number = _to_number(left)
     right_number = _to_number(right)
-    comparable_left: Any = left_number if left_number is not None and right_number is not None else left_text
-    comparable_right: Any = right_number if left_number is not None and right_number is not None else right_text
+    comparable_left: Any = (
+        left_number if left_number is not None and right_number is not None else left_text
+    )
+    comparable_right: Any = (
+        right_number if left_number is not None and right_number is not None else right_text
+    )
     if normalized == ">":
         return comparable_left > comparable_right
     if normalized == "<":
@@ -644,9 +654,7 @@ def _summarize(rows: Iterable[dict[str, Any]], specification: str) -> list[dict[
 
     output = []
     for state in groups.values():
-        result = {
-            name: value for (name, _), value in zip(group_specs, state["group"])
-        }
+        result = {name: value for (name, _), value in zip(group_specs, state["group"])}
         for name, function, _ in aggregate_specs:
             values = state["values"][name]
             if function == "count":
@@ -880,7 +888,9 @@ class SnapshotResourceGraphService:
             raise SnapshotError(f"Unsupported azsnapshot version: {version or '(missing)'}")
         self.engine = SnapshotKqlEngine(self.root, max_result_rows=max_result_rows)
         if "resources" not in self.engine.tables or "resourcecontainers" not in self.engine.tables:
-            raise SnapshotError("Snapshot must include resources.ndjson and resourcecontainers.ndjson")
+            raise SnapshotError(
+                "Snapshot must include resources.ndjson and resourcecontainers.ndjson"
+            )
         subscriptions = self.manifest.get("subscriptions") or []
         self._subscription_name_map = {
             str(item.get("subscriptionId")): str(item.get("displayName"))
@@ -913,9 +923,7 @@ class SnapshotResourceGraphService:
             "claim as historical at that timestamp, never as current state. Do not request or "
             "claim live Azure MCP, ARM, Cost Management, Billing, Activity Log, or Log Analytics "
             "evidence. Use only the snapshot-backed tools and make unavailable evidence an "
-            "explicit gap. Available exported tables: "
-            + ", ".join(self.table_names)
-            + "."
+            "explicit gap. Available exported tables: " + ", ".join(self.table_names) + "."
         )
 
     async def query_resources(
@@ -1010,7 +1018,10 @@ class SnapshotResourceGraphService:
                 except (OSError, json.JSONDecodeError):
                     malformed[name] = 1
         return {
-            "ok": not missing and not malformed and not mismatched and self.metadata.error_count == 0,
+            "ok": not missing
+            and not malformed
+            and not mismatched
+            and self.metadata.error_count == 0,
             "mode": "full" if full else "quick",
             "metadata": self.metadata,
             "checked": checked,
@@ -1289,9 +1300,7 @@ def build_snapshot_tools(service: SnapshotResourceGraphService) -> list[Any]:
                 description=(
                     "Returns an explicit offline snapshot gap. This tool never calls Azure."
                 ),
-                handler=lambda _name=tool_name, **kwargs: _not_exported_factory(
-                    _name, **kwargs
-                ),
+                handler=lambda _name=tool_name, **kwargs: _not_exported_factory(_name, **kwargs),
             )
         )
     return selected
@@ -1305,9 +1314,7 @@ def build_snapshot_specialist_node(
     """Run only the Resource Graph Prompt Agent against snapshot-backed tools."""
     from src.agent import foundry_backend
 
-    roster = {
-        spec.role: spec for spec in settings.get_foundry_specialist_agents()
-    }
+    roster = {spec.role: spec for spec in settings.get_foundry_specialist_agents()}
     resource_graph_agent = roster.get("resource_graph")
     if resource_graph_agent is None:
         raise SnapshotError("Snapshot analysis requires the Resource Graph Prompt Agent")
@@ -1316,7 +1323,9 @@ def build_snapshot_specialist_node(
     async def snapshot_specialist_node(state: dict[str, Any]) -> dict[str, str]:
         update_context = state.get("update_context", "")
         trace_id = state.get("trace_id", "")
-        prompt_context = f"{update_context}\n\n## Offline snapshot contract\n{service.prompt_context()}"
+        prompt_context = (
+            f"{update_context}\n\n## Offline snapshot contract\n{service.prompt_context()}"
+        )
         prompt = foundry_backend.SPECIALIST_PROMPTS["resource_graph"].format(
             update_context=prompt_context
         )
@@ -1351,9 +1360,7 @@ def build_snapshot_specialist_node(
                 gaps=(f"Resource Graph snapshot specialist failed: {type(exc).__name__}",),
             )
         findings = foundry_backend._render_findings([parsed])
-        merged = (
-            f"{update_context}\n\n{foundry_backend.SPECIALIST_CONTEXT_HEADER}\n{findings}"
-        )
+        merged = f"{update_context}\n\n{foundry_backend.SPECIALIST_CONTEXT_HEADER}\n{findings}"
         return {"update_context": merged}
 
     return snapshot_specialist_node

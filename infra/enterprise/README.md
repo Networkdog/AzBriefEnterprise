@@ -11,7 +11,7 @@
 | 영역 | 리소스와 역할 |
 |---|---|
 | Foundry | AI Services account, project, model deployment, VNet mode의 project capability host |
-| Control plane | 같은 image를 쓰는 Container App(API/Admin/MCP)과 Container Apps Job(schedule) |
+| Control plane | 같은 image를 쓰는 Container App(API/Admin/Archive/MCP)과 인수 전 Manual 상태인 Container Apps Job |
 | State | Entra-only Storage account의 checkpoint container, private immutable archive container, Key Vault secret reference |
 | Evaluation | 별도 Entra-only Storage account, Foundry project AAD connection, project identity 전용 Blob Data Owner |
 | Delivery | Communication Services와 Email Services managed domain |
@@ -30,10 +30,11 @@ Prompt Agent version과 Hosted Agent version은 data-plane 객체이므로 이 B
 인프라 배포 뒤 [`scripts/provision_foundry_agents.py`](../../scripts/provision_foundry_agents.py)와
 루트 [`azure.yaml`](../../azure.yaml)이 각각 별도 lifecycle을 담당합니다. Bicep output은
 coordinator, Resource Graph, Azure MCP, Azure API, report writer, quality reviewer의 고유 이름과
-Hosted 배포용 `azd env set` 명령을 제공합니다.
-현재 후속 설정은 비밀 값 없는 `customerSetup` 출력과
-[setup_customer.ps1](../../scripts/setup_customer.ps1)으로 연결하며, `configureHostedAgentCommand`도
-이 도구의 `Configure` 단계를 가리킵니다. 직접 여러 `NAME=VALUE`를 한 번의 `azd env set`에
+대상 tenant/subscription/project를 담은 비밀 값 없는 `customerSetup` 계약을 제공합니다.
+[setup_customer.ps1](../../scripts/setup_customer.ps1)이 이 값을 읽어 고객별 azd 환경을 구성하며,
+`configureHostedAgentCommand`는 이 도구의 `Configure` 단계를 가리킵니다. Hosted 이름은
+`FOUNDRY_HOSTED_AGENT_NAME`으로 manifest에 전달하고 여섯 전문가 이름은 각각 개별 설정으로
+기록합니다. 출력의 셸 명령 문자열을 자동 실행하거나 여러 `NAME=VALUE`를 한 번의 `azd env set`에
 전달하지 않습니다. [고객 가이드](../CUSTOMER_DEPLOYMENT.md)가 새 설치의 기준 절차입니다.
 
 ## 사용 예시
@@ -63,6 +64,8 @@ Hosted 배포용 `azd env set` 명령을 제공합니다.
 
 - 기본 network mode는 create-time 제약이 있는 `vnetInjection`입니다. 기존 public Foundry account를
   in-place로 전환할 수 있다고 가정하지 않습니다.
+- VNet 주입에서는 Foundry와 배포 VNet의 리전이 같아야 합니다. 기본 Portal 폼은 같은 리전으로
+  바인딩하며, 기존 VNet을 사용하는 경우에도 해당 리전과 subnet 위임을 사전에 확인합니다.
 - App과 Job은 같은 image와 user-assigned identity를 쓰지만 entry point가 다릅니다. image rollout은
   둘을 함께 갱신합니다.
 - 준비용 hello-world는 80 포트·`/`, AzBrief는 8000 포트·`/health`를 사용합니다. Bootstrap 이미지는

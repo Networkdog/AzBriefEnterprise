@@ -510,6 +510,8 @@ def test_ci_pins_the_compiler_and_runs_customer_setup_on_windows() -> None:
     assert "runs-on: windows-latest" in workflow
     assert "tests/test_customer_deployment.py" in workflow
     assert workflow.count('"azure.yaml"') == 2
+    assert workflow.count('".github/workflows/ci.yml"') == 2
+    assert re.search(r"^permissions:\n  contents: read$", workflow, re.MULTILINE)
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")

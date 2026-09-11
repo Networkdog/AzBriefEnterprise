@@ -12,7 +12,8 @@ Azure Update 한 건을 근거 기반 `AnalysisResult`로 바꾸는 핵심 계�
 |---|---|
 | [`analyzer.py`](analyzer.py) | Pydantic domain model과 Plan-Execute-Evaluate-Report LangGraph |
 | [`foundry_backend.py`](foundry_backend.py) | Prompt Agent Responses adapter와 specialist collaboration |
-| [`hosted_contract.py`](hosted_contract.py) | 분석·맞춤화·출시 전 평가를 위한 strict v2 wire model |
+| [`hosted_contract.py`](hosted_contract.py) | 분석·맞춤화·출시 전 평가를 위한 strict v3 wire model과 기존 v2 비범위 요청 호환 |
+| [`scope.py`](scope.py) | Management Group/Subscription/Resource Group 분석 범위와 비동기 context 격리 |
 | [`hosted_client.py`](hosted_client.py) | Entra token으로 Hosted endpoint를 호출하는 control-plane proxy |
 | [`tools.py`](tools.py) | LangChain `BaseTool`, Pydantic input, KQL 실행·복구, tool registry |
 | [`context_store.py`](context_store.py) | budget 초과 tool result를 `[ref=Rn]`으로 검색 가능하게 보존 |
@@ -30,7 +31,7 @@ Azure Update 한 건을 근거 기반 `AnalysisResult`로 바꾸는 핵심 계�
 
 ```mermaid
 flowchart LR
-  I[Hosted v2 analysis or evaluation request] --> E[Resource Graph + Azure MCP + Azure API]
+  I[Hosted v3 analysis or evaluation request] --> E[Resource Graph + Azure MCP + Azure API]
   E --> P[Coordinator plan]
     P --> X[Execute tools]
     X --> V[Evaluate evidence]
@@ -48,6 +49,11 @@ flowchart LR
 각 continue node는 기존 `AgentState`를 in-place로 바꾸지 않고 새 partial state dict를 반환합니다.
 평가 결과가 invalid하거나 필수 LLM이 응답하지 않으면 `model_error`로 닫히며 근거가 충분한 것처럼
 보고서를 만들지 않습니다.
+
+`HostedAnalysisRequest.scope`는 조사 범위를 명시합니다. 범위 제한이 있으면 Resource Graph는
+SDK/KQL 경계에서 이를 강제하고, 전체 범위를 적용할 수 없는 MCP/API 도구는 조회를 넓히지 않고
+명시적인 gap을 반환합니다. 구독자별 범위 분석 결과는 이메일 전용이며 공유 canonical Archive나
+기본 분석의 memory에 섞지 않습니다. 호환 배포는 Hosted v3를 먼저 게시한 뒤 제어면을 갱신합니다.
 
 ## Tool 실행과 근거 완전성
 
@@ -80,7 +86,7 @@ request = HostedAnalysisRequest(
     update=HostedUpdate(id="update-1", title="Example Azure update"),
     trace_id="local-contract-check",
 )
-assert request.contract_version == "2"
+assert request.contract_version == "3"
 ```
 
 핵심 경계를 함께 검증합니다.
