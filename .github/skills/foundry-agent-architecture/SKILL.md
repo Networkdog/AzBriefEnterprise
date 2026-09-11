@@ -57,6 +57,17 @@ The two runtimes have separate identities. The Container Apps UAMI owns Key Vaul
 
 ## Procedure
 
+For a new customer installation, follow [the customer deployment guide](../../../infra/CUSTOMER_DEPLOYMENT.md)
+and `scripts/setup_customer.ps1`, not a maintainer's local `.env` or default azd environment.
+The non-secret ARM `customerSetup` contract binds the exact tenant, project, Hosted name and
+six specialist aliases. Configure/Mcp/Agents/Application/Verify/EnableSchedule are distinct
+stages; SDK/CLI targets must agree, and Mcp uses its own deployment region. Hosted publication
+requires a clean source tree, import/full tests and an exact roster check. Dedicated Hosted
+evidence permissions, private connectivity and operational acceptance remain explicit customer
+gates. Never treat foundation success or a bootstrap image as a completed installation.
+The real application and scheduler must share an immutable digest before scheduling is enabled.
+These are deployment procedures, not new Prompt Agent runtime instructions.
+
 1. Read the [current assessment](./references/assessment.md) and the current official Microsoft Foundry Agent documentation.
 2. Identify the controlling path, not only configuration wiring:
    - `src/hosted_agent.py`

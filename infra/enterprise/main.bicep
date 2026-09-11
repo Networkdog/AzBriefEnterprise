@@ -71,7 +71,7 @@ param tags object = {
 // Microsoft Foundry
 // ============================================================================
 
-@description('Region for the Microsoft Foundry account. Model availability differs by region — keep the default unless the chosen model is unavailable there.')
+@description('Region for Microsoft Foundry. In vnetInjection mode it must match the deployment/VNet region; choose a region that supports the required model and Hosted Agents.')
 param foundryLocation string = location
 
 @description('Model deployment name used by the agents.')
@@ -91,7 +91,7 @@ param modelVersion string = ''
 ])
 param modelSkuName string = 'GlobalStandard'
 
-@description('Model deployment capacity in thousands of tokens per minute (TPM). A single report prompt alone runs ~27K tokens, and the multi-agent stages, planning and execution share the same deployment, so 30 rate-limits every run.')
+@description('Model deployment capacity units. Confirm the selected model/SKU capacity-to-TPM/RPM mapping and quota; long multi-agent prompts share the deployment.')
 @minValue(1)
 @maxValue(1000)
 param modelCapacity int = 200
@@ -248,6 +248,14 @@ param subscribers string = ''
 // ============================================================================
 // Scheduler (Container Apps Job)
 // ============================================================================
+
+@description('Enable automatic digest dispatch only after the real App/Job image, Hosted Agent, permissions, archive, and email have been verified. The bootstrap image always keeps the Job manual.')
+param enableScheduledRuns bool = false
+
+@description('Maximum simultaneous update analyses. Start at 1 and increase only after measuring model capacity and throttling.')
+@minValue(1)
+@maxValue(10)
+param maxConcurrentAnalyses int = 1
 
 @description('Protected default automatic-run cron in UTC. Admin-managed daily times are added to this schedule. Default: 02:00 UTC every day.')
 param scheduleCronExpression string = '0 2 * * *'
@@ -445,10 +453,13 @@ var adminReadinessSupportResources = [
 ]
 var containerAppUrl = 'https://${containerApp.properties.configuration.ingress.fqdn}'
 var archiveBaseUrl = 'https://${containerAppName}.${containerEnv.properties.defaultDomain}'
+var isBootstrapImage = containerImage == 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+var containerPort = isBootstrapImage ? 80 : 8000
+var scheduledRunsEnabled = enableScheduledRuns && !isBootstrapImage
 
 // An hour of headroom under the replica timeout: the run needs time to defer
 // what no longer fits and commit the checkpoint before the replica is killed.
-var runTimeBudgetSeconds = jobReplicaTimeoutSeconds - 3600
+var runTimeBudgetSeconds = max(60, jobReplicaTimeoutSeconds - 3600)
 
 var ipRestrictions = [
   for (range, i) in allowedIpRanges: {
@@ -471,6 +482,7 @@ var runtimeEnv = [
   { name: 'FOUNDRY_HOSTED_AGENT_TIMEOUT_S', value: '1800' }
   { name: 'SCHEDULE_CRON_EXPRESSION', value: scheduleCronExpression }
   { name: 'SCHEDULE_DISPATCH_ENABLED', value: 'true' }
+  { name: 'MAX_CONCURRENT_ANALYSES', value: string(maxConcurrentAnalyses) }
   { name: 'CHECKPOINT_BLOB_URL', value: checkpointBlobUrl }
   { name: 'ADMIN_CONFIG_BLOB_URL', value: adminConfigBlobUrl }
   { name: 'ARCHIVE_BLOB_CONTAINER_URL', value: archiveBlobContainerUrl }
@@ -1171,7 +1183,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       ingress: {
         external: !internalIngress
-        targetPort: 8000
+        targetPort: containerPort
         allowInsecure: false
         transport: 'auto'
         ipSecurityRestrictions: empty(allowedIpRanges) ? null : ipRestrictions
@@ -1217,8 +1229,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               type: 'Liveness'
               httpGet: {
-                path: '/health'
-                port: 8000
+                path: isBootstrapImage ? '/' : '/health'
+                port: containerPort
               }
               initialDelaySeconds: 20
               periodSeconds: 30
@@ -1226,8 +1238,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               type: 'Readiness'
               httpGet: {
-                path: '/health'
-                port: 8000
+                path: isBootstrapImage ? '/' : '/health'
+                port: containerPort
               }
               initialDelaySeconds: 10
               periodSeconds: 10
@@ -1313,14 +1325,18 @@ resource schedulerJob 'Microsoft.App/jobs@2024-03-01' = {
     environmentId: containerEnv.id
     workloadProfileName: vnetMode ? 'Consumption' : null
     configuration: {
-      triggerType: 'Schedule'
+      triggerType: scheduledRunsEnabled ? 'Schedule' : 'Manual'
       replicaTimeout: jobReplicaTimeoutSeconds
       // No automatic retry: a failed execution left the checkpoint untouched, so
       // the next scheduled run re-covers the window without paying for the same
       // analysis twice in one night.
       replicaRetryLimit: 0
-      scheduleTriggerConfig: {
+      scheduleTriggerConfig: scheduledRunsEnabled ? {
         cronExpression: scheduleDispatcherCronExpression
+        parallelism: 1
+        replicaCompletionCount: 1
+      } : null
+      manualTriggerConfig: scheduledRunsEnabled ? null : {
         parallelism: 1
         replicaCompletionCount: 1
       }
@@ -1648,7 +1664,7 @@ output foundrySpecialistAgentNames object = {
 @description('Azure managed email sender domain.')
 output emailSenderDomain string = emailDomain.properties.fromSenderDomain
 
-@description('Managed identity principal ID — grant it Reader on the subscriptions AzBrief should analyse.')
+@description('Container Apps control-plane identity. This is not the Hosted Agent evidence identity.')
 output managedIdentityPrincipalId string = managedIdentity.properties.principalId
 
 @description('Key Vault holding every runtime secret.')
@@ -1656,6 +1672,9 @@ output keyVaultName string = keyVault.name
 
 @description('Container Apps Job that runs the daily digest.')
 output schedulerJobName string = schedulerJob.name
+
+@description('True only when scheduled runs were explicitly enabled with a non-bootstrap image. Foundation success alone is not application readiness.')
+output scheduledRunsEnabled bool = scheduledRunsEnabled
 
 @description('Protected default automatic-run cron expression (UTC).')
 output scheduleCronExpression string = scheduleCronExpression
@@ -1675,22 +1694,56 @@ output archiveBlobContainerUrl string = archiveBlobContainerUrl
 @description('Command that starts the scheduler Job immediately. In dispatcher mode, analysis starts only when an automatic schedule is due.')
 output runNowCommand string = 'az containerapp job start --name ${schedulerJobName} --resource-group ${resourceGroup().name}'
 
-@description('Command that grants the identity subscription-wide Reader access.')
-output grantReaderCommand string = 'az role assignment create --assignee ${managedIdentity.properties.principalId} --role Reader --scope /subscriptions/${subscription().subscriptionId}'
+@description('Replace the placeholder with the deployed Hosted Agent dedicated principal ID, not the Container Apps or Foundry project principal.')
+output grantReaderCommand string = 'az role assignment create --assignee-object-id <hosted-agent-principal-id> --assignee-principal-type ServicePrincipal --role Reader --scope /subscriptions/${subscription().subscriptionId} --subscription ${subscription().subscriptionId}'
 
 @description('Command that lets the identity pull from your registry using the role required by its RBAC/ABAC mode. The template cannot assign a role on a registry it does not own.')
 output grantAcrPullCommand string = hasRegistry
   ? 'az role assignment create --assignee ${managedIdentity.properties.principalId} --role "${containerRegistryPullRoleName}" --scope $(az acr show --name ${split(containerRegistryServer, '.')[0]} --query id -o tsv)'
   : '(no containerRegistryServer supplied)'
 
-@description('Commands that roll the real AzBrief image onto BOTH the app and the scheduler job. Updating only the app leaves the nightly digest on the previous build.')
-output deployContainerImageCommand string = 'az containerapp update --name ${containerAppName} --resource-group ${resourceGroup().name} --image <your-registry>/azbrief-enterprise:latest ; az containerapp job update --name ${schedulerJobName} --resource-group ${resourceGroup().name} --image <your-registry>/azbrief-enterprise:latest'
+@description('Customer setup entry point. Build an immutable image first; the guide covers the bootstrap port/probe transition and updating BOTH runtimes without replacing secrets.')
+output deployContainerImageCommand string = './scripts/setup_customer.ps1 -SubscriptionId "${subscription().subscriptionId}" -ResourceGroup "${resourceGroup().name}" -DeploymentName "${deployment().name}" -Environment "${baseName}-customer" -Stage Application -Image "<registry>/azbrief-enterprise@sha256:<digest>"'
 
 @description('Command that creates the Prompt Agent roster. ARM cannot: agents are data-plane objects, so the project stays empty until this runs.')
 output provisionAgentsCommand string = 'python -m scripts.provision_foundry_agents --model ${modelDeploymentName}'
 
-@description('Command that binds the six specialist Prompt Agents to the Hosted Agent deployment manifest.')
-output configureHostedAgentCommand string = 'azd env set AZURE_SUBSCRIPTION_ID=${subscription().subscriptionId} AZBRIEF_PROMPT_COORDINATOR_AGENT_NAME=${foundryCoordinatorAgentName} AZBRIEF_PROMPT_RESOURCE_GRAPH_AGENT_NAME=${foundryResourceGraphAgentName} AZBRIEF_PROMPT_AZURE_MCP_AGENT_NAME=${foundryAzureMcpAgentName} AZBRIEF_PROMPT_AZURE_API_AGENT_NAME=${foundryAzureApiAgentName} AZBRIEF_PROMPT_REPORT_WRITER_AGENT_NAME=${foundryReportWriterAgentName} AZBRIEF_PROMPT_QUALITY_REVIEWER_AGENT_NAME=${foundryQualityReviewerAgentName}'
+@description('Initialize an explicitly named customer azd environment from structured deployment outputs. The script never evaluates command strings from ARM.')
+output configureHostedAgentCommand string = './scripts/setup_customer.ps1 -SubscriptionId "${subscription().subscriptionId}" -ResourceGroup "${resourceGroup().name}" -DeploymentName "${deployment().name}" -Environment "${baseName}-customer" -Stage Configure'
+
+@description('Versioned non-secret setup contract. Do not add credentials, API keys, connection strings, or subscriber data.')
+output customerSetup object = {
+  schemaVersion: 1
+  tenantId: tenant().tenantId
+  subscriptionId: subscription().subscriptionId
+  resourceGroup: resourceGroup().name
+  location: location
+  foundryLocation: foundryLocation
+  foundryAccountName: foundryAccount.name
+  foundryProjectName: foundryProject.name
+  foundryProjectId: foundryProject.id
+  foundryProjectEndpoint: foundryProjectEndpoint
+  modelDeploymentName: modelDeploymentName
+  hostedAgentName: foundryHostedAgentName
+  specialistAgentNames: {
+    coordinator: foundryCoordinatorAgentName
+    resourceGraph: foundryResourceGraphAgentName
+    azureMcp: foundryAzureMcpAgentName
+    azureApi: foundryAzureApiAgentName
+    reportWriter: foundryReportWriterAgentName
+    qualityReviewer: foundryQualityReviewerAgentName
+  }
+  containerAppName: containerAppName
+  schedulerJobName: schedulerJobName
+  containerAppUrl: containerAppUrl
+  azureMcpContainerAppName: azureMcpContainerAppName
+  containerRegistryServer: containerRegistryServer
+  controlPlanePrincipalId: managedIdentity.properties.principalId
+  scheduleDispatcherCronExpression: scheduleDispatcherCronExpression
+  networkIsolationMode: networkIsolationMode
+  allowPublicAccessDuringSetup: allowPublicAccessDuringSetup
+  keyVaultName: keyVault.name
+}
 
 @description('Post-deployment checklist.')
-output nextSteps string = '1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd project endpoint, run configureHostedAgentCommand, run provisionAgentsCommand and its --check, then deploy ${foundryHostedAgentName} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals and/or archiveAllowedPrincipals to enable the authenticated browser surfaces. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.'
+output nextSteps string = 'Foundation deployed; AzBrief is NOT ready yet and automatic runs are disabled by default. Follow infra/CUSTOMER_DEPLOYMENT.md: run configureHostedAgentCommand on a VNet-connected deployment host, deploy the Azure MCP server and project connection, provision/check the six specialists, deploy ${foundryHostedAgentName}, grant its dedicated identity scoped Reader, then deploy one immutable image to App and Job. Validate a no-email analysis and archive write, explicitly test email, and only then enable scheduling. Keep Entra authentication/private endpoints enabled. Do not reapply the full template for image-only upgrades or omit existing secure parameters.'

@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "5547848712458068521"
+      "templateHash": "698606295683786248"
     },
     "description": "AzBrief Enterprise — Microsoft Foundry Hosted Agent analysis runtime + Container Apps control plane and scheduler + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
@@ -40,7 +40,7 @@
       "type": "string",
       "defaultValue": "[parameters('location')]",
       "metadata": {
-        "description": "Region for the Microsoft Foundry account. Model availability differs by region — keep the default unless the chosen model is unavailable there."
+        "description": "Region for Microsoft Foundry. In vnetInjection mode it must match the deployment/VNet region; choose a region that supports the required model and Hosted Agents."
       }
     },
     "modelDeploymentName": {
@@ -82,7 +82,7 @@
       "minValue": 1,
       "maxValue": 1000,
       "metadata": {
-        "description": "Model deployment capacity in thousands of tokens per minute (TPM). A single report prompt alone runs ~27K tokens, and the multi-agent stages, planning and execution share the same deployment, so 30 rate-limits every run."
+        "description": "Model deployment capacity units. Confirm the selected model/SKU capacity-to-TPM/RPM mapping and quota; long multi-agent prompts share the deployment."
       }
     },
     "foundryHostedAgentName": {
@@ -341,6 +341,22 @@
         "description": "Subscriber list as a JSON array, e.g. [{\"email\":\"a@co.com\",\"name\":\"A\",\"role\":\"Cloud Architect\",\"language\":\"ko\"}]."
       }
     },
+    "enableScheduledRuns": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Enable automatic digest dispatch only after the real App/Job image, Hosted Agent, permissions, archive, and email have been verified. The bootstrap image always keeps the Job manual."
+      }
+    },
+    "maxConcurrentAnalyses": {
+      "type": "int",
+      "defaultValue": 1,
+      "minValue": 1,
+      "maxValue": 10,
+      "metadata": {
+        "description": "Maximum simultaneous update analyses. Start at 1 and increase only after measuring model capacity and throttling."
+      }
+    },
     "scheduleCronExpression": {
       "type": "string",
       "defaultValue": "0 2 * * *",
@@ -541,7 +557,10 @@
         "api_version": "2023-04-01"
       }
     ],
-    "runTimeBudgetSeconds": "[sub(parameters('jobReplicaTimeoutSeconds'), 3600)]"
+    "isBootstrapImage": "[equals(parameters('containerImage'), 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest')]",
+    "containerPort": "[if(variables('isBootstrapImage'), 80, 8000)]",
+    "scheduledRunsEnabled": "[and(parameters('enableScheduledRuns'), not(variables('isBootstrapImage')))]",
+    "runTimeBudgetSeconds": "[max(60, sub(parameters('jobReplicaTimeoutSeconds'), 3600))]"
   },
   "resources": [
     {
@@ -1197,7 +1216,7 @@
           "activeRevisionsMode": "Single",
           "ingress": {
             "external": "[not(variables('internalIngress'))]",
-            "targetPort": 8000,
+            "targetPort": "[variables('containerPort')]",
             "allowInsecure": false,
             "transport": "auto",
             "ipSecurityRestrictions": "[if(empty(parameters('allowedIpRanges')), null(), variables('ipRestrictions'))]",
@@ -1252,6 +1271,10 @@
                 {
                   "name": "SCHEDULE_DISPATCH_ENABLED",
                   "value": "true"
+                },
+                {
+                  "name": "MAX_CONCURRENT_ANALYSES",
+                  "value": "[string(parameters('maxConcurrentAnalyses'))]"
                 },
                 {
                   "name": "CHECKPOINT_BLOB_URL",
@@ -1382,8 +1405,8 @@
                 {
                   "type": "Liveness",
                   "httpGet": {
-                    "path": "/health",
-                    "port": 8000
+                    "path": "[if(variables('isBootstrapImage'), '/', '/health')]",
+                    "port": "[variables('containerPort')]"
                   },
                   "initialDelaySeconds": 20,
                   "periodSeconds": 30
@@ -1391,8 +1414,8 @@
                 {
                   "type": "Readiness",
                   "httpGet": {
-                    "path": "/health",
-                    "port": 8000
+                    "path": "[if(variables('isBootstrapImage'), '/', '/health')]",
+                    "port": "[variables('containerPort')]"
                   },
                   "initialDelaySeconds": 10,
                   "periodSeconds": 10
@@ -1474,14 +1497,11 @@
         "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('containerEnvName'))]",
         "workloadProfileName": "[if(variables('vnetMode'), 'Consumption', null())]",
         "configuration": {
-          "triggerType": "Schedule",
+          "triggerType": "[if(variables('scheduledRunsEnabled'), 'Schedule', 'Manual')]",
           "replicaTimeout": "[parameters('jobReplicaTimeoutSeconds')]",
           "replicaRetryLimit": 0,
-          "scheduleTriggerConfig": {
-            "cronExpression": "[parameters('scheduleDispatcherCronExpression')]",
-            "parallelism": 1,
-            "replicaCompletionCount": 1
-          },
+          "scheduleTriggerConfig": "[if(variables('scheduledRunsEnabled'), createObject('cronExpression', parameters('scheduleDispatcherCronExpression'), 'parallelism', 1, 'replicaCompletionCount', 1), null())]",
+          "manualTriggerConfig": "[if(variables('scheduledRunsEnabled'), null(), createObject('parallelism', 1, 'replicaCompletionCount', 1))]",
           "registries": "[if(variables('hasRegistry'), createArray(createObject('server', parameters('containerRegistryServer'), 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')))), null())]",
           "secrets": [
             {
@@ -1542,6 +1562,10 @@
                 {
                   "name": "SCHEDULE_DISPATCH_ENABLED",
                   "value": "true"
+                },
+                {
+                  "name": "MAX_CONCURRENT_ANALYSES",
+                  "value": "[string(parameters('maxConcurrentAnalyses'))]"
                 },
                 {
                   "name": "CHECKPOINT_BLOB_URL",
@@ -2204,7 +2228,7 @@
     "managedIdentityPrincipalId": {
       "type": "string",
       "metadata": {
-        "description": "Managed identity principal ID — grant it Reader on the subscriptions AzBrief should analyse."
+        "description": "Container Apps control-plane identity. This is not the Hosted Agent evidence identity."
       },
       "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]"
     },
@@ -2221,6 +2245,13 @@
         "description": "Container Apps Job that runs the daily digest."
       },
       "value": "[variables('schedulerJobName')]"
+    },
+    "scheduledRunsEnabled": {
+      "type": "bool",
+      "metadata": {
+        "description": "True only when scheduled runs were explicitly enabled with a non-bootstrap image. Foundation success alone is not application readiness."
+      },
+      "value": "[variables('scheduledRunsEnabled')]"
     },
     "scheduleCronExpression": {
       "type": "string",
@@ -2267,9 +2298,9 @@
     "grantReaderCommand": {
       "type": "string",
       "metadata": {
-        "description": "Command that grants the identity subscription-wide Reader access."
+        "description": "Replace the placeholder with the deployed Hosted Agent dedicated principal ID, not the Container Apps or Foundry project principal."
       },
-      "value": "[format('az role assignment create --assignee {0} --role Reader --scope /subscriptions/{1}', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId, subscription().subscriptionId)]"
+      "value": "[format('az role assignment create --assignee-object-id <hosted-agent-principal-id> --assignee-principal-type ServicePrincipal --role Reader --scope /subscriptions/{0} --subscription {1}', subscription().subscriptionId, subscription().subscriptionId)]"
     },
     "grantAcrPullCommand": {
       "type": "string",
@@ -2281,9 +2312,9 @@
     "deployContainerImageCommand": {
       "type": "string",
       "metadata": {
-        "description": "Commands that roll the real AzBrief image onto BOTH the app and the scheduler job. Updating only the app leaves the nightly digest on the previous build."
+        "description": "Customer setup entry point. Build an immutable image first; the guide covers the bootstrap port/probe transition and updating BOTH runtimes without replacing secrets."
       },
-      "value": "[format('az containerapp update --name {0} --resource-group {1} --image <your-registry>/azbrief-enterprise:latest ; az containerapp job update --name {2} --resource-group {3} --image <your-registry>/azbrief-enterprise:latest', variables('containerAppName'), resourceGroup().name, variables('schedulerJobName'), resourceGroup().name)]"
+      "value": "[format('./scripts/setup_customer.ps1 -SubscriptionId \"{0}\" -ResourceGroup \"{1}\" -DeploymentName \"{2}\" -Environment \"{3}-customer\" -Stage Application -Image \"<registry>/azbrief-enterprise@sha256:<digest>\"', subscription().subscriptionId, resourceGroup().name, deployment().name, parameters('baseName'))]"
     },
     "provisionAgentsCommand": {
       "type": "string",
@@ -2295,16 +2326,54 @@
     "configureHostedAgentCommand": {
       "type": "string",
       "metadata": {
-        "description": "Command that binds the six specialist Prompt Agents to the Hosted Agent deployment manifest."
+        "description": "Initialize an explicitly named customer azd environment from structured deployment outputs. The script never evaluates command strings from ARM."
       },
-      "value": "[format('azd env set AZURE_SUBSCRIPTION_ID={0} AZBRIEF_PROMPT_COORDINATOR_AGENT_NAME={1} AZBRIEF_PROMPT_RESOURCE_GRAPH_AGENT_NAME={2} AZBRIEF_PROMPT_AZURE_MCP_AGENT_NAME={3} AZBRIEF_PROMPT_AZURE_API_AGENT_NAME={4} AZBRIEF_PROMPT_REPORT_WRITER_AGENT_NAME={5} AZBRIEF_PROMPT_QUALITY_REVIEWER_AGENT_NAME={6}', subscription().subscriptionId, variables('foundryCoordinatorAgentName'), variables('foundryResourceGraphAgentName'), variables('foundryAzureMcpAgentName'), variables('foundryAzureApiAgentName'), variables('foundryReportWriterAgentName'), variables('foundryQualityReviewerAgentName'))]"
+      "value": "[format('./scripts/setup_customer.ps1 -SubscriptionId \"{0}\" -ResourceGroup \"{1}\" -DeploymentName \"{2}\" -Environment \"{3}-customer\" -Stage Configure', subscription().subscriptionId, resourceGroup().name, deployment().name, parameters('baseName'))]"
+    },
+    "customerSetup": {
+      "type": "object",
+      "metadata": {
+        "description": "Versioned non-secret setup contract. Do not add credentials, API keys, connection strings, or subscriber data."
+      },
+      "value": {
+        "schemaVersion": 1,
+        "tenantId": "[tenant().tenantId]",
+        "subscriptionId": "[subscription().subscriptionId]",
+        "resourceGroup": "[resourceGroup().name]",
+        "location": "[parameters('location')]",
+        "foundryLocation": "[parameters('foundryLocation')]",
+        "foundryAccountName": "[variables('foundryAccountName')]",
+        "foundryProjectName": "[variables('foundryProjectName')]",
+        "foundryProjectId": "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]",
+        "foundryProjectEndpoint": "[variables('foundryProjectEndpoint')]",
+        "modelDeploymentName": "[parameters('modelDeploymentName')]",
+        "hostedAgentName": "[parameters('foundryHostedAgentName')]",
+        "specialistAgentNames": {
+          "coordinator": "[variables('foundryCoordinatorAgentName')]",
+          "resourceGraph": "[variables('foundryResourceGraphAgentName')]",
+          "azureMcp": "[variables('foundryAzureMcpAgentName')]",
+          "azureApi": "[variables('foundryAzureApiAgentName')]",
+          "reportWriter": "[variables('foundryReportWriterAgentName')]",
+          "qualityReviewer": "[variables('foundryQualityReviewerAgentName')]"
+        },
+        "containerAppName": "[variables('containerAppName')]",
+        "schedulerJobName": "[variables('schedulerJobName')]",
+        "containerAppUrl": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('containerAppName')), '2024-03-01').configuration.ingress.fqdn)]",
+        "azureMcpContainerAppName": "[variables('azureMcpContainerAppName')]",
+        "containerRegistryServer": "[parameters('containerRegistryServer')]",
+        "controlPlanePrincipalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
+        "scheduleDispatcherCronExpression": "[parameters('scheduleDispatcherCronExpression')]",
+        "networkIsolationMode": "[parameters('networkIsolationMode')]",
+        "allowPublicAccessDuringSetup": "[parameters('allowPublicAccessDuringSetup')]",
+        "keyVaultName": "[variables('keyVaultName')]"
+      }
     },
     "nextSteps": {
       "type": "string",
       "metadata": {
         "description": "Post-deployment checklist."
       },
-      "value": "[format('1) Push the AzBrief control-plane image, run grantAcrPullCommand, then deployContainerImageCommand. 2) Set the azd project endpoint, run configureHostedAgentCommand, run provisionAgentsCommand and its --check, then deploy {0} from azure.yaml. 3) Grant the Hosted Agent identity Reader on every subscription it must inspect plus the service-specific data-plane roles documented in README; grantReaderCommand applies only to the Container Apps identity used by the Admin/MCP control plane. 4) Start the Container App and scheduler only after the Hosted Agent endpoint is active; they fail closed without it. 5) Optional: register an Entra app and redeploy with adminEntraClientId/Secret plus adminAllowedPrincipals and/or archiveAllowedPrincipals to enable the authenticated browser surfaces. 6) networkIsolationMode=vnetInjection: run agent provisioning/deployment from inside the virtual network, or temporarily use allowPublicAccessDuringSetup=true. 7) networkIsolationMode=perimeter: review NSPAccessLogs, then run enforcePerimeterCommand for each association.', parameters('foundryHostedAgentName'))]"
+      "value": "[format('Foundation deployed; AzBrief is NOT ready yet and automatic runs are disabled by default. Follow infra/CUSTOMER_DEPLOYMENT.md: run configureHostedAgentCommand on a VNet-connected deployment host, deploy the Azure MCP server and project connection, provision/check the six specialists, deploy {0}, grant its dedicated identity scoped Reader, then deploy one immutable image to App and Job. Validate a no-email analysis and archive write, explicitly test email, and only then enable scheduling. Keep Entra authentication/private endpoints enabled. Do not reapply the full template for image-only upgrades or omit existing secure parameters.', parameters('foundryHostedAgentName'))]"
     }
   }
 }

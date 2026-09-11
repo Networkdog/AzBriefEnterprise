@@ -24,7 +24,7 @@ services:
         cpu: '1'
         memory: 2Gi
     kind: hosted
-    name: azbrief-analysis-hosted
+    name: ${FOUNDRY_HOSTED_AGENT_NAME}
     displayName: AzBrief Analysis Runtime
     description: Owns the complete Plan-Execute-Evaluate-Report graph and subscriber customization for Azure updates.
     protocols:

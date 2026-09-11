@@ -21,6 +21,7 @@ pytest로 검증합니다. 대부분 외부 Azure/Foundry 호출을 mock해 빠�
 | Data access | [`test_services.py`](test_services.py), [`test_runtime_inventory.py`](test_runtime_inventory.py), [`test_checkpoint.py`](test_checkpoint.py), [`test_archive_store.py`](test_archive_store.py), [`test_rss_parser.py`](test_rss_parser.py) |
 | 결정론적 평가 | [`test_archive_evaluation.py`](test_archive_evaluation.py), [`test_quality_evaluator.py`](test_quality_evaluator.py), [`test_quality_campaign.py`](test_quality_campaign.py) |
 | Security/config | [`test_security.py`](test_security.py), [`test_config.py`](test_config.py), [`test_enterprise_config.py`](test_enterprise_config.py) |
+| 고객 배포 | [test_customer_deployment.py](test_customer_deployment.py): 독립 폴더·가짜 CLI 기반 대상 격리, MCP 리전/인증, Agent 게시 gate, 이미지/포트 전환·되돌림, 스케줄 설정 보존, 버튼·폼 계약 |
 | 공개 저장소 위생 | [`test_repository_hygiene.py`](test_repository_hygiene.py) |
 | 웹 사용자 흐름 | [browser/control_surfaces.cjs](browser/control_surfaces.cjs): 합성 서버에서 탐색·필터 URL·요청 경합·폼 검증·접수증·반응형 경계 |
 
@@ -28,6 +29,14 @@ pytest로 검증합니다. 대부분 외부 Azure/Foundry 호출을 mock해 빠�
 test가 공유하는 realistic fixture를 제공합니다.
 
 ## 실행 예시
+
+고객 배포의 오프라인 검증은 PowerShell 7을 사용하며 실제 Azure 호출이나 모델·메일 비용이 없습니다.
+Windows 전용 CLI shim 검사는 Windows CI에서 수행하고, 나머지 계약은 Linux CI에서도 검사합니다.
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m pytest tests/test_customer_deployment.py tests/test_deploy_dev_script.py tests/test_enterprise_config.py -o addopts= -x -q
+```
 
 가장 빠른 변경 범위 test를 먼저 실행합니다.
 

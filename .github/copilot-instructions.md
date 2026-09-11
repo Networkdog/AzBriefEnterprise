@@ -227,6 +227,22 @@ AzBrief/
 
 ## Deployment Topology
 
+New customer installations start from the paired README ARM/UI button
+(`infra/azbrief-enterprise-deploy.json` + `infra/createUiDefinition.json`) and follow
+`infra/CUSTOMER_DEPLOYMENT.md`. Bootstrap hello-world uses port 80 and `/`; real AzBrief uses
+8000 and `/health`. Jobs default to Manual (`enableScheduledRuns=false`), bootstrap images can
+never enable scheduling, and `maxConcurrentAnalyses=1` is the initial customer default.
+`scripts/setup_customer.ps1` reads only the versioned non-secret `customerSetup` output, requires
+explicit customer targets and a matching default CLI account, rejects a root developer `.env`,
+and isolates named azd environments. Keep `FOUNDRY_HOSTED_AGENT_NAME` aligned with `azure.yaml`.
+The initial Application stage updates both images and bootstrap probes; normal guarded image
+upgrades still use `scripts/deploy_dev.ps1`. Only after analysis/archive/auth/email acceptance
+may EnableSchedule recheck readiness and PATCH the Job while preserving configuration and
+Key Vault references. Never grant Hosted evidence permissions to the Container Apps or project
+identity. Local/mocked checks are not customer ARM validation or proof of delivery. Pin the CI
+Bicep compiler to the version that generated the checked-in ARM, and test setup on Windows.
+The guided VNet profile must bind Foundry and the VNet to the same deployment region.
+
 This repository ships **one** topology. There is no Automation Account, no Function App and
 no fat wheel. Analysis runs in a Foundry Hosted Agent; Container Apps hosts only control-plane
 surfaces and the scheduled digest driver.

@@ -15,7 +15,9 @@
 Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication Services
 · Container App 제어면 + `/admin` + `/mcp` · 기본값은 VNet 주입 + Private Endpoint
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
+
+[고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md): 기반 배포 후 고객별 설정과 인수 검증을 진행합니다.
 
 </div>
 
@@ -526,7 +528,14 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 기반과 제어면을 배포합니다. Prompt Agent와 Hosted Agent는 Foundry 데이터 평면 객체이므로
 배포 후 단계에서 별도로 배포합니다.
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
+
+**먼저 [고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md)를 확인하십시오.** 버튼은 승인된 모델과 버전,
+기존 고객 ACR, 이메일, Entra 접근을 입력하는 탭형 폼을 엽니다. VNet 격리를 유지하고 임시 공용
+접근과 정기 실행은 끄며 Key Vault purge protection을 켭니다. 준비용 앱은 80 포트와 `/`로
+응답하지만 아직 AzBrief 서비스는 아닙니다. 초기 동시 분석 수는 1입니다. 후속 설정은 VNet에
+연결된 배포 호스트에서 수행하며 고객별 소스 폴더와 azd 환경을 개발 환경과 분리합니다.
+폼은 Foundry와 VNet을 같은 리전에 배치합니다. 해당 리전의 모델·Hosted Agent 지원을 먼저 확인하십시오.
 
 **배포되는 항목**([infra/azbrief-enterprise-deploy.json](infra/azbrief-enterprise-deploy.json),
 [infra/enterprise/main.bicep](infra/enterprise/main.bicep)에서 작성):
@@ -536,12 +545,12 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 | User Assigned Managed Identity | `id-{baseName}` | Container App과 scheduler Job이 공유 |
 | Microsoft Foundry account | `aif-{baseName}-{suffix}` | `AIServices` · `allowProjectManagement` · **`disableLocalAuth`** |
 | Foundry project | `{baseName}-agents` | Hosted Agent와 Prompt Agent의 데이터 평면 작업 공간 |
-| Model deployment | `gpt-4o`(변경 가능) | GlobalStandard, 기본 200K TPM |
+| Model deployment | 고객이 승인한 모델과 버전 | 리전·SKU·capacity 단위·할당량 확인 필요. 원본 ARM 기본값이 호환성을 보장하지는 않음 |
 | Key Vault | `kv-{baseName}-{suffix}` | RBAC 전용, 모든 런타임 secret 보관 |
 | Storage account + `azbrief-state` container | `st{baseName}{suffix}` | Checkpoint blob, **`allowSharedKeyAccess: false`** |
 | Container Apps Environment | `cae-{baseName}-{suffix}` | 기본값에서 VNet 통합 |
 | Container App | `ca-{baseName}` | 제어면 API + `/admin` + `/archive` + 인증된 `/mcp` |
-| Container Apps Job | `caj-{baseName}` | Cron schedule, Hosted Agent 호출, archive, checkpoint, email |
+| Container Apps Job | `caj-{baseName}` | 인수 전에는 수동. 인수 후 cron, Hosted 호출, archive, checkpoint, email |
 | Hosted Agent(후속 `azd deploy`) | `{baseName}-analysis-hosted` | 전체 LangGraph 분석과 구독자 맞춤화, 전용 Entra identity |
 | Container App authConfig | `current` | Client ID를 제공했을 때만 생성되는 Entra ID 로그인 |
 | Communication Services + Email | `acs-{baseName}-{suffix}` | Azure 관리 도메인 자동 연결 |
@@ -626,109 +635,69 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 
 ### 배포 후 단계
 
-1. **Azure MCP Server 배포** — `infra/azure-mcp-server`는 검증된 공식 Azure MCP
-   `3.0.0-beta.38` 이미지를 별도 Container App에 배포합니다. Bicep의 `azureMcpImage` parameter로
-   버전을 명시적으로 올립니다. 서버는 Entra 인증을 유지하고 `--mode all`,
-   `--namespace group|resourcehealth|advisor`, `--read-only`로 실행합니다. 따라서 동적 `azure`
-   proxy 없이 세 namespace의 direct tool만 노출하며, managed identity에는 대상 subscription의
-   `Reader`만 부여합니다. 기본 크기는 0.5 vCPU/1 GiB입니다.
-   ```powershell
-   cd infra/azure-mcp-server
-   azd env new production
-   azd env set AZURE_SUBSCRIPTION_ID '<subscription-id>'
-   azd env set AZURE_LOCATION 'koreacentral'
-  azd env set AZURE_RESOURCE_GROUP '<resource-group>'
-   azd env set AZURE_MCP_CONTAINER_APP_NAME 'ca-azbrief-mcp'
-   azd env set FOUNDRY_PROJECT_RESOURCE_ID '<project-arm-resource-id>'
-   azd env set SERVICE_MANAGEMENT_REFERENCE ''
-   azd up --no-prompt
-   ```
-2. **Azure MCP project connection 생성** — Azure MCP 배포 output의 HTTPS URL과 Entra
-   application identifier URI를 사용합니다. Project Managed Identity token이 MCP API의
-   audience로 발급되고, Bicep이 해당 identity에 MCP app role을 부여합니다.
-   ```powershell
-   azd ai connection create azbrief-azure-mcp-read-only `
-     --kind remote-tool `
-     --target '<AZURE_MCP_SERVER_URL>' `
-     --auth-type project-managed-identity `
-     --audience '<AZURE_MCP_ENTRA_APP_IDENTIFIER_URI>' `
-     --project-endpoint '<project-endpoint>'
-   ```
-3. **Foundry Prompt Agent 생성** — ARM은 Agent 데이터 평면 객체를 만들 수 없습니다.
-   Coordinator는 Microsoft Learn MCP를 기본 출처로 사용하고 Web Search를 보완 수단으로
-   사용합니다. Resource Graph 전문가는 KQL, schema, result retrieval FunctionTool만 받습니다.
-   Azure API 전문가는 ARM, Health, Policy, Advisor, Activity Log, Cost Management FunctionTool만
-   받습니다. Azure MCP 전문가는 위 remote MCP connection만 사용하며 local ARM fallback은
-   없습니다. Hosted Agent는 모든 Azure MCP/API 요청에 정확한 tenant GUID와 구성된 subscription
-   GUID를 넣고 literal `default`를 금지합니다. Remote leaf tool은 tenant가 누락되거나
-   `default`이면 이를 tenant 표시 이름으로 해석해 거부할 수 있습니다. Azure MCP image를 올린
-   뒤에는 direct tool schema와 read-only inventory smoke test를 먼저 검증합니다. MCP mode,
-   namespace, scope 계약이 바뀌면 Azure MCP specialist와 Hosted Agent의 새 immutable version을
-   함께 게시해야 합니다. `.env`에 endpoint, 여섯 Agent 이름, provisioning model, 다음 설정을
-   넣은 뒤 실행합니다.
-   ```env
-   FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED=true
-   AZURE_MCP_SERVER_URL=<AZURE_MCP_SERVER_URL>
-   AZURE_MCP_PROJECT_CONNECTION_NAME=azbrief-azure-mcp-read-only
-   ```
-   ```bash
-   python -m scripts.provision_foundry_agents --dry-run   # preview instructions
-   python -m scripts.provision_foundry_agents             # create or update
-   ```
-   일부 역할만 갱신할 때는 `--roles resource_graph azure_api`와 같이 지정합니다. 이어서
-   `python -m scripts.provision_foundry_agents --check`가 여섯 Agent, FunctionTool, server tool,
-   instruction, schema에 drift가 없는 상태로 통과하는지 확인합니다. 한 Agent 이름을 여러 역할에
-   재사용하면 provisioning과 check가 모두 실패합니다. 이 검사는 Foundry가 MCP URL에 추가하는
-   trailing slash와 저장된 `allowed_tools.tool_names` 표현을 정규화한 뒤 의미상 같은지 비교합니다.
-4. **Hosted Agent 구성 및 배포** — 기존 Foundry project endpoint와 ARM resource ID를 azd
-   environment에 연결하고 Prompt Agent 이름 alias를 설정합니다. `azure.yaml`에
-   `codeConfiguration`이 있으므로 `azd deploy`가 소스를 ZIP으로 업로드하고 Foundry가 이미지를
-   빌드합니다. 이 단계에는 Docker와 ACR이 필요하지 않습니다.
-   ```powershell
-   $env:AZURE_DEV_USER_AGENT='microsoft_foundry_skill'
-   azd env set AZURE_AI_PROJECT_ENDPOINT '<project-endpoint>'
-   azd env set AZURE_AI_PROJECT_ID '<project-arm-resource-id>'
-   azd env set AZURE_SUBSCRIPTION_ID '<subscription-id>'
-   azd env set AZBRIEF_PROMPT_COORDINATOR_AGENT_NAME 'azbrief-coordinator'
-   azd env set AZBRIEF_PROMPT_RESOURCE_GRAPH_AGENT_NAME 'azbrief-resource-graph'
-   azd env set AZBRIEF_PROMPT_AZURE_MCP_AGENT_NAME 'azbrief-azure-mcp'
-   azd env set AZBRIEF_PROMPT_AZURE_API_AGENT_NAME 'azbrief-azure-api'
-   azd env set AZBRIEF_PROMPT_REPORT_WRITER_AGENT_NAME 'azbrief-report-writer'
-   azd env set AZBRIEF_PROMPT_QUALITY_REVIEWER_AGENT_NAME 'azbrief-quality-reviewer'
-   azd deploy azbrief-analysis-hosted --no-prompt
-   azd ai agent show --output json
-   ```
-  `azure.yaml`은 `AZURE_AI_PROJECT_ENDPOINT`로 Foundry project를 해석하며 공개 repository에
-  tenant별 project hostname을 넣지 않습니다.
-5. **Hosted Agent identity에 권한 부여** — `azd ai agent show --output json` 또는 Foundry
-   Portal에서 새 Hosted Agent identity의 principal ID를 확인합니다. 분석할 모든 subscription에
-   Reader를 부여하고, Log Analytics와 Cost Management 같은 도구가 요구하는 최소 data-plane
-   역할만 추가합니다. `list_billing_accounts` 또는 `list_billing_profiles`를 사용하려면 관련
-   billing account 범위에서 이 identity에 **Billing Reader** 또는 동등한 읽기 권한을 부여합니다.
-   Billing 접근 권한은 subscription Reader에 포함되지 않으며 resource group 범위의 Bicep
-   배포가 대신 부여할 수도 없습니다. Container Apps용 `grantReaderCommand`를 사용하면 잘못된
-   identity에 권한이 부여됩니다.
-6. **Container Apps 제어면 이미지 배포** — Template은 placeholder image로 시작합니다.
-   `deployContainerImageCommand` 또는 `deploy-container-app.yml`로 Container App과 scheduler
-   Job을 **함께** 갱신합니다. 둘 다 `FOUNDRY_HOSTED_AGENT_NAME`이 없거나 endpoint가 비활성이면
-   로컬 분석으로 fallback하지 않고 실패합니다.
-7. **선택 사항: 관리자 콘솔과 Archive 활성화** — Entra app을 등록한 뒤
-  `adminEntraClientId`, `adminEntraClientSecret`, `adminAllowedPrincipals` 및 필요하면
-  별도 `archiveAllowedPrincipals`를 채워 다시 배포합니다.
+루트 `.env`가 없는 고객 전용 소스 폴더에서 `.venv`를 활성화하고 Azure CLI와 azd에 각각 고객
+테넌트로 로그인합니다. Azure CLI의 기본 구독도 명시적으로 설정합니다. 사전 조건, 역할 부여,
+이미지 빌드, Entra 콜백, 인수 증거와 복구 절차는 [고객 가이드](infra/CUSTOMER_DEPLOYMENT.md)를
+따르십시오.
 
-> **검증 범위:** Template은 resource type, API version, property name에 대한 Bicep type check를
-> 통과했습니다. 개발 환경의 MFA 요구 때문에 subscription 수준 ARM preflight
-> (`az deployment group validate`)는 실행하지 못했으므로 첫 배포 전에 한 번 실행하십시오.
+```powershell
+$customer = @{
+  SubscriptionId = '<customer-subscription-id>'
+  ResourceGroup = '<resource-group>'
+  DeploymentName = '<portal-deployment-name>'
+  Environment = 'customer-prod'
+}
+./scripts/setup_customer.ps1 @customer -Stage Configure -WhatIf
+./scripts/setup_customer.ps1 @customer -Stage Configure
+./scripts/setup_customer.ps1 @customer -Stage Mcp
+./scripts/setup_customer.ps1 @customer -Stage Agents
+```
+
+스크립트는 비밀 값이 없는 `customerSetup` 출력을 읽어 별도 azd 환경을 구성하고, 버전이 고정된
+읽기 전용 Azure MCP Server와 project-managed-identity 연결을 배포합니다. 여섯 전문가 정의를
+검사한 뒤 [azure.yaml](azure.yaml)에 지정된 고객 Hosted 이름으로 게시합니다. 다른 대상의
+환경 재사용, Agent 게시 시 소스 변경, 개발용 `.env`를 거부하며 템플릿 출력의 셸 명령을
+실행하지 않습니다.
+
+1. **Hosted Agent 전용 identity**에만 승인된 근거 조회 범위의 Reader를 부여합니다.
+  Billing hierarchy와 다른 데이터 평면 권한은 고객의 별도 승인이 필요합니다.
+  `managedIdentityPrincipalId`는 Container Apps UAMI이며 Hosted identity가 아닙니다.
+  `grantReaderCommand`는 이제 Hosted principal을 명시적으로 입력하도록 요구합니다.
+2. 같은 검토된 소스로 immutable ACR digest를 빌드하고 App/Job identity에 올바른 RBAC/ABAC
+  pull-only 역할을 부여합니다. 해당 digest로 `Application` 단계를 실행합니다.
+3. 브라우저 화면을 활성화했다면 Entra Web 콜백을 추가하고 허용 사용자와 거부 사용자를 검증합니다.
+4. `Verify` 후 이메일을 끈 단건 분석에서 archive 저장을 확인하고, 명시적으로 승인된 테스트
+  이메일을 한 번 보냅니다. 단순 `completed`가 아니라 개별 처리 카운터를 확인합니다.
+5. 인수 결과를 기록한 뒤에만 `EnableSchedule -AcceptOperationalChecks`를 실행합니다.
+
+```powershell
+./scripts/setup_customer.ps1 @customer -Stage Application -Image '<registry>/azbrief-enterprise@sha256:<digest>'
+./scripts/setup_customer.ps1 @customer -Stage Verify
+./scripts/setup_customer.ps1 @customer -Stage EnableSchedule -AcceptOperationalChecks
+```
+
+`Application`은 Job을 수동으로 유지하며 두 이미지와 준비용 포트·상태 확인 설정을 함께
+갱신하고, 갱신 실패 시 되돌림 요청을 보냅니다. `Verify`는 읽기 전용으로 모델 호출이나 이메일
+발송을 하지 않습니다. `EnableSchedule`은 준비 상태를 다시 확인하고 기존 Job 설정·Key Vault
+참조를 보존하며 디스패처 cron을 확인합니다. 초기 포트 전환에 이미지 전용 CI를 사용하거나
+기존 보안 파라미터를 보존하지 않은 채 전체 템플릿을 다시 적용하지 마십시오.
+
+**검증 범위:** 로컬 테스트·스키마 검사·Bicep 컴파일은 고객의 정책·할당량, Graph 동의,
+비공개 네트워크, 원격 빌드, 권한 전파, 분석 품질, 이메일 수신을 증명하지 않습니다. 가이드의
+고객 인수 검사를 완료한 뒤에만 서비스 준비 완료로 판단합니다. 릴리스용 버튼을 공유하기 전에
+일치하는 소스·ARM·UI 파일을 함께 게시해야 하며, 로컬 수정만으로 공개 `main` 버튼이 바뀌지는
+않습니다.
 
 ### 예약 실행 운영
 
 | 목적 | 방법 |
 |-------------|------|
+| 새 설치의 정기 실행 활성화 | 고객 인수 후 `setup_customer.ps1 -Stage EnableSchedule -AcceptOperationalChecks` 실행. 기반 배포 기본값은 수동 |
 | 매일 실행 시각 추가 | `/admin`의 **자동 실행**에서 UTC `HH:MM` 시각 추가. Private Admin 구성 Blob에 저장됩니다 |
 | 보호된 기본 시각 변경 | `scheduleCronExpression`(UTC cron, 기본 `0 2 * * *`)으로 다시 배포 |
 | 디스패처 주기 변경 | `scheduleDispatcherCronExpression`(기본 `*/5 * * * *`)으로 다시 배포. 이 주기는 만기 일정을 확인하고 선점만 합니다 |
 | 즉시 실행 | `/admin`의 실행 버튼에서 체크포인트, 기간, 최근 개수, Update 번호 또는 Azure Update URL 선택. `runNowCommand`는 Job 디스패처를 시작하므로 만기 일정이 있을 때만 분석합니다 |
-| 한 실행의 최대 시간 조정 | `jobReplicaTimeoutSeconds` 설정(기본 12시간, 최대 7일). `RUN_TIME_BUDGET_S`는 자동으로 이 값보다 한 시간 짧게 설정됩니다 |
+| 한 실행의 최대 시간 조정 | `jobReplicaTimeoutSeconds` 설정(기본 12시간, 최대 7일). `RUN_TIME_BUDGET_S`는 한 시간 짧게 설정하되 짧은 타임아웃에서는 최솟값 60초를 적용합니다 |
 | 분석 window 초기화 | Output의 `checkpointBlobUrl`에 있는 blob을 삭제해 기본 24시간 window로 복귀 |
 | 실행 이력 확인 | Log Analytics 또는 `az containerapp job execution list` 사용 |
 

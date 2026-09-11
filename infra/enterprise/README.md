@@ -31,6 +31,10 @@ Prompt Agent version과 Hosted Agent version은 data-plane 객체이므로 이 B
 루트 [`azure.yaml`](../../azure.yaml)이 각각 별도 lifecycle을 담당합니다. Bicep output은
 coordinator, Resource Graph, Azure MCP, Azure API, report writer, quality reviewer의 고유 이름과
 Hosted 배포용 `azd env set` 명령을 제공합니다.
+현재 후속 설정은 비밀 값 없는 `customerSetup` 출력과
+[setup_customer.ps1](../../scripts/setup_customer.ps1)으로 연결하며, `configureHostedAgentCommand`도
+이 도구의 `Configure` 단계를 가리킵니다. 직접 여러 `NAME=VALUE`를 한 번의 `azd env set`에
+전달하지 않습니다. [고객 가이드](../CUSTOMER_DEPLOYMENT.md)가 새 설치의 기준 절차입니다.
 
 ## 사용 예시
 
@@ -48,7 +52,7 @@ Hosted 배포용 `azd env set` 명령을 제공합니다.
 
 - Compute: `containerImage`, `minReplicas`, `maxReplicas`, 보호된 기본 일정인
   `scheduleCronExpression`, 일정 확인 주기인 `scheduleDispatcherCronExpression`,
-  `jobReplicaTimeoutSeconds`
+  `jobReplicaTimeoutSeconds`, 초기값 1인 `maxConcurrentAnalyses`, 기본 false인 `enableScheduledRuns`
 - Foundry: `foundryLocation`, model 이름/SKU/capacity, `foundryHostedAgentName`
 - Network: `networkIsolationMode`, 기존 VNet 또는 세 subnet prefix, `internalIngressOnly`
 - Admin: Entra client ID/secret과 `adminAllowedPrincipals`가 모두 있어야 활성화
@@ -61,9 +65,12 @@ Hosted 배포용 `azd env set` 명령을 제공합니다.
   in-place로 전환할 수 있다고 가정하지 않습니다.
 - App과 Job은 같은 image와 user-assigned identity를 쓰지만 entry point가 다릅니다. image rollout은
   둘을 함께 갱신합니다.
+- 준비용 hello-world는 80 포트·`/`, AzBrief는 8000 포트·`/health`를 사용합니다. Bootstrap 이미지는
+  `enableScheduledRuns=true`여도 정기 실행을 켜지 않습니다. 새 설치는 인수 전까지 Job이 수동입니다.
 - Scheduler Job의 cron은 분석 일정 자체가 아니라 내구성 Admin 구성의 만기 슬롯을 확인하는
   디스패처 주기입니다. 실제 기본 분석 cron은 `SCHEDULE_CRON_EXPRESSION`으로 전달됩니다.
 - `RUN_TIME_BUDGET_S`는 Job replica timeout보다 짧아야 미완료 항목을 다음 실행으로 넘길 수 있습니다.
+  기본적으로 한 시간의 여유를 두며, 짧은 timeout에서도 음수가 되지 않도록 60초 하한을 적용합니다.
 - Storage shared-key와 Foundry local auth를 켜서 편의상 우회하지 않습니다.
 - Admin은 Entra 설정과 allow-list가 모두 없으면 닫혀 있어야 합니다.
 - Archive container는 public access가 없고 App/Job UAMI만 REST data plane으로 읽고 씁니다.

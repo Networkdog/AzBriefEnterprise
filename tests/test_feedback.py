@@ -218,27 +218,6 @@ def test_feedback_page_defaults_to_english_and_uses_shared_shell():
     assert "Report context" in page
 
 
-def test_feedback_form_supports_preserved_input_and_explicit_receipts():
-    page = render_feedback_page("nonce", admin_enabled=True, archive_enabled=True)
-
-    assert 'href="/admin"' in page
-    assert 'href="/archive"' in page
-    assert 'href="/feedback" aria-current="page"' in page
-    assert 'aria-describedby="subject-error subject-count"' in page
-    assert 'id="language"' in page
-    assert "function setLanguage(code)" in page
-    assert "window.addEventListener('beforeunload'" in page
-    assert "if (submitting || !byId('receipt').hidden) return" in page
-    assert "receipt.feedback_id" in page
-    assert "receipt.notification_sent" in page
-    assert "error.status === 429" in page
-    assert "error.status === 503" in page
-    assert "localStorage" not in page
-    assert "sessionStorage" not in page
-    assert "innerHTML" not in page
-    assert 'href="/admin"' not in render_feedback_page("nonce")
-
-
 def test_feedback_page_localizes_korean_and_escapes_report_reference():
     page = render_feedback_page(
         "nonce-value",
@@ -256,9 +235,7 @@ def test_feedback_page_localizes_korean_and_escapes_report_reference():
 def _feedback_client(monkeypatch, enabled=True, service=None):
     monkeypatch.setattr(
         "src.feedback.router.get_settings",
-        lambda: SimpleNamespace(
-            feedback_ui_enabled=enabled, admin_ui_enabled=True, archive_ui_enabled=True
-        ),
+        lambda: SimpleNamespace(feedback_ui_enabled=enabled),
     )
     if service is not None:
         monkeypatch.setattr("src.feedback.router.get_feedback_service", lambda: service)

@@ -177,10 +177,12 @@ def create_app() -> FastAPI:
             )
         elif request.url.path == "/feedback":
             content = render_feedback_page(
-                nonce, language, request.query_params.get("report", ""), True, True
+                nonce=nonce,
+                language=language,
+                report_reference=request.query_params.get("report", ""),
             )
             content = content.replace(
-                '<span class="brand-area">Operations</span>',
+                '<span class="brand-area">Feedback</span>',
                 '<span class="brand-area">SYNTHETIC PREVIEW</span>',
             )
         else:

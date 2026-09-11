@@ -15,7 +15,9 @@
 Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication Services
 · Container App control plane + `/admin` + `/mcp` · VNet injection + Private Endpoint by default
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
+
+[Customer deployment guide](infra/CUSTOMER_DEPLOYMENT.md): foundation first, then guided setup and acceptance.
 
 </div>
 
@@ -549,7 +551,15 @@ deployment, the Container App (API + Admin + MCP), the Container Apps Job that d
 daily digest, Key Vault, state storage, and Communication Services. Prompt Agents and the
 Hosted Agent are Foundry data-plane objects and are deployed in the post-deployment steps.
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json)
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
+
+**Start with the [customer deployment guide](infra/CUSTOMER_DEPLOYMENT.md).** The button now opens
+a tabbed form for an approved model/version, existing customer registry, email and Entra access.
+It keeps VNet isolation, disables temporary public access and automatic runs, and enables Key
+Vault purge protection. The bootstrap application uses port 80 and `/`; it is not AzBrief yet.
+Initial analysis concurrency is 1. Use a VNet-connected deployment host for the follow-up steps,
+and keep each customer's source checkout and azd environment separate from local development.
+The form binds Foundry and the VNet to the same region; confirm model/Hosted availability in that region.
 
 **What gets deployed** ([infra/azbrief-enterprise-deploy.json](infra/azbrief-enterprise-deploy.json),
 authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
@@ -559,12 +569,12 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 | User Assigned Managed Identity | `id-{baseName}` | Shared by the Container App and scheduler Job |
 | Microsoft Foundry account | `aif-{baseName}-{suffix}` | `AIServices` · `allowProjectManagement` · **`disableLocalAuth`** |
 | Foundry project | `{baseName}-agents` | Data-plane workspace for the Hosted Agent and Prompt Agents |
-| Model deployment | `gpt-4o` (configurable) | GlobalStandard, 200K TPM by default |
+| Model deployment | Customer-approved model/version | Confirm region, SKU, capacity-unit mapping and quota; raw ARM defaults are not a compatibility guarantee |
 | Key Vault | `kv-{baseName}-{suffix}` | RBAC-only store for all runtime secrets |
 | Storage account + `azbrief-state` container | `st{baseName}{suffix}` | Checkpoint blob, **`allowSharedKeyAccess: false`** |
 | Container Apps Environment | `cae-{baseName}-{suffix}` | VNet-integrated by default |
 | Container App | `ca-{baseName}` | Control-plane API + `/admin` + authenticated `/mcp` |
-| Container Apps Job | `caj-{baseName}` | Cron schedule, Hosted Agent invocation, checkpoint, and email |
+| Container Apps Job | `caj-{baseName}` | Manual until acceptance; then cron, Hosted invocation, checkpoint, and email |
 | Hosted Agent (subsequent `azd deploy`) | `{baseName}-analysis-hosted` | Complete LangGraph analysis and subscriber customization with a dedicated Entra identity |
 | Container App authConfig | `current` | Entra ID sign-in, created only when a client ID is supplied |
 | Communication Services + Email | `acs-{baseName}-{suffix}` | Azure-managed domain connected automatically |
@@ -648,111 +658,69 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 
 ### Post-deployment steps
 
-1. **Deploy the Azure MCP Server** — `infra/azure-mcp-server` deploys the verified official Azure
-  MCP `3.0.0-beta.38` image to a separate Container App. Upgrade the version explicitly through
-  the Bicep `azureMcpImage` parameter. The server keeps Entra authentication enabled and runs with
-  `--mode all`, `--namespace group|resourcehealth|advisor`, and `--read-only`. It therefore exposes
-  only direct tools from those three namespaces, without the dynamic `azure` proxy, and its
-  managed identity receives only `Reader` on the target subscription. The default size is
-  0.5 vCPU/1 GiB.
-  ```powershell
-  cd infra/azure-mcp-server
-  azd env new production
-  azd env set AZURE_SUBSCRIPTION_ID '<subscription-id>'
-  azd env set AZURE_LOCATION 'koreacentral'
-  azd env set AZURE_RESOURCE_GROUP '<resource-group>'
-  azd env set AZURE_MCP_CONTAINER_APP_NAME 'ca-azbrief-mcp'
-  azd env set FOUNDRY_PROJECT_RESOURCE_ID '<project-arm-resource-id>'
-  azd env set SERVICE_MANAGEMENT_REFERENCE ''
-  azd up --no-prompt
-  ```
-2. **Create the Azure MCP project connection** — Use the HTTPS URL and Entra application
-  identifier URI from the Azure MCP deployment outputs. The Project Managed Identity token is
-  issued for the MCP API audience, and Bicep grants that identity the MCP app role.
-  ```powershell
-  azd ai connection create azbrief-azure-mcp-read-only `
-    --kind remote-tool `
-    --target '<AZURE_MCP_SERVER_URL>' `
-    --auth-type project-managed-identity `
-    --audience '<AZURE_MCP_ENTRA_APP_IDENTIFIER_URI>' `
-    --project-endpoint '<project-endpoint>'
-  ```
-3. **Create the Foundry Prompt Agents** — ARM cannot create Agent data-plane objects. The
-  coordinator receives Microsoft Learn MCP as its primary source and Web Search as a supplement.
-  The Resource Graph specialist receives only KQL, schema, and result-retrieval FunctionTools;
-  the Azure API specialist receives only ARM, Health, Policy, Advisor, Activity Log, and Cost
-  Management FunctionTools. The Azure MCP specialist uses only the remote MCP connection above
-  and has no local ARM fallback. The Hosted Agent inserts the exact tenant GUID and configured
-  subscription GUID into every Azure MCP/API request and forbids the literal `default`. A remote
-  leaf tool may interpret an omitted tenant or `default` as a tenant display name and reject it.
-  After upgrading the Azure MCP image, validate direct-tool schemas and a read-only inventory
-  smoke test first. If the MCP mode, namespace, or scope contract changes, publish new immutable
-  versions of both the Azure MCP specialist and Hosted Agent. Put the endpoint, six Agent names,
-  provisioning model, and these settings in `.env`, then run:
-  ```env
-  FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED=true
-  AZURE_MCP_SERVER_URL=<AZURE_MCP_SERVER_URL>
-  AZURE_MCP_PROJECT_CONNECTION_NAME=azbrief-azure-mcp-read-only
-  ```
-  ```bash
-    python -m scripts.provision_foundry_agents --dry-run   # preview instructions
-    python -m scripts.provision_foundry_agents             # create or update
-  ```
-    To update only selected roles, pass a value such as `--roles resource_graph azure_api`. Then
-    confirm that `python -m scripts.provision_foundry_agents --check` passes without drift in all
-    six Agents, FunctionTools, server tools, instructions, or schemas. Reusing one Agent name for
-    multiple roles makes both provisioning and the check fail. The check normalizes the trailing
-    slash that Foundry adds to MCP URLs and the persisted `allowed_tools.tool_names` representation
-    before comparing semantic equality.
-  4. **Configure and deploy the Hosted Agent** — Connect the existing Foundry project endpoint and
-    ARM resource ID to the azd environment, then set the Prompt Agent name aliases. Because
-    `azure.yaml` contains `codeConfiguration`, `azd deploy` uploads the source as a ZIP and Foundry
-    builds the image. Docker and ACR are not required for this step.
-  ```powershell
-  $env:AZURE_DEV_USER_AGENT='microsoft_foundry_skill'
-  azd env set AZURE_AI_PROJECT_ENDPOINT '<project-endpoint>'
-  azd env set AZURE_AI_PROJECT_ID '<project-arm-resource-id>'
-  azd env set AZURE_SUBSCRIPTION_ID '<subscription-id>'
-  azd env set AZBRIEF_PROMPT_COORDINATOR_AGENT_NAME 'azbrief-coordinator'
-  azd env set AZBRIEF_PROMPT_RESOURCE_GRAPH_AGENT_NAME 'azbrief-resource-graph'
-  azd env set AZBRIEF_PROMPT_AZURE_MCP_AGENT_NAME 'azbrief-azure-mcp'
-  azd env set AZBRIEF_PROMPT_AZURE_API_AGENT_NAME 'azbrief-azure-api'
-  azd env set AZBRIEF_PROMPT_REPORT_WRITER_AGENT_NAME 'azbrief-report-writer'
-  azd env set AZBRIEF_PROMPT_QUALITY_REVIEWER_AGENT_NAME 'azbrief-quality-reviewer'
-  azd deploy azbrief-analysis-hosted --no-prompt
-  azd ai agent show --output json
-  ```
-  `azure.yaml` resolves the Foundry project through `AZURE_AI_PROJECT_ENDPOINT`; it never embeds a
-  tenant-specific project hostname in the public repository.
-5. **Grant permissions to the Hosted Agent identity** — Find the new Hosted Agent identity
-   principal ID through `azd ai agent show --output json` or the Foundry portal. Grant Reader on
-   every subscription to be analyzed and only the data-plane roles required by tools such as Log
-   Analytics and Cost Management. To use `list_billing_accounts` or `list_billing_profiles`, grant
-   this identity **Billing Reader** or equivalent read permission at the relevant billing-account
-   scope. Billing access is not included in subscription Reader, and the resource-group-scoped
-   Bicep deployment cannot grant it on your behalf. Using the Container Apps
-   `grantReaderCommand` instead grants permission to the wrong identity.
-6. **Deploy the Container Apps control-plane image** — The template starts with a placeholder
-   image. Use `deployContainerImageCommand` or `deploy-container-app.yml` to update the Container
-   App and scheduler Job **together**. Both fail rather than falling back to local analysis when
-   `FOUNDRY_HOSTED_AGENT_NAME` is absent or the endpoint is inactive.
-7. **Optionally enable the admin console** — Register an Entra app, then redeploy with
-   `adminEntraClientId`, `adminEntraClientSecret`, and `adminAllowedPrincipals` populated.
+Use a clean customer checkout without a root `.env`, activate `.venv`, and sign both Azure CLI
+and azd into the customer tenant. Set Azure CLI's default subscription explicitly. The
+[customer guide](infra/CUSTOMER_DEPLOYMENT.md) covers prerequisites, role grants, image build,
+Entra callbacks, exact acceptance evidence, and rollback.
 
-> **Validation scope:** The template passes Bicep type checking for resource types, API versions,
-> and property names. The subscription-level ARM preflight (`az deployment group validate`) could
-> not be run in the development environment because of MFA requirements, so run it once before
-> the first deployment.
+```powershell
+$customer = @{
+  SubscriptionId = '<customer-subscription-id>'
+  ResourceGroup = '<resource-group>'
+  DeploymentName = '<portal-deployment-name>'
+  Environment = 'customer-prod'
+}
+./scripts/setup_customer.ps1 @customer -Stage Configure -WhatIf
+./scripts/setup_customer.ps1 @customer -Stage Configure
+./scripts/setup_customer.ps1 @customer -Stage Mcp
+./scripts/setup_customer.ps1 @customer -Stage Agents
+```
+
+The script reads the non-secret `customerSetup` output, configures a distinct azd environment,
+deploys the pinned read-only Azure MCP server and its project-managed-identity connection,
+checks the six specialist definitions, and publishes the intended Hosted name from
+[azure.yaml](azure.yaml). It refuses cross-target environment reuse, source drift for agent
+publication, and a developer `.env`. It never executes shell commands from template outputs.
+
+1. Grant the **dedicated Hosted Agent identity** Reader only on approved evidence scopes.
+   Billing hierarchy and other data-plane rights remain separate customer-approved grants.
+   `managedIdentityPrincipalId` is the Container Apps UAMI, not the Hosted identity;
+   `grantReaderCommand` now requires an explicit Hosted principal placeholder.
+2. Build an immutable ACR digest from the same reviewed source and grant the App/Job identity
+   pull-only access using the correct RBAC/ABAC role. Run the `Application` stage with that digest.
+3. Add the Entra Web callback and verify allowed/denied users when browser surfaces are enabled.
+4. Run `Verify`, then a no-email one-update analysis with a confirmed archive write, and one
+   explicitly approved email test. Require successful item counters, not merely `completed`.
+5. Only after recording acceptance, run `EnableSchedule -AcceptOperationalChecks`.
+
+```powershell
+./scripts/setup_customer.ps1 @customer -Stage Application -Image '<registry>/azbrief-enterprise@sha256:<digest>'
+./scripts/setup_customer.ps1 @customer -Stage Verify
+./scripts/setup_customer.ps1 @customer -Stage EnableSchedule -AcceptOperationalChecks
+```
+
+`Application` keeps the Job manual while updating both images and the bootstrap port/probes;
+it submits rollback on an update failure. `Verify` is read-only and does not send email or invoke
+a model. `EnableSchedule` rechecks readiness, preserves existing Job settings and Key Vault
+references, and confirms the dispatcher cron. Do not use an image-only CI rollout for the
+bootstrap port transition or reapply the whole template without preserving secure parameters.
+
+**Verification boundary:** local tests, schema checks and Bicep compilation do not establish
+customer policy/quota, Graph consent, private-network access, remote builds, role propagation,
+analysis quality, or email receipt. Complete the guide's customer acceptance checks before
+calling the installation ready. Publish matching source, ARM and UI files together before
+sharing a release-specific button; local edits do not change the public `main` button.
 
 ### Scheduling operations
 
 | Goal | Method |
 |-------------|------|
+| Enable a new installation | Complete customer acceptance, then `setup_customer.ps1 -Stage EnableSchedule -AcceptOperationalChecks`; foundation defaults to Manual |
 | Add a daily run time | Add an `HH:MM` UTC time under **Automatic runs** in `/admin`; it is stored in the private Admin configuration blob |
 | Change the protected default time | Redeploy with `scheduleCronExpression` (UTC cron, default `0 2 * * *`) |
 | Change the dispatcher cadence | Redeploy with `scheduleDispatcherCronExpression` (default `*/5 * * * *`); this only checks and claims due schedules |
 | Run immediately | Use the run button in `/admin` and select checkpoint, date range, recent count, Update ID, or Azure Update URL. `runNowCommand` starts the Job dispatcher and runs only when a schedule is due |
-| Adjust the maximum duration of one run | Set `jobReplicaTimeoutSeconds` (12 hours by default, 7 days maximum). `RUN_TIME_BUDGET_S` is set automatically to one hour less |
+| Adjust the maximum duration of one run | Set `jobReplicaTimeoutSeconds` (12 hours by default, 7 days maximum). `RUN_TIME_BUDGET_S` is one hour less, with a 60-second floor for short timeouts |
 | Reset the analysis window | Delete the blob at the output's `checkpointBlobUrl` to return to the default 24-hour window |
 | Review execution history | Use Log Analytics or `az containerapp job execution list` |
 

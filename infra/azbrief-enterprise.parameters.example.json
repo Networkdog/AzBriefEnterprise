@@ -59,6 +59,9 @@
     "scheduleCronExpression": {
       "value": "0 2 * * *"
     },
+    "enableScheduledRuns": {
+      "value": false
+    },
     "scheduleDispatcherCronExpression": {
       "value": "*/5 * * * *"
     },
@@ -67,6 +70,9 @@
     },
     "networkIsolationMode": {
       "value": "vnetInjection"
+    },
+    "allowPublicAccessDuringSetup": {
+      "value": false
     },
     "existingVnetResourceId": {
       "value": ""

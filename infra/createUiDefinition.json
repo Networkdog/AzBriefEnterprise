@@ -1,0 +1,237 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
+  "handler": "Microsoft.Azure.CreateUIDef",
+  "version": "0.1.2-preview",
+  "parameters": {
+    "config": {
+      "basics": {
+        "description": "AzBrief Enterprise foundation. Complete the customer setup guide after this deployment; automatic analysis remains disabled until acceptance. Use a deployment host connected to the private network.",
+        "location": {
+          "resourceTypes": [
+            "Microsoft.App/managedEnvironments",
+            "Microsoft.CognitiveServices/accounts"
+          ]
+        }
+      }
+    },
+    "basics": [
+      {
+        "name": "baseName",
+        "type": "Microsoft.Common.TextBox",
+        "label": "Resource name prefix",
+        "defaultValue": "azbrief",
+        "toolTip": "3-16 lowercase letters or numbers. Use a dedicated resource group for each customer installation.",
+        "constraints": {
+          "required": true,
+          "regex": "^[a-z0-9]{3,16}$",
+          "validationMessage": "Enter 3-16 lowercase letters or numbers."
+        },
+        "visible": true
+      },
+      {
+        "name": "registryServer",
+        "type": "Microsoft.Common.TextBox",
+        "label": "Existing container registry login server",
+        "toolTip": "Use the customer's ACR login server, for example company.azurecr.io. Managed identity pull access is granted after foundation deployment.",
+        "constraints": {
+          "required": true,
+          "regex": "^[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.azurecr\\.io$",
+          "validationMessage": "Enter an Azure Container Registry login server, without https:// or a path."
+        },
+        "visible": true
+      },
+      {
+        "name": "registryMode",
+        "type": "Microsoft.Common.DropDown",
+        "label": "Existing registry permission mode",
+        "defaultValue": "RBAC Registry + ABAC Repository Permissions",
+        "constraints": {
+          "required": true,
+          "allowedValues": [
+            { "label": "RBAC Registry + ABAC Repository Permissions", "value": "AbacRepositoryPermissions" },
+            { "label": "RBAC Registry Permissions (legacy)", "value": "LegacyRegistryPermissions" }
+          ]
+        },
+        "visible": true
+      }
+    ],
+    "steps": [
+      {
+        "name": "foundry",
+        "label": "Foundry and model",
+        "elements": [
+          {
+            "name": "model",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Approved model name",
+            "toolTip": "Enter a currently available model verified for this workload. The deployment name will match the model name; no model is silently selected.",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$",
+              "validationMessage": "Enter the exact model name from Foundry."
+            },
+            "visible": true
+          },
+          {
+            "name": "version",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Approved model version",
+            "toolTip": "Pin the model version approved for the customer. Model name, version and region must be compatible.",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9._-]+$",
+              "validationMessage": "Enter the exact model version from Foundry."
+            },
+            "visible": true
+          },
+          {
+            "name": "sku",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Model deployment type",
+            "defaultValue": "Global Standard",
+            "toolTip": "Global Standard may process requests outside the deployment region. Choose the deployment type approved by the customer's data residency policy.",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                { "label": "Global Standard", "value": "GlobalStandard" },
+                { "label": "Data Zone Standard", "value": "DataZoneStandard" },
+                { "label": "Regional Standard", "value": "Standard" }
+              ]
+            },
+            "visible": true
+          },
+          {
+            "name": "capacity",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Model capacity units",
+            "defaultValue": "200",
+            "toolTip": "Confirm the model's capacity-to-TPM/RPM mapping and available quota. Start with one concurrent analysis and measure throttling before increasing throughput.",
+            "constraints": {
+              "required": true,
+              "regex": "^(?:[1-9][0-9]{0,2}|1000)$",
+              "validationMessage": "Enter an integer from 1 to 1000."
+            },
+            "visible": true
+          }
+        ]
+      },
+      {
+        "name": "delivery",
+        "label": "Email delivery",
+        "elements": [
+          {
+            "name": "recipient",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Initial recipient email",
+            "toolTip": "Use an approved acceptance-test mailbox. Configure production subscribers after the first analysis and delivery checks.",
+            "constraints": {
+              "required": true,
+              "regex": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+              "validationMessage": "Enter an email address."
+            },
+            "visible": true
+          },
+          {
+            "name": "dataLocation",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Communication Services data location",
+            "defaultValue": "Korea",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                { "label": "Africa", "value": "Africa" },
+                { "label": "Asia Pacific", "value": "Asia Pacific" },
+                { "label": "Australia", "value": "Australia" },
+                { "label": "Brazil", "value": "Brazil" },
+                { "label": "Canada", "value": "Canada" },
+                { "label": "Europe", "value": "Europe" },
+                { "label": "France", "value": "France" },
+                { "label": "Germany", "value": "Germany" },
+                { "label": "India", "value": "India" },
+                { "label": "Japan", "value": "Japan" },
+                { "label": "Korea", "value": "Korea" },
+                { "label": "Norway", "value": "Norway" },
+                { "label": "Switzerland", "value": "Switzerland" },
+                { "label": "UAE", "value": "UAE" },
+                { "label": "UK", "value": "UK" },
+                { "label": "United States", "value": "United States" }
+              ]
+            },
+            "visible": true
+          }
+        ]
+      },
+      {
+        "name": "access",
+        "label": "Console access",
+        "elements": [
+          {
+            "name": "enableAdmin",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "Enable Entra-authenticated Admin and Archive"
+          },
+          {
+            "name": "adminClientId",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Existing single-tenant Entra application client ID",
+            "toolTip": "Register the application's HTTPS callback URI after the Container App URL is known. Entra application permissions are separate from Azure resource permissions.",
+            "constraints": {
+              "required": true,
+              "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "validationMessage": "Enter an application client ID GUID."
+            },
+            "visible": "[steps('access').enableAdmin]"
+          },
+          {
+            "name": "adminSecret",
+            "type": "Microsoft.Common.PasswordBox",
+            "label": { "password": "Existing Entra client secret", "confirmPassword": "Confirm client secret" },
+            "toolTip": "Enter the value directly in the Portal. Do not put it in chat, source control, command-line arguments or output files.",
+            "constraints": { "required": true },
+            "options": { "hideConfirmation": true },
+            "visible": "[steps('access').enableAdmin]"
+          },
+          {
+            "name": "adminPrincipals",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Allowed administrator object IDs or UPNs",
+            "toolTip": "Comma-separated allow-list. Other signed-in users remain forbidden. Administrators are Archive readers automatically.",
+            "constraints": {
+              "required": true,
+              "regex": "^\\S(?:.*\\S)?$",
+              "validationMessage": "Enter at least one administrator object ID or UPN."
+            },
+            "visible": "[steps('access').enableAdmin]"
+          },
+          {
+            "name": "internalIngress",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "Restrict the application ingress to the VNet"
+          }
+        ]
+      }
+    ],
+    "outputs": {
+      "baseName": "[basics('baseName')]",
+      "location": "[location()]",
+      "foundryLocation": "[location()]",
+      "modelName": "[steps('foundry').model]",
+      "modelDeploymentName": "[steps('foundry').model]",
+      "modelVersion": "[steps('foundry').version]",
+      "modelSkuName": "[steps('foundry').sku]",
+      "modelCapacity": "[int(steps('foundry').capacity)]",
+      "containerRegistryServer": "[basics('registryServer')]",
+      "containerRegistryRoleAssignmentMode": "[basics('registryMode')]",
+      "emailRecipientAddress": "[steps('delivery').recipient]",
+      "emailDataLocation": "[steps('delivery').dataLocation]",
+      "adminEntraClientId": "[if(steps('access').enableAdmin, steps('access').adminClientId, '')]",
+      "adminEntraClientSecret": "[if(steps('access').enableAdmin, steps('access').adminSecret, '')]",
+      "adminAllowedPrincipals": "[if(steps('access').enableAdmin, steps('access').adminPrincipals, '')]",
+      "internalIngressOnly": "[steps('access').internalIngress]",
+      "networkIsolationMode": "vnetInjection",
+      "allowPublicAccessDuringSetup": false,
+      "enableScheduledRuns": false,
+      "enableKeyVaultPurgeProtection": true
+    }
+  }
+}

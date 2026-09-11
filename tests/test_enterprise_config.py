@@ -146,6 +146,73 @@ class TestFoundryAgentRoster:
 
 
 class TestSpecialistDeploymentContract:
+    def test_bootstrap_image_uses_its_actual_port_and_health_path(self):
+        template = json.loads(
+            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
+        )
+        app = next(
+            resource
+            for resource in template["resources"]
+            if resource["type"].lower() == "microsoft.app/containerapps"
+        )
+
+        assert template["variables"]["containerPort"] == (
+            "[if(variables('isBootstrapImage'), 80, 8000)]"
+        )
+        assert app["properties"]["configuration"]["ingress"]["targetPort"] == (
+            "[variables('containerPort')]"
+        )
+        probes = app["properties"]["template"]["containers"][0]["probes"]
+        assert len(probes) == 2
+        for probe in probes:
+            assert probe["httpGet"]["port"] == "[variables('containerPort')]"
+            assert probe["httpGet"]["path"] == (
+                "[if(variables('isBootstrapImage'), '/', '/health')]"
+            )
+
+    def test_scheduling_is_opt_in_and_cannot_run_the_bootstrap_image(self):
+        template = json.loads(
+            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
+        )
+        job = next(
+            resource
+            for resource in template["resources"]
+            if resource["type"].lower() == "microsoft.app/jobs"
+        )
+        configuration = job["properties"]["configuration"]
+
+        assert template["parameters"]["enableScheduledRuns"]["defaultValue"] is False
+        assert template["variables"]["scheduledRunsEnabled"] == (
+            "[and(parameters('enableScheduledRuns'), not(variables('isBootstrapImage')))]"
+        )
+        assert configuration["triggerType"] == (
+            "[if(variables('scheduledRunsEnabled'), 'Schedule', 'Manual')]"
+        )
+        assert "variables('scheduledRunsEnabled')" in configuration["manualTriggerConfig"]
+        assert "variables('scheduledRunsEnabled')" in configuration["scheduleTriggerConfig"]
+        assert configuration["replicaRetryLimit"] == 0
+
+    def test_initial_concurrency_and_short_job_budget_are_bounded(self):
+        template = json.loads(
+            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
+        )
+
+        assert template["parameters"]["maxConcurrentAnalyses"]["defaultValue"] == 1
+        assert template["variables"]["runTimeBudgetSeconds"] == (
+            "[max(60, sub(parameters('jobReplicaTimeoutSeconds'), 3600))]"
+        )
+        for resource in template["resources"]:
+            if resource["type"].lower() not in {
+                "microsoft.app/containerapps",
+                "microsoft.app/jobs",
+            }:
+                continue
+            environment = resource["properties"]["template"]["containers"][0]["env"]
+            setting = next(
+                item for item in environment if item["name"] == "MAX_CONCURRENT_ANALYSES"
+            )
+            assert setting["value"] == "[string(parameters('maxConcurrentAnalyses'))]"
+
     def test_hosted_manifest_carries_all_six_specialist_aliases(self):
         manifest = Path("azure.yaml").read_text(encoding="utf-8")
         aliases = (
@@ -161,6 +228,7 @@ class TestSpecialistDeploymentContract:
         assert "AZBRIEF_PROMPT_PRIMARY_AGENT_NAME" not in manifest
         assert "AZBRIEF_ENRICHMENT_AGENT_ROSTER" not in manifest
         assert "endpoint: ${AZURE_AI_PROJECT_ENDPOINT}" in manifest
+        assert "name: ${FOUNDRY_HOSTED_AGENT_NAME}" in manifest
         assert ".services.ai.azure.com" not in manifest
 
     def test_compiled_template_outputs_specialist_names_and_config_command(self):
@@ -174,15 +242,25 @@ class TestSpecialistDeploymentContract:
         assert "foundryPrimaryAgentName" not in outputs
         assert "foundryEnrichmentAgentRoster" not in outputs
         command = outputs["configureHostedAgentCommand"]["value"]
-        for role in (
-            "COORDINATOR",
-            "RESOURCE_GRAPH",
-            "AZURE_MCP",
-            "AZURE_API",
-            "REPORT_WRITER",
-            "QUALITY_REVIEWER",
-        ):
-            assert f"AZBRIEF_PROMPT_{role}_AGENT_NAME" in command
+        assert "setup_customer.ps1" in command
+        assert "-Stage Configure" in command
+        assert "azd env set AZURE_SUBSCRIPTION_ID=" not in command
+        setup = outputs["customerSetup"]["value"]
+        assert setup["schemaVersion"] == 1
+        assert set(setup["specialistAgentNames"]) == {
+            "coordinator",
+            "resourceGraph",
+            "azureMcp",
+            "azureApi",
+            "reportWriter",
+            "qualityReviewer",
+        }
+        assert "foundryProjectId" in setup
+        assert "tenantId" in setup
+        assert "hosted-agent-principal-id" in outputs["grantReaderCommand"]["value"]
+        assert "managedIdentity" not in outputs["grantReaderCommand"]["value"]
+        for forbidden in ("secret", "password", "connectionstring", "subscribers", "apikey"):
+            assert forbidden not in json.dumps(setup).lower()
 
     def test_compiled_template_selects_the_acr_pull_role_for_its_permission_mode(self):
         template = json.loads(

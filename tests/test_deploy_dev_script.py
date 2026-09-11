@@ -63,7 +63,10 @@ def test_development_deploy_fails_closed_on_legacy_runtime_settings(
     assert "Remove them from both resources before deploying" in script_text
 
 
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
+@pytest.mark.skipif(
+    os.name != "nt" or shutil.which("pwsh") is None,
+    reason="The Windows Azure CLI command shim requires PowerShell 7 on Windows",
+)
 def test_azure_cli_progress_does_not_corrupt_json(
     tmp_path: Path,
 ) -> None:

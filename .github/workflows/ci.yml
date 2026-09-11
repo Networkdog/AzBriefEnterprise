@@ -10,6 +10,7 @@ on:
       - "scripts/**"
       - "requirements.txt"
       - "pyproject.toml"
+      - "azure.yaml"
       - "infra/**"
   pull_request:
     branches: [main]
@@ -19,7 +20,11 @@ on:
       - "scripts/**"
       - "requirements.txt"
       - "pyproject.toml"
+      - "azure.yaml"
       - "infra/**"
+
+    permissions:
+      contents: read
 
 jobs:
   lint-and-test:
@@ -72,7 +77,7 @@ jobs:
       # never compiled would ship the previous topology to every new deployment.
       - name: Compiled ARM template matches the Bicep source
         run: |
-          az bicep install
+          az bicep install --version v0.46.1
           az bicep build --file infra/enterprise/main.bicep --outfile /tmp/compiled.json
           if ! diff -q /tmp/compiled.json infra/azbrief-enterprise-deploy.json >/dev/null; then
             echo "::error::infra/azbrief-enterprise-deploy.json is stale. Run:"
@@ -81,3 +86,30 @@ jobs:
             diff /tmp/compiled.json infra/azbrief-enterprise-deploy.json | head -40
             exit 1
           fi
+          az bicep build --file infra/azure-mcp-server/infra/main.bicep --outfile /tmp/mcp.json
+
+  customer-deployment:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install test dependencies in a virtual environment
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          & .\.venv\Scripts\Activate.ps1
+          python -m pip install -r requirements.txt
+          python -m pip install -e ".[dev]"
+      - name: Verify customer setup and guarded deployment scripts offline
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: "00000000-0000-0000-0000-000000000000"
+          AZBRIEF_VERBOSE: "false"
+        run: |
+          & .\.venv\Scripts\Activate.ps1
+          python -m pytest tests/test_customer_deployment.py tests/test_deploy_dev_script.py tests/test_enterprise_config.py -o addopts= -x -q

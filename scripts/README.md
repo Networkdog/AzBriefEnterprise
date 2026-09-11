@@ -2,7 +2,7 @@
 
 [프로젝트 README](../README.md) > `scripts`
 
-로컬 운영·진단·평가·Foundry Agent 프로비저닝을 위한 Python CLI 모음입니다. 애플리케이션
+고객 배포·로컬 운영·진단·평가·Foundry Agent 프로비저닝을 위한 Python CLI와 PowerShell 도구입니다. 애플리케이션
 런타임에서 import하는 business logic이 아니라, 개발자와 운영자가 명시적으로 실행하는
 entry point입니다.
 
@@ -10,6 +10,9 @@ entry point입니다.
 
 | Module | 용도 | 부작용 |
 |---|---|---|
+| [setup_customer.ps1](setup_customer.ps1) | ARM 출력 기반 고객 환경 구성, MCP/Agent 게시, 초기 이미지 전환, 준비 검사·스케줄 활성화 | 단계별 로컬/원격 변경. `-WhatIf`는 변경 없음; `Verify`는 읽기 전용이며 모델·이메일 호출 없음 |
+| [deploy_dev.ps1](deploy_dev.ps1) | 이미 기동한 App/Job의 동일 digest 업그레이드와 실패 시 되돌림 | ACR 빌드와 두 리소스 이미지 갱신. 새 설치의 포트 전환에는 사용하지 않음 |
+| [deploy_hosted_agent.ps1](deploy_hosted_agent.ps1) | 검토된 Hosted 패키지의 검사·게시·smoke | Foundry 버전 생성 및 명시적 모델 smoke 호출 |
 | [`test_local.py`](test_local.py) | 설정, RSS, resource 요약, 단건/기간 분석 | Azure/Foundry 조회; `--jsonl` 없으면 이메일 경로 사용 가능 |
 | [preview_email.py](preview_email.py) | SYNTHETIC ko/en/ja 단건·digest 디자인 미리보기 | 로컬 HTML만 저장; Azure 호출·이메일 발송·전송 client 초기화 없음 |
 | [preview_web.py](preview_web.py) | SYNTHETIC Admin/Archive/Feedback 브라우저 미리보기 | 루프백 서버, 메모리 내 관리 변경, 모의 접수증; 실분석·이메일 발송·영구 저장 없음 |
@@ -24,6 +27,13 @@ entry point입니다.
 | [`optimize_prompt.py`](optimize_prompt.py) | 고정 sample로 한국어 prompt A/B 최적화 | prompt source를 수정할 수 있음 |
 
 ## 자주 쓰는 예시
+
+새 고객 설치는 [고객 가이드](../infra/CUSTOMER_DEPLOYMENT.md)를 따릅니다. 루트 `.env`가 없는
+별도 clone과 명시적 `-SubscriptionId`, `-ResourceGroup`, `-DeploymentName`, `-Environment`가
+필요합니다. `Configure` → `Mcp` → `Agents` → 전용 Hosted identity 권한 부여 → `Application` →
+`Verify` → 고객 인수 → `EnableSchedule -AcceptOperationalChecks` 순서입니다. 공개 ARM 출력의
+명령 문자열을 `Invoke-Expression`으로 실행하지 않습니다. 초기 실패 시 자동 진행하지 않으며
+`Application`의 되돌림 요청도 실제 리소스 상태를 확인한 뒤 다음 작업을 결정합니다.
 
 ```powershell
 & .\.venv\Scripts\Activate.ps1; python -m scripts.test_local config
