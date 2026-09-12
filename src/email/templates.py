@@ -80,11 +80,14 @@ FONT_SIZE_PX: dict[str, int | float] = {
     "meta": 11,  # badges, table headers, timestamps, fine print
     "secondary": 12,  # table cells, action detail lines, CLI blocks
     "body": 13,  # prose, list items, concept boxes
+    "badge_text": 13.5,
     "heading": 15,  # action titles
     "section_mobile": 15.75,
     "title": 17,  # update titles
+    "section_heading_mobile": 17.325,
     "badge": 18,
     "section": 18.75,
+    "section_heading": 20.625,
     "masthead": 21,  # section headings and takeaways
     "display": 25,  # mobile document title
     "hero": 29,  # digest detail titles
@@ -171,7 +174,7 @@ _RESPONSIVE_STYLE = """
     .azb-outer { padding: 12px 6px 24px !important; }
     .azb-pad { padding-left: 20px !important; padding-right: 20px !important; }
     .azb-hero-title { font-size: 29px !important; }
-    .azb-heading { font-size: 15.75px !important; }
+    .azb-heading { font-size: 17.325px !important; }
     .azb-summary { font-size: 15.75px !important; }
     .azb-wordmark { font-size: 29px !important; }
     .azb-count-value { font-size: 36px !important; }
@@ -222,9 +225,10 @@ _RESPONSIVE_STYLE = """
   @media only screen and (min-width: 800px) {
     .azb-card { max-width: 760px !important; }
         .azb-outer { padding-top: 32px !important; }
-                                .azb-section-label { width: 18% !important; }
-                                .azb-section-copy { width: 82% !important; }
-                                .azb-section-label h2 { padding-right: 18px !important; }
+                                .azb-section-label { width: 15% !important; }
+                                .azb-section-copy { width: 85% !important; }
+                                .azb-section-label h2 { padding-right: 12px !important; }
+                                .azb-section-label .azb-heading-rest { display: block !important; }
   }
   @media only screen and (min-width: 1100px) {
     .azb-card { max-width: 900px !important; }
@@ -765,10 +769,27 @@ HTML_DIGEST_TEMPLATE = _EMAIL_DOCUMENT_START + """
 """ + _EMAIL_DOCUMENT_END
 
 
-def format_email_section_html(label: str, content_html: str, *, full_width: bool = False) -> str:
+def format_email_section_html(
+    label: str, content_html: str, *, full_width: bool = False, count_text: str = ""
+) -> str:
     """Wrap trusted content in a section with a desktop label rail or full-width heading."""
     label_class = "" if full_width else "azb-section-label"
     copy_class = "" if full_width else "azb-section-copy"
+    label_html = escape_email_text(label)
+    count_html = (
+        f'<span class="azb-heading-count" style="font-size:{FONT_SIZE_PX["meta"]}px; '
+        f'font-weight:525; white-space:nowrap;"> · {escape_email_text(count_text)}</span>'
+        if count_text
+        else ""
+    )
+    first_word, separator, remaining_words = label.partition(" ")
+    if separator and not full_width:
+        label_html = (
+            f'{escape_email_text(first_word)}<span class="azb-heading-rest" '
+            f'style="display:inline;"> {escape_email_text(remaining_words)}{count_html}</span>'
+        )
+    else:
+        label_html += count_html
     return (
         '<tr><td class="azb-section azb-pad" style="padding: 0 32px 32px;">'
         '<table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" '
@@ -776,9 +797,10 @@ def format_email_section_html(label: str, content_html: str, *, full_width: bool
         '<tr><td style="padding-top: 20px;">'
         '<table role="presentation" width="100%" align="left" cellspacing="0" cellpadding="0" '
         f'border="0" class="{label_class}" style="table-layout: fixed;"><tr><td>'
-        f'<h2 class="azb-heading" style="margin: 0 0 18px; font-size: {FONT_SIZE_PX["section"]}px; '
+        f'<h2 class="azb-heading" style="margin: 0 0 18px; '
+        f'font-size: {FONT_SIZE_PX["section_heading"]}px; '
         f'font-weight: 525; color: {EMAIL_COLORS["ink"]}; line-height: 1.2; '
-        f'overflow-wrap: anywhere;">{escape_email_text(label)}</h2></td></tr></table>'
+        f'overflow-wrap: anywhere;">{label_html}</h2></td></tr></table>'
         '<table role="presentation" width="100%" align="left" cellspacing="0" cellpadding="0" '
         f'border="0" class="{copy_class}" style="table-layout: fixed;"><tr><td>'
         f'{content_html}</td></tr></table><div style="clear: both; height: 0; line-height: 0;">'
@@ -1291,7 +1313,7 @@ def format_affected_resources_html(
             html += "</tr>\n"
 
     html += "</table>"
-    return format_email_section_html(f"{section_label} · {count_display}", html)
+    return format_email_section_html(section_label, html, count_text=count_display)
 
 
 _RE_PROC_MD_STEP = re.compile(r"^\s*(?:[-*\u2022\u00b7]|\d+[.)])\s+(?P<body>.+)$")
@@ -2055,8 +2077,11 @@ def _level_badge_html(level: str, language: str = "ko") -> str:
         f'<span class="{badge_class}" style="display:inline-block; background-color:{colors["bg"]}; '
         f'color:{colors["color"]}; border-left:{SEMANTIC_ACCENT_WIDTH_PX}px solid {colors["color"]}; '
         f"padding:4px 4px; "
-        f'font-size:{FONT_SIZE_PX["badge"]}px; font-weight:700; line-height:1.5; '
-        f'white-space:nowrap;">{label}</span>'
+        f'font-size:{FONT_SIZE_PX["badge_text"]}px; font-weight:700; '
+        f'line-height:{FONT_SIZE_PX["badge"] * 1.5:g}px; text-align:center; white-space:nowrap;">'
+        f'<span aria-hidden="true" style="display:block; height:0; overflow:hidden; '
+        f'visibility:hidden; font-size:{FONT_SIZE_PX["badge"]}px; line-height:0;">{label}</span>'
+        f"{label}</span>"
     )
 
 

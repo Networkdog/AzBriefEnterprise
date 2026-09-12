@@ -486,19 +486,22 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
   navy heroes or rounded, shadowed cards.
 - Keep the 13px body scale and explicit `cover=36` / `stat=48` display steps. The wordmark uses
   36px and the main title uses 48px; both become 29px on mobile. Contents use 17px titles, 13px summaries
-  and separate 29px number cells. Takeaways and section headings use 18.75px on desktop and
-  15.75px on mobile; section headings use weight 525 and takeaways retain 700. Prose retains
+  and separate 29px number cells. Takeaways use 18.75px on desktop and 15.75px on mobile at weight
+  700. Section headings use 20.625px/17.325px at weight 525. Prose retains
   1.8–1.85 line height. Digest figures and chapter numbers use 48px tabular numerals;
   counts fall back uniformly to 29px at three digits. Keep letter spacing at zero.
-- `format_email_section_html()` uses an 18% label / 82% content rail at >=800px. Its inline/MSO
-  default stacks full-width tables; `full_width=True` keeps contents wide. The masthead also
+- `format_email_section_html()` uses a 15% label / 85% content rail at >=800px, with a desktop-only
+  break after the first word. `count_text` renders resource counts separately at 11px. Its inline/MSO
+  default stacks full-width tables without forced heading breaks; `full_width=True` keeps contents wide. The masthead also
   stacks by default and uses 44%/56% columns only with desktop media queries.
 - Keep the shared email `FONT_STACK_SANS` exactly as
   `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif`.
   Never add remote webfonts; preserve the monospace stack for commands and code blocks.
 - Use shared `SEMANTIC_ACCENT_WIDTH_PX = 4` for level/verification badges, the
   summary takeaway, concept boxes, and additional checks; retain badge top/bottom padding at 4px.
-  Level badges use 18px text. Each assessment label/badge pair lives in its own 33%-width
+  Level badges use 13.5px text while preserving the previous box dimensions: a zero-height,
+  invisible, aria-hidden 18px label preserves width and a 27px line height preserves height.
+  Each assessment label/badge pair lives in its own 33%-width
   auto-layout table so it can wrap as a unit, even in inline-only output, without shrinking text.
   Preserve visible status text, existing colors, thin neutral dividers, and text contrast **≥4.5:1**.
 - Keep the 640px inline/MSO baseline, 760px at 800px and 900px at 1100px. `azb-pad` gutters are 32px

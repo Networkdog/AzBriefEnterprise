@@ -186,12 +186,14 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   item, and links full, numbered contents titles to details and back. A proportional 8px bar and
   48px counters on tinted panels visualize analyzed counts without including skipped items.
   A 36px publication wordmark, 48px document title, 17px contents titles with separate number cells, and full-width teal
-  chapter bands establish a clear hierarchy. Desktop body sections use an 18% heading / 82% content
-  grid with 18.75px headings and takeaways. Section headings use weight 525; takeaways retain 700.
-  Narrow and inline-only layouts stack both parts; mobile media queries reduce headings and
-  takeaways to 15.75px and document titles to 29px. Inline-only output retains the baseline sizes.
+  chapter bands establish a clear hierarchy. Desktop body sections use a 15% heading / 85% content
+  grid with 20.625px headings at weight 525. Multiword rail headings break after the first word;
+  mobile and inline-only headings remain continuous. Takeaways retain 18.75px text at weight 700.
+  Narrow and inline-only layouts stack both parts; mobile media queries reduce headings to
+  17.325px, takeaways to 15.75px, and document titles to 29px. Inline-only output retains baseline sizes.
   Titles stay full-width above labeled metrics in inline-only/MSO output; media-query desktops
-  place the title and three metrics side by side. Level badges use 18px text, with each label/badge
+  place the title and three metrics side by side. Level badges use 13.5px text inside unchanged
+  badge boxes, with each label/badge
   pair wrapping as a unit when space is insufficient, including inline-only output. Mobile layouts label metrics
   and stack resource fields without losing reasons, grouping, or Portal identity. Body text stays
   at 13px with separate 36px/48px display steps. Email text uses

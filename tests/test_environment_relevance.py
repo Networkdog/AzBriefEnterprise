@@ -53,7 +53,9 @@ def test_relevance_heading_is_shared_across_delivery_surfaces(
     archive = render_archive_page(nonce="test", profile="test", user="reader", language=language)
     assert get_labels(language)["relevance_evidence"] == heading
     for content in (single, digest):
-        visible_text = BeautifulSoup(content["html_content"], "html.parser").get_text(" ")
+        visible_text = BeautifulSoup(content["html_content"], "html.parser").get_text(
+            " ", strip=True
+        )
         assert visible_text.count(heading) == 1
         assert content["html_content"].count(result.relevance_evidence) == 1
         assert heading in content["plain_content"]

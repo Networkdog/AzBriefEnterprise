@@ -16,6 +16,7 @@ from src.email.templates import (
     SEMANTIC_ACCENT_WIDTH_PX,
     format_digest_intro_html,
     format_digest_update_card_html,
+    format_email_section_html,
     get_labels,
 )
 
@@ -169,8 +170,17 @@ def test_semantic_color_bars_are_prominent_including_inline_fallback(report_mark
     for badge in soup.select(".azb-verify, [class^='azb-badge-']"):
         assert re.search(r"padding:\s*4px (4|8)px", badge["style"])
     assert FONT_SIZE_PX["badge"] == 12 * 1.5
+    assert FONT_SIZE_PX["badge_text"] == FONT_SIZE_PX["badge"] * 0.75
     for badge in soup.select("[class^='azb-badge-']"):
-        assert f'font-size:{FONT_SIZE_PX["badge"]}px' in badge["style"]
+        assert f'font-size:{FONT_SIZE_PX["badge_text"]}px' in badge["style"]
+        assert "line-height:27px" in badge["style"]
+        assert "text-align:center" in badge["style"]
+        width_guide = badge.find("span", attrs={"aria-hidden": "true"})
+        assert width_guide is not None
+        assert f'font-size:{FONT_SIZE_PX["badge"]}px' in width_guide["style"]
+        assert "height:0" in width_guide["style"]
+        assert "visibility:hidden" in width_guide["style"]
+        assert badge.contents[-1] == width_guide.get_text()
         metric = badge.find_parent("table", class_="azb-metric")
         assert metric is not None
         assert metric["width"] == "33%"
@@ -203,14 +213,18 @@ def test_report_typography_uses_larger_sizes_without_scaling_layout_reset(report
     assert f"font-size: {title_size}px" in soup.find("h1")["style"]
     assert FONT_SIZE_PX["section"] == 25 * 0.75
     assert FONT_SIZE_PX["section_mobile"] == 21 * 0.75
+    assert FONT_SIZE_PX["section_heading"] == pytest.approx(FONT_SIZE_PX["section"] * 1.1)
+    assert FONT_SIZE_PX["section_heading_mobile"] == pytest.approx(
+        FONT_SIZE_PX["section_mobile"] * 1.1
+    )
     for heading in soup.select("h2.azb-heading"):
-        assert f'font-size: {FONT_SIZE_PX["section"]}px' in heading["style"]
+        assert f'font-size: {FONT_SIZE_PX["section_heading"]}px' in heading["style"]
         assert f"font-weight: {700 * 0.75:g}" in heading["style"]
     for summary in soup.select(".azb-summary"):
         assert f'font-size: {FONT_SIZE_PX["section"]}px' in summary["style"]
         assert "font-weight: 700" in summary["style"]
     assert ".azb-hero-title { font-size: 29px !important; }" in markup
-    assert ".azb-heading { font-size: 15.75px !important; }" in markup
+    assert ".azb-heading { font-size: 17.325px !important; }" in markup
     assert ".azb-summary { font-size: 15.75px !important; }" in markup
     assert "font-size: 0 !important" in markup
     assert not re.search(r"font-size:\s*(?:10|14|16|20|24|28)px", markup)
@@ -223,9 +237,45 @@ def test_sections_have_a_label_rail_with_a_full_width_fallback(report_markup, ki
     assert soup.select(".azb-section-label h2")
     for table in soup.select(".azb-section-label, .azb-section-copy"):
         assert table["width"] == "100%"
-    assert ".azb-section-label { width: 18% !important; }" in report_markup(kind, "en")
-    assert ".azb-section-copy { width: 82% !important; }" in report_markup(kind, "en")
-    assert ".azb-section-label h2 { padding-right: 18px !important; }" in report_markup(kind, "en")
+    assert ".azb-section-label { width: 15% !important; }" in report_markup(kind, "en")
+    assert ".azb-section-copy { width: 85% !important; }" in report_markup(kind, "en")
+    assert ".azb-section-label h2 { padding-right: 12px !important; }" in report_markup(kind, "en")
+    assert ".azb-section-label .azb-heading-rest { display: block !important; }" in report_markup(
+        kind, "en"
+    )
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["요약 판정", "영향받는 리소스", "Affected Resources", "References", "<em>Safe & text</em>"],
+)
+@pytest.mark.parametrize("full_width", [False, True])
+def test_section_heading_break_preserves_text_and_inline_fallback(label, full_width):
+    markup = format_email_section_html(label, "<p>Content</p>", full_width=full_width)
+    heading = BeautifulSoup(markup, "html.parser").select_one("h2.azb-heading")
+    assert heading.get_text() == label
+    assert heading.find("em") is None
+    continuation = heading.select_one(".azb-heading-rest")
+    if " " in label and not full_width:
+        first_word, _, remaining_words = label.partition(" ")
+        assert heading.contents[0] == first_word
+        assert continuation.get_text() == " " + remaining_words
+        assert "display:inline" in continuation["style"]
+    else:
+        assert continuation is None
+
+
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_resource_heading_keeps_its_count_separate_from_title_text(report_markup, kind):
+    soup = BeautifulSoup(report_markup(kind, "ko"), "html.parser")
+    counts = soup.select(".azb-heading-count")
+    assert counts
+    for count in counts:
+        assert count.parent["class"] == ["azb-heading-rest"]
+        assert count.parent.contents[0] == " 리소스"
+        assert count.get_text().startswith(" · ")
+        assert "font-size:11px" in count["style"]
+        assert "white-space:nowrap" in count["style"]
 
 
 def test_digest_uses_a_publication_masthead_and_separate_statistic_panels(report_markup):
