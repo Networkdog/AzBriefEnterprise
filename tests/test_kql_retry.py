@@ -34,11 +34,9 @@ class TestSanitizeKqlAdvanced:
         result = sanitize_kql(query)
         assert "render" not in result
 
-    def test_datatable_removed(self):
-        """datatable blocks are removed."""
+    def test_unsupported_datatable_preserved_for_explicit_failure(self):
         query = "datatable(x:string) ['a','b'] | join (Resources) on x"
-        result = sanitize_kql(query)
-        assert "datatable" not in result.lower()
+        assert sanitize_kql(query) == query
 
     def test_project_except_to_project_away(self):
         """project-except is converted to project-away."""
@@ -47,11 +45,9 @@ class TestSanitizeKqlAdvanced:
         assert "project-away" in result
         assert "project-except" not in result
 
-    def test_kind_alias_collision_fixed(self):
-        """kind=tostring(kind) is fixed to kindValue=tostring(kind)."""
+    def test_kind_alias_preserved(self):
         query = "Resources | project name, kind=tostring(kind)"
-        result = sanitize_kql(query)
-        assert "kindValue=tostring(kind)" in result
+        assert sanitize_kql(query) == query
 
     def test_duplicate_pipes_cleaned(self):
         """|| is cleaned to |."""
@@ -87,53 +83,29 @@ class TestResourceGraphQueryFixerRuleBased:
         assert "top 50" not in result or "by" in result
         assert "take 50" in result
 
-    def test_attempt_1_fixes_kind_alias(self):
-        """Attempt 1: fixes kind=tostring(kind) collision."""
+    def test_attempt_1_preserves_kind_alias(self):
         query = "Resources | project name, kind=tostring(kind)"
-        result = self.fixer._rule_based_fix(query, "ParserFailure", 1)
-        # The fix renames the alias to avoid reserved word collision
-        assert "kind=tostring(kind)" not in result
-        assert "kindValue" in result
+        assert self.fixer._rule_based_fix(query, "ParserFailure", 1) == query
 
-    def test_attempt_5_simplifies_projection(self):
-        """Attempt 5: simplifies projection to safe fields."""
+    def test_attempt_5_preserves_requested_projection(self):
         query = "Resources | where type =~ 'x' | project name, complexField=tostring(a.b.c)"
-        result = self.fixer._rule_based_fix(query, "ParserFailure", 5)
-        assert "name" in result
-        assert "location" in result
-        assert "complexField" not in result
+        assert self.fixer._rule_based_fix(query, "ParserFailure", 5) == query
 
-    def test_attempt_8_builds_minimal_query(self):
-        """Attempt 8: builds a minimal query from resource type (no builder available)."""
-        # routeTables has no predefined builder → falls back to the minimal raw query.
+    def test_attempt_8_does_not_replace_query_with_inventory(self):
         query = "Resources | where type =~ 'Microsoft.Network/routeTables' | complex stuff"
-        result = self.fixer._rule_based_fix(query, "ParserFailure", 8)
-        assert "Microsoft.Network/routeTables" in result
-        assert "name" in result
-        assert "limit 100" in result
+        assert self.fixer._rule_based_fix(query, "ParserFailure", 8) == query
 
-    def test_builder_fallback_preserves_intent(self):
-        """A failing custom query for a type WITH a builder falls back to that builder.
-
-        This preserves domain projections (e.g. storage TLS / privateEndpoint /
-        publicNetworkAccess) instead of degrading to a generic raw-properties dump —
-        the #1 cause of degraded queries found in the 3-month KB audit.
-        """
+    def test_builder_cannot_replace_update_specific_question(self):
         query = (
             "Resources | where type =~ 'Microsoft.Storage/storageAccounts' "
+            "| where properties.minimumTlsVersion == 'TLS1_0' "
             "| project name, broken=tostring(a.b.c.d)"
         )
-        result = self.fixer._rule_based_fix(query, "ParserFailure", 8)
-        # Should be the storage builder, not a generic 'properties | limit 100' dump
-        assert "minimumTlsVersion" in result
-        assert "publicNetworkAccess" in result
-        assert "privateEndpoints" in result
+        assert self.fixer._rule_based_fix(query, "ParserFailure", 8) == query
 
-    def test_attempt_11_fallback_count_query(self):
-        """Attempt 11: ultimate fallback to simple count query."""
+    def test_attempt_11_cannot_turn_failure_into_unrelated_count(self):
         query = "completely broken"
-        result = self.fixer._rule_based_fix(query, "Error", 11)
-        assert "summarize count() by type" in result
+        assert self.fixer._rule_based_fix(query, "Error", 11) == query
 
     def test_strip_markdown_fences(self):
         """Markdown code fences are stripped from LLM output."""
@@ -173,38 +145,27 @@ class TestResourceGraphQueryFixerRuleBased:
 
         assert self.fixer._extract_kql_response(response) == ""
 
-    def test_column_reference_error_fix(self):
-        """Error about unresolved column triggers extend removal."""
+    def test_column_reference_error_cannot_orphan_predicate(self):
         query = "Resources | extend badCol = tostring(x) | where badCol == 'y'"
         error_msg = "Failed to resolve scalar expression named 'badCol'"
-        result = self.fixer._rule_based_fix(query, error_msg, 2)
-        # The extend for badCol should be removed
-        assert "badCol" not in result or "extend" not in result
+        assert self.fixer._rule_based_fix(query, error_msg, 2) == query
 
-    def test_kind_tostring_extend_not_orphaned(self):
-        """Unidentifiable ParserFailure must not orphan a moved project alias.
-
-        `project name, kind=tostring(kind)` is rewritten into an extend feeding the
-        projection; the fallback branch must keep that extend so `kindValue` stays
-        defined rather than becoming a dangling reference.
-        """
-        query = (
-            "Resources | where type =~ 'microsoft.web/sites' " "| project name, kind=tostring(kind)"
-        )
-        result = self.fixer._rule_based_fix(query, "ParserFailure near 'kind'", 1)
-        assert "kindValue" in result
-        assert "extend kindValue=tostring(kind)" in result
-        assert "project name, kindValue" in result
-
-    def test_strip_unreferenced_extends_keeps_referenced(self):
-        """Helper keeps extends whose alias is used downstream, drops the rest."""
-        from src.agent.tools import _strip_unreferenced_extends
-
-        query = "Resources | extend a=tostring(x) | extend b=tostring(y) " "| project name, a"
-        result = _strip_unreferenced_extends(query)
-        assert "extend a=tostring(x)" in result  # referenced in project → kept
-        assert "extend b=tostring(y)" not in result  # unreferenced → stripped
-        assert "project name, a" in result
+    @pytest.mark.parametrize("attempt", [1, 3, 5, 8])
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "Resources | where type =~ 'microsoft.network/virtualnetworks' "
+            "| mv-expand subnet=properties.subnets limit 2000 "
+            "| where subnet.properties.privateEndpointNetworkPolicies == 'Disabled' "
+            "| project id, subnetName=tostring(subnet.name)",
+            "Resources | where type =~ 'microsoft.compute/virtualmachines' "
+            "| project id, owner=tolower(properties.managedBy) "
+            "| join kind=leftouter (Resources | project owner=tolower(id), ownerName=name) "
+            "on owner | project id, ownerName",
+        ],
+    )
+    def test_relational_and_array_queries_never_degrade(self, query: str, attempt: int):
+        assert self.fixer._rule_based_fix(query, "ParserFailure", attempt) == query
 
 
 class TestExecuteKqlWithRetry:
@@ -430,9 +391,479 @@ class TestResultImprovementHelpers:
 
         assert _build_type_probe_query("Resources | project name") is None
 
+    def test_probe_keeps_nondefault_table_and_double_quoted_type(self):
+        from src.agent.tools import _build_type_probe_query, _query_has_property_filter
+
+        query = 'RecoveryServicesResources | where type == "microsoft.recoveryservices/items"'
+        probe = _build_type_probe_query(query)
+        assert probe is not None
+        assert probe.startswith("RecoveryServicesResources")
+        assert "subscriptionId" in probe
+        assert "order by id asc" in probe
+        assert not _query_has_property_filter(query)
+
+    def test_relational_query_is_not_replaced_with_single_type_probe(self):
+        from src.agent.tools import _build_type_probe_query
+
+        query = (
+            "Resources | where type =~ 'microsoft.compute/virtualmachines' "
+            "| join (Resources | where type =~ 'microsoft.compute/disks') on id"
+        )
+        assert _build_type_probe_query(query) is None
+
+
+class TestResultReviewLoop:
+    @pytest.fixture(autouse=True)
+    def isolate_fixer_state(self):
+        with (
+            patch("src.agent.tools._kql_fixer_circuit_breaker") as breaker,
+            patch("src.agent.tools.record_successful_query"),
+            patch("src.agent.tools.record_failed_query"),
+        ):
+            breaker.is_open = False
+            yield
+
+    @pytest.mark.asyncio
+    async def test_missing_property_is_probed_rewritten_and_reexecuted(self):
+        from src.agent.tools import execute_kql_with_retry
+
+        original = (
+            "Resources | where type =~ 'microsoft.storage/storageaccounts' "
+            "| project id, tls=tostring(properties.tlsVersion)"
+        )
+        corrected = original.replace("properties.tlsVersion", "properties.minimumTlsVersion")
+        service = MagicMock()
+        service.query_resources = AsyncMock(
+            side_effect=[
+                {"data": [{"id": "account", "tls": None}], "count": 1},
+                {"data": [{"id": "account", "properties": {"minimumTlsVersion": "TLS1_0"}}]},
+                {"data": [{"id": "account", "tls": "TLS1_0"}], "count": 1},
+            ]
+        )
+        fixer = MagicMock()
+        fixer.improve_query_for_result = AsyncMock(return_value=corrected)
+        with patch("src.agent.tools.get_query_fixer", return_value=fixer):
+            result = await execute_kql_with_retry(service, original, expected_columns=["tls"])
+
+        assert service.query_resources.call_count == 3
+        assert "properties" in service.query_resources.call_args_list[1].args[0]
+        assert service.query_resources.call_args_list[2].args[0] == corrected
+        assert result["executed_query"] == corrected
+        assert result["result_rewrites"] == 1
+        assert result["query_status"] == "complete"
+        assert "Required columns" in fixer.improve_query_for_result.call_args.kwargs["result_issue"]
+
+    @pytest.mark.asyncio
+    async def test_nonempty_off_topic_result_is_rewritten_using_purpose(self):
+        from src.agent.tools import execute_kql_with_retry
+
+        original = "Resources | project id, tls=tostring(properties.minimumTlsVersion)"
+        corrected = original + " | where tls == 'TLS1_0'"
+        purpose = "Find only accounts that still require TLS1_0 retirement remediation."
+        service = MagicMock()
+        service.query_resources = AsyncMock(
+            side_effect=[
+                {"data": [{"id": "modern", "tls": "TLS1_2"}], "count": 1},
+                {"data": [{"id": "legacy", "tls": "TLS1_0"}], "count": 1},
+            ]
+        )
+        fixer = MagicMock()
+        fixer.improve_query_for_result = AsyncMock(side_effect=[corrected, corrected])
+        with patch("src.agent.tools.get_query_fixer", return_value=fixer):
+            result = await execute_kql_with_retry(
+                service, original, purpose=purpose, expected_columns=["tls"]
+            )
+
+        assert service.query_resources.call_count == 2
+        assert result["data"][0]["id"] == "legacy"
+        assert result["query_status"] == "complete"
+        assert fixer.improve_query_for_result.call_args.kwargs["original_query"] == original
+        assert fixer.improve_query_for_result.call_args.kwargs["purpose"] == purpose
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("value", [False, 0])
+    async def test_false_and_zero_are_valid_required_evidence(self, value: object):
+        from src.agent.tools import execute_kql_with_retry
+
+        service = MagicMock()
+        service.query_resources = AsyncMock(return_value={"data": [{"setting": value}]})
+        fixer = MagicMock()
+        fixer.improve_query_for_result = AsyncMock()
+        with patch("src.agent.tools.get_query_fixer", return_value=fixer):
+            result = await execute_kql_with_retry(
+                service,
+                "Resources | project setting=properties.enabled",
+                expected_columns=["setting"],
+            )
+        assert result["query_status"] == "complete"
+        fixer.improve_query_for_result.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unresolved_required_property_is_partial_not_false(self):
+        from src.agent.tools import execute_kql_with_retry
+
+        service = MagicMock()
+        service.query_resources = AsyncMock(return_value={"data": [{"setting": None}]})
+        fixer = MagicMock()
+        fixer.improve_query_for_result = AsyncMock(return_value=None)
+        with patch("src.agent.tools.get_query_fixer", return_value=fixer):
+            result = await execute_kql_with_retry(
+                service,
+                "Resources | project setting=properties.unknown",
+                expected_columns=["setting"],
+            )
+        assert result["data"][0]["setting"] is None
+        assert result["query_status"] == "partial"
+        assert "Required columns" in result["evidence_gaps"][0]
+
+    @pytest.mark.asyncio
+    async def test_probe_cannot_be_returned_as_affected_resources(self):
+        from src.agent.tools import execute_kql_with_retry
+
+        service = MagicMock()
+        service.query_resources = AsyncMock(
+            side_effect=[
+                {"data": [], "count": 0},
+                {"data": [{"id": "modern", "properties": {"minimumTlsVersion": "TLS1_2"}}]},
+            ]
+        )
+        fixer = MagicMock()
+        fixer.improve_query_for_empty_result = AsyncMock(return_value=None)
+        with patch("src.agent.tools.get_query_fixer", return_value=fixer):
+            result = await execute_kql_with_retry(
+                service,
+                "Resources | where type =~ 'microsoft.storage/storageaccounts' "
+                "| where properties.minimumTlsVersion == 'TLS1_0'",
+            )
+        assert result["data"] == []
+        assert result["count"] == 0
+        assert result["query_status"] == "partial"
+
+    @pytest.mark.asyncio
+    async def test_last_attempt_empty_result_returns_explicit_gap(self):
+        from src.agent.tools import execute_kql_with_retry
+
+        service = MagicMock()
+        service.query_resources = AsyncMock(return_value={"data": [], "count": 0})
+        with patch("src.agent.tools.get_query_fixer") as fixer:
+            result = await execute_kql_with_retry(
+                service,
+                "Resources | where type =~ 'microsoft.storage/storageaccounts' "
+                "| where properties.minimumTlsVersion == 'TLS1_0'",
+                max_retries=1,
+            )
+        assert result["query_status"] == "partial"
+        assert result["query_attempts"] == 1
+        service.query_resources.assert_called_once()
+        fixer.return_value.improve_query_for_empty_result.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_syntax_rewrite_cycle_stops_before_repeating_query(self):
+        from src.agent.tools import execute_kql_with_retry
+
+        original = "Resources | project missing"
+        revised = "Resources | project alsoMissing"
+        service = MagicMock()
+        service.query_resources = AsyncMock(side_effect=RuntimeError("InvalidQuery"))
+        fixer = MagicMock()
+        fixer.fix_query = AsyncMock(side_effect=[revised, original])
+        with patch("src.agent.tools.get_query_fixer", return_value=fixer):
+            with pytest.raises(RuntimeError, match="failed after 2 retries"):
+                await execute_kql_with_retry(service, original)
+        assert service.query_resources.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_semantic_rewrite_cycle_returns_last_result_with_gap(self):
+        from src.agent.tools import execute_kql_with_retry
+
+        original = "Resources | project id, setting=properties.first"
+        revised = "Resources | project id, setting=properties.second"
+        service = MagicMock()
+        service.query_resources = AsyncMock(return_value={"data": [{"setting": "candidate"}]})
+        fixer = MagicMock()
+        fixer.improve_query_for_result = AsyncMock(side_effect=[revised, original])
+        with patch("src.agent.tools.get_query_fixer", return_value=fixer):
+            result = await execute_kql_with_retry(service, original, purpose="Check the setting.")
+        assert service.query_resources.call_count == 2
+        assert result["executed_query"] == revised
+        assert result["query_status"] == "partial"
+        assert any("repeated" in gap for gap in result["evidence_gaps"])
+
+    @pytest.mark.asyncio
+    async def test_scope_rejection_does_not_retry_or_rewrite(self):
+        from src.agent.tools import execute_kql_with_retry
+
+        service = MagicMock()
+        service.query_resources = AsyncMock(side_effect=ValueError("outside the analysis scope"))
+        with patch("src.agent.tools.get_query_fixer") as fixer:
+            with pytest.raises(RuntimeError, match="outside the analysis scope"):
+                await execute_kql_with_retry(service, "Resources | project id")
+        service.query_resources.assert_called_once()
+        fixer.return_value.fix_query.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [401, 403])
+    async def test_permission_error_is_not_rewritten_or_retried(self, status_code: int):
+        from azure.core.exceptions import HttpResponseError
+
+        from src.agent.tools import execute_kql_with_retry
+
+        error = HttpResponseError(message="AuthorizationFailed")
+        error.status_code = status_code
+        service = MagicMock()
+        service.query_resources = AsyncMock(side_effect=error)
+        with patch("src.agent.tools.get_query_fixer") as fixer:
+            with pytest.raises(RuntimeError, match="failed after 1 retries"):
+                await execute_kql_with_retry(service, "Resources | project id")
+        service.query_resources.assert_called_once()
+        fixer.return_value.fix_query.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_tool_passes_result_requirements_to_loop(self):
+        from src.agent.tools import ResourceGraphQueryTool
+
+        service = MagicMock()
+        tool = ResourceGraphQueryTool(service=service)
+        with patch("src.agent.tools.execute_kql_with_retry", new_callable=AsyncMock) as execute:
+            execute.return_value = {"data": [], "count": 0}
+            await tool.ainvoke(
+                {
+                    "query": "Resources | project id",
+                    "purpose": "Locate candidates",
+                    "expected_columns": ["id"],
+                }
+            )
+        execute.assert_awaited_once_with(
+            service, "Resources | project id", purpose="Locate candidates", expected_columns=["id"]
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_review_does_not_teach_relaxing_security_thresholds(self):
+        specialist = MagicMock()
+        query = "Resources | where properties.minimumTlsVersion == 'TLS1_0'"
+        specialist.ainvoke = AsyncMock(return_value=MagicMock(content=query))
+        fixer = ResourceGraphQueryFixer(llm=specialist)
+        result = await fixer.improve_query_for_empty_result(
+            query, '{"properties": {"minimumTlsVersion": "TLS1_2"}}'
+        )
+        assert result == query
+        prompt = specialist.ainvoke.call_args.args[0][1].content
+        assert "Zero rows can be the correct answer" in prompt
+        assert "Never change TLS1_0 to TLS1_2" in prompt
+        assert "therefore too strict" not in prompt
+
+
+class TestKqlInvestigationGuidance:
+    def test_cached_queries_do_not_define_allowed_query_shapes(self):
+        from src.agent.kql_knowledge import build_context_for_prompt
+
+        with patch(
+            "src.agent.kql_knowledge._load",
+            return_value={
+                "schemas": {"test/type": {"paths": ["properties.oldField"]}},
+                "queries": {},
+                "failed_queries": [
+                    {"query": "Resources | join (Resources) on id", "error": "ParserFailure"}
+                ],
+            },
+        ):
+            context = build_context_for_prompt()
+        assert "not current tenant evidence" in context
+        assert "not a ban on joins" in context
+        assert "DO NOT REPEAT" not in context
+
+    def test_persisted_runtime_guidance_matches_advanced_query_contract(self):
+        from scripts.provision_foundry_agents import agent_instructions
+
+        instructions = agent_instructions("resource_graph")
+        assert "expected_columns" in instructions
+        assert "Builder" not in instructions or "not limits" in instructions
+        assert "no `join`" not in instructions
+        assert "two result rewrites" in instructions
+        assert "uncollected Azure pages" in instructions
+
+    def test_plan_purpose_reaches_query_tool_without_replacing_custom_kql(self):
+        from src.agent.analyzer import AnalysisTask, AzureUpdateAnalyzer
+        from src.agent.tools import ResourceGraphQueryTool
+
+        query = "ResourceChanges | project id, changed=todatetime(properties.changeAttributes.timestamp)"
+        task = AnalysisTask(
+            task_id="changed",
+            description="Find configuration changes",
+            method="kql",
+            tool_name="query_azure_resources",
+            tool_args={"query": query, "expected_columns": ["changed"]},
+            purpose="Check the actual change timestamp for the update decision.",
+        )
+        AzureUpdateAnalyzer._fill_contextual_tool_args(
+            task, ResourceGraphQueryTool(service=MagicMock()), {}
+        )
+        assert task.tool_args["query"] == query
+        assert task.tool_args["expected_columns"] == ["changed"]
+        assert task.tool_args["purpose"] == task.purpose
+
+    def test_planning_and_specialist_allow_goal_directed_advanced_queries(self):
+        from src.agent.foundry_backend import SPECIALIST_PROMPTS
+        from src.agent.prompts.phases import PLANNING_PROMPT
+
+        specialist = SPECIALIST_PROMPTS["resource_graph"].format(update_context="TLS retirement")
+        for guidance in (PLANNING_PROMPT, specialist, ResourceGraphQueryFixer.SYSTEM_PROMPT):
+            assert "no join" not in guidance.lower()
+            assert "project expressions" in guidance or "project alias=expression" in guidance
+        assert "FOLLOW THIS" not in PLANNING_PROMPT
+        assert "expected_columns" in PLANNING_PROMPT
+        assert "next native tool round" in specialist
+        assert "Always add `| limit 200`" not in ResourceGraphQueryFixer.SYSTEM_PROMPT
+        assert "reserved `kind=tostring(kind)`" in ResourceGraphQueryFixer.SYSTEM_PROMPT
+
+    def test_evaluation_and_revision_require_query_intent_not_only_success(self):
+        from src.agent.prompts.phases import EVALUATION_PROMPT, REVISE_TASKS_PROMPT
+
+        evaluation = EVALUATION_PROMPT.format(
+            update_context="update", task_results_summary="results"
+        )
+        revision = REVISE_TASKS_PROMPT.format(
+            evaluation_result="partial", current_plan="plan", task_results_summary="results"
+        )
+        assert '"query_intent": true' in evaluation
+        assert "query_intent: false" in evaluation
+        assert "never received" in evaluation
+        assert "expected_columns" in revision
+        assert "Do not change thresholds just to produce rows" in revision
+
+
+class TestSchemaExploration:
+    @pytest.mark.asyncio
+    async def test_live_samples_merge_nested_objects_arrays_and_false_values(self):
+        from src.agent.tools import ExploreResourceSchemaTool
+
+        service = MagicMock()
+        service.query_resources = AsyncMock(
+            return_value={
+                "data": [
+                    {"id": "first", "properties": {"provisioningState": "Succeeded"}},
+                    {
+                        "id": "second",
+                        "properties": {
+                            "storageProfile": {"fileCSIDriver": {"enabled": False}},
+                            "agentPoolProfiles": [{"name": "pool"}, {"osSKU": "AzureLinux"}],
+                        },
+                    },
+                ]
+            }
+        )
+        with (
+            patch("src.agent.tools.get_known_schema", return_value=["properties.oldPath"]),
+            patch("src.agent.tools.record_schema") as record,
+        ):
+            output = await ExploreResourceSchemaTool(service=service)._arun(
+                "Microsoft.ContainerService/managedClusters"
+            )
+        assert "properties.storageProfile.fileCSIDriver.enabled: false" in output
+        assert "properties.agentPoolProfiles[].osSKU" in output
+        assert "AzureLinux" in output
+        assert "Historical path hints, not observed" in output
+        assert "Not exhaustive" in output
+        assert "order by id asc" in service.query_resources.call_args.args[0]
+        assert "take 5" in service.query_resources.call_args.args[0]
+        assert "properties.storageProfile.fileCSIDriver.enabled" in record.call_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_multiword_focus_matches_nested_path_without_second_query(self):
+        from src.agent.tools import ExploreResourceSchemaTool
+
+        service = MagicMock()
+        service.query_resources = AsyncMock(
+            return_value={
+                "data": [{"id": "account", "properties": {"minimumTlsVersion": "TLS1_2"}}]
+            }
+        )
+        with (
+            patch("src.agent.tools.get_known_schema", return_value=[]),
+            patch("src.agent.tools.record_schema"),
+        ):
+            output = await ExploreResourceSchemaTool(service=service)._arun(
+                "Microsoft.Storage/storageAccounts", focus_area="TLS settings"
+            )
+        assert 'properties.minimumTlsVersion: "TLS1_2"' in output
+        service.query_resources.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_secondary_table_and_punctuated_property_names(self):
+        from src.agent.tools import ExploreResourceSchemaTool
+
+        service = MagicMock()
+        service.query_resources = AsyncMock(
+            return_value={"data": [{"id": "item", "properties": {"odata.type": "sample"}}]}
+        )
+        with (
+            patch("src.agent.tools.get_known_schema", return_value=[]),
+            patch("src.agent.tools.record_schema"),
+        ):
+            output = await ExploreResourceSchemaTool(service=service)._arun(
+                "Microsoft.RecoveryServices/items", table="RecoveryServicesResources"
+            )
+        assert service.query_resources.call_args.args[0].startswith("RecoveryServicesResources")
+        assert 'properties["odata.type"]' in output
+
+    @pytest.mark.asyncio
+    async def test_schema_cap_is_disclosed(self):
+        from src.agent.tools import ExploreResourceSchemaTool
+
+        service = MagicMock()
+        service.query_resources = AsyncMock(
+            return_value={"data": [{"id": "account", "properties": {"values": list(range(20))}}]}
+        )
+        with (
+            patch("src.agent.tools.get_known_schema", return_value=[]),
+            patch("src.agent.tools.record_schema"),
+        ):
+            output = await ExploreResourceSchemaTool(service=service)._arun(
+                "Microsoft.Test/accounts"
+            )
+        assert "traversal_capped=true" in output
+        assert "Missing paths are unknown" in output
+
 
 class TestResourceGraphSpecialistBoundary:
     """The query fixer never crosses into another Prompt Agent specialty."""
+
+    def test_standalone_fixer_disables_native_tools(self):
+        fixer = ResourceGraphQueryFixer()
+        with (
+            patch("src.config.get_settings"),
+            patch("src.agent.foundry_backend.create_foundry_chat_model") as create,
+        ):
+            model = fixer._get_llm()
+        create.return_value.without_tools.assert_called_once_with()
+        assert model is create.return_value.without_tools.return_value
+
+    @pytest.mark.asyncio
+    async def test_result_review_cancellation_propagates(self):
+        specialist = MagicMock()
+        specialist.ainvoke = AsyncMock(side_effect=asyncio.CancelledError())
+        fixer = ResourceGraphQueryFixer(llm=specialist)
+        with pytest.raises(asyncio.CancelledError):
+            await fixer.improve_query_for_empty_result("Resources | where kind == 'legacy'", "[]")
+
+    @pytest.mark.asyncio
+    async def test_syntax_repair_cancellation_does_not_fall_back(self):
+        fixer = ResourceGraphQueryFixer(llm=MagicMock())
+        with (
+            patch.object(
+                fixer, "_search_docs_for_fix", new_callable=AsyncMock, return_value="docs"
+            ),
+            patch.object(
+                fixer,
+                "_llm_fix_query",
+                new_callable=AsyncMock,
+                side_effect=asyncio.CancelledError(),
+            ),
+            patch.object(fixer, "_rule_based_fix") as fallback,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                await fixer.fix_query("Resources | broken", "ParserFailure", 1)
+        fallback.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_availability_error_is_not_sent_to_another_agent(self):

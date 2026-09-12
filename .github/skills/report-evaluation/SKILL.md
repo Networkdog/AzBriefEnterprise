@@ -11,6 +11,9 @@ description: 'G-Eval and Microsoft Foundry cloud-evaluation methodology for scor
   independent from the report writer.
 - Evaluate independently across actionability, faithfulness, job relevance, structure, and
   architectural depth. Faithfulness outranks polish.
+- For architectural depth, reward an evidenced CSA decision brief: a decision hinge, conditional
+  recommendation, alternative/current-state boundary, concrete trade-off, hidden failure mode,
+  operational responsibility, and closure evidence. Do not reward generic WAF or compliance labels.
 - Treat any fabricated resource, date, command, or URL as critical. Reward concise evidence,
   honest zero-impact findings, and explicit limits rather than verbosity.
 - Judge changes by confirmed applicability/action and capabilities by documented value/adoption
@@ -143,7 +146,7 @@ another (no anchor bleed / halo effect). Each is judged in its **own parallel LL
 | D2 | `faithfulness` | 맥락적 사실성·데이터 충실성 | 1.3 | Every claim grounded in source context; zero hallucination |
 | D3 | `job_relevance` | 직무 연관성·독자 맞춤화 | 1.0 | Narrative re-centered on the subscriber's role |
 | D4 | `structure` | 구조적 명확성·시각적 디자인 | 0.9 | Headings, tables, emphasis → 1-second scannability |
-| D5 | `architectural_depth` | 클라우드 아키텍처 통찰 | 1.0 | 2nd/3rd-order ripple effects, WAF pillars, compliance |
+| D5 | `architectural_depth` | 클라우드 아키텍처 통찰 | 1.0 | 판단축, 조건부 권고, 2·3차 영향, 숨은 실패 모드, 운영 책임과 완료 기준 |
 
 `faithfulness` carries the highest weight — a fabricated fact is the most dangerous
 failure. `structure` carries the least — polish matters less than correctness.
@@ -223,6 +226,8 @@ categories, matching what the reader sees in the email.
 The environment-relevance section uses the same localized `relevance_evidence` label as Archive and
 email. Judge its actual grounding: public documents establish a capability's conditional use cases,
 not that the tenant needs or plans to adopt it. Preserve `unknown` for material missing evidence.
+Resource-section headings likewise use the shared `affected_resources` label (`연관 리소스` in
+Korean); this does not change the resource data, selection logic, or scoring rubric.
 The mechanical evaluator checks rationale presence and structural contradictions without requiring
 resource counts for workload/code-only cases. Its revised category-aware scoring must not be compared
 directly with old totals as evidence of a generation-quality gain; establish a fresh baseline.

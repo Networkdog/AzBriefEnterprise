@@ -45,6 +45,9 @@ assert "CATEGORY: `retirement`" not in prompt
 - `affected_resources`: 실제 query property가 왜 영향을 입증하는지 resource별로 기록
 - `action_items`: 실제 대상, 절차, 주의사항, rollback, 근거 있는 deadline을 구조화
 - `impact_details`: category family에 맞는 구체적 impact 또는 opportunity만 기록
+- `impact_summary.cost_impact` (생성 JSON): 비용 관련 업데이트의 실제 지출 기준선은 조회
+  범위·기간·통화와 함께 기록하고, 예상 증감은 단가·사용량 근거와 가정을 별도로 제시합니다.
+  빈 데이터나 조회 실패는 0원으로 쓰지 않으며, 관련 없는 전체 비용에 절감률을 곱하지 않습니다.
 - `additional_checks`: 현재 tool로 답할 수 없는 data-plane/app/in-cluster 사실만 남김
 - `reference_docs`: 수집된 실제 HTTP(S) URL만 사용하며 URL을 만들어내지 않음
 

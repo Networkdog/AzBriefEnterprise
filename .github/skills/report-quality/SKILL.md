@@ -19,6 +19,14 @@ description: 'Evaluate and improve AzBrief report quality. Use when: report qual
      and limited to one grounded, non-mutating fit check.
 - Keep evidence, relevance, resource counts/reasons, and conclusions consistent. Actions name
      what, where, why, completion criteria, precautions, rollback, and only real deadlines.
+- For material financial implications, report the scoped ActualCost baseline with period and
+     currency in the cost-impact field. Separate observed spending from estimates; estimates need
+     documented rates and matching usage, not an advertised discount on the entire bill. Preserve
+     missing cost evidence and never treat empty data, denied access, or ActualCost zero as free use.
+- Treat the artifact as a CSA decision brief, not feature education. Name the decision hinge,
+     give a grounded recommendation plus the condition for the alternative/current state, contrast
+     supported gains and trade-offs, identify the operational responsibility, and define the evidence
+     that closes the decision. Never expose sales motions or invent customer plans.
 - Distinguish non-mutating evaluation actions from executable changes. An `advisory_review`
      does not require CLI or rollback; treat an incomplete go/no-go check as caution, not unsafe.
      Its command must be empty or read-only; an evaluate/review task paired with `update`, `set`,
@@ -125,7 +133,7 @@ AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·
 | `impact_summary` | 5 | 내용이 있는 차원 수. Capability 카테고리는 개수를 보상하지 않고, "영향 없음"만 쓴 빈 차원을 감점 |
 | `affected_resources` | 5 | Resource Graph 속성값 근거 포함 (reason 필드) |
 | `reference_docs` | 4 | 1개 이상 Microsoft Learn URL 포함 |
-| `additional_checks` | 3 | CSA 검토 권장 사항 포함 (선택) |
+| `additional_checks` | 3 | 미확인된 의사결정 사실을 WHAT/WHERE/WHY가 있는 자가 검증 항목으로 표현하며 CSA에게 되넘기지 않음 (선택) |
 
 **구조 표준**:
 ```

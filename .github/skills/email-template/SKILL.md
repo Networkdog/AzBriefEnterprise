@@ -50,7 +50,7 @@ Labels live in `src/i18n/labels/<code>.py`, one `LABELS` dict per language.
 LABELS: dict[str, str] = {
     "analysis_summary": "개요",
     "impact_analysis": "영향 분석",
-    "affected_resources": "영향받는 리소스",
+    "affected_resources": "연관 리소스",
     ...
 }
 ```
@@ -59,6 +59,8 @@ Add every new key to `ko.py` first — `label_keys()` derives the canonical set 
 it, and `missing_label_keys("ja")` reports what a language has not translated yet.
 Missing keys are backfilled through the registry fallback chain, so a partial
 translation renders in the fallback language instead of raising `KeyError`.
+The Korean resource-section title is `연관 리소스` across email, Archive, and judge Markdown.
+Keep the `affected_resources` field and archived data unchanged; this is a display label only.
 
 ### `HTML_EMAIL_TEMPLATE` / `HTML_DIGEST_TEMPLATE`
 
@@ -269,7 +271,7 @@ table — intended, since its reading pane is usually narrow.
 - User-facing text follows the requested language; Korean is the default, with curated ko/en/ja labels
 - Add new label keys to `src/i18n/labels/ko.py` first, then translate in `en.py` / `ja.py`
 - Urgency prefixes: `[긴급]`, `[중요]`
-- Default "no data" messages: `"영향받는 리소스가 없습니다."`, etc.
+- Default "no data" messages: `"연관 리소스가 없습니다."`, etc.
 
 ## `EmailService` in `service.py`
 

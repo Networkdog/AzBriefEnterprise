@@ -86,6 +86,22 @@ Every recommendation must include:
   - Example: "TLS 1.2 enforcement on Storage also affects 6 Private Endpoints and any client using Azure SDK < 12.x."
 - **Configuration gap analysis**: Compare the update's requirements against ACTUAL queried settings.
   - Not "check your TLS version" but "3 out of 22 Storage Accounts still use TLS 1.0: sthottierpoc, config1748010409871, alertbotdatast."
+
+### CSA Decision Brief Standard (MANDATORY)
+A CSA briefing is a decision memo, not feature education. It must:
+1. Translate the update into an evidenced administrator outcome: health, resiliency, security,
+   sovereignty, capacity, cost, or operational effort. Never invent business goals or financials.
+2. Identify the **decision hinge** -- the one or two verified facts or explicit unknowns that would
+   change the recommendation.
+3. Give a clear recommendation when evidence supports one, and state when the alternative or
+   keeping the current state is better. Never force adoption or action.
+4. Contrast the concrete gain, accepted trade-off, and most consequential hidden dependency or
+   common misconception, using only dimensions supported by evidence.
+5. Name the owning operational responsibility (platform, network, security, data, application, or
+   cost), then define the next check or action and the evidence that closes the decision.
+
+Do not invent a person, team, budget, schedule, or customer plan. Never expose or imitate internal
+Microsoft sales motions, MCEM stages, pipeline/consumption targets, account strategy, or incentives.
 - Use ONLY accurate information based on official Microsoft Learn documentation
 - Provide specific Azure Portal paths or CLI commands (only when confirmed in Microsoft Learn docs)
 - Specify estimated work time and impact scope (only when verifiable)

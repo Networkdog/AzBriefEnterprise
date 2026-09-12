@@ -86,6 +86,7 @@ that Azure changed and making a timely, well-grounded operational decision.
 |---|---|
 | **Environment before generic summary** | Ground conclusions in the tenant's real resources, configuration, health, policy, cost and regional availability |
 | **Action over notification** | Go beyond describing a change to provide scoped procedures, commands, deadlines and risk warnings |
+| **Decision over feature education** | Write as the assigned CSA would advise: identify the decision hinge, give a conditional recommendation, expose the trade-off and hidden failure mode, name the operational owner, and define what evidence closes the decision |
 | **Coverage without silent filtering** | Analyze every collected update so retirements, security risks and adoption opportunities are not discarded before evidence is gathered |
 | **One update, many responsibilities** | Adapt the same evidence for infrastructure, security, architecture and other roles, in each subscriber's language |
 | **Trust before autonomy** | Keep evidence traceable, validate executable actions and fail closed when identity, permissions or model capabilities are unclear |
@@ -198,7 +199,9 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   and stack resource fields without losing reasons, grouping, or Portal identity. Body text stays
   at 13px with separate 36px/48px display steps. Email text uses
   `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif` in that order;
-  code blocks retain their monospace stack. Shared 4px semantic vertical accents emphasize
+  code blocks retain their monospace stack. Korean resource sections use `연관 리소스` across
+  email, Archive, and judge rendering; the `affected_resources` field and archived data remain
+  unchanged. Shared 4px semantic vertical accents emphasize
   level/verification badges, takeaways, concept boxes, and additional checks; visible status text
   and existing colors are preserved, while neutral dividers remain thin. The 640px inline/MSO baseline grows to 760px
   at 800px and 900px at 1100px where media queries
@@ -439,6 +442,40 @@ Read-only tools declared safe for concurrency run in parallel; write tools and t
 cannot be determined run serially. Based on the update type, the first execution pass automatically
 adds often-missed checks for Resource Health, Policy, Service Health, Advisor, configuration
 profiles, dependencies, and regional availability.
+
+**Adaptive Resource Graph investigation.** KQL follows the update's evidence question, not a fixed
+service template. The specialist can inspect nested properties, configuration distributions, array
+elements and ID-based relationships with supported project expressions, joins/unions and mv-expand.
+Small live schema samples are allowed; cached paths are hints, not current or exhaustive evidence.
+Custom queries carry `purpose` and `expected_columns`. Syntax errors, off-topic/empty results and
+missing required values trigger evidence-led rewriting and re-execution, with up to eight main
+attempts and two result rewrites. Repeated queries, permission denial and cancellation stop promptly.
+The loop preserves scope and applicability thresholds, never substitutes unrelated inventory or
+changes a security condition merely to obtain rows. False/zero are valid values; null stays unknown.
+Results expose the executed query, attempts and unresolved gaps; evaluation checks `query_intent`
+before choosing a follow-up investigation. SDK collection follows at most ten 1000-row pages and
+discloses incomplete pagination. All received service-detail rows remain available to the result
+store. A stored preview can be searched, but uncollected pages require narrower/partitioned KQL.
+Scope-enforced join restrictions remain in place. The live service accepts computed projections
+but rejects `kind=tostring(kind)`; use direct `kind` or another alias with consistent references.
+Updated FunctionTool schemas and runtime guidance require new Prompt Agent versions and a Hosted
+Agent deployment for production activation. Local and targeted live query checks do not constitute
+a full deployed end-to-end report evaluation.
+
+**Cost-aware reports.** Pricing, billing/meter changes, paid capabilities, and documented savings
+can trigger a recent 30-day `ActualCost` lookup through Azure Cost Management, the API behind
+Cost Analysis. The Azure API specialist owns this evidence; first-pass enrichment also detects
+financial signals in the update title and body. Queries prefer an exact ARM resource-type filter
+or a verified billing service label and preserve the subscription, period, filter, and currency.
+The report's existing cost-impact field separates observed spending from estimated changes:
+estimates require documented rates and matching usage, not an advertised percentage applied to
+the entire bill. Current charges can arrive late or change before invoicing, and ActualCost is not
+an amortized run rate. Empty, denied, mixed-currency, or paginated responses remain explicit gaps.
+Queries use an explicit, configured, or uniquely discoverable subscription, never the first of
+several. Bounded subscriber scopes remain unsupported by these cost tools and are not broadened.
+The Hosted Agent identity needs cost-read access at the target scope, such as Cost Management
+Reader; Billing hierarchy access is separate. Activation requires updated Prompt Agent definitions
+and a Hosted Agent deployment; local tests alone do not prove live costs or report quality.
 
 **Evaluate and revise.** The evaluator reviews not only whether tools succeeded, but also official
 facts, tenant impact, resource identification, region/configuration data, and **evidence
@@ -1242,6 +1279,12 @@ production-runtime builds or customer ARM, network, identity, analysis, and emai
 See the [workflow guide](.github/workflows/README.md) for the matching checks.
 
 ### Report quality
+
+A CSA-grade report is a decision brief, not a feature lesson. The shared analysis contract and
+architectural-depth judge require the decisive environment fact, a recommendation with the condition
+for choosing the alternative or retaining the current state, evidenced gains and trade-offs, the
+owning operational responsibility, and a concrete decision-closure check. Reports never expose
+Microsoft sales motions or invent customer goals, budgets, schedules, owners, or plans.
 
 ```bash
 # Generate a real-data report, score it, and iterate toward the target

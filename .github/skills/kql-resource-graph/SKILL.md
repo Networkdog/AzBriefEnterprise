@@ -9,20 +9,40 @@ description: 'Write and debug KQL queries for Azure Resource Graph. Use when: KQ
 
 - As the Resource Graph specialist, own KQL authoring, schema probing, result
   interpretation, and KQL repair. Do not hand this work to another specialist.
-- Use Resource Graph's restricted dialect: no `join`, `let`, `render`, `datatable`, or
-  `toscalar()`; use `mv-expand` only on arrays.
-- Compare types with `=~`, retain `subscriptionId`, project named fields, and order stably.
-  Never return broad raw `properties`, `tags`, or `sku` bags.
+- Start with the update's applicability question, not a predefined service template.
+  Select nested projections, typed predicates, distributions, array expansion or ID-based
+  relationships according to the evidence needed. Builders are optional examples, not limits.
+- Resource Graph supports project expressions, join/union and mv-expand within documented
+  limits. No let, render, datatable, externaldata, toscalar or custom join strategies.
+  Use at most three join/union operations combined and three mv-expand operators; observe
+  cross-table/right-table reuse restrictions. mv-expand supports arrays and documented bag
+  expansion, defaults to 128 elements and allows at most 2000; set its limit explicitly.
+- Compare types with =~ or in~, retain scalar id/subscriptionId and order enumerations stably.
+  Cast by meaning and distinguish null/missing from false/zero. Project expressions are valid,
+  but the live service rejects kind=tostring(kind); project kind directly or use resourceKind.
+  Keep all downstream alias references consistent. There is no five-extend restriction.
+- Avoid broad raw properties/tags/sku dumps, but allow bounded 1-5 resource/parent-bag samples
+  for discovery. Inspect nested objects and arrays across variants; cached schemas and samples
+  are hints, not exhaustive evidence. Do not guess a dependent query before its probe returns.
 - Keep similarly named AKS properties semantically distinct: Azure Files/Disk CSI state comes
   from `storageProfile.fileCSIDriver` / `diskCSIDriver`; the Key Vault secrets provider under
   `addonProfiles.azureKeyvaultSecretsProvider` is not a storage CSI signal.
 - Query tenant-wide accessible subscriptions by default and cite exact IDs. When the runtime supplies
   a Management Group/Subscription/Resource Group scope, treat it as a hard boundary and never query
-  or report outside it. Query ARM resources and properties now; defer only data-plane, application,
-  or in-cluster state.
-- An empty filtered result does not prove absence. Probe the type, correct filters against
-  observed values, and preserve uncertainty when completeness is unresolved. On failure,
-  prefer deterministic builder/rule recovery or emit a gap; never cross-fallback roles.
+  or report outside it. App-injected Resource Group or intersected Management Group/subscription
+  predicates prohibit join/union: use separate scoped queries and correlate exact IDs instead.
+  Try the relevant ARG table/path before deferring; unsupported/masked ARM fields remain gaps.
+- Pass purpose and expected_columns to query_azure_resources. On syntax failure, off-topic rows,
+  an empty filtered result or missing required values, use observed errors/schema to rewrite
+  and re-execute without changing scope, identities, thresholds or the original question.
+  Zero rows can be correct; never relax an eligibility/security condition merely to find rows.
+- Inspect executed_query, query_status and evidence_gaps, not just HTTP success. The inner loop
+  has at most eight attempts and two result rewrites, stops repeated queries, and returns gaps
+  when no supported correction exists. Never substitute a builder/count for a failed question.
+  Use the next native tool round or evaluation/revision pass for a different, evidence-led query.
+- Complete enumerations must not contain take/limit; retain scalar IDs for SDK paging. The service
+  collects at most ten 1000-row pages. For result_truncated=true, narrow or partition KQL. A local
+  [ref=Rn] search can recover a stored preview, not uncollected Azure pages or capped storage.
 
 <!-- End Foundry Runtime Guidance -->
 
@@ -43,8 +63,15 @@ Resource Graph KQL is a **subset** of full Kusto Query Language. These operation
 | `let` statements | Inline the value directly |
 | `render` | Not supported — post-process in Python |
 | `datatable` | Use `where` with literal values |
-| `mv-expand` on nested bags | `mv-expand` on arrays only |
 | `toscalar()` | Not supported |
+
+Supported operators are not an excuse to add complexity without an information need. Joins support
+`innerunique`, `inner`, `leftouter` and `fullouter`; the default is `innerunique`. SDK limits are three
+join/union operations combined and three mv-expand operators. Cross-table joins/right-table reuse
+have additional restrictions. Array expansion defaults to 128 items (maximum 2000). Bag expansion is
+supported, including `mv-expand bagexpansion=array tags`; track empty arrays and row multiplication.
+See [query language](https://learn.microsoft.com/azure/governance/resource-graph/concepts/query-language)
+and [pagination](https://learn.microsoft.com/azure/governance/resource-graph/concepts/work-with-data).
 
 ### Mandatory Patterns
 
@@ -54,26 +81,52 @@ Resource Graph KQL is a **subset** of full Kusto Query Language. These operation
   immediately after the first Resource Graph table. Fields are intersected; values within a field
   are ORed. Never remove or broaden those runtime filters during KQL repair.
 - **Exact Resource Group IDs**: A full ARM ID keeps its parent subscription and becomes an exact
-  `(subscriptionId AND resourceGroup)` predicate. Reject `join`/`union` in bounded queries and never
-  read or persist shared KQL knowledge while a bounded scope is active.
+  `(subscriptionId AND resourceGroup)` predicate. The app rejects join/union when it must inject
+  Resource Group or intersected MG/subscription predicates. SDK-only subscription/MG boundaries
+  can use supported joins. Never read or persist shared KQL knowledge in a bounded analysis.
 - **`subscriptionId` column**: Always available — use it for subscription-level grouping
 - **Property access**: Use `properties.X` dot notation, e.g., `properties.storageProfile.osDisk.osType`
 
-### Query Structure Template
+### Query Shapes Are Examples, Not Templates
+
+Choose the minimum query that discriminates the update's actual applicability. Known paths can be
+queried directly; unknown or inconsistent shapes need bounded exploration followed by a new query.
+For instance, a TLS retirement needs a distribution plus exact affected identities, not VM inventory:
+
+```kql
+Resources
+| where type =~ 'microsoft.storage/storageaccounts'
+| summarize resources=count(),
+  unknownTls=countif(isnull(properties.minimumTlsVersion)),
+  legacyTls=countif(tostring(properties.minimumTlsVersion) in~ ('TLS1_0', 'TLS1_1'))
+```
+
+Array-level configuration must inspect the relevant elements rather than index zero alone:
+
+```kql
+Resources
+| where type =~ 'microsoft.containerservice/managedclusters'
+| mv-expand pool=properties.agentPoolProfiles limit 2000
+| project id, subscriptionId, poolName=tostring(pool.name), osSKU=tostring(pool.osSKU)
+| order by id asc, poolName asc
+```
+
+A nested-property query can use a direct project expression or extend for reuse:
 
 ```kql
 Resources
 | where type =~ "microsoft.compute/virtualmachines"
 | extend status = tostring(properties.extended.instanceView.powerState.displayStatus)
-| project name, resourceGroup, subscriptionId, location, status
-| order by name asc
+| project id, name, resourceGroup, subscriptionId, location, status
+| order by id asc
 ```
 
 ### Completeness — query the answer instead of deferring it
 
 A 3-month report audit (2026-07) found the agent repeatedly punting **queryable** ARM facts to
-`additional_checks`/CSA review. Rule of thumb: *if a fact is an ARM resource or a resource property,
-it is queryable NOW — plan a query, do not defer it.* Commonly under-queried facts and their paths:
+`additional_checks`/CSA review. Try the documented ARG table and observed property path first;
+not every ARM property is exposed in ARG. Unsupported/masked fields or missing permissions remain
+explicit gaps, with ARM-only facts owned by the Azure API specialist. Common examples:
 
 | Update topic | Query this instead of deferring | Property path |
 |--------------|--------------------------------|---------------|
@@ -96,7 +149,9 @@ Static methods in `src/services/resource_graph.py` that return KQL strings:
 - `get_resource_summary()` — counts by type
 - `get_resources_by_type(resource_type)` — list resources of a type
 - `get_query_for_update_service(service_name)` — dispatcher: maps Azure service name → optimized detail query
-- `get_query_for_resource_type(resource_type)` — maps an ARM **resource type** (lowercase) → its builder query, or `None`. Used as a recovery fallback by the fixer (see below).
+- `get_query_for_resource_type(resource_type)` maps an ARM resource type to an optional baseline,
+  or None. Natural-language task normalization may use it as an initial query while preserving
+  purpose/expected_columns; the fixer never substitutes it for a failed targeted query.
 - Each service-specific query projects relevant `properties.*` columns
 - Detail queries must project the properties that reports actually reason about, e.g. the AKS
   query projects **ACNS** (`properties.networkProfile.advancedNetworking.observability/.security.enabled`)
@@ -143,61 +198,63 @@ Located in `src/agent/tools.py`:
   normalized to `keyword`, and a natural-language `query_azure_resources.query` paired with
   `resource_type` is replaced by that type's rich builder (or a bounded identity projection).
 
-### sanitize/`_rule_based_fix` hardening — never emit a guaranteed-broken query
+### Syntax Repair Preserves Meaning
 
-The rule-based fallback must always produce an *executable* query; otherwise the retry
-loop burns every attempt and hits `kql_query_exhausted`. Three subtle self-defeating
-behaviors were fixed (verified by directly observing the pipeline against the 56 recorded
-queries + realistic failure scenarios):
+`sanitize_kql` protects strings/comments before small lexical fixes. It does not move valid project
+expressions, rename aliases behind downstream references, split mv-expand's limit into another
+operator, or remove unsupported datatable expressions to produce unrelated resource inventory.
+Legacy scalar let inlining remains a compatibility repair, not permission to author let statements.
+The live service rejects `kind=tostring(kind)` while `resourceKind=tostring(kind)` works: repair that
+specific alias contract, not every computed projection.
 
-| Defect | Symptom | Fix |
-|--------|---------|-----|
-| **`let` dangling reference** | `let x='V'; … == x` → strip `let` leaves `== x` (unresolved) | `sanitize_kql` **inlines** the value into `\bx\b` refs *before* removing the `let` (`_RE_LET_DECL`) → `== 'V'` |
-| **`extend` orphaning** | project-mover makes `extend kindValue=… \| project name, kindValue`, then a blunt "strip all extends" fallback orphans `kindValue` | `_strip_unreferenced_extends()` drops an extend **only if its alias is unused downstream**; a referenced alias is kept |
-| **Missing pipe before `project`/`extend`** | `… 'storageaccounts' project name` left `project` with no `\|` | `_RE_MISSING_PIPE` alternation extended to `project\|extend\|mv-expand\|distinct` |
+`_rule_based_fix` now applies only lexical repair. The former join/array stripping, field deletion,
+builder substitution and final count fallback lost the original question and are removed. A
+specialist must repair with supporting error/schema evidence, otherwise the failure remains a gap.
+Repeated or unchanged corrections stop before executing the same failed query again.
 
-Rule of thumb: a fix that removes a clause must also fix (or preserve) everything that
-*referenced* that clause — never leave a dangling identifier or an orphaned projection alias.
+### Result-Driven Rewrite Loop
 
-### Builder-fallback recovery — never degrade a type that has a builder
+`query_azure_resources(query, purpose="", expected_columns=[])` supplies an information requirement.
+The coordinator carries task purpose into execution even when the optional tool field is omitted.
+The inner `execute_kql_with_retry` loop has eight main attempts and at most two result rewrites:
 
-A 3-month audit (all of `kql_knowledge_base.json` cross-referenced with the `results_*.jsonl`
-reports) found **57% of recorded fallback queries had degraded to a generic raw-properties
-dump** (`| project name, type, resourceGroup, subscriptionId, location, sku, properties | limit 100`),
-and that degradation *directly caused* reports to hedge on queryable facts (private endpoint,
-public network access, TLS). Fix: when `_rule_based_fix` exhausts the targeted fixes (attempt > 3),
-it now calls `ResourceGraphQueryBuilder.get_query_for_resource_type(<type>)` and, if a builder
-exists for that type (storage, VM, AKS, Cosmos, KeyVault, LogAnalytics, VNet, NSG, publicIP,
-ACR, SQL, CognitiveServices, ContainerApps), substitutes the **known-good builder query**
-(which preserves domain projections) instead of degrading to a raw dump. Only types with *no*
-builder fall back to the generic dump. When you add a new builder, register its type in
-`ResourceGraphQueryBuilder._TYPE_TO_BUILDER` so the fixer can recover it.
+1. Inspect the returned rows and required projected values, not just request success. False and 0
+  are valid; missing/null/empty required values remain unknown.
+2. For an empty filtered result or missing fields, make a stable five-row diagnostic probe only
+  when a single table/type is unambiguous. Keep the original table and SDK/runtime scope. Never
+  replace join/union intent with a one-type probe or return probe rows as affected resources.
+3. `improve_query_for_result` receives the original question/query, required columns, issue and
+  bounded observed data. It may correct paths, casts, predicates, array shape or relationships;
+  it may not relax applicability/security thresholds merely to obtain rows. Type existence does
+  not imply a wrong filter. An unchanged query can confirm a justified zero; missing evidence
+  returns no correction and preserves a gap. The empty-result method delegates to this reviewer.
+4. Re-execute a new query, then inspect its result again. Stop cycles, absent corrections, or the
+  shared attempt/result-rewrite budget. The final successful request still returns its real rows
+  with executed_query, query_attempts, result_rewrites, query_status and evidence_gaps.
+5. Evaluation's query_intent criterion checks whether the decisive question was answered. A false
+  criterion cannot pass as sufficient before the existing revision limit; exhausted limits retain
+  the missing criterion and reason. The next native tool round/revision can request a new targeted
+  query based on actual schema outputs, rather than guessing dependent work in parallel.
 
-### Result-driven (semantic) improvement — fix queries that run but return nothing
+### Schema and Result Completeness
 
-Error-driven fixing only handles queries that *fail*. A query can be syntactically valid
-yet **semantically wrong** — it runs, returns 0 rows because its filter is too strict or
-uses a wrong property value/path (e.g. `kind =~ 'Storage'` when the real value is
-`BlobStorage`), and the report then sees no affected resources. `execute_kql_with_retry`
-adds a bounded semantic layer (`MAX_RESULT_IMPROVEMENTS = 2`):
+`explore_resource_schema` reads five live samples even when cached paths exist. It traverses nested
+objects/arrays to depth eight, up to 250 paths and eight elements per sampled array, disclosing caps.
+Multiword focus matches individual keywords. Array `[]` paths are discovery notation, requiring
+mv-expand for all elements. Only paths, not sampled values, enter the existing runtime knowledge store.
 
-1. On an **empty** result from a *property-filtered* query (`_query_has_property_filter`),
-   run a cheap **type-only probe** (`_build_type_probe_query`) — does the resource type
-   have any resources at all?
-2. If the type **exists** (probe non-empty) but the filter matched none, the filter is
-   wrong. `ResourceGraphQueryFixer.improve_query_for_empty_result` sends the query + a
-   sample of the **real** data to the LLM, which corrects the filter against the actual
-   property values, and the improved query is **re-executed**.
-3. If the type is genuinely **absent** (probe empty), the empty result is correct — accept it.
-4. A successful improvement is persisted (`record_successful_query`, purpose
-   `"Result-improved query (was empty)"`) and reused via `build_context_for_prompt`.
+`ResourceGraphService` requests objectArray data and follows up to ten 1000-row pages. It preserves
+query/scope on each page and marks missing/repeated tokens or exhausted budgets as incomplete.
+Service details retain every received row and null value, instead of discarding everything after
+row 20. JSON metadata stays on one header line. Query-tool refs can recover stored previews, not
+pages never fetched; partition/narrow KQL when result_truncated is true.
 
 ### Specialist failure boundary
 
 The analyzer injects only the Resource Graph specialist into `ResourceGraphQueryFixer`.
 An availability error is not sent to the coordinator, report writer, or quality reviewer.
-The retry pipeline applies its deterministic sanitizer and registered builder fallback; if
-those cannot preserve the query intent, the failure remains an explicit evidence gap.
+The retry pipeline applies deterministic lexical repair only; if it cannot preserve the query
+intent, the failure remains an explicit evidence gap rather than an unrelated successful builder.
 
 ## Resilience Patterns for KQL
 
@@ -221,7 +278,7 @@ result = await retry_with_backoff(
 2. Execute against Resource Graph
 3. On failure:
   a. Use the Resource Graph specialist to fix the query
-  b. If the specialist fails → apply rule-based sanitization and a registered builder query
+  b. If the specialist fails → apply only meaning-preserving lexical sanitization
   c. If deterministic recovery fails → preserve the error as a gap
 4. Track consecutive failures (circuit breaker at threshold=3)
 5. Record successful queries to knowledge base
@@ -251,5 +308,5 @@ If 3+ KQL retry iterations produce the same error:
 |-------|-------|-----|
 | `BadRequest` with `let` | Used `let` statement | Inline the value |
 | Empty results | Case-sensitive `type ==` | Use `type =~` |
-| `properties.X` returns null | Wrong property path | Check with exploratory `project properties` query first |
+| `properties.X` returns null | Wrong path, unset/masked field, or unsupported data | Inspect a bounded parent-bag/schema sample; keep unknown distinct from false |
 | Timeout on large tenants | Unfiltered `Resources` | Always add `where type =~` filter |

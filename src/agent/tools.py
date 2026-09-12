@@ -76,6 +76,8 @@ async def execute_kql_with_retry(
     *,
     max_retries: int = MAX_QUERY_RETRIES,
     enrich_subscriptions: bool = True,
+    purpose: str = "",
+    expected_columns: Optional[list[str]] = None,
 ) -> dict:
     """Execute a KQL query with automatic retry and query fixing.
 
@@ -88,6 +90,8 @@ async def execute_kql_with_retry(
         query: Initial KQL query string (will be sanitized)
         max_retries: Maximum number of attempts
         enrich_subscriptions: Whether to resolve subscriptionId to display name
+        purpose: Update-specific question used to review result relevance.
+        expected_columns: Projected columns required to answer the question.
 
     Returns:
         Raw query result dict from ResourceGraphService
@@ -102,41 +106,93 @@ async def execute_kql_with_retry(
     last_error: Exception | None = None
     _result_improvements = 0
     _query_t0 = _time.time()
+    expected_columns = expected_columns or []
+    attempted_queries: set[str] = set()
+    if max_retries < 1:
+        raise ValueError("max_retries must be at least 1")
 
     for attempt in range(1, max_retries + 1):
         try:
+            attempted_queries.add(current_query)
             _attempt_t0 = _time.time()
             result = await service.query_resources(current_query)
             _attempt_elapsed = _time.time() - _attempt_t0
 
-            # Result-driven (semantic) improvement: a syntactically-valid query
-            # that returned an empty result may have an over-strict or wrong
-            # filter. If the resource type actually has resources, analyze the
-            # real data and improve the filter, then re-execute. Fail-safe: any
-            # error in this path falls through to returning the (empty) result.
-            _rows = result.get("count") or len(result.get("data") or [])
+            data = result.get("data") or []
+            missing_columns = [
+                column
+                for column in expected_columns
+                if data
+                and any(
+                    row.get(column) is None
+                    or row.get(column) == ""
+                    or row.get(column) == []
+                    or row.get(column) == {}
+                    for row in data
+                )
+            ]
+            gaps: list[str] = []
+            empty_filtered = not data and _query_has_property_filter(current_query)
+            if empty_filtered:
+                gaps.append(
+                    "Empty filtered result: resource or property absence is not established."
+                )
+            if missing_columns:
+                gaps.append(f"Required columns missing or empty: {', '.join(missing_columns)}")
+            if result.get("result_truncated"):
+                gaps.append("Resource Graph response is incomplete; narrow or partition the query.")
+            issue = "; ".join(gaps) or "Check whether the returned rows answer the query purpose."
+            improved: Optional[str] = None
             if (
-                _rows == 0
+                (empty_filtered or missing_columns or purpose)
                 and _result_improvements < MAX_RESULT_IMPROVEMENTS
-                and _query_has_property_filter(current_query)
+                and attempt < max_retries
             ):
                 try:
-                    _improved = await _try_result_improvement(service, fixer, current_query)
+                    improved = await _try_result_improvement(
+                        service,
+                        fixer,
+                        current_query,
+                        result=result,
+                        purpose=purpose,
+                        expected_columns=expected_columns,
+                        result_issue=issue,
+                        original_query=query,
+                    )
                 except Exception as _imp_err:
                     logger.warning("kql_result_improve_error", error=str(_imp_err)[:200])
-                    _improved = None
-                if _improved and _improved.strip() != current_query.strip():
+                    gaps.append("Result review failed; query intent is not validated.")
+                if improved:
+                    improved = sanitize_kql(improved)
+                if improved and improved not in attempted_queries:
                     _result_improvements += 1
                     logger.info(
                         "kql_result_improved",
                         improvement=_result_improvements,
                         old_query=current_query[:200],
-                        new_query=_improved[:200],
+                        new_query=improved[:200],
+                        result_issue=issue,
                     )
-                    current_query = _improved
-                    continue  # re-execute with the improved query
+                    current_query = improved
+                    continue
+                if improved and improved != current_query:
+                    gaps.append(
+                        "Result rewrite repeated an earlier query; further retries stopped."
+                    )
+                if improved == current_query and empty_filtered:
+                    gaps = [gap for gap in gaps if not gap.startswith("Empty filtered result:")]
+                if not improved and purpose:
+                    gaps.append(
+                        "No supported result rewrite or query-intent confirmation was returned."
+                    )
+            elif (missing_columns or purpose or empty_filtered) and (
+                _result_improvements or attempt >= max_retries
+            ):
+                gaps.append(
+                    "Result-rewrite budget exhausted; the last result is not fully validated."
+                )
 
-            if attempt > 1 or _result_improvements > 0:
+            if (attempt > 1 or _result_improvements > 0) and not gaps:
                 total_elapsed = _time.time() - _query_t0
                 logger.info(
                     "kql_query_succeeded_after_retry",
@@ -169,7 +225,14 @@ async def execute_kql_with_retry(
                 if isinstance(data, list) and data:
                     service.enrich_subscription_names(data)
 
-            return result
+            return {
+                **result,
+                "executed_query": result.get("executed_query", current_query),
+                "query_attempts": attempt,
+                "result_rewrites": _result_improvements,
+                "query_status": "partial" if gaps else "complete",
+                "evidence_gaps": gaps,
+            }
 
         except Exception as e:
             last_error = e
@@ -185,6 +248,10 @@ async def execute_kql_with_retry(
             if attempt >= max_retries:
                 break
 
+            status_code = getattr(e, "status_code", None)
+            if isinstance(e, ValueError) or status_code in {401, 403}:
+                break
+
             if any(kw in error_msg for kw in ("InvalidQuery", "ParserFailure", "BadRequest")):
                 # Check circuit breaker before LLM-assisted fix
                 if _kql_fixer_circuit_breaker.is_open:
@@ -194,11 +261,16 @@ async def execute_kql_with_retry(
                         reason="Too many consecutive LLM fix failures",
                     )
                     # Fall back to rule-based sanitization only
-                    current_query = sanitize_kql(current_query)
+                    next_query = sanitize_kql(current_query)
                 else:
                     try:
-                        current_query = await fixer.fix_query(current_query, error_msg, attempt)
-                        _kql_fixer_circuit_breaker.record_success()
+                        next_query = sanitize_kql(
+                            await fixer.fix_query(current_query, error_msg, attempt)
+                        )
+                        if next_query and next_query not in attempted_queries:
+                            _kql_fixer_circuit_breaker.record_success()
+                        else:
+                            _kql_fixer_circuit_breaker.record_failure()
                     except Exception as fix_err:
                         _kql_fixer_circuit_breaker.record_failure()
                         logger.warning(
@@ -206,7 +278,11 @@ async def execute_kql_with_retry(
                             error=str(fix_err)[:200],
                             fallback="rule-based sanitization",
                         )
-                        current_query = sanitize_kql(current_query)
+                        next_query = sanitize_kql(current_query)
+                if not next_query or next_query in attempted_queries:
+                    logger.warning("kql_repair_stalled", attempt=attempt)
+                    break
+                current_query = next_query
             else:
                 # Transient error: use exponential backoff with jitter
                 delay = calculate_backoff(attempt, base_delay=0.5, max_delay=16.0)
@@ -220,81 +296,44 @@ async def execute_kql_with_retry(
     total_elapsed = _time.time() - _query_t0
     logger.error(
         "kql_query_exhausted",
-        attempts=max_retries,
+        attempts=attempt,
         total_elapsed_s=round(total_elapsed, 2),
         error=str(last_error),
     )
     record_failed_query(query, str(last_error))
-    raise RuntimeError(f"Query failed after {max_retries} retries: {last_error}")
+    raise RuntimeError(f"Query failed after {attempt} retries: {last_error}")
 
 
 # Pre-compiled regex patterns for sanitize_kql (compiled once at module load)
 _RE_TOP_WITHOUT_BY = re.compile(r"\|\s*top\s+(\d+)\b(?!\s+by\b)", re.IGNORECASE)
-_RE_STRAY_TOP = re.compile(r"(?<!\|)\s+top\s+(\d+)\b(?!\s+by\b)", re.IGNORECASE)
-_RE_KIND_TOSTRING = re.compile(r"\bkind\s*=\s*tostring\(kind\)")
+_RE_STRAY_TOP = re.compile(r"(?<=[^\s|])\s+top\s+(\d+)\b(?!\s+by\b)", re.IGNORECASE)
+_RE_KQL_LITERAL = re.compile(
+    r"//[^\r\n]*|/\*.*?\*/|'(?:\\.|''|[^'\\])*'|\"(?:\\.|\"\"|[^\"\\])*\"",
+    re.DOTALL,
+)
 _RE_PROJECT_EXCEPT = re.compile(r"\bproject-except\b", re.IGNORECASE)
 _RE_LET_STATEMENT = re.compile(r"^\s*let\s+\w+\s*=.*?;\s*\n?", re.MULTILINE)
 # Captures the (name, value) of each `let NAME = VALUE;` so the value can be
 # inlined into later references before the declaration is stripped.
 _RE_LET_DECL = re.compile(r"^\s*let\s+(\w+)\s*=\s*(.*?);", re.MULTILINE)
-_RE_STARTS_WITH_PIPE = re.compile(r"^\w")
 _RE_RENDER = re.compile(r"\|\s*render\s+\w+", re.IGNORECASE)
-_RE_DATATABLE = re.compile(r"\bdatatable\b|\bexternaldata\b", re.IGNORECASE)
-_RE_DATATABLE_BLOCK = re.compile(r"\bdatatable\s*\(.*?\)\s*\[.*?\]", re.DOTALL | re.IGNORECASE)
-_RE_PROJECT_CLAUSE = re.compile(r"\|\s*project\b(.+?)(?:\||$)", re.DOTALL)
-_RE_INLINE_ASSIGN = re.compile(
-    r"(\w+)\s*=\s*(tostring\([^)]+\)|tolower\([^)]+\)|toupper\([^)]+\)"
-    r"|array_length\([^)]+\)|coalesce\([^)]+\)|iff\([^)]+\)"
-    r"|properties\.\w+(?:\.\w+)*)"
-)
 _RE_MISSING_PIPE = re.compile(
-    r"(?<!\|)\s+(order by|summarize|limit|take|project|extend|mv-expand|distinct)\s",
+    r"(?<=[^\s|])\s+(order by|summarize|take|project|extend|mv-expand|distinct)\s",
     re.IGNORECASE,
 )
 _RE_DUPLICATE_PIPES = re.compile(r"\|\s*\|")
 
-# Pre-compiled patterns for _rule_based_fix and query parsing
-_RE_JOIN = re.compile(r"\|\s*join\b", re.IGNORECASE)
-_RE_TYPE_MATCH = re.compile(r"type\s*=~\s*'([^']+)'", re.IGNORECASE)
-_RE_KIND_EQ_KIND = re.compile(r"\bkind\s*=\s*kind\b")
 _RE_MARKDOWN_FENCE_START = re.compile(r"^```(?:kql)?\s*\n?")
 _RE_MARKDOWN_FENCE_END = re.compile(r"\n?```\s*$")
-_RE_FAILED_RESOLVE_COL = re.compile(r"Failed to resolve scalar expression named '(\w+)'")
-_RE_COLUMN_ERROR = re.compile(r"column '(\w+)'")
-_RE_MV_EXPAND_ALIAS = re.compile(r"mv-expand\s+(\w+)\s*=")
-_RE_EXTEND_BLOCK = re.compile(r"\|\s*extend[^|]+")
-_RE_PROJECT_BLOCK = re.compile(r"\|\s*project[^|]+")
-
-
-def _strip_unreferenced_extends(query: str) -> str:
-    """Remove ``| extend alias = expr`` blocks whose alias is unused downstream.
-
-    Last-resort simplification for unidentifiable ParserFailures. An extend whose
-    alias still feeds a later clause (e.g. a ``project`` column) is preserved so the
-    simplification never orphans a projection and produces another broken query.
-
-    Args:
-        query: KQL query string, possibly containing computed extend blocks.
-
-    Returns:
-        The query with unreferenced extend blocks removed.
-    """
-
-    def _replace(match: re.Match) -> str:
-        block = match.group(0)
-        alias_match = re.match(r"\|\s*extend\s+(\w+)\s*=", block)
-        if alias_match:
-            alias = alias_match.group(1)
-            after = query[match.end() :]
-            if re.search(rf"\b{re.escape(alias)}\b", after):
-                return block  # alias still referenced downstream → keep
-        return ""
-
-    return _RE_EXTEND_BLOCK.sub(_replace, query)
 
 
 # --- Result-driven (semantic) query improvement helpers ---------------------
-_RE_TYPE_EXTRACT = re.compile(r"type\s*=~\s*'([^']+)'", re.IGNORECASE)
+_RE_TYPE_EXTRACT = re.compile(r"\btype\s*(?:=~|==)\s*(['\"])([^'\";\r\n]+)\1", re.IGNORECASE)
+_RE_KQL_TABLE = re.compile(
+    r"^\s*(Resources|ResourceContainers|ResourceChanges|ResourceContainerChanges|"
+    r"HealthResourceChanges|[A-Za-z][A-Za-z0-9_]*resources)\b",
+    re.IGNORECASE,
+)
 _RE_WHERE_CLAUSE = re.compile(r"\bwhere\b([^|]+)", re.IGNORECASE)
 
 
@@ -306,7 +345,7 @@ def _query_has_property_filter(query: str) -> bool:
     a property-filtered query returning empty may have an over-strict / wrong filter.
     """
     for m in _RE_WHERE_CLAUSE.finditer(query):
-        clause = re.sub(r"type\s*=~\s*'[^']+'", "", m.group(1), flags=re.IGNORECASE)
+        clause = _RE_TYPE_EXTRACT.sub("", m.group(1))
         if re.search(
             r"properties\.|[!<>]=|==|=~|\bcontains\b|\bhas\b|\bstartswith\b|\bendswith\b|\bin~?\s*\(",
             clause,
@@ -322,35 +361,56 @@ def _build_type_probe_query(query: str) -> Optional[str]:
     Returns a small-sample query for the resource type with its identifying fields,
     or None if no resource type can be extracted from the query.
     """
-    m = _RE_TYPE_EXTRACT.search(query)
-    if not m:
+    table = _RE_KQL_TABLE.match(query)
+    matches = list(_RE_TYPE_EXTRACT.finditer(query))
+    code = _RE_KQL_LITERAL.sub("", query)
+    if not table or len(matches) != 1 or re.search(r"\b(join|union)\b", code, re.IGNORECASE):
         return None
-    rtype = m.group(1)
+    rtype = matches[0].group(2)
     return (
-        f"Resources | where type =~ '{rtype}' "
-        f"| project name, type, kind, sku, properties | limit 5"
+        f"{table.group(1)} | where type =~ '{rtype}' "
+        f"| project id, name, type, subscriptionId, resourceGroup, kind, sku, properties "
+        f"| order by id asc | limit 5"
     )
 
 
-async def _try_result_improvement(service, fixer, query: str) -> Optional[str]:
-    """Probe whether the resource type exists; if so, LLM-improve the empty query.
-
-    Returns an improved query only when the type has resources but the filter matched
-    none (so the filter is wrong). Returns None when the type is genuinely absent
-    (the empty result is correct) or no improvement is available.
-    """
-    probe_query = _build_type_probe_query(query)
-    if not probe_query:
-        return None
-    probe = await service.query_resources(sanitize_kql(probe_query))
-    probe_data = probe.get("data") or []
-    probe_count = probe.get("count") or len(probe_data)
-    if not probe_count:
-        return None  # type genuinely absent → the empty result is correct
-    import json as _json
-
-    sample = _json.dumps(probe_data[:3], ensure_ascii=False, default=str)
-    return await fixer.improve_query_for_empty_result(query, sample)
+async def _try_result_improvement(
+    service,
+    fixer,
+    query: str,
+    *,
+    result: Optional[dict] = None,
+    purpose: str = "",
+    expected_columns: Optional[list[str]] = None,
+    result_issue: str = "",
+    original_query: str = "",
+) -> Optional[str]:
+    """Use bounded diagnostic data without replacing the original result with the probe."""
+    data = (result or {}).get("data") or []
+    probe_data = []
+    if not data or "Required columns" in result_issue:
+        probe_query = _build_type_probe_query(query)
+        if probe_query:
+            probe = await service.query_resources(sanitize_kql(probe_query))
+            probe_data = probe.get("data") or []
+            if not probe_data and not data and not probe.get("result_truncated"):
+                return query
+    if not data and probe_data and not purpose and not expected_columns:
+        sample = json.dumps(probe_data[:3], ensure_ascii=False, default=str)
+        return await fixer.improve_query_for_empty_result(query, sample)
+    sample = json.dumps(
+        {"query_rows": data[:5], "diagnostic_schema_sample": probe_data[:3]},
+        ensure_ascii=False,
+        default=str,
+    )
+    return await fixer.improve_query_for_result(
+        query,
+        sample,
+        result_issue=result_issue,
+        purpose=purpose,
+        expected_columns=expected_columns or [],
+        original_query=original_query or query,
+    )
 
 
 def sanitize_kql(query: str) -> str:
@@ -365,14 +425,23 @@ def sanitize_kql(query: str) -> str:
     Returns:
         Sanitized KQL query
     """
+    prefix = "__azbrief_kql_literal_"
+    while prefix in query:
+        prefix = "_" + prefix
+    literals: dict[str, str] = {}
+
+    def protect_literal(match: re.Match) -> str:
+        token = f"{prefix}{len(literals)}__"
+        literals[token] = match.group(0)
+        return token
+
+    query = _RE_KQL_LITERAL.sub(protect_literal, query)
+
     # 1. Fix '| top N' without 'by' clause → '| take N'
     query = _RE_TOP_WITHOUT_BY.sub(r"| take \1", query)
 
     # 2. Fix stray 'top N' not preceded by pipe → '| take N'
     query = _RE_STRAY_TOP.sub(r" | take \1", query)
-
-    # 3. Fix 'kind=tostring(kind)' in project (reserved field alias collision)
-    query = _RE_KIND_TOSTRING.sub("kindValue=tostring(kind)", query)
 
     # 4. Fix 'project-except' (not supported in Resource Graph) → 'project-away'
     query = _RE_PROJECT_EXCEPT.sub("project-away", query)
@@ -388,28 +457,11 @@ def sanitize_kql(query: str) -> str:
             query = re.sub(rf"\b{re.escape(_name)}\b", lambda _m, _v=_value: _v, query)
 
     # 6. Fix missing table name — query must start with a table reference
-    stripped = query.strip()
-    if stripped and not _RE_STARTS_WITH_PIPE.match(stripped):
+    if query.lstrip().startswith("|"):
         query = "Resources\n" + query
 
     # 7. Fix 'render' operator (not supported in Resource Graph)
     query = _RE_RENDER.sub("", query)
-
-    # 8. Fix 'datatable' and 'externaldata' (not supported)
-    if _RE_DATATABLE.search(query):
-        query = _RE_DATATABLE_BLOCK.sub("", query)
-
-    # 9. Fix inline expressions in project that should be in extend
-    project_match = _RE_PROJECT_CLAUSE.search(query)
-    if project_match:
-        project_clause = project_match.group(1)
-        inline_assigns = _RE_INLINE_ASSIGN.findall(project_clause)
-        if inline_assigns:
-            extends = " | ".join([f"extend {name}={expr}" for name, expr in inline_assigns])
-            fixed_project = project_clause
-            for name, expr in inline_assigns:
-                fixed_project = fixed_project.replace(f"{name}={expr}", name)
-            query = query.replace(project_match.group(0), f"| {extends} | project{fixed_project}")
 
     # 10. Fix missing pipe before operators (order by, summarize, etc.)
     query = _RE_MISSING_PIPE.sub(r" | \1 ", query)
@@ -419,6 +471,9 @@ def sanitize_kql(query: str) -> str:
 
     # 12. Strip trailing semicolons
     query = query.rstrip("; \n")
+
+    for token, literal in literals.items():
+        query = query.replace(token, literal)
 
     return query.strip()
 
@@ -435,13 +490,20 @@ Rules:
   whose evidence contains `query:corrected-kql`, and whose confidence is high.
 - On failure, return no claims and one concrete gap. Never place JSON inside KQL text.
 - Use only tables and columns that exist in Azure Resource Graph (Resources, advisorresources, servicehealthresources, etc.).
-- Always use `extend` before referencing a nested property in `project`.
+- Both `project alias=expression` and `extend` support nested properties and scalar expressions.
+- Live Resource Graph rejects the reserved `kind=tostring(kind)` assignment. Project kind directly
+    or use resourceKind=tostring(kind), updating all downstream references when renaming an alias.
 - Use `=~` for case-insensitive type comparisons.
-- Avoid `mv-expand` on non-array fields.
-- When a column doesn't exist, remove it or replace with a valid alternative.
+- Use documented join/union and mv-expand forms when the question requires relationships or arrays.
+- Preserve joins, array predicates, required projections, identity and scope filters. Never drop an
+    unresolved column needed by a predicate or replace the question with generic inventory.
 - If the error mentions a specific column or function, fix that specific issue.
 - Keep the query intent the same as the original.
-- Always add `| limit 200` if not present.
+- Preserve null/false/zero distinctions and use the appropriate scalar type.
+- Do not append a row limit to an enumeration; pagination needs scalar identity columns and stable
+    ordering. Use explicit small limits only for diagnostic samples, and label them as samples.
+- Resource Group or intersected Management Group/subscription predicates are injected by the app;
+    if it rejects a join/union for scope enforcement, return a gap, never bypass that boundary.
 - NEVER use `| top N` without an ORDER BY (by) clause. Use `| take N` or `| limit N` instead.
   - WRONG: `| top 50`
   - RIGHT: `| take 50` or `| top 50 by name asc`
@@ -478,8 +540,7 @@ Rules:
     def _extract_kql_response(text: str) -> str:
         """Extract KQL from a raw response or the specialist evidence envelope."""
         candidate = ResourceGraphQueryFixer._strip_markdown_fences(text)
-        query_pattern = r"^\s*(?:Resources|ResourceContainers|[A-Za-z][A-Za-z0-9_]*resources)\b"
-        if re.match(query_pattern, candidate, re.IGNORECASE):
+        if _RE_KQL_TABLE.match(candidate):
             return candidate
         try:
             payload = json.loads(candidate)
@@ -491,7 +552,7 @@ Rules:
             if not isinstance(claim, dict):
                 continue
             query = ResourceGraphQueryFixer._strip_markdown_fences(str(claim.get("text") or ""))
-            if re.match(query_pattern, query, re.IGNORECASE):
+            if _RE_KQL_TABLE.match(query):
                 return query
         return ""
 
@@ -503,7 +564,7 @@ Rules:
             settings = get_settings()
             from src.agent.foundry_backend import create_foundry_chat_model
 
-            self._llm = create_foundry_chat_model(settings, "resource_graph")
+            self._llm = create_foundry_chat_model(settings, "resource_graph").without_tools()
         return self._llm
 
     async def fix_query(
@@ -549,6 +610,7 @@ Rules:
                     return sanitize_kql(fixed.strip())
             except asyncio.CancelledError:
                 logger.warning("kql_fix_cancelled", strategy="llm")
+                raise
             except Exception as e:
                 error_str = str(e)
                 # If the model doesn't support chatCompletion or returns 400, cache it
@@ -602,7 +664,7 @@ Rules:
             return "\n".join(context_parts)
         except asyncio.CancelledError:
             logger.warning("Doc search for query fix cancelled")
-            return "Documentation search cancelled."
+            raise
         except Exception as e:
             logger.warning("Doc search for query fix failed", error=str(e))
             return "Documentation search failed."
@@ -630,9 +692,11 @@ Rules:
 
 ## Instructions
 - Fix ONLY the issue described in the error message.
-- If the error is about an unknown column, remove it or use a valid alternative.
-- NEVER use `kind=tostring(kind)` in a project statement — `kind` is a reserved top-level field. Use it directly (e.g., `| project name, kind, ...`) or alias it differently (e.g., `| extend kindValue = tostring(kind)`).
-- For ParserFailure errors, simplify the query: use `extend` for computed columns before `project`, or remove complex inline expressions from `project`.
+- If a column is unknown, repair its path, cast or alias with supporting evidence. Do not drop a
+    required field or leave its downstream references unresolved.
+- Resource Graph supports project expressions, joins and mv-expand. The reserved kind assignment
+    must use direct projection or a different alias with matching downstream references. A ParserFailure
+    does not justify deleting those constructs or substituting an unrelated predefined builder.
 - NEVER use `| top N` without a `by` clause. Use `| take N` or `| limit N` instead.
 - Preserve the original intent of the query.
 - Return the required specialist JSON envelope. Put ONLY the corrected KQL query in the
@@ -650,38 +714,56 @@ Rules:
         return self._extract_kql_response(response.content or "")
 
     async def improve_query_for_empty_result(self, query: str, probe_sample: str) -> Optional[str]:
-        """Improve a valid query that returned zero rows, using real sample data.
+        """Review an empty result without assuming the applicability filter is wrong."""
+        return await self.improve_query_for_result(
+            query,
+            probe_sample,
+            result_issue="Zero matching rows; the diagnostic sample contains this resource type.",
+            original_query=query,
+        )
 
-        The resource type DOES have resources (shown by ``probe_sample``), but the
-        query's filter matched none — so the filter is too strict or uses a wrong
-        property path / value / casing. Ask the LLM to correct the filter against the
-        actual data (this is the semantic complement to error-driven ``fix_query``).
-
-        Args:
-            query: The KQL query that returned an empty result.
-            probe_sample: JSON sample of actual resources of the same type.
-
-        Returns:
-            An improved KQL query, or None if unavailable / no change produced.
-        """
+    async def improve_query_for_result(
+        self,
+        query: str,
+        probe_sample: str,
+        *,
+        result_issue: str,
+        purpose: str = "",
+        expected_columns: Optional[list[str]] = None,
+        original_query: str = "",
+    ) -> Optional[str]:
+        """Reassess query semantics and required values using observed diagnostic evidence."""
         if self._llm_unavailable:
             return None
 
-        user_prompt = f"""This Azure Resource Graph KQL query is syntactically valid but returned ZERO rows:
+        user_prompt = f"""Review this Azure Resource Graph investigation before accepting its result.
+
+Original question: {purpose or 'Preserve the applicability conditions in the original query.'}
+Original query: {original_query or query}
+Required projected columns: {json.dumps(expected_columns or [])}
+Observed issue: {result_issue}
 
 ```kql
 {query}
 ```
 
-Resources of this type DO exist. Here is a sample of the ACTUAL data returned by a broader probe of the same resource type:
+Bounded diagnostic sample (not a complete inventory or an affected-resource list):
 
 ```json
-{probe_sample[:1500]}
+{probe_sample[:TOOL_RESULT_BUDGET_CHARS]}
 ```
 
-The query's WHERE filter is therefore too strict or uses a wrong property path / value / casing (e.g. filtering `kind == 'Storage'` when the real value is `BlobStorage`, or a `properties.*` path that does not exist in the sample).
-
-Rewrite the query so its filter correctly matches the intended resources AGAINST THE REAL PROPERTY VALUES shown in the sample. Keep the same projected columns. Output ONLY the corrected KQL query.
+Zero rows can be the correct answer. Existence of a resource type does NOT prove its filter is wrong.
+Missing/null/empty properties mean unknown, not disabled, false, zero, or absent resources.
+Values false and 0 are valid evidence. A sample cannot prove tenant-wide absence.
+Correct a property path, scalar cast, alias, array expansion, relationship, or predicate ONLY when
+the observed data and original question support that correction. Preserve the original scope,
+identities, type, version/security thresholds and required columns. Never change TLS1_0 to TLS1_2,
+remove an eligibility condition, or replace a targeted query with a builder just to obtain rows.
+If results are off-topic, rewrite the query to answer the original question, not a different one.
+If the current query already answers the question (including a justified zero), return it unchanged.
+If evidence cannot support a correction or confirmation, return partial with gaps and no claims.
+Use the required specialist JSON envelope; put only KQL in one claim with query:corrected-kql evidence.
 """
         try:
             response = await self._ainvoke_specialist(
@@ -695,6 +777,7 @@ Rewrite the query so its filter correctly matches the intended resources AGAINST
                 return sanitize_kql(improved.strip())
         except asyncio.CancelledError:
             logger.warning("kql_result_improve_cancelled")
+            raise
         except Exception as e:
             error_str = str(e)
             if self._is_availability_error(error_str):
@@ -711,157 +794,8 @@ Rewrite the query so its filter correctly matches the intended resources AGAINST
         return text.strip()
 
     def _rule_based_fix(self, query: str, error_message: str, attempt: int) -> str:
-        """Progressive rule-based query simplification as fallback."""
-        # Fix join queries early — Resource Graph's KQL subset often fails
-        # on complex join + mv-expand combinations. Remove the join clause
-        # and keep only the primary table query.
-        if "join" in query.lower() and attempt <= 3:
-            # Extract the part before the join clause
-            join_match = _RE_JOIN.search(query)
-            if join_match:
-                primary_part = query[: join_match.start()].rstrip()
-                # Extract resource type from primary part
-                type_match = _RE_TYPE_MATCH.search(primary_part)
-                if type_match:
-                    resource_type = type_match.group(1)
-                    query = (
-                        f"Resources\n| where type =~ '{resource_type}'\n"
-                        f"| project name, type, resourceGroup, subscriptionId, location, sku, properties\n"
-                        f"| limit 100"
-                    )
-                    logger.info(
-                        "kql_fix_removed_join",
-                        resource_type=resource_type,
-                        attempt=attempt,
-                        strategy="rule_based",
-                    )
-                    return query
-
-        # Fix complex mv-expand queries that cause ParserFailure
-        # When mv-expand + many extend lines fail, simplify to a flat query
-        # with just the raw properties (let the report interpret them).
-        if "mv-expand" in query.lower() and "ParserFailure" in error_message and attempt <= 4:
-            type_match = _RE_TYPE_MATCH.search(query)
-            if type_match:
-                resource_type = type_match.group(1)
-                query = (
-                    f"Resources\n| where type =~ '{resource_type}'\n"
-                    f"| project name, type, resourceGroup, subscriptionId, location, sku, properties\n"
-                    f"| limit 100"
-                )
-                logger.info(
-                    "kql_fix_simplified_mv_expand",
-                    resource_type=resource_type,
-                    attempt=attempt,
-                    strategy="rule_based",
-                )
-                return query
-
-        # Fix '| top N' without ORDER BY → '| take N'
-        query = _RE_TOP_WITHOUT_BY.sub(r"| take \1", query)
-        # Fix missing pipe: 'project ... top 50' → 'project ... | take 50'
-        query = _RE_STRAY_TOP.sub(r" | take \1", query)
-
-        # Fix common inline alias issues in project statements that cause ParserFailure
-        # e.g., kind=tostring(kind) -> kindValue=tostring(kind)
-        query = _RE_KIND_TOSTRING.sub("kindValue=tostring(kind)", query)
-
-        # Fix duplicate column names in project (e.g., project name, kind, kind → remove dupe)
-        query = _RE_KIND_EQ_KIND.sub("kind", query)
-
-        # Fix inline expressions in project that need extend first
-        # e.g., `| project ..., foo=tostring(bar)` → move to extend
-        project_match = _RE_PROJECT_CLAUSE.search(query)
-        if project_match and attempt <= 2:
-            project_clause = project_match.group(1)
-            # Find inline assignments like `col=tostring(...)` or `col=properties.x`
-            inline_assigns = re.findall(
-                r"(\w+)\s*=\s*(tostring\([^)]+\)|tolower\([^)]+\)|properties\.\w+)", project_clause
-            )
-            if inline_assigns:
-                # Move them to extend statements before project
-                extends = " | ".join([f"extend {name}={expr}" for name, expr in inline_assigns])
-                # Replace inline assignments with just the alias name in project
-                fixed_project = project_clause
-                for name, expr in inline_assigns:
-                    fixed_project = fixed_project.replace(f"{name}={expr}", name)
-                query = query.replace(
-                    project_match.group(0), f"| {extends} | project{fixed_project}"
-                )
-
-        if attempt <= 3:
-            # Handle mv-expand field reference errors: after mv-expand, columns
-            # from the expanded object need tostring() wrappers
-            error_col_match = _RE_FAILED_RESOLVE_COL.search(error_message)
-            if error_col_match:
-                col = error_col_match.group(1)
-                # Check if this column came from an mv-expand alias
-                mv_match = _RE_MV_EXPAND_ALIAS.search(query)
-                if mv_match:
-                    parent = mv_match.group(1)
-                    # Replace bare column refs in where/extend with tostring(parent.col)
-                    query = re.sub(
-                        rf"\btolower\({col}\)",
-                        f"tolower(tostring({parent}.{col}))",
-                        query,
-                    )
-                    query = re.sub(
-                        rf"(?<!tostring\()(?<!\.)\b{col}\b(?!\s*=\s*tostring)",
-                        f"tostring({parent}.{col})",
-                        query,
-                    )
-                else:
-                    # Remove only the extend that references this column
-                    query = re.sub(rf"\|\s*extend\s+[^|]*\b{col}\b[^|]*", "", query)
-            else:
-                error_col_generic = _RE_COLUMN_ERROR.search(error_message)
-                if error_col_generic:
-                    col = error_col_generic.group(1)
-                    query = re.sub(rf"\|\s*extend\s+[^|]*\b{col}\b[^|]*", "", query)
-                else:
-                    # Unidentifiable ParserFailure: strip computed extends to
-                    # simplify, but KEEP any extend whose alias is still referenced
-                    # downstream (e.g. a moved `kindValue=tostring(kind)` feeding
-                    # `project name, kindValue`). Blindly removing every extend would
-                    # orphan such a projection alias and produce another broken query.
-                    query = _strip_unreferenced_extends(query)
-        else:
-            # attempts 4+: the targeted fixes above didn't resolve it. Prefer a
-            # known-good builder query for this resource type — it preserves the
-            # domain projections (TLS / privateEndpoint / publicNetworkAccess /
-            # ACNS / backup mode) that a generic raw-properties dump would lose.
-            # A 3-month audit of the KQL knowledge base showed 57% of recorded
-            # fallbacks had degraded to such dumps, directly causing reports to
-            # hedge on facts that were in fact queryable.
-            type_match = _RE_TYPE_MATCH.search(query)
-            builder_query = (
-                ResourceGraphQueryBuilder.get_query_for_resource_type(type_match.group(1))
-                if type_match
-                else None
-            )
-            count_fallback = (
-                "Resources\n| summarize count() by type\n| order by count_ desc\n| limit 50"
-            )
-            if builder_query:
-                query = builder_query
-            elif attempt <= 6:
-                # No builder for this type: simplify projection to safe fields
-                query = _RE_PROJECT_BLOCK.sub(
-                    "| project name, type, resourceGroup, subscriptionId, location, properties",
-                    query,
-                )
-            elif attempt <= 10 and type_match:
-                # No builder: build a minimal raw query from the resource type
-                resource_type = type_match.group(1)
-                query = (
-                    f"Resources\n| where type =~ '{resource_type}'\n"
-                    f"| project name, type, resourceGroup, subscriptionId, location, sku, properties\n"
-                    f"| limit 100"
-                )
-            else:
-                # Ultimate fallback: just count by type
-                query = count_fallback
-        return query
+        """Apply lexical repairs without replacing the investigation with inventory."""
+        return sanitize_kql(query)
 
 
 # Singleton query fixer instance (lazy-initialized)
@@ -888,6 +822,16 @@ class ResourceGraphQueryInput(BaseModel):
     """Input for Resource Graph query tool."""
 
     query: str = Field(description="Azure Resource Graph KQL query")
+    purpose: str = Field(
+        default="",
+        max_length=2000,
+        description="Update-specific question and applicability conditions to preserve during result review.",
+    )
+    expected_columns: list[str] = Field(
+        default_factory=list,
+        max_length=32,
+        description="Projected evidence columns that must contain values; false and zero are valid.",
+    )
 
 
 def format_rg_result(result: dict, label: str) -> str:
@@ -908,10 +852,15 @@ def format_rg_result(result: dict, label: str) -> str:
 
     rows = result.get("data") or []
     meta = {k: v for k, v in result.items() if k != "data"}
-    meta_text = ", ".join(f"{k}={v}" for k, v in meta.items())
+    meta_text = ", ".join(
+        f"{key}={json.dumps(value, ensure_ascii=False, default=str)}" for key, value in meta.items()
+    )
     head = f"{label}: {len(rows)} rows" + (f" ({meta_text})" if meta_text else "")
     if not rows:
-        return head + ". No matching resources."
+        return (
+            head
+            + ". No matching resources in the returned query data; incomplete results do not prove absence."
+        )
     body = [json.dumps(row, ensure_ascii=False, default=str) for row in rows]
     return "\n".join([head + ":"] + body)
 
@@ -920,13 +869,14 @@ class ResourceGraphQueryTool(BaseTool):
     """Tool to execute Azure Resource Graph queries."""
 
     name: str = "query_azure_resources"
-    description: str = """Queries Azure resources using Azure Resource Graph.
-    Takes a KQL (Kusto Query Language) query as input and executes it.
-    
-    Usage examples:
-    - Query all Virtual Machines: Resources | where type =~ 'Microsoft.Compute/virtualMachines'
-    - Count resources by type: Resources | summarize count() by type
-    - Find resources with a specific tag: Resources | where isnotnull(tags['environment'])
+    description: str = """Answers update-specific questions with custom Azure Resource Graph KQL.
+    Supply purpose and expected_columns for result validation and bounded semantic rewriting.
+    Inspect nested properties, configuration distributions, eligibility predicates, array elements,
+    and relationships using supported KQL; predefined builders are not a required template.
+    Preserve scalar resource IDs/subscriptionId and order enumerations stably for paging.
+    Syntax errors, empty filtered results and missing required values can trigger specialist repair.
+    Results include the executed query, retry counts and explicit gaps. A partial result is not
+    confirmed absence. Diagnostic samples never replace the matching resources.
     """
     args_schema: Type[BaseModel] = ResourceGraphQueryInput
 
@@ -937,18 +887,24 @@ class ResourceGraphQueryTool(BaseTool):
         super().__init__(**kwargs)
         self._service = service or ResourceGraphService()
 
-    def _run(self, query: str) -> str:
+    def _run(
+        self, query: str, purpose: str = "", expected_columns: Optional[list[str]] = None
+    ) -> str:
         """Sync execution not supported."""
         raise NotImplementedError("Use async version")
 
-    async def _arun(self, query: str) -> str:
+    async def _arun(
+        self, query: str, purpose: str = "", expected_columns: Optional[list[str]] = None
+    ) -> str:
         """Execute Resource Graph query asynchronously with retry logic.
 
         On InvalidQuery errors, uses Microsoft Learn docs + LLM to fix the query
         and retries up to MAX_QUERY_RETRIES times.
         """
         try:
-            result = await execute_kql_with_retry(self._service, query)
+            result = await execute_kql_with_retry(
+                self._service, query, purpose=purpose, expected_columns=expected_columns
+            )
             return format_rg_result(result, "Resource Graph query")
         except RuntimeError as e:
             return f"Query execution error: {e}"
@@ -1063,7 +1019,10 @@ class FindRelatedResourcesTool(BaseTool):
         """
         keywords = ", ".join(service_keywords) or "(none)"
         rows = result.get("data", []) or []
+        partial = result.get("result_truncated") or result.get("query_status") == "partial"
         if not rows:
+            if partial:
+                return f"Incomplete resource search for {keywords}; absence is not established."
             return f"No resources found matching keywords: {keywords}."
 
         by_type: dict[str, list[dict]] = {}
@@ -1074,7 +1033,11 @@ class FindRelatedResourcesTool(BaseTool):
             f"Found {len(rows)} resources matching keywords: {keywords} "
             f"({len(by_type)} resource types).",
             "",
-            "### Type distribution (complete — survives any preview cut)",
+            (
+                "### Type distribution (returned rows only; incomplete query coverage)"
+                if partial
+                else "### Type distribution (complete — survives any preview cut)"
+            ),
         ]
         for rtype in sorted(by_type, key=lambda t: (-len(by_type[t]), t)):
             lines.append(f"- {rtype}: {len(by_type[rtype])}")
@@ -1146,42 +1109,13 @@ class GetServiceResourceDetailsTool(BaseTool):
         except RuntimeError as e:
             return f"Resource details query error: {e}"
 
-        data = result.get("data", [])
-        count = result.get("count", 0)
-
-        if not data:
-            return (
-                f"No related resources found for '{service_name}'. "
-                f"This means no {service_name} resources exist in the queried subscriptions "
-                f"(query executed successfully, 0 results returned)."
+        if result.get("query_status") == "complete":
+            record_successful_query(
+                resource_type=service_name,
+                purpose=f"Get {service_name} resource details",
+                query=result["executed_query"],
             )
-
-        # Record successful query to knowledge base
-        record_successful_query(
-            resource_type=service_name,
-            purpose=f"Get {service_name} resource details",
-            query=current_query,
-        )
-
-        # Format output
-        output_lines = [f"## {service_name} related resource details ({count})" "\n"]
-
-        for i, resource in enumerate(data[:20], 1):  # Limit to 20
-            output_lines.append(f"### {i}. {resource.get('name', 'Unknown')}")
-            for key, value in resource.items():
-                if key == "name" or value is None:
-                    continue
-                # Show subscriptionName as "subscription"
-                if key == "subscriptionName":
-                    output_lines.append(f"- subscription: {value}")
-                else:
-                    output_lines.append(f"- {key}: {value}")
-            output_lines.append("")
-
-        if count > 20:
-            output_lines.append(f"\n... and {count - 20} more resources")
-
-        return "\n".join(output_lines)
+        return format_rg_result(result, f"{service_name} resource details")
 
 
 class GetSecurityPostureInput(BaseModel):
@@ -1808,10 +1742,11 @@ class ExploreResourceSchemaInput(BaseModel):
     """Input for exploring resource type schema."""
 
     resource_type: str = Field(
+        pattern=r"^[A-Za-z][A-Za-z0-9.]+(?:/[A-Za-z0-9_-]+)+$",
         description=(
             "Full Azure resource type to explore "
             "(e.g., 'Microsoft.Storage/storageAccounts', 'Microsoft.Compute/virtualMachines')"
-        )
+        ),
     )
     focus_area: str = Field(
         default="",
@@ -1821,24 +1756,25 @@ class ExploreResourceSchemaInput(BaseModel):
             "Leave empty to discover all top-level property keys."
         ),
     )
+    table: str = Field(
+        default="Resources",
+        pattern=r"^[A-Za-z][A-Za-z0-9_]*$",
+        description="Resource Graph table containing the type, for example RecoveryServicesResources.",
+    )
 
 
 class ExploreResourceSchemaTool(BaseTool):
-    """Tool to discover available properties in a Resource Graph resource type.
-
-    Runs a sampling query that extracts the top-level keys from the `properties`
-    bag of one resource, then records the discovery into the KQL knowledge base
-    so future queries can reference it.
-    """
+    """Discover nested property paths across a bounded live sample, including arrays."""
 
     name: str = "explore_resource_schema"
     description: str = """Explores the property schema of a specific resource type in Azure Resource Graph.
 
-    Use this to discover undocumented fields within properties.
-    Step 1: Samples one resource and displays all top-level keys within properties.
-    Step 2 (when focus_area is specified): Displays actual values for matching keys.
-
-    Discovered property paths are recorded in the internal knowledge base for reference in future queries.
+    Samples up to five resources in stable ID order and inspects nested objects and arrays.
+    focus_area matches individual keywords (for example TLS settings or private endpoint).
+    Reports observed values without interpreting missing/null as false or disabled.
+    Cached paths are historical hints, never proof of the current schema or of absence.
+    Array paths use [] notation: use mv-expand to inspect all elements, not just index zero.
+    Sampling is bounded, not exhaustive; target other variants with custom KQL as needed.
 
     Usage examples:
     - resource_type: "Microsoft.Storage/storageAccounts"  ->  List properties keys
@@ -1852,118 +1788,98 @@ class ExploreResourceSchemaTool(BaseTool):
         super().__init__(**kwargs)
         self._service = service or ResourceGraphService()
 
-    def _run(self, resource_type: str, focus_area: str = "") -> str:
+    def _run(self, resource_type: str, focus_area: str = "", table: str = "Resources") -> str:
         raise NotImplementedError("Use async version")
 
-    async def _arun(self, resource_type: str, focus_area: str = "") -> str:
+    async def _arun(
+        self, resource_type: str, focus_area: str = "", table: str = "Resources"
+    ) -> str:
         """Explore the properties schema of a resource type."""
-        # Check knowledge base first
+        ExploreResourceSchemaInput(resource_type=resource_type, focus_area=focus_area, table=table)
+        if not _RE_KQL_TABLE.fullmatch(table):
+            raise ValueError("Unrecognized Resource Graph table")
         known = get_known_schema(resource_type)
-        if known and not focus_area:
-            lines = [
-                f"## Known schema for {resource_type} (from knowledge base)\n",
-                f"Property paths ({len(known)}):",
-            ]
-            for p in known:
-                lines.append(f"  - {p}")
-            lines.append(
-                "\nThese paths were confirmed in previous queries. "
-                "You can use them directly in your KQL `extend` statements."
-            )
-            return "\n".join(lines)
-
-        # --- Phase 1: sample one resource to get top-level property keys ---
         sample_query = (
-            f"Resources\n"
+            f"{table}\n"
             f"| where type =~ '{resource_type}'\n"
-            f"| take 1\n"
-            f"| project properties, sku, kind, identity"
+            f"| project id, name, subscriptionId, resourceGroup, properties, sku, kind, identity\n"
+            f"| order by id asc\n| take 5"
         )
         try:
-            result = await self._service.query_resources(sample_query)
+            result = await execute_kql_with_retry(
+                self._service, sample_query, max_retries=3, enrich_subscriptions=False
+            )
         except Exception as e:
-            return f"Schema exploration failed: {e}"
+            return f"Schema exploration failed: {e}. Cached paths are not current evidence."
 
         data = result.get("data", [])
         if not data:
-            return f"No resources of type '{resource_type}' found. Cannot explore schema."
+            return (
+                f"No resources of type '{resource_type}' returned from {table} in this scope. "
+                "Schema remains unknown; check table/type and permissions before claiming absence."
+            )
 
-        sample = data[0]
-        props = sample.get("properties", {})
-        sku_val = sample.get("sku")
-        kind_val = sample.get("kind")
+        observed: dict[str, list[str]] = {}
+        capped = False
 
-        # Extract property keys recursively (2 levels deep)
-        discovered_paths: list[str] = []
-        if isinstance(props, dict):
-            for k, v in sorted(props.items()):
-                discovered_paths.append(f"properties.{k}")
-                if isinstance(v, dict):
-                    for k2 in sorted(v.keys()):
-                        discovered_paths.append(f"properties.{k}.{k2}")
+        def visit(path: str, value: Any, depth: int) -> None:
+            nonlocal capped
+            if len(observed) >= 250 and path not in observed:
+                capped = True
+                return
+            examples = observed.setdefault(path, [])
+            if isinstance(value, (dict, list)):
+                if depth >= 8:
+                    capped = True
+                    return
+                if isinstance(value, dict):
+                    for key, child in sorted(value.items()):
+                        suffix = (
+                            f".{key}"
+                            if re.fullmatch(r"[A-Za-z_]\w*", key)
+                            else f"[{json.dumps(key)}]"
+                        )
+                        visit(path + suffix, child, depth + 1)
+                else:
+                    capped = capped or len(value) > 8
+                    for child in value[:8]:
+                        visit(path + "[]", child, depth + 1)
+            else:
+                text = json.dumps(value, ensure_ascii=False, default=str)
+                if text not in examples and len(examples) < 3:
+                    examples.append(text[:160])
 
-        if sku_val and isinstance(sku_val, dict):
-            for k in sorted(sku_val.keys()):
-                discovered_paths.append(f"sku.{k}")
+        for resource in data[:5]:
+            for field in ("properties", "sku", "kind", "identity"):
+                if field in resource:
+                    visit(field, resource[field], 0)
 
-        # Record to knowledge base
-        record_schema(resource_type, discovered_paths)
-
-        # --- Phase 2 (optional): if focus_area is specified, show values ---
-        focus_detail = ""
-        if focus_area:
-            focus_lower = focus_area.lower()
-            matching = [p for p in discovered_paths if focus_lower in p.lower()]
-            if matching:
-                # Build a query that projects the matching fields
-                extends = []
-                projections = ["name"]
-                for path in matching[:8]:
-                    alias = path.replace(".", "_")
-                    extends.append(f"extend {alias} = tostring({path})")
-                    projections.append(alias)
-                detail_query = (
-                    f"Resources\n"
-                    f"| where type =~ '{resource_type}'\n"
-                    f"| {'| '.join(extends)}\n"
-                    f"| project {', '.join(projections)}\n"
-                    f"| take 5"
-                )
-                try:
-                    detail_result = await self._service.query_resources(detail_query)
-                    detail_data = detail_result.get("data", [])
-                    if detail_data:
-                        focus_detail = f"\n## Focus: '{focus_area}' — sample values\n"
-                        for row in detail_data[:3]:
-                            focus_detail += f"Resource: {row.get('name', '?')}\n"
-                            for k, v in row.items():
-                                if k != "name":
-                                    focus_detail += f"  {k}: {v}\n"
-                except Exception:
-                    focus_detail = (
-                        f"\n(Focus query for '{focus_area}' failed — use top-level paths above)\n"
-                    )
-
-        # Format output
-        lines = [
-            f"## Discovered schema for {resource_type}\n",
-            f"Top-level property paths ({len(discovered_paths)}):",
+        record_schema(resource_type, sorted(observed))
+        terms = re.findall(r"\w+", focus_area.casefold())
+        matching = [
+            path for path in sorted(observed) if any(term in path.casefold() for term in terms)
         ]
-        for p in discovered_paths:
-            lines.append(f"  - {p}")
-
-        if kind_val:
-            lines.append(f"\nkind: {kind_val}")
-
-        if focus_detail:
-            lines.append(focus_detail)
-
-        lines.append(
-            "\nUse these paths in your KQL queries with "
-            "`| extend alias = tostring(properties.X.Y)`. "
-            "These paths have been recorded to the knowledge base for future reference."
-        )
-
+        lines = [
+            f"## Live sampled schema for {resource_type} ({table})",
+            f"Samples: {min(len(data), 5)}; traversal_capped={str(capped).lower()}. Not exhaustive.",
+            "Missing paths are unknown, not proof of absence. Null is not false or disabled.",
+            "Array [] is schema notation: use mv-expand with an explicit row limit for all elements.",
+            f"Sample resource IDs: {', '.join(str(row.get('id', '?')) for row in data[:5])}",
+        ]
+        if terms:
+            lines.append(f"Focus: {focus_area}; {len(matching)} matching sampled paths.")
+            if not matching:
+                lines.append(
+                    "No focus match in this sample; inspect other variants or the relevant parent bag."
+                )
+        for path in matching or sorted(observed):
+            examples = ", ".join(observed[path]) or "object/array"
+            lines.append(f"- {path}: {examples}")
+        historical = sorted(set(known) - set(observed))
+        if historical:
+            lines.append(
+                "Historical path hints, not observed in this sample: " + ", ".join(historical[:20])
+            )
         return "\n".join(lines)
 
 
@@ -2725,6 +2641,15 @@ class GetCostByResourceTypeInput(BaseModel):
     top: int = Field(
         default=15, ge=1, le=100, description="Return top N resource types (1-100, default: 15)"
     )
+    resource_type: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Exact ARM resource type to filter, e.g. Microsoft.Storage/storageAccounts",
+    )
+    subscription_id: Optional[str] = Field(
+        default=None,
+        description="Exact subscription GUID; omit only for configured or unique scope",
+    )
 
 
 class GetCostByResourceTypeTool(BaseTool):
@@ -2733,8 +2658,11 @@ class GetCostByResourceTypeTool(BaseTool):
     name: str = "get_cost_by_resource_type"
     description: str = """Retrieves cost by Azure resource type.
     
-    Useful when evaluating updates that may affect costs during Azure Update analysis.
-    Identify which resource types are currently generating the most costs.
+    Use for pricing, billing, paid features, changed meters, or documented cost savings.
+    Filter to the relevant ARM resource_type before aggregation, even outside the top spenders.
+    Returns ActualCost JSON with the exact scope, period, currency, filter, and cost rows.
+    Historical spending is a baseline, not the update's projected savings or additional cost.
+    Empty data and errors do not prove zero cost; unfiltered totals are subscription-wide.
     
     Usage examples:
     - days: 30, top: 10 -> Top 10 resource types by cost for the last 30 days
@@ -2748,50 +2676,55 @@ class GetCostByResourceTypeTool(BaseTool):
         super().__init__(**kwargs)
         self._service = service or CostManagementService()
 
-    def _run(self, days: int = 30, top: int = 15) -> str:
+    def _run(
+        self,
+        days: int = 30,
+        top: int = 15,
+        resource_type: Optional[str] = None,
+        subscription_id: Optional[str] = None,
+    ) -> str:
         """Sync execution not supported."""
         raise NotImplementedError("Use async version")
 
-    async def _arun(self, days: int = 30, top: int = 15) -> str:
+    async def _arun(
+        self,
+        days: int = 30,
+        top: int = 15,
+        resource_type: Optional[str] = None,
+        subscription_id: Optional[str] = None,
+    ) -> str:
         """Get cost by resource type asynchronously."""
         try:
-            result = await self._service.get_cost_by_resource_type(days=days, top=top)
+            result = await self._service.get_cost_by_resource_type(
+                days=days, top=top, resource_type=resource_type, subscription_id=subscription_id
+            )
 
-            if not result.get("success"):
-                return f"Cost query error: {result.get('error', 'Unknown error')}"
+            if not result["success"]:
+                raise RuntimeError(f"Cost query error: {result['error']}")
 
-            costs = result.get("costs_by_type", [])
-            if not costs:
-                return "No cost data for this period."
-
-            output_lines = [
-                f"## Cost by resource type (last {days} days)\n",
-                f"**Total cost**: ${result.get('total_cost', 0):,.2f}\n",
-                f"**Period**: {result.get('start_date', 'N/A')} ~ {result.get('end_date', 'N/A')}\n",
-                "\n### Top cost resource types\n",
-            ]
-
-            for i, cost in enumerate(costs, 1):
-                percentage = (
-                    (cost["cost"] / result["total_cost"] * 100) if result["total_cost"] > 0 else 0
-                )
-                bar = "█" * int(percentage / 5) + "░" * (20 - int(percentage / 5))
-                output_lines.append(
-                    f"{i:2}. {cost['resource_type']}\n"
-                    f"    ${cost['cost']:,.2f} ({percentage:.1f}%) [{bar}]"
-                )
-
-            return "\n".join(output_lines)
+            return json.dumps(result, ensure_ascii=False)
 
         except Exception as e:
             logger.error("Cost by resource type query failed", error=str(e))
-            return f"Cost query error: {str(e)}"
+            raise
 
 
 class GetCostByServiceInput(BaseModel):
     """Input for getting cost by Azure service."""
 
-    days: int = Field(default=30, description="Query costs for past N days (default: 30)")
+    days: int = Field(
+        default=30, ge=1, le=365, description="Query costs for past N days (default: 30)"
+    )
+    top: int = Field(default=20, ge=1, le=100, description="Maximum service cost rows to display")
+    service_name: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Exact Cost Management ServiceName value; omit to discover service labels",
+    )
+    subscription_id: Optional[str] = Field(
+        default=None,
+        description="Exact subscription GUID; omit only for configured or unique scope",
+    )
 
 
 class GetCostByServiceTool(BaseTool):
@@ -2801,6 +2734,9 @@ class GetCostByServiceTool(BaseTool):
     description: str = """Retrieves cost by Azure service.
     
     Useful when evaluating how an Azure Update may affect specific service costs.
+    Returns ActualCost JSON with the exact scope, period, currency, filter, and cost rows.
+    Use service_name only for a verified billing label, not a guessed RSS product alias.
+    Historical spending is a baseline, not savings; empty data never proves zero cost.
     """
     args_schema: Type[BaseModel] = GetCostByServiceInput
 
@@ -2811,35 +2747,37 @@ class GetCostByServiceTool(BaseTool):
         super().__init__(**kwargs)
         self._service = service or CostManagementService()
 
-    def _run(self, days: int = 30) -> str:
+    def _run(
+        self,
+        days: int = 30,
+        top: int = 20,
+        service_name: Optional[str] = None,
+        subscription_id: Optional[str] = None,
+    ) -> str:
         """Sync execution not supported."""
         raise NotImplementedError("Use async version")
 
-    async def _arun(self, days: int = 30) -> str:
+    async def _arun(
+        self,
+        days: int = 30,
+        top: int = 20,
+        service_name: Optional[str] = None,
+        subscription_id: Optional[str] = None,
+    ) -> str:
         """Get cost by service asynchronously."""
         try:
-            result = await self._service.get_cost_by_service(days=days)
+            result = await self._service.get_cost_by_service(
+                days=days, top=top, service_name=service_name, subscription_id=subscription_id
+            )
 
-            if not result.get("success"):
-                return f"Service cost query error: {result.get('error', 'Unknown error')}"
+            if not result["success"]:
+                raise RuntimeError(f"Service cost query error: {result['error']}")
 
-            costs = result.get("costs_by_service", [])
-            if not costs:
-                return "No cost data for this period."
-
-            output_lines = [
-                f"## Azure service cost (last {days} days)\n",
-                f"**Total cost**: ${result.get('total_cost', 0):,.2f}\n",
-            ]
-
-            for i, cost in enumerate(costs[:20], 1):
-                output_lines.append(f"{i}. **{cost['service']}**: ${cost['cost']:,.2f}")
-
-            return "\n".join(output_lines)
+            return json.dumps(result, ensure_ascii=False)
 
         except Exception as e:
             logger.error("Cost by service query failed", error=str(e))
-            return f"Service cost query error: {str(e)}"
+            raise
 
 
 # ============================================================================

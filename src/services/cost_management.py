@@ -2,14 +2,18 @@
 
 import asyncio
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from typing import Any, Optional
+from uuid import UUID
 
 from azure.core.exceptions import HttpResponseError
 from azure.mgmt.costmanagement import CostManagementClient
 from azure.mgmt.costmanagement.models import (
     QueryAggregation,
+    QueryComparisonExpression,
     QueryDataset,
     QueryDefinition,
+    QueryFilter,
     QueryGrouping,
     QueryTimePeriod,
 )
@@ -49,7 +53,7 @@ class CostManagementService:
 
             credential = get_azure_credential()
             subs = await discover_subscriptions_async(credential)
-            if subs:
+            if len(subs) == 1:
                 self.subscription_id = subs[0]["subscriptionId"]
                 logger.info(
                     "cost_subscription_auto_discovered",
@@ -57,6 +61,21 @@ class CostManagementService:
                 )
         except Exception as e:
             logger.warning("cost_subscription_discovery_failed", error=str(e))
+
+    async def _resolve_scope(self, subscription_id: Optional[str]) -> str:
+        """Resolve one explicit subscription without broadening a bounded analysis."""
+        from src.agent.scope import current_analysis_scope
+
+        if current_analysis_scope().is_bounded:
+            raise ValueError("Cost Management cannot enforce the full subscriber resource scope")
+        if not subscription_id:
+            await self._ensure_subscription()
+        resolved = subscription_id or self.subscription_id
+        if not resolved:
+            raise ValueError(
+                "Cost query requires an explicit or uniquely discoverable subscription"
+            )
+        return f"/subscriptions/{UUID(resolved)}"
 
     def _get_client(self) -> CostManagementClient:
         """Get or create Cost Management client."""
@@ -106,19 +125,72 @@ class CostManagementService:
 
         raise last_error  # type: ignore[misc]
 
-    async def get_cost_by_resource_type(self, days: int = 30, top: int = 20) -> dict[str, Any]:
+    @staticmethod
+    def _parse_cost_result(
+        result: Any, dimension: str, item_key: str
+    ) -> tuple[list[dict[str, Any]], float, str]:
+        """Parse named columns without summing currencies or incomplete pages."""
+        if result.next_link:
+            raise ValueError("Cost query is incomplete: additional result pages are available")
+        if not result.rows:
+            return [], 0.0, ""
+        columns = {column.name.lower(): index for index, column in enumerate(result.columns)}
+        cost_column = next(
+            (columns[name] for name in ("cost", "pretaxcost", "totalcost") if name in columns),
+            None,
+        )
+        if cost_column is None or dimension.lower() not in columns or "currency" not in columns:
+            raise ValueError("Cost response is missing cost, dimension, or currency columns")
+
+        costs = []
+        currencies = set()
+        total = Decimal("0")
+        for row in result.rows:
+            amount = Decimal(str(row[cost_column]))
+            currency = str(row[columns["currency"]] or "").strip()
+            if not amount.is_finite() or not currency:
+                raise ValueError("Cost response contains an invalid amount or missing currency")
+            currencies.add(currency)
+            total += amount
+            costs.append(
+                {
+                    item_key: row[columns[dimension.lower()]],
+                    "cost": float(amount),
+                    "currency": currency,
+                }
+            )
+        if len(currencies) != 1:
+            raise ValueError(
+                "Cost response contains multiple currencies; no combined total is valid"
+            )
+        costs.sort(key=lambda cost: cost["cost"], reverse=True)
+        for cost in costs:
+            cost["cost"] = round(cost["cost"], 2)
+        return costs, float(round(total, 2)), currencies.pop()
+
+    async def get_cost_by_resource_type(
+        self,
+        days: int = 30,
+        top: int = 20,
+        resource_type: Optional[str] = None,
+        subscription_id: Optional[str] = None,
+    ) -> dict[str, Any]:
         """Get cost breakdown by resource type.
 
         Args:
             days: Number of days to look back
             top: Number of top resource types to return
+            resource_type: Exact ARM resource type to filter before aggregation
+            subscription_id: Explicit subscription, otherwise the configured or unique subscription
 
         Returns:
             Cost breakdown by resource type
         """
         try:
-            await self._ensure_subscription()
-            scope = f"/subscriptions/{self.subscription_id}"
+            scope = await self._resolve_scope(subscription_id)
+            if not 1 <= days <= 365 or not 1 <= top <= 100:
+                raise ValueError("Cost query requires days in 1-365 and top in 1-100")
+            resource_type = resource_type.strip().lower() if resource_type else None
 
             end_date = datetime.now(timezone.utc)
             start_date = end_date - timedelta(days=days)
@@ -131,6 +203,15 @@ class CostManagementService:
                     granularity="None",
                     aggregation={"totalCost": QueryAggregation(name="Cost", function="Sum")},
                     grouping=[QueryGrouping(type="Dimension", name="ResourceType")],
+                    filter=(
+                        QueryFilter(
+                            dimensions=QueryComparisonExpression(
+                                name="ResourceType", operator="In", values=[resource_type]
+                            )
+                        )
+                        if resource_type
+                        else None
+                    ),
                 ),
             )
 
@@ -147,23 +228,9 @@ class CostManagementService:
             result = await self._query_with_retry(scope=scope, query_definition=query_definition)
             _elapsed = _time.time() - _t0
 
-            # Parse results
-            costs = []
-            if result.rows:
-                for row in result.rows[:top]:
-                    if len(row) >= 2:
-                        costs.append(
-                            {
-                                "resource_type": row[1] if len(row) > 1 else "Unknown",
-                                "cost": round(float(row[0]), 2) if row[0] else 0,
-                                "currency": result.columns[0].name if result.columns else "USD",
-                            }
-                        )
-
-            # Sort by cost descending
-            costs.sort(key=lambda x: x["cost"], reverse=True)
-
-            total_cost = sum(c["cost"] for c in costs)
+            costs, total_cost, currency = self._parse_cost_result(
+                result, "ResourceType", "resource_type"
+            )
 
             logger.info(
                 "cost_query_ok",
@@ -175,10 +242,17 @@ class CostManagementService:
 
             return {
                 "success": True,
+                "scope": scope,
+                "source": "Azure Cost Management Query API",
+                "filter": {"ResourceType": resource_type} if resource_type else {},
+                "has_cost_data": bool(costs),
+                "cost_type": "ActualCost",
+                "currency": currency,
                 "period_days": days,
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "total_cost": round(total_cost, 2),
+                "row_count": len(costs),
                 "costs_by_type": costs[:top],
             }
 
@@ -186,19 +260,28 @@ class CostManagementService:
             logger.error("cost_query_error", query_type="by_resource_type", error=str(e))
             return {"success": False, "error": str(e), "costs_by_type": []}
 
-    async def get_cost_by_service(self, days: int = 30, top: int = 20) -> dict[str, Any]:
+    async def get_cost_by_service(
+        self,
+        days: int = 30,
+        top: int = 20,
+        service_name: Optional[str] = None,
+        subscription_id: Optional[str] = None,
+    ) -> dict[str, Any]:
         """Get cost breakdown by Azure service (meter category).
 
         Args:
             days: Number of days to look back
             top: Number of top services to return
+            service_name: Exact Cost Management ServiceName value to filter
+            subscription_id: Explicit subscription, otherwise the configured or unique subscription
 
         Returns:
             Cost breakdown by service
         """
         try:
-            await self._ensure_subscription()
-            scope = f"/subscriptions/{self.subscription_id}"
+            scope = await self._resolve_scope(subscription_id)
+            if not 1 <= days <= 365 or not 1 <= top <= 100:
+                raise ValueError("Cost query requires days in 1-365 and top in 1-100")
 
             end_date = datetime.now(timezone.utc)
             start_date = end_date - timedelta(days=days)
@@ -211,6 +294,15 @@ class CostManagementService:
                     granularity="None",
                     aggregation={"totalCost": QueryAggregation(name="Cost", function="Sum")},
                     grouping=[QueryGrouping(type="Dimension", name="ServiceName")],
+                    filter=(
+                        QueryFilter(
+                            dimensions=QueryComparisonExpression(
+                                name="ServiceName", operator="In", values=[service_name]
+                            )
+                        )
+                        if service_name
+                        else None
+                    ),
                 ),
             )
 
@@ -227,19 +319,7 @@ class CostManagementService:
             result = await self._query_with_retry(scope=scope, query_definition=query_definition)
             _elapsed = _time.time() - _t0
 
-            costs = []
-            if result.rows:
-                for row in result.rows[:top]:
-                    if len(row) >= 2:
-                        costs.append(
-                            {
-                                "service": row[1] if len(row) > 1 else "Unknown",
-                                "cost": round(float(row[0]), 2) if row[0] else 0,
-                            }
-                        )
-
-            costs.sort(key=lambda x: x["cost"], reverse=True)
-            total_cost = sum(c["cost"] for c in costs)
+            costs, total_cost, currency = self._parse_cost_result(result, "ServiceName", "service")
 
             logger.info(
                 "cost_query_ok",
@@ -251,10 +331,17 @@ class CostManagementService:
 
             return {
                 "success": True,
+                "scope": scope,
+                "source": "Azure Cost Management Query API",
+                "filter": {"ServiceName": service_name} if service_name else {},
+                "has_cost_data": bool(costs),
+                "cost_type": "ActualCost",
+                "currency": currency,
                 "period_days": days,
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "total_cost": round(total_cost, 2),
+                "row_count": len(costs),
                 "costs_by_service": costs[:top],
             }
 

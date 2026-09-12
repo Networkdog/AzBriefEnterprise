@@ -52,7 +52,7 @@ Note: `job_relevance` evaluates role fit — it is independent of `importance` (
 
 **If subscriber_relevance is "skip"**: Skip this step entirely — keep all text fields from the original unchanged (they will be translated in Step 3).
 - **one_line_summary**: Rewrite from the subscriber's role perspective. MUST remain 30-80 characters. Do NOT expand into a full sentence.
-- **detailed_analysis**: Emphasize content relevant to the subscriber's role. Use ONLY information from the original — do NOT add new content. Preserve `> ` blockquote concept boxes exactly. **Do NOT mention the subscriber's role name or title in the report text** — the report should read as a general professional analysis, not as "as a Security Engineer, you should...".
+- **detailed_analysis**: Emphasize content relevant to the subscriber's role. Use ONLY information from the original — do NOT add new content. Preserve `> ` blockquote concept boxes exactly. Preserve the decision hinge, recommendation boundary, supported trade-off or hidden failure mode, owning operational responsibility, and decision-closure evidence; role tailoring may reprioritize these elements but must not delete them or turn them into generic advice. **Do NOT mention the subscriber's role name or title in the report text** — the report should read as a general professional analysis, not as "as a Security Engineer, you should...".
 - **affected_resources**: Move role-relevant resources to the top. May remove irrelevant resources
 - **action_items**: Re-prioritize urgency based on role. May remove irrelevant items
 - **impact_summary**: Keep original values (translate only)

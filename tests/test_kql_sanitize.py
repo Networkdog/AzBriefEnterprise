@@ -47,11 +47,24 @@ class TestSanitizeKql:
         assert "project-away" in result
         assert "project-except" not in result
 
-    def test_kind_alias_collision(self):
-        """kind=tostring(kind) in project → kindValue=tostring(kind)."""
-        query = "Resources | project name, kind=tostring(kind)"
-        result = sanitize_kql(query)
-        assert "kindValue=tostring(kind)" in result
+    def test_kind_alias_requires_explicit_repair_not_silent_renaming(self):
+        """Repair must update the whole alias contract, not only its declaration."""
+        query = "Resources | project id, kind=tostring(kind) | where kind == 'StorageV2'"
+        assert sanitize_kql(query) == query
+
+    @pytest.mark.parametrize(
+        "expression",
+        [
+            "tostring(properties.minimumTlsVersion)",
+            "coalesce(tostring(properties.minimumTlsVersion), 'unknown')",
+            "iff(isnull(properties.minimumTlsVersion), 'unknown', "
+            "tostring(properties.minimumTlsVersion))",
+            "properties.minimumTlsVersion",
+        ],
+    )
+    def test_project_expression_and_downstream_filter_preserved(self, expression: str):
+        query = f"Resources | project id, tls={expression} | where tls == 'TLS1_0'"
+        assert sanitize_kql(query) == query
 
     def test_duplicate_pipes_cleaned(self):
         """|| or '| |' collapsed to single |."""
@@ -71,11 +84,36 @@ class TestSanitizeKql:
         result = sanitize_kql(query)
         assert result.startswith("Resources")
 
-    def test_datatable_removed(self):
-        """datatable blocks (unsupported) are removed."""
+    def test_unsupported_table_is_not_replaced_with_resources(self):
+        """Unsupported syntax must fail explicitly, not become unrelated inventory."""
         query = "datatable(a:string)['foo'] | take 1"
+        assert sanitize_kql(query) == query
+
+    @pytest.mark.parametrize(
+        "query",
+        [
+            "Resources | project id, label='please take care' | order by id asc",
+            'Resources | where tags["project name"] == "top 10" | project id',
+            "Resources | where name == 'let take; | render table' | project id",
+            "Resources | where name == 'can''t take this' | project id",
+            r"Resources | where name == 'can\'t take this' | project id",
+            "Resources // project name take 1\n| project id",
+            "Resources /* | top 10 */ | project id",
+            "Resources\n|    project id\n|    order by id asc",
+            "Resources | mv-expand subnet=properties.subnets limit 2000 | project id, subnet",
+            "Resources | project id, owner=tolower(properties.managedBy) "
+            "| join kind=leftouter (Resources | project owner=tolower(id), ownerName=name) "
+            "on owner | project id, ownerName",
+        ],
+    )
+    def test_valid_exploratory_query_preserved(self, query: str):
+        assert sanitize_kql(query) == query
+
+    def test_let_inlining_does_not_replace_literal_content(self):
+        query = "let tier = 'Basic'; Resources | where sku.name == tier | project note='tier'"
         result = sanitize_kql(query)
-        assert "datatable" not in result
+        assert "sku.name == 'Basic'" in result
+        assert "note='tier'" in result
 
     def test_normal_query_unchanged(self):
         """Well-formed query passes through without modification."""

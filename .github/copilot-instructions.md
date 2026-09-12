@@ -25,6 +25,11 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 - **Vision**: Make Azure change intelligence a routine operational capability so every Azure team knows what changed, where and why it matters, and what comes next for its own environment.
 - **Evidence before inference**: Ground conclusions in actual tenant resources, configuration, health, policy, cost, and regional availability. AzBrief is environment-aware decision intelligence, not a generic update summarizer.
 - **Action over notification**: Turn findings into safe, specific procedures, commands, deadlines, and risk warnings instead of merely restating announcements.
+- **Decision brief over feature education**: Write as the assigned CSA would advise. Name the
+  decision hinge, give a grounded recommendation and the condition for choosing the alternative or
+  retaining the current state, expose supported trade-offs and hidden failure modes, identify the
+  operational responsibility, and define the evidence that closes the decision. Never leak Microsoft
+  sales motions or invent customer goals, budgets, schedules, owners, or plans.
 - **Coverage without silent filtering**: Analyze every collected update before deciding its importance, impact, or job relevance so risks and opportunities are not discarded prematurely.
 - **Category-aware environment relevance**: `relevance_evidence` means applicability/value within
   the analysis-time scope, never a selection or delivery justification. Changes/retirements explain
@@ -80,7 +85,7 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 - **Circuit breaker**: Track consecutive failures; after 3 consecutive failures, fall back to alternative model or abort gracefully. Auto-reset after timeout (half-open state)
 - **Model fallback**: After `MAX_CONSECUTIVE_OVERLOAD_ERRORS` (3) consecutive 529 errors, raise `ModelFallbackError` to trigger model switch. Cleanly separates retry exhaustion from model switching logic
 - **Stale connection detection**: Detect ECONNRESET/EPIPE for targeted recovery (disable keep-alive pooling + reconnect) instead of generic retry
-- **LLM-assisted tool repair**: On tool failure, the Resource Graph specialist repairs KQL and the coordinator repairs other tool arguments, with bounded retries and a circuit breaker. Never fall back across specialist roles; use deterministic builder/rule recovery or preserve a gap instead
+- **LLM-assisted tool repair**: On tool failure, the Resource Graph specialist repairs KQL and the coordinator repairs other tool arguments, with bounded retries and a circuit breaker. Never fall back across specialist roles; use meaning-preserving lexical repair or preserve a gap, never replace a failed question with a generic builder/count
 - **Multi-turn output recovery**: If LLM hits output token limit, inject meta-message ("Resume directly — no apology, no recap") and retry up to 3 times
 - **Error withholding**: Recoverable errors (prompt-too-long, max-output-tokens) are not surfaced to callers until recovery is attempted. Surface only if recovery fails
 - **Graceful degradation**: If Resource Graph, Azure MCP, or Azure API evidence fails, preserve an explicit `partial` gap and reduce confidence. Missing specialist evidence never becomes confirmed absence and never falls back to a general-purpose Prompt Agent
@@ -127,6 +132,38 @@ Tools follow a self-contained module pattern:
 | **Quality Reviewer** | Evidence-completeness verdict, G-Eval, bounded correction feedback, action safety | `_evaluation_node`, `GEvalJudge`, `ActionItemVerifier` |
 
 `Settings.foundry_agent_for_role()` accepts only explicit specialist names. Production Hosted execution requires all six specialist roles to resolve to **distinct** Agent names (`has_complete_specialist_roster`); unknown former settings are ignored and do not satisfy readiness. Agent definitions use `AIProjectClient.agents`; runtime invocation uses the project-scoped Responses API. The app never constructs a direct Azure OpenAI/OpenAI chat-completions client.
+
+Material financial implications in any update category require a scoped recent ActualCost baseline
+or an explicit cost-evidence gap. Cost enrichment checks title/body, not only the pricing category.
+Keep cost calls under Azure API ownership, filter before aggregation, parse response columns by name,
+and preserve period, currency, and subscription. Sort all rows and total before applying display
+limits; reject mixed currencies and incomplete pages. Never assume USD, choose the first visible
+subscription, or broaden a bounded subscriber analysis. Cost-tool failures must remain failed tasks,
+not successful strings. Report observed spending separately from supported estimates in the existing
+cost-impact field; do not apply advertised savings to unrelated spending. Hosted cost-read permission,
+updated Prompt Agent definitions, and Hosted deployment are separate from local verification.
+
+### Resource Graph Investigation
+
+- Start with the update's decision question. Builders are optional baselines, never query-shape
+  ceilings. Supported project expressions, typed predicates, distributions, join/union and array/bag
+  expansion are available within documented SDK limits. No let/render/datatable/externaldata/toscalar.
+- Keep scope and applicability thresholds. App-injected Resource Group or intersected MG/subscription
+  predicates still prohibit join/union; use separate scoped ID-based queries there.
+- Schema exploration samples five live resources, traverses nested objects/arrays with disclosed
+  bounds, and matches focus keywords. Cached paths are historical hints, not complete/current evidence.
+- Custom KQL carries purpose and expected_columns. The loop handles syntax, wrong/off-topic results,
+  empty filtered queries and missing required values with up to eight attempts and two result rewrites.
+  Stop cycles, 401/403 and cancellation. False/zero are valid; null/missing stays unknown. A diagnostic
+  sample must never become the affected-resource result or justify relaxing a security threshold.
+- Preserve project expressions, strings/comments and downstream aliases during sanitization. The
+  live service rejects kind=tostring(kind), but direct kind or resourceKind=tostring(kind) works.
+  Never restore regex project-to-extend rewriting, blanket join/array stripping or builder substitution.
+- Follow up to ten 1000-row SDK pages with objectArray output and explicit incompleteness. Keep every
+  received service-detail row, including nulls. Local refs cannot recover uncollected Azure pages.
+- Evaluate query_intent, not only tool success; false coverage requests revision before existing
+  termination limits, and exhausted gaps remain explicit. Updated tools/runtime guidance require
+  new Prompt Agent versions and a Hosted deployment, not just a control-plane image update.
 
 ### Memory & Caching
 
@@ -484,6 +521,9 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
   `_EMAIL_DOCUMENT_END` shell and masthead/header/section/footer/intro formatters. `EMAIL_COLORS`
   defines a pure white canvas and paper, ink `#182b32`, and teal `#08746b`; never restore dark
   navy heroes or rounded, shadowed cards.
+- Korean resource sections use the shared `affected_resources` label `연관 리소스` in email,
+  Archive, and judge Markdown; the empty label is `연관 리소스가 없습니다.`. Keep field names,
+  resource selection, and immutable archived content unchanged.
 - Keep the 13px body scale and explicit `cover=36` / `stat=48` display steps. The wordmark uses
   36px and the main title uses 48px; both become 29px on mobile. Contents use 17px titles, 13px summaries
   and separate 29px number cells. Takeaways use 18.75px on desktop and 15.75px on mobile at weight
@@ -654,9 +694,9 @@ Common error patterns in AzBrief logs and their root causes:
 
 | Log Pattern | Root Cause | Fix Location |
 |-------------|-----------|--------------|
-| `kql_query_failed` + `ParserFailure` | LLM generated invalid KQL (join, let, unsupported syntax) | `src/agent/prompts/tools.py` KQL tips, `src/agent/tools.py` rule-based fix |
+| `kql_query_failed` + `ParserFailure` | Specific syntax, alias, field or dialect error; join/array use alone is not invalid | Inspect the error and preserve query intent in `src/agent/tools.py` |
 | `kql_fix_llm_failed` repeated N times | Resource Graph specialist is unavailable but the error is not cached | `src/agent/tools.py` `_llm_unavailable` conditions and deterministic fallback |
-| `task_failed` after max retries | Tool execution failure not recoverable | Check tool args in plan, add fallback in `_rule_based_fix` |
+| `task_failed` after max retries | Tool execution failure not recoverable | Check the original question/args; preserve a gap instead of an unrelated fallback |
 | `llm_circuit_breaker_open` | 3+ consecutive LLM failures | Check model deployment, API key, rate limits |
 | `output_recovery_attempt` | Report hit output token limit | Consider reducing prompt size or raising `max_output_tokens` |
 | `429` / `529` errors | Rate limiting / model overload | Backoff is automatic; check if request volume is too high |
@@ -699,7 +739,8 @@ After achieving clean logs, run `python -c "import src"` and `python -m pytest t
 | `kql_query_failed` | WARNING | KQL query failed (check `attempt`, `error`, `query`) |
 | `kql_fix_by_llm` | INFO | LLM successfully fixed a KQL query |
 | `kql_fix_llm_failed` | WARNING | LLM-based KQL fix failed |
-| `kql_fix_removed_join` | INFO | Rule-based fix removed join clause |
+| `kql_repair_stalled` | WARNING | Correction was empty or repeated a prior query; loop stopped |
+| `kql_result_improved` | INFO | Result evidence triggered a new query; inspect issue and actual rows |
 | `evaluation_phase_done` | INFO | Evaluation verdict (sufficient/partial/insufficient) |
 | `report_phase_done` | INFO | Report generated (check `report_chars`, token usage) |
 | `analysis_complete` | INFO | Full analysis summary (relevance, urgency, elapsed) |
@@ -822,7 +863,7 @@ These issues compile fine but cause subtle runtime bugs.
 | Email labels | New key added only to a non-`ko` bundle | Key is invisible to `label_keys()` and untested | Add it to `src/i18n/labels/ko.py` first |
 | HTML template | Literal `{` in template | `KeyError` in `str.format()` | Use `_escape_braces()` |
 | Tool definition | `args_schema` mismatch | Agent silently passes wrong args | Match Pydantic schema to tool signature |
-| KQL query | Using `join`, `let`, or `mv-expand` | `ParserFailure` from Resource Graph | Stick to single-table queries with `where`/`project`/`summarize` |
+| KQL query | Destructive repair, missing properties, or incomplete pages | Wrong question appears to succeed or missing evidence becomes absence | Preserve intent; use supported KQL, required columns and explicit completeness |
 | Settings | New env var not in `Settings` class | Value silently `None` | Add to `src/config.py` with default |
 | Settings | Env var present but **empty** checked with `is not None` | The template always defines it, so unconfigured reads as configured | Check truthiness, not `is not None` |
 | Email | Debug artefact written before delivery | An unwritable `out/` suppressed the whole digest | Keep pre-delivery side effects best-effort |
@@ -851,6 +892,10 @@ When implementing a feature or fixing a bug:
 
 ## Learnings
 
+KQL-specific entries dated before 2026-09 describe historical implementations. The former
+project-expression rewriting, join/array stripping, builder/count fallback and assumption that type
+existence proves a bad filter are superseded by Resource Graph Investigation above. Do not restore them.
+
 - **An analysis archive is a control-plane durability boundary, not Hosted Agent memory (2026-08).** The Hosted Agent runs under a separate identity/filesystem and its `$HOME/.azbrief` JSONL is bounded best-effort planning memory, so the Container App cannot use it as a browser source of truth. The canonical archive therefore lives in a private Blob container owned by the App/Job UAMI. One immutable JSON document and its metadata projection commit in the same create-only PUT; `ArchiveService` runs after the Hosted response but before digest/email/checkpoint. A configured archive failure fails the run before delivery or watermark advancement, while subscriber customization, job relevance, and PII stay out of storage. The deterministic 10,000-version evaluator observed 10,000/10,000 records, zero duplicate/order/filter errors, 100% schema integrity, zero personalized keys, PII keys, or email-like values, 762.322 ms local listing P95, and a 28,140-byte maximum page. Browser checks at 1440×900 and 390×844 found zero horizontal overflow; mobile collapses advanced filters so results remain in the first viewport.
 - **Foundry roster cleanup must use the deployed Hosted definition, not stale azd aliases (2026-08).** The live Hosted v10 definition referenced only coordinator, Resource Graph, Azure MCP, Azure API, report writer, and quality reviewer. Eight superseded Prompt Agents (`action`, `evaluator`, `impact`, `planner`, `primary`, `reporter`, `research`, `review`) had no source/IaC/manifest or live definition reference and were removed with all 28 versions. Old local `AZBRIEF_PROMPT_{CODEX,EVALUATOR,FAST,PLANNER,PRIMARY,REPORTER}_AGENT_NAME` values were then emptied. Always list the project, inspect the active Hosted version's environment variables, pass the six-role `--check`, and guard both required and unexpected names before a destructive cleanup.
 
@@ -873,7 +918,9 @@ Past mistakes and workarounds discovered during development.
 - **Committing the newest finished item is the wrong checkpoint under concurrency.** `max_concurrent_analyses` lets update #5 finish before #2; saving #5's timestamp would make the next run start after #5 and silently skip #2 forever. `_CheckpointCursor` only advances across the **contiguous prefix** of finished updates. Failures count as finished (otherwise one permanently broken update pins the checkpoint forever), but deadline-deferred and circuit-breaker-aborted updates do not.
 - **A documented, configurable setting that no code reads is invisible until you check the wiring** (found 2026-08). `azure_openai_fast_*` (endpoint/key/api-version/deployment) existed in `src/config.py`, `.env.example` and `README.md`, and was set to a mini deployment in a real `.env` — but `_create_llm()` hard-coded `azure_openai_deployment_name`, so `llm_fast` had always run on the **primary** model. Subscriber customization and task revision were silently paying full-model prices, and the only visible symptom was the bill. Fixed by routing every role through `Settings.llm_profile(role)`. Lesson: when a setting exists to change behaviour, assert the *resolved* value end-to-end (instantiate the client and read back its deployment), not just that the field parses.
 - `html.parser` is the only allowed HTML parser. Adding `lxml` breaks the fat wheel build on Azure Automation (Linux sandbox has no system `libxml2`).
-- KQL `join` is not supported in Azure Resource Graph. All queries must be single-table. The agent generates `join` frequently — `_rule_based_fix()` strips it.
+- **Corrected by live validation (2026-09-12):** Resource Graph supports joins/unions, nested project
+  expressions, array and bag expansion. Its reserved kind assignment is a specific exception, not
+  a reason to ban computed projections. Apply SDK limits and the app's explicit scope restrictions.
 - `f-string` with `["key"]` inside `py -3 -c "..."` causes `SyntaxError` on Windows PowerShell. Always write to a `.py` file for complex inline scripts.
 - UI labels live in `src/i18n/labels/<code>.py`, not in `src/email/templates.py`. `ko.py` defines the canonical key set; other languages may be partial because `get_labels()` backfills through the registry fallback chain, so a missing key can no longer raise `KeyError` at render time.
 - `str.format()` on HTML templates fails on any literal `{` or `}` — every brace in the template HTML must be doubled or escaped via `_escape_braces()`.
@@ -1021,7 +1068,7 @@ Past mistakes and workarounds discovered during development.
 - **A strict evidence Prompt Agent response is not raw KQL (2026-08).** The Resource Graph Agent's
   immutable output schema returned `{status, claims, gaps}`, but the old fixer treated the whole JSON
   as a query and retried `Resources\n{...}`. Repair calls now set `tool_choice=none` and extract only an
-  executable table query from a claim; a gap falls through to deterministic builder/rule recovery.
+  executable table query from a claim; a gap now permits only meaning-preserving lexical repair.
   The same smoke caught two task-contract errors: `find_related_resources` received `query` instead
   of `keyword`, and a revision put English prose in `query_azure_resources.query`. Exact prompt
   examples plus pre-execution normalization now map the former and replace the latter from
@@ -1034,7 +1081,7 @@ Past mistakes and workarounds discovered during development.
 | `SyntaxError` in PowerShell inline Python | f-string with `["key"]` in `-c` | Write to a `.py` file instead of inline |
 | Tests pass locally, fail in the container | Missing dependency in the image | Add it to `requirements.txt` and rebuild |
 | `KeyError` rendering email | Label key missing from `src/i18n/labels/ko.py` | Add it to `ko.py` (canonical set); other languages backfill automatically |
-| KQL `ParserFailure` | Agent used `join`/`let`/`mv-expand` | Add pattern to `_rule_based_fix()` in `tools.py` |
+| KQL `ParserFailure` | Specific invalid syntax/alias/path or exceeded SDK limits | Repair from actual error/schema evidence; do not remove required query structure |
 | `429` / `529` overload | Too many concurrent LLM calls | Automatic backoff handles this; reduce batch size if persistent |
 | `ECONNRESET` on Azure OpenAI | Stale keep-alive connection | Automatic reconnect; disable connection pooling if persistent |
 | Email not delivered | No `COMMUNICATION_SERVICES_CONNECTION_STRING` | Expected — falls back to console output |

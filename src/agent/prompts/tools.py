@@ -14,14 +14,14 @@ TOOLS_PROMPT = """## Available Tools
 - `get_service_documentation`: Service-specific documentation lookup
 
 ### Azure Resource Graph
-- `get_service_resource_details`: Optimized detail query per service (recommended)
+- `get_service_resource_details`: Optional service baseline; use only when its fields answer the question
 - `get_resource_configurations`: **Configuration profiling** — shows actual config values (K8s version, TLS version, SKU, feature flags) with distribution summary (e.g., "3/5 on 1.28, 2/5 on 1.30"). Use when you need to assess which resources are affected by a version/config change
 - `get_resource_dependencies`: **Dependency mapping** — traces VNet integrations, Private Endpoints, cross-service references. Use for blast radius analysis of core infrastructure updates (Storage, VNet, Key Vault, SQL)
-- `query_azure_resources`: Execute custom KQL queries
+- `query_azure_resources`: Custom KQL with purpose and expected_columns for bounded result review/rewrite
 - `find_related_resources`: Keyword-based resource search. Use exactly
   `{"keyword": ["storage", "blob"]}`; never pass a `query` key.
 - `get_security_posture`: Security posture analysis
-- `explore_resource_schema`: Discover properties schema for a resource type (use when predefined queries lack needed fields)
+- `explore_resource_schema`: Inspect nested objects/arrays across five live samples; optional table and multiword focus_area
 
 ### Service Resource-Type Region Availability (authoritative within its scope)
 - `get_service_region_availability`: Confirms whether an exact ARM resource type can be deployed in
@@ -64,16 +64,17 @@ The unshown rows are NOT lost: the full result is retained and searchable.
   Input: `ref` (from the preview), `pattern` (literal text, case-insensitive), optional `mode`
   (`search` | `head` | `tail` | `stats`) and `regex`.
 
-**Rule**: if a result was truncated, you MUST call `query_tool_result` before claiming a resource
-does not exist, a property is unverified, or a check needs manual review. "It was not in the preview"
-is not evidence — the preview stops at an arbitrary row. A `no match` answer from `query_tool_result`
-IS evidence, because it searched the entire result.
+**Rule**: search stored previews before inferring absence. A no-match establishes absence only within
+the fully stored, fully collected query result and its actual predicate. Partial storage, SDK
+result_truncated=true, a limited sample or an unverified property path cannot prove tenant absence.
+Rows never received from Azure require a narrower/partitioned KQL query, not a local ref search.
 
 ### Resource Graph Completeness — query the answer instead of deferring it
 **Before you leave any fact for "manual review" / `additional_checks`, ask: "Is this an ARM resource or a resource property?"**
-If yes, it is queryable through Resource Graph NOW — plan a query for it instead of punting it to the reader.
-Deferring a queryable fact to CSA review is a quality failure. The facts below are frequently (and wrongly)
-left unqueried — always query them when the update touches the relevant service:
+If yes, first try the appropriate Resource Graph table and observed property path. ARM membership does
+not guarantee that Resource Graph exposes every property: unsupported/masked fields, missing access
+and stale data remain explicit gaps. ARM-only facts belong to the Azure API specialist, not guessed
+Resource Graph results. The facts below are examples, not the allowed set of investigations:
 
 | Update topic | Do NOT defer — query this | KQL property path |
 |--------------|---------------------------|-------------------|
@@ -89,7 +90,7 @@ Example (AKS networking — single-table, follows the KQL constraints below):
 ```
 resources
 | where type =~ 'microsoft.containerservice/managedclusters'
-| project name, resourceGroup,
+| project id, name, subscriptionId, resourceGroup,
     dataplane = tostring(properties.networkProfile.networkDataplane),
     policy = tostring(properties.networkProfile.networkPolicy),
     acns = tostring(properties.networkProfile.advancedNetworking)
@@ -101,21 +102,39 @@ prerequisite (e.g. `backupPolicy.type == 'Periodic'` means Continuous Backup is 
 conclusion in the report — do not re-raise the same question as an unresolved check.
 
 ### KQL Query Strategy (Advanced)
-When predefined queries cannot provide needed information, use this strategy:
+Choose the query shape from the evidence question, never from a fixed service template.
 
-1. **Schema exploration first**: If the update mentions a specific setting/property not covered by predefined queries, use `explore_resource_schema` to discover actual property keys.
-   - Example: "Azure SQL TLS version" → `explore_resource_schema(resource_type='Microsoft.Sql/servers', focus_area='tls')`
-2. **Progressive approach**: Schema exploration → field discovery → detailed query with discovered fields → execution
-3. **Knowledge accumulation**: Successful queries and schemas are automatically saved to an internal knowledge base for future analyses.
+1. State the original purpose, eligibility conditions and required result columns. If the path is
+  known, query directly. Otherwise inspect a small type/parent-bag sample or explore_resource_schema;
+  cached schemas are hypotheses. Inspect other versions/SKUs/regions when shape varies.
+2. Use nested projections, conditional distributions, null checks, array expansion or ID-based
+  joins when they answer the question. Configuration presence alone is not applicability; retain
+  an affected/unaffected/unknown denominator. False and zero are values, not missing evidence.
+3. Pass purpose and expected_columns to query_azure_resources. Inspect executed_query and evidence_gaps:
+  syntax failures, empty/off-topic results and missing required values warrant evidence-based
+  rewrites, not removing thresholds or returning a generic builder. A correct zero is acceptable.
+4. Follow a schema probe with a query based on its actual output in the next tool round/revision.
+  Independent queries can run together; do not guess dependent queries in the same batch.
+5. Stop once the question is answered or bounded attempts expose an unresolved gap. Repeating an
+  equivalent failure is not exploration. Successful equivalent queries should be reused.
 
 ### Common Pitfalls
 - Resource Graph uses **KQL subset**, not full Kusto. No `let`, `render`, `datatable`, `externaldata`.
-- `type` values are **lowercase** in data. Always use `=~` (case-insensitive) or `==` with lowercase.
-- Wrap `properties.*` in `tostring()` before using in `summarize` or `==` comparisons.
+- `type` values are **lowercase** in data. Use `=~`/`in~` or exact lowercase comparisons.
+- Cast dynamic fields by meaning: tostring for labels, tobool for flags, numbers/datetime for ordering.
+- Project expressions are valid. Project kind directly or use resourceKind=tostring(kind);
+  the reserved kind=tostring(kind) assignment fails in the live service. No five-extend restriction.
 - Use `project-away` (not `project-except`) to remove join duplicate columns.
-- `servicehealthresources`: Avoid `extend` + `project` combination; filter directly with `where tostring(properties.X)`.
-- `join` default is `innerunique`; explicitly specify `kind=leftouter` or `kind=inner`.
-- Max 1000 rows per page; use `top` or `take` to limit.
+- Joins support innerunique, inner, leftouter and fullouter; normalize ARM ID keys on both sides.
+  Limit join/union to three combined, observe cross-table/right-table restrictions, and filter early.
+  App-injected Resource Group or intersected MG/subscription boundaries prohibit join/union there:
+  use separate scoped ID-based queries without broadening the boundary.
+- mv-expand supports arrays and documented property-bag expansion. At most three expansions;
+  choose an explicit per-array limit up to 2000 (default 128). Preserve empty-array cases and avoid
+  multiplying the resource denominator. More complex operators are useful only when justified.
+- Complete enumerations retain scalar id/subscriptionId and stable ordering, without take/limit.
+  The service follows 1000-row pages up to ten pages and reports remaining truncation explicitly.
+  Small raw-property samples are allowed for discovery; broad raw properties/tags/sku dumps are not.
 - For Function Apps vs Web Apps: both are `microsoft.web/sites`; distinguish by `kind contains 'functionapp'`.
 - `sku` is a top-level field (not under `properties`): access as `sku.name`, `sku.tier`.
 - `tags` is top-level; access as `tags['keyName']` or `tags.keyName`.

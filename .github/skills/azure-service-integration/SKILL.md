@@ -16,6 +16,10 @@ description: 'Add new Azure service integration to AzBrief. Use when: new servic
     subscription as the whole tenant.
 - Billing hierarchy is tenant-scoped and needs billing-scope read access. Preserve 403,
     unsupported agreement types, and an empty visible-account set as distinct gaps.
+- For material financial implications in any update category, collect a recent 30-day ActualCost
+    baseline through the Azure API specialty. Filter to exact resource types or verified billing
+    service labels and retain subscription, period, currency, and filter in claims. Never confuse
+    historical spending with projected savings, infer zero from empty rows, or query outside scope.
 - Make the minimum calls needed to close a named gap. Execute serially when concurrency
     safety is undeclared.
 - Preserve service errors and lower confidence. Missing evidence never proves absence.
@@ -159,6 +163,16 @@ because `AZURE_SUBSCRIPTION_ID` is unset. Billing APIs return only scopes visibl
 identity; permission failures and empty visibility never prove that the tenant has no billing data.
 Subscription Reader is insufficient for billing hierarchy access: the Hosted Agent identity needs
 Billing Reader or equivalent read permission at the relevant billing account scope.
+
+`CostManagementService` queries one explicit, configured, or uniquely discoverable subscription.
+It never picks the first of multiple subscriptions. Its tools accept `subscription_id` and an exact
+`resource_type` or verified Cost Management `service_name` filter, returning JSON evidence with
+`ActualCost`, scope, period, currency, filter, and `has_cost_data`. All rows contribute to the total
+before sorting/display limits. Named-column parsing rejects missing currency, mixed currencies,
+non-finite amounts, and extra result pages; adapters propagate failures rather than return success
+strings. Bounded subscriber scopes remain blocked because these tools cannot enforce their full
+hierarchy. Cost Management Reader at the query scope is separate from Billing hierarchy permission.
+Tests in `tests/test_services.py` and `tests/test_analyzer.py` cover this contract without Azure calls.
 
 ## Resilience Patterns for Services
 

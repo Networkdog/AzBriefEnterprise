@@ -395,7 +395,32 @@ class TestFindRelatedResourcesFormat:
 
         output = await GetServiceResourceDetailsTool(service=service)._arun("Storage")
 
-        assert "subscriptionId: 11111111-1111-1111-1111-111111111111" in output
+        rows = [json.loads(line) for line in output.splitlines()[1:]]
+        assert rows[0]["subscriptionId"] == "11111111-1111-1111-1111-111111111111"
+
+    @pytest.mark.asyncio
+    async def test_service_details_preserve_rows_beyond_twenty_and_nulls(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        rows = _rows(60)
+        rows[-1]["minimumTlsVersion"] = "TLS1_0"
+        rows[0]["minimumTlsVersion"] = None
+        service = MagicMock()
+        service.query_resources = AsyncMock(return_value={"data": rows, "count": 60})
+        monkeypatch.setattr("src.agent.tools.record_successful_query", lambda **_kwargs: None)
+
+        output = await GetServiceResourceDetailsTool(service=service)._arun("Storage")
+        parsed = [json.loads(line) for line in output.splitlines()[1:]]
+        assert len(parsed) == 60
+        assert parsed[-1]["minimumTlsVersion"] == "TLS1_0"
+        assert parsed[0]["minimumTlsVersion"] is None
+
+    def test_partial_inventory_does_not_claim_complete_distribution(self):
+        output = FindRelatedResourcesTool._format_related(
+            ["storage"], {"data": _rows(3), "result_truncated": True, "total_records": 2000}
+        )
+        assert "returned rows only" in output
+        assert "distribution (complete" not in output
 
 
 class TestRegionAvailabilityVerdict:

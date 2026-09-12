@@ -216,8 +216,10 @@ def build_context_for_prompt() -> str:
 
     parts = ["## Previously Discovered Resource Graph Schema Knowledge\n"]
     parts.append(
-        "The following property paths and queries were discovered in previous analyses "
-        "and confirmed to work. Use them to write more precise KQL queries.\n"
+        "Historical paths and query examples are discovery hints, not current tenant evidence "
+        "or a fixed template. Adapt them to this update's question and validate decisive values "
+        "against current results. Missing cached paths do not prove absence. Array [] notation "
+        "requires mv-expand to inspect all elements.\n"
     )
 
     for rtype, info in sorted(kb.get("schemas", {}).items()):
@@ -225,14 +227,14 @@ def build_context_for_prompt() -> str:
         if not paths:
             continue
         parts.append(f"### {rtype}")
-        parts.append(f"Known properties ({len(paths)}):")
+        parts.append(f"Historical properties (showing {min(len(paths), 30)} of {len(paths)}):")
         for p in paths[:30]:
             parts.append(f"  - {p}")
 
         # Attach known queries for this type
         queries = kb.get("queries", {}).get(rtype, [])
         if queries:
-            parts.append(f"Proven queries:")
+            parts.append("Historical query examples (adapt, then validate):")
             for q in queries:
                 parts.append(f"  Purpose: {q['purpose']}")
                 parts.append(f"  ```\n  {q['query']}\n  ```")
@@ -241,8 +243,12 @@ def build_context_for_prompt() -> str:
     # Include recent failed queries so the LLM avoids repeating them
     failed = kb.get("failed_queries", [])
     if failed:
-        parts.append("## Previously Failed KQL Queries (DO NOT REPEAT)\n")
-        parts.append("These queries failed in past analyses. Avoid the same patterns.\n")
+        parts.append("## Previously Failed KQL Queries (diagnostic history)\n")
+        parts.append(
+            "Do not repeat an unchanged known failure. Inspect its specific error before "
+            "correcting it; an old ParserFailure is not a ban on joins, arrays or projections, "
+            "and transient/permission failures do not establish a syntax restriction.\n"
+        )
         for fq in failed[-10:]:
             parts.append(f"- Query: `{fq['query'][:150]}`")
             parts.append(f"  Error: {fq['error'][:150]}")

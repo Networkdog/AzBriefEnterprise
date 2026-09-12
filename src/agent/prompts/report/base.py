@@ -172,6 +172,21 @@ This is the MOST IMPORTANT field -- the administrator reads this first and may r
   - Internal: "Resource Graph query results show..." (exposes internals)
   - Vague: "Some resources may be affected" (no specifics)
 
+#### Cost Evidence (key: impact_summary.cost_impact)
+For material pricing, billing/meter, paid-feature, usage-cost, or savings implications in any
+category, include the observed cost baseline with amount, currency, exact period, and scoped
+service/resource type. Use only successful Cost Management evidence with `has_cost_data=true`.
+Distinguish **observed spending** from **estimated change**. Quantify a change only with documented
+rates and matching usage/meter coverage; state assumptions and the calculation. Never multiply a
+whole subscription or resource-type total by an advertised saving unless every included charge
+is proven eligible. A 30-day observation is not a calendar-month forecast or an amortized run rate;
+ActualCost can include up-front reservation/savings-plan purchases and delayed or rerated charges.
+If data is missing, denied, incomplete, or outside the enforceable scope, explain that the amount
+cannot be quantified and retain the precise gap. Empty rows are not zero cost; observed zero is
+not proof that usage is free. Do not invent USD, convert currencies, or treat retail prices as the
+customer's actual bill. Put these concise findings in `cost_impact`, not duplicate narrative prose.
+Leave the field empty when the update has no grounded financial implications.
+
 #### Analysis Body (key: detailed_analysis)
 This is the analytical narrative. Write it as a **CSA briefing** for the administrator.
 You are the architect who personally inspected their environment and is now delivering findings.
@@ -234,6 +249,9 @@ If you find yourself listing action steps, STOP — that belongs in `action_item
 
 3. **Guidance** (1 paragraph): a human-readable OVERVIEW — NOT a repetition of the detailed steps in `action_items`.
    Do NOT repeat step-by-step procedures, CLI commands, or deadlines — those are in `action_items`.
+  Lead with the **decision hinge**: the verified fact or explicit unknown that changes the answer.
+  A complete recommendation states both the preferred path and the condition under which the
+  alternative or keeping the current state is better.
    - **Change family**: what the administrator should do. Describe the **sequence of phases** in plain
      language — vary the wording across reports (do NOT always use "순서로 접근하는 것이 좋습니다") — and
      highlight prerequisites or dependencies between actions. When the environment turns out not to be
@@ -502,6 +520,9 @@ A violation in ANY item degrades the report quality and should be corrected.
 - [ ] No emojis in report text
 
 **Actionability:**
+- [ ] The briefing names the decision hinge, gives a grounded recommendation plus the condition for
+  the alternative/current state, identifies the owning operational responsibility, and defines the
+  evidence that closes the decision
 - [ ] For retirement/feature_change: `action_items` are present with procedure or cli_command
 - [ ] For `opportunity`: exactly ONE scoped evaluation `action_item` exists (named candidates, real criteria, empty deadline) — an opportunity is never a dead-end
 - [ ] Action items ordered by `step` in logical execution sequence

@@ -1,6 +1,7 @@
 """Tests for service layer with mocks."""
 
 import asyncio
+import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -261,6 +262,129 @@ class TestResourceGraphServiceInit:
         )
 
 
+class TestResourceGraphPaging:
+    @staticmethod
+    def make_service(responses):
+        with patch("src.services.resource_graph.get_settings") as settings:
+            settings.return_value.azure_subscription_id = SUBSCRIPTION_A
+            service = ResourceGraphService()
+        service._client = MagicMock()
+        service._client.resources.side_effect = responses
+        return service
+
+    @pytest.mark.asyncio
+    async def test_continuation_pages_keep_query_scope_and_object_array_format(self):
+        service = self.make_service(
+            [
+                MagicMock(
+                    data=[{"id": "first"}],
+                    total_records=2,
+                    skip_token="page-two",
+                    result_truncated="true",
+                ),
+                MagicMock(
+                    data=[{"id": "second"}],
+                    total_records=2,
+                    skip_token=None,
+                    result_truncated="false",
+                ),
+            ]
+        )
+        with analysis_scope_context(
+            AnalysisScope(subscriptions=[SUBSCRIPTION_A], resource_groups=["rg-a"])
+        ):
+            result = await service.query_resources("Resources | project id | order by id asc")
+
+        assert result["data"] == [{"id": "first"}, {"id": "second"}]
+        assert result["count"] == 2
+        assert result["pages_fetched"] == 2
+        assert result["result_truncated"] is False
+        first, second = [call.args[0] for call in service._client.resources.call_args_list]
+        assert first.query == second.query
+        assert "resourceGroup in~ ('rg-a')" in second.query
+        assert second.subscriptions == [SUBSCRIPTION_A]
+        assert result["executed_query"] == second.query
+        assert result["query_scope"] == {
+            "subscriptions": [SUBSCRIPTION_A],
+            "management_groups": [],
+            "resource_groups": ["rg-a"],
+        }
+        assert result["queried_at"].endswith("+00:00")
+        assert first.options.result_format == "objectArray"
+        assert second.options.skip_token == "page-two"
+
+    @pytest.mark.asyncio
+    async def test_missing_continuation_token_is_explicit_partial_result(self):
+        service = self.make_service(
+            [
+                MagicMock(
+                    data=[{"id": "first"}],
+                    total_records=1500,
+                    skip_token=None,
+                    result_truncated="true",
+                )
+            ]
+        )
+        result = await service.query_resources("Resources | project id | order by id asc")
+        assert result["result_truncated"] is True
+        assert "No continuation token" in result["truncation_reason"]
+        assert result["count"] == 1
+        assert result["total_records"] == 1500
+
+    @pytest.mark.asyncio
+    async def test_repeated_token_stops_paging(self):
+        service = self.make_service(
+            [
+                MagicMock(
+                    data=[{"id": "first"}],
+                    total_records=3,
+                    skip_token="repeated",
+                    result_truncated="true",
+                ),
+                MagicMock(
+                    data=[{"id": "second"}],
+                    total_records=3,
+                    skip_token="repeated",
+                    result_truncated="true",
+                ),
+            ]
+        )
+        result = await service.query_resources("Resources | project id | order by id asc")
+        assert result["pages_fetched"] == 2
+        assert result["result_truncated"] is True
+        assert "stalled" in result["truncation_reason"]
+
+    @pytest.mark.asyncio
+    async def test_page_budget_is_bounded_and_disclosed(self):
+        service = self.make_service(
+            [
+                MagicMock(
+                    data=[{"id": "first"}],
+                    total_records=3,
+                    skip_token="next",
+                    result_truncated="true",
+                )
+            ]
+        )
+        with patch("src.services.resource_graph._MAX_QUERY_PAGES", 1):
+            result = await service.query_resources("Resources | project id | order by id asc")
+        assert result["pages_fetched"] == 1
+        assert result["result_truncated"] is True
+        assert "budget" in result["truncation_reason"]
+
+    @pytest.mark.asyncio
+    async def test_literal_keywords_and_comments_do_not_trigger_scope_rejection(self):
+        service = self.make_service(
+            [MagicMock(data=[], total_records=0, skip_token=None, result_truncated="false")]
+        )
+        query = "// join examples\nResources | where name == 'join top 10' | project id"
+        with analysis_scope_context(AnalysisScope(resource_groups=["rg-a"])):
+            await service.query_resources(query)
+        executed = service._client.resources.call_args.args[0].query
+        assert "name == 'join top 10'" in executed
+        assert "resourceGroup in~ ('rg-a')" in executed
+
+
 class TestAnalysisScope:
     def test_report_resource_must_match_configured_subscription_and_group(self):
         scope = AnalysisScope(
@@ -471,6 +595,176 @@ class TestCostManagementService:
 
             result = await svc.get_cost_by_resource_type(days=7)
             assert result["success"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method_name", "dimension", "result_key", "item_key"),
+        [
+            ("get_cost_by_resource_type", "ResourceType", "costs_by_type", "resource_type"),
+            ("get_cost_by_service", "ServiceName", "costs_by_service", "service"),
+        ],
+    )
+    async def test_cost_totals_and_currency_survive_top_limit(
+        self, method_name: str, dimension: str, result_key: str, item_key: str
+    ):
+        from src.services.cost_management import CostManagementService
+
+        service = CostManagementService(subscription_id="00000000-0000-0000-0000-000000000001")
+        columns = []
+        for column_name in ("Cost", dimension, "Currency"):
+            column = MagicMock()
+            column.name = column_name
+            columns.append(column)
+        service._client = MagicMock()
+        service._client.query.usage.return_value = MagicMock(
+            columns=columns,
+            rows=[[1, "Small", "KRW"], [10, "Largest", "KRW"], [2, "Other", "KRW"]],
+            next_link=None,
+        )
+
+        result = await getattr(service, method_name)(days=7, top=1)
+
+        assert result["success"] is True
+        assert result["total_cost"] == 13
+        assert result[result_key] == [{item_key: "Largest", "cost": 10, "currency": "KRW"}]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("tool_class_name", "filter_key", "filter_value", "dimension"),
+        [
+            (
+                "GetCostByResourceTypeTool",
+                "resource_type",
+                "microsoft.storage/storageaccounts",
+                "ResourceType",
+            ),
+            ("GetCostByServiceTool", "service_name", "Storage", "ServiceName"),
+        ],
+    )
+    async def test_cost_tool_preserves_scope_filter_currency_and_period(
+        self, tool_class_name: str, filter_key: str, filter_value: str, dimension: str
+    ):
+        from src.agent import tools
+        from src.services.cost_management import CostManagementService
+
+        service = CostManagementService(subscription_id=SUBSCRIPTION_A)
+        columns = []
+        for column_name in ("Currency", dimension, "PreTaxCost"):
+            column = MagicMock()
+            column.name = column_name
+            columns.append(column)
+        service._client = MagicMock()
+        service._client.query.usage.return_value = MagicMock(
+            columns=columns, rows=[["KRW", filter_value, 1200.25]], next_link=None
+        )
+        tool = getattr(tools, tool_class_name)(service=service)
+
+        output = await tool.ainvoke(
+            {"days": 7, "top": 1, "subscription_id": SUBSCRIPTION_B, filter_key: filter_value}
+        )
+        result = json.loads(output)
+        query_args = service._client.query.usage.call_args.kwargs
+
+        assert query_args["scope"] == f"/subscriptions/{SUBSCRIPTION_B}"
+        assert query_args["parameters"].dataset.filter.serialize() == {
+            "dimensions": {"name": dimension, "operator": "In", "values": [filter_value]}
+        }
+        assert service.subscription_id == SUBSCRIPTION_A
+        assert result["scope"] == query_args["scope"]
+        assert result["filter"] == {dimension: filter_value}
+        assert result["currency"] == "KRW"
+        assert result["cost_type"] == "ActualCost"
+        assert result["has_cost_data"] is True
+        assert result["total_cost"] == 1200.25
+        assert result["period_days"] == 7
+        assert result["start_date"] < result["end_date"]
+        assert "$" not in output
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["pagination", "mixed_currency", "missing_currency", "nan"])
+    async def test_cost_query_rejects_unreliable_totals(self, failure: str):
+        from src.services.cost_management import CostManagementService
+
+        service = CostManagementService(subscription_id=SUBSCRIPTION_A)
+        columns = []
+        for column_name in ("Cost", "ResourceType", "Currency"):
+            column = MagicMock()
+            column.name = column_name
+            columns.append(column)
+        rows = [[10, "Storage", "KRW"]]
+        if failure == "mixed_currency":
+            rows.append([20, "Compute", "USD"])
+        if failure == "missing_currency":
+            rows[0][2] = ""
+        if failure == "nan":
+            rows[0][0] = float("nan")
+        service._client = MagicMock()
+        service._client.query.usage.return_value = MagicMock(
+            columns=columns,
+            rows=rows,
+            next_link="https://management.azure.com/next" if failure == "pagination" else None,
+        )
+
+        result = await service.get_cost_by_resource_type()
+
+        assert result["success"] is False
+        assert "total_cost" not in result
+        assert result["error"]
+
+    @pytest.mark.asyncio
+    async def test_cost_query_does_not_pick_first_of_multiple_subscriptions(self):
+        from src.services.cost_management import CostManagementService
+
+        service = CostManagementService(subscription_id=SUBSCRIPTION_A)
+        service.subscription_id = None
+        service._client = MagicMock()
+        with (
+            patch("src.config.get_azure_credential", return_value=MagicMock()),
+            patch(
+                "src.services.discover_subscriptions_async",
+                new=AsyncMock(
+                    return_value=[
+                        {"subscriptionId": SUBSCRIPTION_A},
+                        {"subscriptionId": SUBSCRIPTION_B},
+                    ]
+                ),
+            ),
+        ):
+            result = await service.get_cost_by_resource_type()
+
+        assert result["success"] is False
+        assert "explicit or uniquely discoverable subscription" in result["error"]
+        service._client.query.usage.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cost_query_never_broadens_bounded_analysis(self):
+        from src.services.cost_management import CostManagementService
+
+        service = CostManagementService(subscription_id=SUBSCRIPTION_A)
+        service._client = MagicMock()
+        with analysis_scope_context(AnalysisScope(subscriptions=[SUBSCRIPTION_A])):
+            result = await service.get_cost_by_service(subscription_id=SUBSCRIPTION_B)
+
+        assert result["success"] is False
+        service._client.query.usage.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_cost_data_is_not_confirmed_zero(self):
+        from src.agent.tools import GetCostByServiceTool
+        from src.services.cost_management import CostManagementService
+
+        service = CostManagementService(subscription_id=SUBSCRIPTION_A)
+        service._client = MagicMock()
+        service._client.query.usage.return_value = MagicMock(rows=[], next_link=None)
+
+        output = await GetCostByServiceTool(service=service).ainvoke({"days": 30})
+        result = json.loads(output)
+
+        assert result["success"] is True
+        assert result["has_cost_data"] is False
+        assert result["currency"] == ""
+        assert result["costs_by_service"] == []
+        assert result["scope"] == f"/subscriptions/{SUBSCRIPTION_A}"
 
 
 class TestLogAnalyticsService:

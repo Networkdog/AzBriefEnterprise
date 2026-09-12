@@ -55,8 +55,17 @@ def test_new_document_hierarchy_is_shared_and_complete(report_markup, kind, lang
     assert soup.select_one(".azb-preheader").get_text(strip=True)
     assert soup.select(".azb-takeaway .azb-summary")
     assert soup.select(".azb-assessment")
-    for key in ("col_importance", "col_impact", "col_job_relevance", "relevance_evidence"):
+    for key in (
+        "col_importance",
+        "col_impact",
+        "col_job_relevance",
+        "relevance_evidence",
+        "affected_resources",
+    ):
         assert get_labels(language)[key] in soup.get_text()
+    if language == "ko":
+        assert get_labels(language)["affected_resources"] == "연관 리소스"
+        assert get_labels(language)["no_affected_resources"] == "연관 리소스가 없습니다."
     assert "#0f1b2d" not in markup
     assert "#1e3a5f" not in markup
     assert "box-shadow" not in markup
@@ -247,7 +256,7 @@ def test_sections_have_a_label_rail_with_a_full_width_fallback(report_markup, ki
 
 @pytest.mark.parametrize(
     "label",
-    ["요약 판정", "영향받는 리소스", "Affected Resources", "References", "<em>Safe & text</em>"],
+    ["요약 판정", "연관 리소스", "Affected Resources", "References", "<em>Safe & text</em>"],
 )
 @pytest.mark.parametrize("full_width", [False, True])
 def test_section_heading_break_preserves_text_and_inline_fallback(label, full_width):

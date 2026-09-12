@@ -1094,6 +1094,44 @@ class AzureUpdateAnalyzer:
                 )
                 next_id += 1
 
+        cost_context = " ".join(
+            str(update.get(field) or "")
+            for field in ("update_type", "title", "description", "detail_description")
+        )
+        is_cost_relevant = re.search(
+            r"\b(?:pricing|prices?|costs?|billing|billable|charges?|savings?|discounts?|"
+            r"paid|free (?:tiers?|allowances?|quotas?|usage)|egress fees?|metered|metering|"
+            r"pay[- ]as[- ]you[- ]go|reservations?)\b",
+            cost_context,
+            re.IGNORECASE,
+        )
+        if is_cost_relevant and not existing_tools.intersection(
+            {"get_cost_by_resource_type", "get_cost_by_service"}
+        ):
+            cost_args: dict[str, Any] = {"days": 30}
+            if resource_type_filter:
+                cost_tool_name = "get_cost_by_resource_type"
+                cost_args["resource_type"] = resource_type_filter
+            else:
+                cost_tool_name = "get_cost_by_service"
+                cost_args["top"] = 100
+            injected.append(
+                AnalysisTask(
+                    task_id=f"enrich_{next_id}",
+                    description="Auto-enrichment: actual spending baseline for cost impact",
+                    method="cost_api",
+                    tool_name=cost_tool_name,
+                    tool_args=cost_args,
+                    purpose=(
+                        "Ground financial impact in recent ActualCost with scope, filter, "
+                        "period, and currency. A baseline is not projected savings; broad "
+                        "service totals are discovery evidence, not update-attributable cost. "
+                        "Preserve unavailable cost data as an explicit gap."
+                    ),
+                    max_retries=0,
+                )
+            )
+
         scope = current_analysis_scope()
         if scope.is_bounded:
             injected = [task for task in injected if task.tool_name in SCOPED_ANALYSIS_TOOL_NAMES]
@@ -1118,13 +1156,11 @@ class AzureUpdateAnalyzer:
     def _fill_contextual_tool_args(task: AnalysisTask, tool: Any, state: AgentState) -> None:
         """Fill required tool arguments already known from immutable update context."""
         if task.tool_name == "query_azure_resources":
+            from src.agent.tools import _RE_KQL_TABLE
+
             raw_query = task.tool_args.get("query")
             resource_type = task.tool_args.get("resource_type")
-            is_kql = isinstance(raw_query, str) and re.match(
-                r"^\s*(?:Resources|ResourceContainers|[A-Za-z][A-Za-z0-9_]*resources)\b",
-                raw_query,
-                re.IGNORECASE,
-            )
+            is_kql = isinstance(raw_query, str) and _RE_KQL_TABLE.match(raw_query)
             if not is_kql and isinstance(resource_type, str) and resource_type.strip():
                 from src.services.resource_graph import ResourceGraphQueryBuilder
 
@@ -1139,7 +1175,12 @@ class AzureUpdateAnalyzer:
                         "| order by name asc\n"
                         "| limit 200"
                     )
-                task.tool_args = {"query": query}
+                task.tool_args = {
+                    key: value
+                    for key, value in task.tool_args.items()
+                    if key in {"purpose", "expected_columns"}
+                }
+                task.tool_args["query"] = query
                 logger.info(
                     "tool_args_normalized",
                     trace_id=state.get("trace_id", ""),
@@ -1148,6 +1189,8 @@ class AzureUpdateAnalyzer:
                     from_key="resource_type+natural_language",
                     to_key="builder_query",
                 )
+            if not task.tool_args.get("purpose"):
+                task.tool_args["purpose"] = task.purpose or task.description
 
         if task.tool_name == "find_related_resources":
             has_keyword = bool(
@@ -1609,6 +1652,19 @@ class AzureUpdateAnalyzer:
             if suggestion not in evaluation.suggestions:
                 evaluation.suggestions.append(suggestion)
             evaluation.reason += " [Primary-Region availability coverage was not confirmed.]"
+
+        if (
+            evaluation.verdict in {"sufficient", "partial"}
+            and evaluation.coverage.get("query_intent") is False
+        ):
+            evaluation.verdict = "partial"
+            if "query_intent" not in evaluation.missing_aspects:
+                evaluation.missing_aspects.append("query_intent")
+            evaluation.suggestions.append(
+                "Rewrite the unanswered KQL question from observed schema/results, preserving "
+                "scope and applicability predicates; pass purpose and expected_columns."
+            )
+            evaluation.reason += " [Required query intent was not satisfied.]"
 
         # Prevent infinite loops
         if evaluation.verdict == "partial" and task_revision_count >= 3:

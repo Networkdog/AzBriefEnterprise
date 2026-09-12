@@ -4,10 +4,11 @@ import asyncio
 import re
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from azure.mgmt.resourcegraph import ResourceGraphClient
-from azure.mgmt.resourcegraph.models import QueryRequest
+from azure.mgmt.resourcegraph.models import QueryRequest, QueryRequestOptions
 from structlog import get_logger
 
 from src.agent.scope import AnalysisScope, current_analysis_scope
@@ -20,6 +21,7 @@ _resource_types_cache: Optional[dict[str, Any]] = None
 _resource_types_cache_time: float = 0
 _resource_types_cache_lock = threading.Lock()
 _RESOURCE_TYPES_CACHE_TTL = 300  # 5 minutes TTL
+_MAX_QUERY_PAGES = 10
 
 
 class ResourceGraphService:
@@ -238,27 +240,71 @@ class ResourceGraphService:
 
         try:
             client = self._get_client()
-            request = QueryRequest(
-                subscriptions=subscriptions,
-                management_groups=management_groups or None,
-                query=query,
-            )
-
             _t0 = time.time()
-            # Run sync SDK call in a thread to avoid blocking the event loop
-            response = await asyncio.to_thread(client.resources, request)
+            rows: list[dict[str, Any]] = []
+            skip_token: Optional[str] = None
+            seen_tokens: set[str] = set()
+            total_records = 0
+            result_truncated = False
+            truncation_reason = ""
+            for page_count in range(1, _MAX_QUERY_PAGES + 1):
+                request = QueryRequest(
+                    subscriptions=subscriptions,
+                    management_groups=management_groups or None,
+                    query=query,
+                    options=QueryRequestOptions(
+                        result_format="objectArray", top=1000, skip_token=skip_token
+                    ),
+                )
+                response = await asyncio.to_thread(client.resources, request)
+                page_rows = response.data or []
+                if not isinstance(page_rows, list):
+                    raise ValueError(
+                        "Resource Graph did not return the requested objectArray format"
+                    )
+                rows.extend(page_rows)
+                total_records = max(total_records, response.total_records or 0, len(rows))
+                next_token = getattr(response, "skip_token", None)
+                next_token = next_token if isinstance(next_token, str) and next_token else None
+                truncated = getattr(response, "result_truncated", False)
+                truncated = str(getattr(truncated, "value", truncated)).casefold() == "true"
+                result_truncated = bool(next_token) or truncated or len(rows) < total_records
+                if not next_token:
+                    if result_truncated:
+                        truncation_reason = "No continuation token; narrow or partition the query."
+                    break
+                if next_token in seen_tokens or not page_rows:
+                    truncation_reason = "Pagination stalled; completeness is not established."
+                    break
+                if page_count == _MAX_QUERY_PAGES:
+                    truncation_reason = "Page budget reached; narrow or partition the query."
+                    break
+                seen_tokens.add(next_token)
+                skip_token = next_token
             _elapsed = time.time() - _t0
 
             result = {
-                "data": response.data,
-                "count": response.count,
-                "total_records": response.total_records,
+                "data": rows,
+                "count": len(rows),
+                "total_records": total_records,
+                "pages_fetched": page_count,
+                "result_truncated": result_truncated,
+                "truncation_reason": truncation_reason,
+                "executed_query": query,
+                "query_scope": {
+                    "subscriptions": list(subscriptions or subscription_filter),
+                    "management_groups": management_groups,
+                    "resource_groups": list(scope.resource_groups),
+                },
+                "queried_at": datetime.now(timezone.utc).isoformat(),
             }
 
             logger.info(
                 "resource_graph_query_ok",
-                count=response.count,
-                total_records=response.total_records,
+                count=len(rows),
+                total_records=total_records,
+                pages_fetched=page_count,
+                result_truncated=result_truncated,
                 elapsed_s=round(_elapsed, 2),
             )
 
@@ -306,31 +352,23 @@ class ResourceGraphService:
         if not predicates:
             return query
 
-        if re.search(r"\b(?:union|join)\b", query, re.IGNORECASE):
+        from src.agent.tools import _RE_KQL_LITERAL, _RE_KQL_TABLE
+
+        code = _RE_KQL_LITERAL.sub(lambda match: " " * len(match.group(0)), query)
+        if re.search(r"\b(?:union|join)\b", code, re.IGNORECASE):
             raise ValueError("A scoped Resource Graph query cannot contain union or join")
 
-        table = re.match(
-            r"^(\s*(?:Resources|ResourceContainers|[A-Za-z][A-Za-z0-9_]+Resources)\b)",
-            query,
-            re.IGNORECASE,
-        )
+        table = _RE_KQL_TABLE.match(code)
         if table is None:
             raise ValueError("Cannot apply resource scope to an unrecognized Resource Graph query")
         return f"{query[:table.end()]}\n| where {' and '.join(predicates)}{query[table.end():]}"
 
     @staticmethod
     def _sanitize_query(query: str) -> str:
-        """Sanitize KQL query to fix common issues before execution.
+        """Use the same literal-preserving normalization for direct and tool queries."""
+        from src.agent.tools import sanitize_kql
 
-        Delegates to the comprehensive sanitize_kql() in tools module for
-        queries run through execute_kql_with_retry. For direct query_resources
-        calls, applies the critical '| top N' fix only (lightweight).
-        """
-        from src.agent.tools import _RE_STRAY_TOP, _RE_TOP_WITHOUT_BY
-
-        query = _RE_TOP_WITHOUT_BY.sub(r"| take \1", query)
-        query = _RE_STRAY_TOP.sub(r" | take \1", query)
-        return query
+        return sanitize_kql(query)
 
     async def get_resource_types_summary(self) -> dict[str, Any]:
         """Get summary of resource types in the subscription.

@@ -5,7 +5,8 @@ NOT included in: Planning, Execution phases (saves ~2K tokens).
 """
 
 WRITING_PROMPT = """## Response Principles
-1. **Conclusion first**: Assume the administrator is busy — deliver the key message first
+1. **Decision-oriented, update-first**: Name what changed first, then move immediately to what the
+   administrator should decide; do not open with either announcement boilerplate or the environment verdict
 2. **Speak in numbers**: Not "several" but "18 out of 22 Storage Accounts" (out of TOTAL, based on Resource Graph)
 3. **Show comparisons**: "TLS 1.0 사용 중 — 2024-10-31 이후 차단 예정" (must use actually queried values)
 4. **Cite evidence**: Attach Microsoft Learn doc URLs to every claim (only URLs returned by tools)
@@ -66,10 +67,12 @@ Follow these writing rules strictly:
 The `detailed_analysis` (main body) is read by a busy administrator. Structure it so the
 reader grasps *their* situation in seconds — not so they learn a generic product fact.
 
-1. **Administrator-first opening (MANDATORY)**: Open with what this update means for THIS
-   environment and the resulting decision — NOT with a generic product announcement.
+1. **Update-first opening (MANDATORY)**: Open with the specific thing that changed, then state what
+   it means for THIS environment and the resulting decision. Do not use a generic announcement frame,
+   and do not give the environment verdict before naming the subject.
    - BAD (product-first): "Azure Databricks SQL Serverless is now available in UK West. This feature automatically scales..."
-   - GOOD (admin-first): "현재 환경에는 즉시 조치할 항목이 없습니다 — Databricks 워크스페이스가 없고 UK West도 사용하지 않기 때문입니다. 향후 도입을 검토한다면 아래 조건만 확인하면 됩니다."
+   - BAD (verdict-first): "현재 환경에는 즉시 조치할 항목이 없습니다 — Databricks 워크스페이스가 없습니다."
+   - GOOD (update-first): "**Azure Databricks SQL Serverless**의 UK West 지원 범위가 확대되었습니다. 현재 환경에는 Databricks 워크스페이스가 없어 즉시 변경할 항목은 없습니다."
 2. **No subsection headers in the narrative body (MANDATORY)**: Never emit `#`, `##`, or `###`
    headings inside `detailed_analysis`. Template-style labels (`### 무엇이 바뀌었나`,
    `### 현재 환경과의 관련성`, `### 향후 검토 포인트`) make the report read as machine-generated and

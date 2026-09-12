@@ -26,7 +26,8 @@ the explicit target for GA and Preview feature-availability checks; report the f
 {kql_knowledge_context}
 
 > The resource type summary above is already provided.
-> Do NOT call `get_resource_type_summary` again. Start directly with `search_update_related_docs` and `get_service_resource_details`.
+> Do NOT call `get_resource_type_summary` again. Choose the next query from the update's decision
+> question and current evidence; a predefined service inventory is optional, not a required first step.
 
 
 """
@@ -67,18 +68,18 @@ have already been fetched from the update's Learn More links. When pre-fetched d
 - **Still include at least 1 KQL task** for resource identification
 - **Focus doc search tasks on gaps** only (e.g., migration guides, CLI commands not covered by the pre-fetched docs)
 
-### IMPORTANT: Emit the plan DIRECTLY
-**Do NOT call search tools during planning.** The update context above already contains enough information to create a plan.
-Include doc search tasks (`search_update_related_docs`, `search_azure_docs`, etc.) as execution tasks in your plan instead — they will be executed in parallel with other tasks during the Execution phase, which is faster.
-
-Only call a planning-phase search tool if the update title/description is genuinely ambiguous and you cannot determine which Azure service or resource type is involved.
+### Plan From Available Evidence
+Reuse fetched documentation. When a public applicability condition or property meaning is missing,
+consult Microsoft Learn before inventing it; never put tenant data in a public search query.
+Plan independent tasks together. A query depending on a new schema/result must wait for that evidence
+in the specialist's next tool round or an evaluation/revision pass, not guess its values in parallel.
 
 ### Create the Analysis Plan
 Design specific analysis tasks based on the update context.
 
 #### Available Tools by Method
 1. **kql** (Azure Resource Graph):
-   - `get_service_resource_details` -- Optimized predefined query per service (FAST, covers common fields)
+  - `get_service_resource_details` -- Optional baseline for common service fields, not a stopping condition
    - `get_resource_configurations` -- Configuration profiling with distribution summary (RECOMMENDED for version/config impact analysis)
    - `get_resource_dependencies` -- Dependency mapping for blast radius analysis (RECOMMENDED for core infrastructure updates)
    - `query_azure_resources` -- Custom KQL query you write yourself (FLEXIBLE, for specific fields)
@@ -87,8 +88,13 @@ Design specific analysis tasks based on the update context.
      `{"keyword": ["storage", "blob"]}` (never `query`)
    - `explore_resource_schema` -- Discover properties schema for a resource type
 2. **cost_api** (Cost Management API):
-   - `get_cost_by_resource_type` -- Cost breakdown by resource type
-   - `get_cost_by_service` -- Cost breakdown by service name
+  - `get_cost_by_resource_type` -- ActualCost baseline; filter by exact `resource_type`
+  - `get_cost_by_service` -- ActualCost baseline; `service_name` must be a verified billing label
+  - When the announcement or official docs establish material pricing, billing/meter, paid-feature,
+    usage-cost, or savings implications, collect a recent 30-day baseline regardless of category.
+    Use an exact `subscription_id` when needed; never select the first of several subscriptions.
+    Retain scope, filter, period, currency, and unavailable-data gaps. Do not repeat a successful
+    equivalent cost query. Updates without financial implications need no cost query.
 3. **billing_api** (Microsoft.Billing REST API):
   - `list_billing_accounts` -- Accessible billing accounts, agreement types, and status
   - `list_billing_profiles` -- Profiles under an exact account name returned above
@@ -162,82 +168,63 @@ When the update announces new resource types, features, or SKUs,
 - **For features not resolvable via the providers API**: Add a `search_azure_docs` task with:
   - `query`: "[feature name] supported regions" or "[feature name] availability"
 
-#### KQL Tool Selection Decision Tree (FOLLOW THIS)
+#### Evidence-Driven KQL Investigation
 
-```
-Is a predefined query available for this service?
-├── YES (Storage, VM, AKS, Function Apps, App Service, SQL, Cosmos DB,
-│        Container Apps, Key Vault, Container Registry, VNet, NSG, Public IP,
-│        Log Analytics, Cognitive Services)
-│   │
-│   ├── Does the predefined query already include the field mentioned in the update?
-│   │   ├── YES → Use `get_service_resource_details` (Task 1). Done.
-│   │   └── NO  → Use BOTH:
-│   │       Task 1: `get_service_resource_details` (get baseline inventory)
-│   │       Task 2: `explore_resource_schema` (discover the missing property path)
-│   │       Task 3: `query_azure_resources` (custom KQL targeting the discovered field)
-│   │
-│   └── Unsure whether the field is included?
-│       → Use `get_service_resource_details` first. The Evaluation phase will
-│         detect if the needed field is missing and add a follow-up task.
-│
-└── NO (service not in the predefined list)
-    │
-    ├── Resource type is known (e.g., Microsoft.Network/applicationGateways)?
-    │   Task 1: `explore_resource_schema` (discover properties structure)
-    │   Task 2: `query_azure_resources` (custom KQL based on discovered schema)
-    │
-    └── Resource type is unknown?
-        Task 1: `find_related_resources` (keyword search to identify resource type)
-        Task 2: Based on results, either `explore_resource_schema` or `query_azure_resources`
-```
+1. Define the question: which documented prerequisite, retirement threshold, dependency or
+   adoption condition must be tested? Declare `purpose` and `expected_columns` on custom queries.
+2. Choose the right table/type. Resources is not the only table: recovery items, policy state,
+   extensions and resource changes may need their documented specialized table or child type.
+3. If the path is known from current evidence/docs, query it directly. If its shape is uncertain,
+   use `explore_resource_schema` or a bounded 1-5 resource/parent-bag sample, then inspect the
+   observed nested keys, arrays and scalar types before writing the next query. A cached schema
+   and one sample do not enumerate all variants. Sample other SKUs/regions/configurations as needed.
+4. Project the decisive fields and apply the actual eligibility predicate. Compare affected,
+   unaffected and unknown counts in the same scope; a field appearing in a builder is not proof
+   that its values answer this update. Builders are optional examples, not coverage ceilings.
+5. Trace dependencies by actual ARM IDs. Use supported joins or separate scoped ID-based queries,
+   never infer a relationship from similar names or co-location. Inspect array elements with
+   mv-expand when the question concerns node pools, subnet settings, IP configurations or replicas.
+6. Inspect results, not just HTTP success. For syntax errors, off-topic rows, empty filtered
+   results or required fields that are null/missing, use observed errors/schema to rewrite and
+   re-execute. Preserve applicability thresholds; a correct zero needs no forced match.
+7. Stop when the question is answered or bounded exploration establishes an explicit gap.
+   Do not retry equivalent failed queries or replace the question with inventory/counts.
 
-**Predefined query coverage** (fields already included — no custom KQL needed):
-- **Storage**: SKU, HNS, SFTP, TLS version, public access, shared key, private endpoints, encryption
-- **VM**: size, OS, security type, Trusted Launch, encryption at host, disks, availability zones
-- **AKS**: K8s version, addons (8 types), RBAC, AAD, auto-upgrade, network plugin/policy/dataplane, private FQDN
-- **Function Apps**: all runtime versions (Python, Node, Java, .NET, PowerShell), TLS, HTTPS, VNet integration
-- **App Service**: runtime, TLS, HTTPS, HTTP/2, VNet integration, always-on
-- **SQL Database**: SKU, zone redundancy, read scale, backup redundancy, ledger, license type
-- **Key Vault**: soft delete, purge protection, RBAC auth, private endpoints, network ACLs
-- **Container Apps**: replicas, scaling rules, Dapr, ingress transport, revision mode
-
-If the update mentions a field NOT in the above list, you MUST plan a `explore_resource_schema` + `query_azure_resources` combo.
-
-#### Custom KQL Writing Tips
-When writing custom KQL for `query_azure_resources`:
-- Resource Graph uses KQL subset: NO `let`, `render`, `datatable`, `externaldata`
-- **AVOID `join` queries** — Resource Graph's KQL subset has very limited `join` support. Complex join + mv-expand combinations almost always fail with ParserFailure. Instead of joining two resource types, write **separate queries** for each resource type and let the report correlate the results.
-  - BAD: `Resources | where type =~ 'microsoft.compute/virtualmachines' | join kind=leftouter (Resources | where type =~ 'microsoft.compute/disks') on ...`
-  - GOOD: Write two separate tasks — one for VMs, one for Disks — and analyze the relationship in the report.
-- **Keep `mv-expand` queries simple** — When using `mv-expand` to expand array properties (e.g., `agentPoolProfiles`), limit the number of subsequent `extend` statements to 5 or fewer. If you need more fields, use `project name, type, resourceGroup, subscriptionId, location, sku, properties` instead and let the report extract what it needs from the raw `properties` bag.
-  - BAD: `| mv-expand pool = properties.agentPoolProfiles | extend a = ... | extend b = ... | extend c = ... | extend d = ... | extend e = ... | extend f = ...` (6+ extends after mv-expand)
-  - GOOD: `| mv-expand pool = properties.agentPoolProfiles | extend poolName = tostring(pool.name) | extend osSKU = tostring(pool.osSKU) | project name, poolName, osSKU, properties`
-- `type` values are lowercase in data — always use `=~` (case-insensitive) or lowercase string
-- Wrap `properties.*` nested values in `tostring()` before `summarize` or `==`
-- Use `project-away` (NOT `project-except`) to remove join duplicate columns
-- Max 1000 rows per page; use `take N` or `limit N` (NOT `top N` without `by`)
-- Access `sku` and `tags` as top-level fields: `sku.name`, `tags['keyName']`
-- Use `extend` for computed columns BEFORE `project` — do NOT put expressions inside `project`
-  - BAD:  `| project name, foo=tostring(properties.bar)`
-  - GOOD: `| extend foo=tostring(properties.bar) | project name, foo`
-- `kind` is a reserved top-level field — do NOT alias it (e.g., `kind=tostring(kind)` fails)
-- Do NOT use trailing semicolons
+#### Resource Graph Dialect and Completeness
+- Supported: project expressions, extend, typed predicates, summarize, documented joins/unions,
+  and mv-expand. No let, render, datatable, externaldata, toscalar or custom join strategies.
+- Use =~ or in~ for types. Cast according to meaning: tostring for labels/IDs, tobool for flags,
+  numeric casts for numeric comparisons, todatetime for dates. Null/empty remains unknown.
+- Up to three join/union operations combined and three mv-expand operators per SDK query;
+  cross-table/right-table reuse has further service restrictions. mv-expand defaults to 128
+  elements, maximum 2000: choose an explicit limit and disclose larger arrays. Expansion can
+  drop empty arrays or multiply rows; keep a base denominator and do not double-count resources.
+- Filter both join sides early, project normalized ID keys and retain the needed identity.
+  When runtime Resource Group or intersected MG/subscription predicates block join/union,
+  issue separate queries inside that same boundary and correlate exact IDs in the specialist.
+- Enumerations keep scalar id/subscriptionId and stable ordering. SDK pages are at most 1000;
+  the service follows continuation tokens for up to ten pages. Do not add take/limit to complete
+  enumerations because it prevents paging. Explicit sampling/top-N queries are not inventories.
+- A stored [ref=Rn] contains only received data. Search it for preview truncation, but for
+  result_truncated=true narrow/partition and rerun KQL; a local text search cannot fetch missing pages.
+- sku and tags are top-level; bracket-quote keys containing dots or punctuation. project expressions
+  are valid. Project kind directly or alias it as resourceKind; kind=tostring(kind) is rejected by
+  the live service. Update downstream references together. No five-extend cap or raw-bag fallback.
 
 #### Planning Guidelines
 - Adjust analysis scope based on update type:
   - **Retirement/Breaking Change**: Precise affected resource identification + migration path docs + resource health check (CRITICAL)
-    - **MUST include** `get_resource_configurations` task to profile current versions/settings of affected resources
+    - Profile current versions/settings with `get_resource_configurations` or an equivalent custom KQL distribution
     - **SHOULD include** `get_resource_dependencies` task for core services (Storage, VNet, Key Vault, SQL, AKS) to assess blast radius
-  - **New GA Feature**: Inventory of eligible resources + cost impact analysis
+  - **New GA Feature**: Inventory of eligible resources + cost baseline only for financial implications
     - **SHOULD include** `get_resource_configurations` to identify resources that could benefit from the new feature
   - **Security Update**: Security posture analysis + affected resource identification + policy compliance check
-    - **MUST include** `get_resource_configurations` task to find resources with insecure config values
-  - **Preview Feature**: Basic resource inventory + documentation reference
-- For **version-specific updates** (K8s version, TLS version, runtime version), always include a `get_resource_configurations` task to get the version distribution across all resources
-- For **infrastructure updates** affecting Storage, VNet, Key Vault, SQL, or AKS, always include a `get_resource_dependencies` task to map the blast radius
+    - Query the relevant security predicate with a configuration tool or equivalent custom KQL
+  - **Preview Feature**: Documented prerequisites and potential fit; inspect decisive properties when relevant
+- For **version-specific updates**, obtain a scoped version distribution with a suitable tool or custom KQL
+- For **infrastructure updates**, investigate evidenced dependencies when they change the decision; use the helper or ID-based custom KQL
 - Each task must specify exact `tool_name` and `tool_args` (matching the tool's input schema)
-- Include 3-8 tasks for thorough analysis
+- Size the plan to material evidence gaps, not a fixed task quota
 - Always include at least one `kql` method task for resource identification
 - Always include at least one `learn_search` method task for documentation evidence
 - For Retirement/Breaking Change updates, include a `resource_health` task
@@ -298,8 +285,9 @@ Evaluate the completeness and quality of the collected analysis results.
 | Aspect | Required | Criterion |
 |--------|----------|-----------|
 | Resource Identification | Required | Applicable resource/dependency conditions checked within scope, with successful findings or explicit evidence gaps. An attempted, failed, or truncated query is not confirmed absence. No ARM rows alone cannot determine code/SDK usage or potential value. |
+| Query Intent | Required | Each decisive executed_query answers its task's purpose with the required property values and relationships, not merely returned rows. Off-topic results, missing required columns, query_status=partial or changed eligibility predicates require a specific follow-up or an explicit exhausted evidence gap. A type inventory or sample alone does not answer a configuration question. |
 | Configuration Gap Analysis | Conditional | Only if the update is about a retirement, breaking change, or feature_change that requires config migration. NOT needed for new_feature, preview, region_expansion, new_service, sdk_tooling. |
-| Cost Impact | Conditional | Only if the update explicitly changes pricing. NOT needed for feature/preview announcements. |
+| Cost Impact | Conditional | Required for material pricing, billing/meter, paid-feature, usage-cost, or savings implications in any category. Collect scoped recent ActualCost with currency, period, and filter, or preserve an explicit gap after an attempted query. Broad subscription totals alone do not establish the affected service's costs. |
 | Security Impact | Conditional | Only if the update is about a security enforcement or vulnerability. |
 | Documentation Evidence | Required | At least 1 Microsoft Learn doc URL obtained from tool results. **If search was attempted but returned no results, this is met.** |
 | Primary Region Availability | Conditional | **Required for GA, Public Preview, new-service, and region-expansion updates.** The result must identify the primary Regions from Resource Graph and establish one outcome per Region: available now, available with a stated prerequisite, not available, or not confirmed after feature-level official-source checks. Search titles alone do not meet this. ARM provider/resource-type data meets it only when the announced object is that exact resource type or SKU; it does not prove rollout of a feature layered on an existing service. |
@@ -309,12 +297,18 @@ Evaluate the completeness and quality of the collected analysis results.
 **IMPORTANT: Bias toward "sufficient"**
 - If all required criteria are met and the task results contain enough information to write a meaningful report, return **sufficient**.
 - Do NOT return "partial" just because additional optional information could theoretically be collected.
-- Additional KQL queries for minor details (e.g., cost data for a non-pricing update) are NOT worth an extra iteration.
+- Additional queries for minor details, including costs for updates without financial implications, are NOT worth an extra iteration.
 
-**The two exceptions — Evidence Completeness and Primary Region Availability**
-The sufficiency bias does NOT override either criterion. Before setting
+**Exceptions: Query Intent, Evidence Completeness, Primary Region Availability, and material Cost Impact**
+The sufficiency bias does NOT override these criteria. Before setting
 `evidence_complete: true`, re-read each task result and check whether it ends in
 `[TRUNCATED PREVIEW — ... ] [ref=Rn]`.
+- Set `query_intent: false` and return partial when a required configuration/relationship question
+  remains unanswered and a different schema probe, predicate, projection or array/ID query could
+  answer it. Successful execution does not satisfy a failed information requirement. Preserve
+  false/zero as valid values; null/missing is unknown and an empty sample does not establish absence.
+- Resource Graph result_truncated=true refers to uncollected rows: revise KQL to narrow or partition
+  without broadening the scope. query_tool_result cannot retrieve rows that were never received.
 - If one does and the update's key question could be answered by the unshown rows, set
   `evidence_complete: false`, return **partial**, and suggest
   `query_tool_result(ref="Rn", pattern="<the value you need to find>")`.
@@ -327,6 +321,10 @@ The sufficiency bias does NOT override either criterion. Before setting
   feature-level text establishes the primary-Region scope. Suggest a targeted `search_azure_docs`
   call with `include_content=true` and the exact Region names in `focus_terms`. A provider-wide
   availability ratio is not a substitute.
+- For material financial implications without a cost lookup, set `cost_impact: false` and suggest
+  one scoped `get_cost_by_resource_type` or `get_cost_by_service` call. If access is denied, scope
+  cannot be enforced, or data remains unavailable, retain that gap rather than repeatedly querying.
+  Missing cost evidence never becomes zero spending or an invented savings estimate.
 
 ### Verdict Classification
 - **sufficient**: Required criteria met. Enough data to generate a useful report. **This should be the default verdict.**
@@ -339,6 +337,7 @@ Respond with ONLY JSON (no markdown fences):
   "verdict": "sufficient | partial | insufficient",
   "coverage": {{
     "resource_identification": true,
+    "query_intent": true,
     "config_gap_analysis": true,
     "cost_impact": false,
     "security_impact": false,
@@ -371,7 +370,9 @@ Based on the evaluation's `missing_aspects` and `suggestions`:
 1. Create NEW tasks to fill the gaps (use task IDs like "task_r1", "task_r2", etc.)
 2. Each new task must have a specific `tool_name` and `tool_args`
 3. Focus on the missing aspects identified in the evaluation
-4. Do NOT duplicate tasks that already completed successfully
+4. Do NOT duplicate questions already answered. A successful HTTP request with irrelevant rows,
+   null/missing required fields or incomplete pages did NOT answer its question: rewrite it from
+   the observed schema/error, preserving its scope, applicability thresholds and required columns.
 5. When an existing result was TRUNCATED (`[ref=Rn]` in its preview) and the missing fact could
    be in the unshown rows, search it before querying Azure again:
    `{{"method": "context", "tool_name": "query_tool_result", "tool_args": {{"ref": "Rn", "pattern": "<resource name or property>"}}}}`
@@ -381,6 +382,12 @@ Based on the evaluation's `missing_aspects` and `suggestions`:
   claim ID such as `resource_graph-2` or `azure_mcp-2` is not a stored-result ref.
 8. For a missing GA/Preview Region verdict, use `search_azure_docs` with the exact feature name,
   `include_content=true`, and primary Region names in `focus_terms`; do not repeat a generic search.
+9. For a query-intent gap, include purpose and expected_columns on query_azure_resources. Use
+  observed paths/array shapes/ID relationships from prior results. Do not schedule a guessed
+  schema-dependent query in parallel with the probe it depends on. If the runtime forbids a
+  scoped join, keep that boundary and use separate scoped queries, never remove its filters.
+10. A correct zero, unsupported property, denied permission or exhausted exploration remains
+  explicit evidence. Do not change thresholds just to produce rows or repeat a stalled query.
 
 ### Output Format
 Respond with ONLY a JSON array of NEW tasks (no markdown fences):

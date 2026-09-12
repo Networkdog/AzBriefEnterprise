@@ -198,7 +198,7 @@ class TestParseAnalysisResultJSON:
                 "관련성": "관련",
                 "한줄_요약": "중요한 업데이트",
                 "상세_분석": "이 업데이트는 중요합니다.",
-                "영향받는_리소스": [
+                "영향_리소스": [
                     {"name": "stor-1", "type": "Microsoft.Storage/storageAccounts"}
                 ],
                 "적용 방안": ["즉시 조치하세요."],

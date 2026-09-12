@@ -55,12 +55,21 @@ retirement_prompt = build_report_prompt(category="retirement")
 - Python `.format()`을 통과하는 literal brace는 두 번 escape합니다.
 - 규칙을 계속 덧붙이지 않고 기존 원칙을 일반화·압축해 prompt dilution을 제한합니다.
 - 외부 tool 결과를 system instruction처럼 취급하지 않습니다.
+- KQL은 고정 builder가 아니라 조사 목적과 필수 속성에서 출발합니다. 지원되는 계산식·조인·배열
+  탐색을 허용하고 스키마 결과를 받은 뒤 후속 질의를 작성합니다. `purpose`/`expected_columns`,
+  `query_intent`와 명시적 gap으로 실행 성공과 정보 확보를 구분합니다. 정상 0건이나 false/0을
+  오류로 바꾸지 않으며, 범위·적용 조건을 유지합니다. 변경된 지침은 새 Prompt Agent 버전이 필요합니다.
+- 공통 analysis 지침은 CSA 브리핑을 기능 설명이 아닌 의사결정 메모로 정의합니다. 판단축,
+  조건부 권고와 반대 조건, 근거 있는 손익, 운영 책임, 결정을 닫는 증거를 plan/evaluate/report가
+  함께 사용하며 Microsoft 내부 영업 절차나 만들어 낸 고객 계획은 포함하지 않습니다.
+- Subscriber customization은 역할별 우선순위를 바꿀 수 있지만 이 의사결정 요소를 삭제하거나
+  일반적인 역할 조언으로 바꾸지 않습니다.
 
 ## 알려진 정합성 점검
 
-Prompt를 수정할 때 환경 부재 판정으로 보고서 본문을 시작해도 되는지에 관한 예시를 반드시
-교차 검사합니다. 공통 report ordering과 한국어 guide는 업데이트 사실을 먼저 설명하도록
-요구하므로, `writing.py`의 예시가 이 순서를 다시 허용하지 않는지 집중 검토가 필요합니다.
+보고서 본문은 구체적으로 바뀐 대상을 먼저 명명한 뒤 환경 판정과 의사결정으로 이동합니다.
+`writing.py`, 공통 report ordering, 언어 guide 어느 곳도 환경 부재 판정을 첫 문장으로 허용하지
+않아야 합니다.
 
 ## 검증
 

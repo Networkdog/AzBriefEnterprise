@@ -2,7 +2,7 @@
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -390,6 +390,57 @@ class TestParseEvaluationJson:
         assert "include_content=true" in result["evaluation"]["suggestions"][0]
 
 
+class TestQueryIntentEvaluation:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("revision_count", [0, 3])
+    async def test_unsatisfied_query_cannot_silently_pass_evaluation(self, revision_count):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.max_iterations = 5
+        reviewer_response = type(
+            "Response",
+            (),
+            {
+                "content": json.dumps(
+                    {
+                        "verdict": "sufficient",
+                        "coverage": {"query_intent": False},
+                        "missing_aspects": [],
+                        "suggestions": [],
+                        "reason": "The query returned rows but not the required setting.",
+                    }
+                ),
+                "response_metadata": {},
+            },
+        )()
+        analyzer.llm_quality_reviewer = type("Reviewer", (), {})()
+        analyzer.llm_quality_reviewer.ainvoke = AsyncMock(return_value=reviewer_response)
+        analyzer._llm_circuit_breaker = CircuitBreaker(failure_threshold=3, reset_timeout=120)
+        plan = AnalysisPlan(
+            plan_id="p-query",
+            update_summary="TLS retirement",
+            analysis_goal="Find noncompliant TLS settings",
+            tasks=[],
+        )
+        state = {
+            "update_context": "TLS retirement",
+            "analysis_plan": plan.model_dump(),
+            "task_results": {},
+            "task_revision_count": revision_count,
+            "plan_revision_count": 0,
+            "iteration": 1,
+            "trace_id": "query-intent-test",
+        }
+        result = await analyzer._evaluation_node(state)
+        assert result["evaluation"]["coverage"]["query_intent"] is False
+        assert "query_intent" in result["evaluation"]["missing_aspects"]
+        if revision_count == 0:
+            assert result["evaluation"]["verdict"] == "partial"
+            assert analyzer._route_after_evaluation(result) == "partial"
+        else:
+            assert result["evaluation"]["verdict"] == "sufficient"
+            assert "Forced termination" in result["evaluation"]["reason"]
+
+
 class TestShouldSkipUpdate:
     """Test the pre-analysis skip filter."""
 
@@ -542,6 +593,169 @@ class TestEnrichmentWithNullUpdateType:
         result = analyzer._inject_enrichment_tasks(plan, state)
 
         assert result is not None
+
+
+class TestCostEnrichment:
+    @staticmethod
+    def _plan() -> AnalysisPlan:
+        return AnalysisPlan(
+            plan_id="cost_plan",
+            update_summary="Cost assessment",
+            analysis_goal="assess",
+            tasks=[],
+        )
+
+    @pytest.mark.parametrize(
+        ("update_type", "title", "description", "detail_description"),
+        [
+            ("Pricing", "Storage update", "", None),
+            ("Public Preview", "New storage feature", "Additional charges apply", None),
+            (None, "Storage feature", "", "Reduces storage costs for eligible workloads"),
+            ("General Availability", "New storage feature", "Pay-as-you-go billing", None),
+        ],
+    )
+    def test_financial_signals_collect_filtered_costs_in_any_category(
+        self,
+        update_type: str | None,
+        title: str,
+        description: str,
+        detail_description: str | None,
+    ):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        state = {
+            "task_results": {},
+            "update": {
+                "update_type": update_type,
+                "title": title,
+                "description": description,
+                "detail_description": detail_description,
+                "azure_services": ["Storage"],
+            },
+        }
+
+        result = analyzer._inject_enrichment_tasks(self._plan(), state)
+        costs = [task for task in result.tasks if task.method == "cost_api"]
+
+        assert len(costs) == 1
+        assert costs[0].tool_name == "get_cost_by_resource_type"
+        assert costs[0].tool_args == {
+            "days": 30,
+            "resource_type": "Microsoft.Storage/storageAccounts",
+        }
+
+    def test_nonfinancial_preview_does_not_query_costs(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        state = {
+            "update": {
+                "title": "Preview: Workload identity for Storage",
+                "description": "Adds identity-based access for applications",
+                "update_type": "Public Preview",
+                "azure_services": ["Storage"],
+            }
+        }
+
+        result = analyzer._inject_enrichment_tasks(self._plan(), state)
+
+        assert not any(task.method == "cost_api" for task in result.tasks)
+
+    def test_unknown_resource_type_uses_service_discovery_without_guessing_billing_label(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        state = {"update": {"title": "New pricing", "azure_services": ["New Product"]}}
+
+        result = analyzer._inject_enrichment_tasks(self._plan(), state)
+        costs = [task for task in result.tasks if task.method == "cost_api"]
+
+        assert len(costs) == 1
+        assert costs[0].tool_name == "get_cost_by_service"
+        assert costs[0].tool_args == {"days": 30, "top": 100}
+
+    def test_existing_cost_task_and_revision_are_not_duplicated(self):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        plan = self._plan()
+        plan.tasks.append(
+            AnalysisTask(
+                task_id="cost_1",
+                description="Cost baseline",
+                method="cost_api",
+                tool_name="get_cost_by_service",
+                tool_args={"days": 30},
+                purpose="Assess billing",
+            )
+        )
+        state = {"update": {"title": "Pricing change", "azure_services": ["Storage"]}}
+
+        result = analyzer._inject_enrichment_tasks(plan, state)
+        assert sum(task.method == "cost_api" for task in result.tasks) == 1
+        state["task_results"] = {"cost_1": "completed"}
+        revised = analyzer._inject_enrichment_tasks(self._plan(), state)
+        assert not revised.tasks
+
+    def test_bounded_analysis_never_injects_unenforceable_cost_query(self):
+        from src.agent.scope import AnalysisScope, analysis_scope_context
+
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        state = {"update": {"title": "Storage pricing change", "azure_services": ["Storage"]}}
+        with analysis_scope_context(
+            AnalysisScope(subscriptions=["11111111-1111-1111-1111-111111111111"])
+        ):
+            result = analyzer._inject_enrichment_tasks(self._plan(), state)
+
+        assert not any(task.method == "cost_api" for task in result.tasks)
+
+    def test_cost_prompt_contract_preserves_actuals_estimates_and_gaps(self):
+        from src.agent.foundry_backend import SPECIALIST_PROMPTS
+        from src.agent.prompts.phases import EVALUATION_PROMPT, PLANNING_PROMPT
+        from src.agent.prompts.report.base import REPORT_AFTER
+
+        planning = " ".join(PLANNING_PROMPT.split())
+        evaluation = " ".join(EVALUATION_PROMPT.split())
+        report = " ".join(REPORT_AFTER.split())
+
+        assert "baseline regardless of category" in planning
+        assert "NOT needed for feature/preview announcements" not in evaluation
+        assert "set `cost_impact: false`" in evaluation
+        assert "billing/meter, paid-feature" in SPECIALIST_PROMPTS["azure_api"]
+        assert "has_cost_data=true" in report
+        assert "observed spending" in report and "estimated change" in report
+        assert "Empty rows are not zero cost" in report
+
+    @pytest.mark.asyncio
+    async def test_cost_permission_failure_is_a_failed_task_not_successful_evidence(self):
+        from src.agent.tools import GetCostByServiceTool
+
+        service = MagicMock()
+        service.get_cost_by_service = AsyncMock(
+            return_value={"success": False, "error": "403 Forbidden", "costs_by_service": []}
+        )
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.tools = [GetCostByServiceTool(service=service)]
+        plan = self._plan()
+        plan.tasks.append(
+            AnalysisTask(
+                task_id="cost_1",
+                description="Actual cost baseline",
+                method="cost_api",
+                tool_name="get_cost_by_service",
+                tool_args={"days": 30},
+                purpose="Assess financial impact",
+                max_retries=0,
+            )
+        )
+
+        result = await analyzer._execution_node(
+            {
+                "analysis_plan": plan.model_dump(),
+                "task_results": {"earlier": "collected"},
+                "update": {"title": "Pricing change"},
+                "trace_id": "cost-permission-test",
+            }
+        )
+
+        cost_task = result["analysis_plan"]["tasks"][0]
+        assert cost_task["status"] == "failed"
+        assert "403 Forbidden" in cost_task["error"]
+        assert "cost_1" not in result["task_results"]
+        service.get_cost_by_service.assert_awaited_once()
 
 
 class TestRegionAvailabilityEnrichment:
@@ -762,6 +976,10 @@ class TestLanguageIsolation:
 
         assert "{subscriber_resource_scope}" in SUBSCRIBER_CUSTOMIZATION_PROMPT
         assert "hard investigation boundary" in SUBSCRIBER_CUSTOMIZATION_PROMPT
+        assert "Preserve the decision hinge" in SUBSCRIBER_CUSTOMIZATION_PROMPT
+        assert "must not delete them or turn them into generic advice" in (
+            SUBSCRIBER_CUSTOMIZATION_PROMPT
+        )
         assert '"subscriptionId": "exact subscription GUID' in REPORT_AFTER
 
     def test_customization_output_is_filtered_against_the_subscriber_scope(self):
@@ -981,7 +1199,8 @@ class TestContextualToolArguments:
             {"trace_id": "trace-1", "update": {"azure_services": []}},
         )
 
-        assert set(task.tool_args) == {"query"}
+        assert set(task.tool_args) == {"query", "purpose"}
+        assert task.tool_args["purpose"] == task.purpose
         assert task.tool_args["query"].lstrip().startswith("Resources")
         assert "advancedNetworking" in task.tool_args["query"]
 

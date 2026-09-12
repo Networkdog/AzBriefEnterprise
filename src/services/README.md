@@ -57,6 +57,12 @@ finally:
 경로는 현재 identity가 직접 접근할 수 있는 범위만 반환합니다. 403이나 빈 접근 범위를 tenant에
 billing account가 없다는 뜻으로 바꾸지 않습니다.
 
+`CostManagementService`는 명시·설정된 구독 또는 유일하게 발견한 구독에서 `ActualCost`를
+조회합니다. `resource_type`/`service_name` 필터를 서버에 전달하고 기간·통화·범위·필터와
+`has_cost_data`를 반환합니다. 전체 행을 합산·정렬한 뒤 표시 개수를 제한하며 여러 통화나 추가
+페이지가 있으면 확정 합계를 내지 않습니다. 비용 도구는 실패를 예외로 전달합니다. 범위 제한
+구독자 분석은 전체 범위를 강제할 수 없으므로 차단하며, 빈 데이터는 비용 0의 근거가 아닙니다.
+
 ## 불변식
 
 - Azure credential과 SDK/HTTP client는 lazy 생성하며, 병렬 readiness 조회에서도 shared credential은

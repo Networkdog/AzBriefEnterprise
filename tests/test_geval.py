@@ -324,11 +324,23 @@ def test_render_report_markdown_has_all_sections(sample_result, sample_update):
     assert "한 줄 요약" in md
     assert "환경 연관성" in md
     assert "상세 분석" in md
-    assert "영향받는 리소스" in md
+    assert "연관 리소스" in md
     assert "sthottierpoc" in md
     assert "조치 항목" in md
     assert "참고 문서" in md
     assert "중요성:** high" in md
+
+
+@pytest.mark.parametrize(
+    ("language", "heading"),
+    [("ko", "연관 리소스"), ("en", "Affected Resources"), ("ja", "影響を受けるリソース")],
+)
+def test_render_resource_heading_matches_delivery_labels(
+    sample_result, sample_update, language: str, heading: str
+):
+    markdown = GEvalJudge.render_report_markdown(sample_result, sample_update, language)
+    assert f"## {heading}\n" in markdown
+    assert "## 영향받는 리소스\n" not in markdown
 
 
 def test_render_report_markdown_checks_precede_references(sample_result, sample_update):
@@ -382,6 +394,19 @@ def test_target_score_override():
 # ============================================================================
 
 _ALL_TITLES = {d.title: 4 for d in DIMENSIONS}
+
+
+def test_architectural_depth_rewards_csa_decision_quality() -> None:
+    dimension = next(item for item in DIMENSIONS if item.key == "architectural_depth")
+    criteria = " ".join(
+        (dimension.rubric + " " + dimension.steps + " " + dimension.edge_cases).split()
+    )
+    assert "decision hinge" in criteria
+    assert "when the alternative or current state is better" in criteria
+    assert "owning operational responsibility" in criteria
+    assert "decision-closure criterion" in criteria
+    assert "Do not reward generic Well-Architected or compliance name-dropping" in criteria
+    assert "ISO 27017" not in criteria
 
 
 @pytest.mark.asyncio

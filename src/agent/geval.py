@@ -237,25 +237,27 @@ _ARCH_DEPTH = GEvalDimension(
     title="Cloud Architectural Depth",
     weight=1.0,
     rubric=(
-        "5 (Ideal): Sees the long-term impact of a single update across the whole ecosystem — "
-        "on-prem hybrid control, compliance (ISO 27017 etc.), and disaster-recovery strategy — "
-        "with penetrating second- and third-order insight.\n"
-        "4 (Excellent): Analyzes concrete system-level optimization grounded in the relevant "
-        "Well-Architected Framework pillars (cost, security, performance, reliability, "
-        "operations).\n"
-        "3 (Adequate): Lists surface-level pros and cons of the feature but lacks depth in "
-        "analyzing trade-offs across the architecture pillars.\n"
+        "5 (Ideal): Turns the update into an unusually sharp, fully evidenced decision brief: "
+        "the decisive condition, recommendation boundary, system-wide consequences, hidden failure "
+        "mode, operational owner, and acceptance evidence are all explicit.\n"
+        "4 (Excellent): Gives a clear conditional recommendation grounded in the environment; names "
+        "the decision hinge, when the alternative or current state is better, concrete architecture "
+        "and operability trade-offs, and the owning operational responsibility.\n"
+        "3 (Adequate): Lists useful pros and cons and some system context, but leaves the decision "
+        "hinge, recommendation boundary, hidden dependency, or operational ownership implicit.\n"
         "2 (Poor): Almost no consideration of cloud architecture or infrastructure design; stays "
         "at the level of a translated release note.\n"
         "1 (Harmful): Built on a critical misunderstanding of architecture principles that, if "
         "followed, would cause a security incident or large-scale cost waste."
     ),
     steps=(
-        "1. Check whether the report discusses second/third-order ripple effects behind the "
-        "surface feature (e.g. egress cost, latency, blast radius).\n"
-        "2. Cross-check recommendations against cloud security standards (ISO 27017, CSA STAR) "
-        "and Well-Architected best practices.\n"
-        "3. Identify missing architectural insight and score strictly against the rubric."
+        "1. Identify the customer-facing outcome and the one or two facts that actually decide the "
+        "recommendation.\n"
+        "2. Verify that the report recommends a path only when evidence supports it and says when "
+        "the alternative or current state is better.\n"
+        "3. Check for evidenced second/third-order effects, the most consequential hidden failure "
+        "mode, the owning operational responsibility, and a concrete decision-closure criterion. "
+        "Do not reward generic Well-Architected or compliance name-dropping."
     ),
     edge_cases=(
         "For a trivial UI change or simple notification, clearly declaring 'no impact on the "
@@ -830,7 +832,10 @@ class GEvalJudge:
 
         resources = getattr(result, "affected_resources", None) or []
         if resources:
-            header = "## 영향받는 리소스\n\n| 이름 | 유형 | 리소스 그룹 | 사유 |\n|------|------|------------|------|"
+            header = (
+                f"## {get_labels(language)['affected_resources']}\n\n"
+                "| 이름 | 유형 | 리소스 그룹 | 사유 |\n|------|------|------------|------|"
+            )
             # Group resources that share the same non-empty reason into one row so the
             # judge sees the same compact layout the email renders.
             groups: dict = {}

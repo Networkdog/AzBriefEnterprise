@@ -85,6 +85,9 @@ def test_report_prompt_uses_category_aware_relevance_without_resource_gate(categ
     assert "Value first; evaluation is optional" in prompt
     assert "never invent adoption plans" in prompt
     assert "at the analysis time and within the analyzed scope" in prompt
+    assert "Lead with the **decision hinge**" in prompt
+    assert "condition under which the alternative or keeping the current state is better" in prompt
+    assert "evidence that closes the decision" in prompt
 
 
 @pytest.mark.parametrize("phase", ["planning", "evaluation", "report"])
@@ -93,6 +96,24 @@ def test_shared_assessment_does_not_equate_low_impact_with_low_relevance(phase: 
     assert "low=safe to ignore" not in prompt
     assert "Resource ownership is not a relevance gate" in prompt
     assert "The report will correctly mark the update as `not_relevant`" not in PLANNING_PROMPT
+
+
+@pytest.mark.parametrize("phase", ["planning", "evaluation", "report"])
+def test_shared_assessment_requires_csa_decision_brief(phase: str) -> None:
+    prompt = " ".join(build_system_prompt(phase=phase, language="ko").split())
+    assert "A CSA briefing is a decision memo, not feature education" in prompt
+    assert "decision hinge" in prompt
+    assert "when the alternative or keeping the current state is better" in prompt
+    assert "owning operational responsibility" in prompt
+    assert "evidence that closes the decision" in prompt
+    assert "Never expose or imitate internal Microsoft sales motions" in prompt
+
+
+def test_report_system_prompt_uses_one_update_first_opening_rule() -> None:
+    prompt = " ".join(build_system_prompt(phase="report", language="ko").split())
+    assert "Update-first opening (MANDATORY)" in prompt
+    assert "Administrator-first opening" not in prompt
+    assert "do not give the environment verdict before naming the subject" in prompt
 
 
 @pytest.mark.parametrize(
