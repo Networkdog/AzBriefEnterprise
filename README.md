@@ -179,17 +179,20 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   action is reviewed as `advisory_review`: no CLI or rollback is required, and an incomplete
   go/no-go check can be `caution` but cannot be blocked merely for lacking a command. Commands
   and state-changing Portal procedures remain fail-closed.
-- **Editorial email layout** — White paper on a pale neutral canvas, ink `#182b32` and teal
+- **Editorial email layout** — Pure white canvas and paper, ink `#182b32` and teal
   `#08746b`, without dark navy hero panels or rounded, shadowed cards. Single reports and digest
   details share a title, takeaway, independent three-axis strip, and two-column operational facts.
   The digest separates analyzed high/medium/low counts from skipped items, retains every supplied
   item, and links full, numbered contents titles to details and back. A proportional 8px bar and
   48px counters on tinted panels visualize analyzed counts without including skipped items.
-  A 36px publication wordmark, 17px contents titles with separate number cells, and full-width teal
-  chapter bands establish a clear hierarchy. Desktop body sections use a 24% heading / 76% content
-  grid with 21px headings and takeaways; narrow and inline-only layouts stack both parts.
+  A 36px publication wordmark, 48px document title, 17px contents titles with separate number cells, and full-width teal
+  chapter bands establish a clear hierarchy. Desktop body sections use an 18% heading / 82% content
+  grid with 18.75px headings and takeaways. Section headings use weight 525; takeaways retain 700.
+  Narrow and inline-only layouts stack both parts; mobile media queries reduce headings and
+  takeaways to 15.75px and document titles to 29px. Inline-only output retains the baseline sizes.
   Titles stay full-width above labeled metrics in inline-only/MSO output; media-query desktops
-  place the title and three metrics side by side. Mobile layouts label metrics
+  place the title and three metrics side by side. Level badges use 18px text, with each label/badge
+  pair wrapping as a unit when space is insufficient, including inline-only output. Mobile layouts label metrics
   and stack resource fields without losing reasons, grouping, or Portal identity. Body text stays
   at 13px with separate 36px/48px display steps. Email text uses
   `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif` in that order;
@@ -921,6 +924,11 @@ Archive details render the canonical narrative with the same restricted Markdown
 by email: paragraphs, headings, lists, blockquotes for `> **Term**:` concept boxes, fenced and inline
 code, bold text, and allow-listed links. The browser creates DOM nodes without `innerHTML`, preserving
 the report structure without executing report-supplied HTML.
+
+The detail view uses a pure white editorial canvas, a numbered sticky outline, a 48px desktop title,
+25px section headings, 16px prose, and flat rule-separated facts and lists instead of repeated cards.
+On mobile those steps become 32px, 21px, and 14px; the outline becomes one horizontal strip, and the
+list-page introduction is hidden so the report title and lead enter the first viewport sooner.
 
 The search toolbar keeps advanced filters collapsed until needed, displays removable active
 filters, and stores filters in the URL. Reload, sign-in redirects, and return from detail preserve

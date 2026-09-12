@@ -325,6 +325,10 @@ is planning memory, not the browser archive source of truth.
 The Archive detail renderer must preserve the email narrative's restricted Markdown structure,
 including `> **Term**:` concept boxes, while constructing DOM nodes without `innerHTML`. A Markdown
 feature added to email requires the matching safe Archive rendering path and behavior coverage.
+Archive detail uses a pure white editorial canvas with a 48px/32px title, 25px/21px section headings,
+16px/14px prose, a numbered sticky/horizontal outline, one emphasized lead, and flat rule-separated
+facts and lists. Hide the duplicate list-page introduction only while detail is open; preserve the
+responsive toolbar, visible focus, and all report content.
 The Admin and Archive shells keep explicit `width: 100%`, bounded `max-width`, and `margin: 0 auto`
 on their main content so operational panels stay centered on wide viewports without mobile overflow.
 Admin mutation controls keep each command button inside the same bordered action surface as its
@@ -478,14 +482,15 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 
 - Keep `HTML_EMAIL_TEMPLATE` and `HTML_DIGEST_TEMPLATE` on the shared `_EMAIL_DOCUMENT_START` /
   `_EMAIL_DOCUMENT_END` shell and masthead/header/section/footer/intro formatters. `EMAIL_COLORS`
-  defines white paper, ink `#182b32`, teal `#08746b`, and a pale neutral canvas; never restore dark
+  defines a pure white canvas and paper, ink `#182b32`, and teal `#08746b`; never restore dark
   navy heroes or rounded, shadowed cards.
-- Keep the 13px body scale and explicit `cover=36` / `stat=48` display steps. The wordmark and
-  main title use 36px; mobile overrides are 29px/25px. Contents use 17px titles, 13px summaries
-  and separate 29px number cells. Takeaways and section headings use 21px; prose retains
+- Keep the 13px body scale and explicit `cover=36` / `stat=48` display steps. The wordmark uses
+  36px and the main title uses 48px; both become 29px on mobile. Contents use 17px titles, 13px summaries
+  and separate 29px number cells. Takeaways and section headings use 18.75px on desktop and
+  15.75px on mobile; section headings use weight 525 and takeaways retain 700. Prose retains
   1.8–1.85 line height. Digest figures and chapter numbers use 48px tabular numerals;
   counts fall back uniformly to 29px at three digits. Keep letter spacing at zero.
-- `format_email_section_html()` uses a 24% label / 76% content rail at >=800px. Its inline/MSO
+- `format_email_section_html()` uses an 18% label / 82% content rail at >=800px. Its inline/MSO
   default stacks full-width tables; `full_width=True` keeps contents wide. The masthead also
   stacks by default and uses 44%/56% columns only with desktop media queries.
 - Keep the shared email `FONT_STACK_SANS` exactly as
@@ -493,6 +498,8 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
   Never add remote webfonts; preserve the monospace stack for commands and code blocks.
 - Use shared `SEMANTIC_ACCENT_WIDTH_PX = 4` for level/verification badges, the
   summary takeaway, concept boxes, and additional checks; retain badge top/bottom padding at 4px.
+  Level badges use 18px text. Each assessment label/badge pair lives in its own 33%-width
+  auto-layout table so it can wrap as a unit, even in inline-only output, without shrinking text.
   Preserve visible status text, existing colors, thin neutral dividers, and text contrast **≥4.5:1**.
 - Keep the 640px inline/MSO baseline, 760px at 800px and 900px at 1100px. `azb-pad` gutters are 32px
   by default, 48px at ≥1100px, 20px at ≤640px, and 16px at ≤400px; inline-only stays 32px. Impact

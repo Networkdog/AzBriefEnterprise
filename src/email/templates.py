@@ -76,12 +76,15 @@ CAPABILITY_CATEGORIES = (
 # Type scale
 # ============================================================================
 # Body copy uses a 13px baseline for regular email text.
-FONT_SIZE_PX: dict[str, int] = {
+FONT_SIZE_PX: dict[str, int | float] = {
     "meta": 11,  # badges, table headers, timestamps, fine print
     "secondary": 12,  # table cells, action detail lines, CLI blocks
     "body": 13,  # prose, list items, concept boxes
     "heading": 15,  # action titles
+    "section_mobile": 15.75,
     "title": 17,  # update titles
+    "badge": 18,
+    "section": 18.75,
     "masthead": 21,  # section headings and takeaways
     "display": 25,  # mobile document title
     "hero": 29,  # digest detail titles
@@ -90,7 +93,7 @@ FONT_SIZE_PX: dict[str, int] = {
 }
 
 EMAIL_COLORS: dict[str, str] = {
-    "canvas": "#eef1f0",
+    "canvas": "#ffffff",
     "paper": "#ffffff",
     "ink": "#182b32",
     "body": "#34474f",
@@ -167,7 +170,9 @@ _RESPONSIVE_STYLE = """
   @media only screen and (max-width: 640px) {
     .azb-outer { padding: 12px 6px 24px !important; }
     .azb-pad { padding-left: 20px !important; padding-right: 20px !important; }
-    h1.azb-hero-title { font-size: 25px !important; }
+    .azb-hero-title { font-size: 29px !important; }
+    .azb-heading { font-size: 15.75px !important; }
+    .azb-summary { font-size: 15.75px !important; }
     .azb-wordmark { font-size: 29px !important; }
     .azb-count-value { font-size: 36px !important; }
     .azb-count-wide { font-size: 29px !important; }
@@ -217,9 +222,9 @@ _RESPONSIVE_STYLE = """
   @media only screen and (min-width: 800px) {
     .azb-card { max-width: 760px !important; }
         .azb-outer { padding-top: 32px !important; }
-                .azb-section-label { width: 24% !important; }
-                .azb-section-copy { width: 76% !important; }
-                .azb-section-label h2 { padding-right: 24px !important; }
+                                .azb-section-label { width: 18% !important; }
+                                .azb-section-copy { width: 82% !important; }
+                                .azb-section-label h2 { padding-right: 18px !important; }
   }
   @media only screen and (min-width: 1100px) {
     .azb-card { max-width: 900px !important; }
@@ -771,8 +776,8 @@ def format_email_section_html(label: str, content_html: str, *, full_width: bool
         '<tr><td style="padding-top: 20px;">'
         '<table role="presentation" width="100%" align="left" cellspacing="0" cellpadding="0" '
         f'border="0" class="{label_class}" style="table-layout: fixed;"><tr><td>'
-        f'<h2 class="azb-heading" style="margin: 0 0 18px; font-size: 21px; '
-        f'font-weight: 700; color: {EMAIL_COLORS["ink"]}; line-height: 1.4; '
+        f'<h2 class="azb-heading" style="margin: 0 0 18px; font-size: {FONT_SIZE_PX["section"]}px; '
+        f'font-weight: 525; color: {EMAIL_COLORS["ink"]}; line-height: 1.2; '
         f'overflow-wrap: anywhere;">{escape_email_text(label)}</h2></td></tr></table>'
         '<table role="presentation" width="100%" align="left" cellspacing="0" cellpadding="0" '
         f'border="0" class="{copy_class}" style="table-layout: fixed;"><tr><td>'
@@ -814,9 +819,11 @@ def format_report_header_html(
         ),
     )
     metric_cells = "".join(
-        f'<td width="33%" style="padding: 12px 8px 0 0; vertical-align: top;">'
+        '<table role="presentation" width="33%" align="left" cellspacing="0" cellpadding="0" '
+        'border="0" class="azb-metric" style="table-layout: auto;"><tr>'
+        '<td style="padding: 12px 8px 0 0; vertical-align: top;">'
         f'<p style="margin: 0 0 5px; font-size: 11px; color: {EMAIL_COLORS["muted"]};">'
-        f"{escape_email_text(label)}</p>{_level_badge_html(level, language)}</td>"
+        f"{escape_email_text(label)}</p>{_level_badge_html(level, language)}</td></tr></table>"
         for label, level in metrics
     )
     source = safe_email_href(update.link)
@@ -828,7 +835,7 @@ def format_report_header_html(
     )
     published = update.published_date.strftime("%Y-%m-%d") if update.published_date else "-"
     heading = "h2" if index else "h1"
-    title_size = FONT_SIZE_PX["hero"] if index else FONT_SIZE_PX["cover"]
+    title_size = FONT_SIZE_PX["cover"] if index else FONT_SIZE_PX["stat"]
     chapter = (
         '<tr><td class="azb-chapter-band azb-pad" '
         f'style="padding: 20px 32px; background-color: {EMAIL_COLORS["accent"]};">'
@@ -848,16 +855,16 @@ def format_report_header_html(
     services = " &middot; ".join(escape_email_text(s) for s in update.azure_services[:4])
     return f"""{chapter}<tr><td class="azb-hero azb-pad" style="padding: 28px 32px 24px; overflow-wrap: anywhere; word-break: break-word;">
 <p class="azb-eyebrow" style="margin: 0 0 10px; font-size: 11px; font-weight: 700; color: {EMAIL_COLORS['accent']};">{escape_email_text(L['update_type'])}: {escape_email_text(update.update_type or 'Info')} &middot; {published}</p>
-<{heading} class="azb-hero-title" style="margin: 0; font-size: {title_size}px; font-weight: 700; color: {EMAIL_COLORS['ink']}; line-height: 1.35; letter-spacing: 0;">{escape_email_text(update.title)}</{heading}>
+<{heading} class="azb-hero-title" style="margin: 0; font-size: {title_size}px; font-weight: 700; color: {EMAIL_COLORS['ink']}; line-height: 1.18; letter-spacing: 0;">{escape_email_text(update.title)}</{heading}>
 {f'<p style="margin: 8px 0 0; font-size: 12px; color: {EMAIL_COLORS["muted"]};">{services}</p>' if services else ''}
 <p style="margin: 12px 0 0; font-size: 12px; line-height: 1.8;">{source_html}</p>
 {format_archive_link_html(archive_url, language)}
 <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-takeaway" style="margin-top: 20px; background-color: {EMAIL_COLORS['accent_wash']}; border-left: {SEMANTIC_ACCENT_WIDTH_PX}px solid {EMAIL_COLORS['accent']}; table-layout: fixed;">
 <tr><td style="padding: 16px 18px;">
 <p style="margin: 0 0 6px; font-size: 11px; font-weight: 700; color: {EMAIL_COLORS['accent']};">{escape_email_text(L['importance_section'])}</p>
-<p class="azb-summary" style="margin: 0; font-size: 21px; font-weight: 700; color: {EMAIL_COLORS['ink']}; line-height: 1.6;">{escape_email_text(summary)}</p>
+<p class="azb-summary" style="margin: 0; font-size: {FONT_SIZE_PX['section']}px; font-weight: 700; color: {EMAIL_COLORS['ink']}; line-height: 1.45;">{escape_email_text(summary)}</p>
 </td></tr></table>
-<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-assessment" style="table-layout: fixed;"><tr>{metric_cells}</tr></table>
+<table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-assessment" style="table-layout: fixed;"><tr><td style="font-size: 0;">{metric_cells}</td></tr></table>
 <p style="margin: 12px 0 0; font-size: 11px; color: {EMAIL_COLORS['muted']}; line-height: 1.7;">{escape_email_text(L['urgency'])}: <strong style="color: {get_urgency_colors(urgency)['text_color']};">{get_urgency_colors(urgency)['badge']}</strong> &middot; {escape_email_text(get_relevance_colors(relevance, language)['label'])}</p>
 </td></tr>"""
 
@@ -913,7 +920,7 @@ def format_digest_intro_html(
     )
     return f"""<tr><td class="azb-digest-lead azb-pad" style="padding: 24px 32px 28px;">
 <p style="margin: 0 0 8px; font-size: 12px; color: {EMAIL_COLORS['accent']};">{escape_email_text(L['digest_total'].format(total=total))}</p>
-<h1 class="azb-hero-title" style="margin: 0 0 24px; font-size: 36px; font-weight: 800; color: {EMAIL_COLORS['ink']}; line-height: 1.2; letter-spacing: 0;">{escape_email_text(L['digest_title'])}</h1>
+<h1 class="azb-hero-title" style="margin: 0 0 24px; font-size: 48px; font-weight: 800; color: {EMAIL_COLORS['ink']}; line-height: 1.12; letter-spacing: 0;">{escape_email_text(L['digest_title'])}</h1>
 <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" class="azb-digest-counts" style="table-layout: fixed; border-collapse: collapse;"><tr>{cells}</tr></table>
 {distribution}
 {skipped_html}{empty_html}</td></tr>"""
@@ -2048,7 +2055,8 @@ def _level_badge_html(level: str, language: str = "ko") -> str:
         f'<span class="{badge_class}" style="display:inline-block; background-color:{colors["bg"]}; '
         f'color:{colors["color"]}; border-left:{SEMANTIC_ACCENT_WIDTH_PX}px solid {colors["color"]}; '
         f"padding:4px 4px; "
-        f'font-size:12px; font-weight:700; line-height:1.5; white-space:nowrap;">{label}</span>'
+        f'font-size:{FONT_SIZE_PX["badge"]}px; font-weight:700; line-height:1.5; '
+        f'white-space:nowrap;">{label}</span>'
     )
 
 
@@ -2135,11 +2143,13 @@ def format_digest_update_card_html(
     anchor_href = f"#azbrief-detail-{anchor_index}" if anchor_index > 0 else link
 
     metrics = "".join(
-        '<td width="33%" class="azb-cell azb-col-metric" '
+        '<table role="presentation" width="33%" align="left" cellspacing="0" cellpadding="0" '
+        'border="0" class="azb-metric" style="table-layout: auto;"><tr>'
+        '<td class="azb-cell azb-col-metric" '
         'style="padding:12px 8px 0 0; vertical-align:top; text-align:left;">'
         f'<span class="azb-metric-label" style="display:block; margin-bottom:4px; font-size:11px; '
         f'color:{EMAIL_COLORS["muted"]}; line-height:1.5;">{label}</span>'
-        f"{_level_badge_html(level, language)}</td>"
+        f"{_level_badge_html(level, language)}</td></tr></table>"
         for label, level in (
             (L["col_importance"], importance),
             (L["col_impact"], impact_level),
@@ -2169,6 +2179,6 @@ def format_digest_update_card_html(
         f'line-height:1.7;">{summary}</p></td></tr></table>'
         '<table role="presentation" align="left" width="100%" cellspacing="0" cellpadding="0" '
         'border="0" class="azb-digest-metrics" style="table-layout:fixed; border-collapse:collapse;">'
-        f"<tr>{metrics}</tr></table>"
+        f'<tr><td style="font-size:0;">{metrics}</td></tr></table>'
         '<div style="clear:both; height:0; line-height:0;"></div></td></tr>'
     )

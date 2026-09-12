@@ -459,7 +459,7 @@ class TestEmailContentBuilding:
                 language="ko",
             )["html_content"]
 
-        used = {int(px) for px in re.findall(r"font-size:\s*(\d+)px", html)}
+        used = {float(px) for px in re.findall(r"font-size:\s*(\d+(?:\.\d+)?)px", html)}
         assert used, "no font sizes rendered"
         assert not used - set(
             FONT_SIZE_PX.values()
@@ -475,7 +475,10 @@ class TestEmailContentBuilding:
             "secondary": 12,
             "body": 13,
             "heading": 15,
+            "section_mobile": 15.75,
             "title": 17,
+            "badge": 18,
+            "section": 18.75,
             "masthead": 21,
             "display": 25,
             "hero": 29,
@@ -489,7 +492,10 @@ class TestEmailContentBuilding:
                 "secondary",
                 "body",
                 "heading",
+                "section_mobile",
                 "title",
+                "badge",
+                "section",
                 "masthead",
                 "display",
                 "hero",

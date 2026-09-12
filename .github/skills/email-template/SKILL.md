@@ -66,15 +66,18 @@ Both use `str.format()` placeholders and the shared `_EMAIL_DOCUMENT_START` / `_
 shell: one preheader, masthead, white paper surface, and footer. Inline CSS is the fallback;
 head styles add client resets and responsive enhancements. This is not a Jinja template.
 
-`EMAIL_COLORS` centralizes white paper, ink `#182b32`, teal `#08746b`, and the pale neutral
-canvas `#eef1f0`. Keep the editorial hierarchy, not the former dark navy hero or rounded,
-shadowed cards. Shared section headings are 21px `h2` elements in a desktop label rail; prose uses 13px
+`EMAIL_COLORS` centralizes a pure white canvas and paper, ink `#182b32`, and teal `#08746b`.
+Keep the editorial hierarchy, not the former dark navy hero or rounded, shadowed cards. Shared
+section headings and takeaways are 18.75px on desktop and 15.75px on mobile, with weights 525
+and 700 respectively; prose uses 13px
 text with 1.8–1.85 line height. Single reports and digest details share a white hero, takeaway,
 independent importance/impact/job-relevance strip, and two-column operational facts.
 
 Use shared `SEMANTIC_ACCENT_WIDTH_PX = 4` for level and verification badges,
 the summary takeaway, concept boxes, and additional checks. Retain badge top/bottom padding at
-4px. Preserve visible status text, existing colors, thin neutral dividers, and text contrast
+4px. Level badges use 18px text; assessment label/badge pairs use independent 33%-width
+auto-layout tables that wrap together when space is insufficient, including inline-only output.
+Preserve visible status text, existing colors, thin neutral dividers, and text contrast
 **≥4.5:1**.
 
 ### Helper Functions
@@ -82,8 +85,8 @@ the summary takeaway, concept boxes, and additional checks. Retain badge top/bot
 | Function | Purpose |
 |----------|---------|
 | `format_email_masthead_html()` | 36px publication wordmark and edition/date metadata; stacked baseline, desktop columns |
-| `format_report_header_html()` | White title/metadata area, takeaway, independent three-axis strip, safe source/Archive links, and digest back-link |
-| `format_email_section_html()` | 21px heading, 24%/76% desktop label/content rail, stacked fallback; `full_width=True` for contents |
+| `format_report_header_html()` | White 48px single/36px digest title area, 18.75px takeaway, independent three-axis strip, safe source/Archive links, and digest back-link; title/takeaway become 29px/15.75px on mobile |
+| `format_email_section_html()` | 18.75px desktop/15.75px mobile heading at weight 525, 18%/82% desktop label/content rail, stacked fallback; `full_width=True` for contents |
 | `format_email_footer_html()` | Shared localized disclaimer, generation metadata, and Feedback link |
 | `format_digest_intro_html()` | HTML digest totals with analyzed high/medium/low counts separate from skipped items |
 | `format_impact_section_html()` | 영향/기회 차원(비용·보안·성능·운영). `update_category`가 `CAPABILITY_CATEGORIES`(new_feature, new_service, region_expansion, preview, sdk_tooling)면 섹션 제목이 `impact_analysis`(영향 분석) 대신 `opportunity_analysis`(활용 기회)로 바뀜다 |
@@ -117,7 +120,7 @@ whole bar for zero analyzed items. The bar is redundant/aria-hidden, with exact 
 always visible. At three digits all counters use 29px. Contents use 17px titles, 13px summaries
 and separate 29px number cells. Digest details open with a full-width teal band holding a 48px
 number and contents-return link in `on_accent`; single reports omit chapter navigation. Takeaways
-use 21px text. Operational
+use 18.75px text, reduced to 15.75px by mobile media queries. Operational
 facts use a pale inline background with a teal top rule and 12px/16px cell padding. Title letter
 spacing is zero. Remote images are limited to deterministic `visual_assets` extracted from fetched
 Microsoft Learn article bodies: PNG/JPEG/GIF over HTTPS on the dedicated Microsoft image allow-list,
@@ -186,15 +189,18 @@ are separate publication display steps, not a global text increase. Ratios use t
 | Key | px | Ratio | Used for |
 |-----|----|-------|----------|
 | `meta` | 11 | 0.846x | field labels, table headers, timestamps, footer fine print |
-| `secondary` | 12 | 0.923x | badges, table cells, action detail lines, CLI blocks, inline code |
+| `secondary` | 12 | 0.923x | verification badges, table cells, action detail lines, CLI blocks, inline code |
 | `body` | 13 | 1x | prose paragraphs, list items, concept boxes, impact values |
 | `heading` | 15 | 1.154x | action `h3` titles |
+| `section_mobile` | 15.75 | 1.212x | mobile section headings and takeaways |
 | `title` | 17 | 1.308x | contents titles and retirement countdown values |
-| `masthead` | 21 | 1.615x | section headings, takeaways, action numbers |
-| `display` | 25 | 1.923x | mobile main hero override |
-| `hero` | 29 | 2.231x | digest detail titles, contents numbers, three-digit counters, mobile wordmark |
-| `cover` | 36 | 2.769x | wordmark, document title, mobile two-digit counters |
-| `stat` | 48 | 3.692x | desktop/inline two-digit counters and chapter numbers |
+| `badge` | 18 | 1.385x | importance, impact, and job-relevance level badges |
+| `section` | 18.75 | 1.442x | desktop/inline-only section headings and takeaways |
+| `masthead` | 21 | 1.615x | action numbers and display accents |
+| `display` | 25 | 1.923x | available display step |
+| `hero` | 29 | 2.231x | mobile document title, contents numbers, three-digit counters, mobile wordmark |
+| `cover` | 36 | 2.769x | wordmark, digest detail titles, mobile two-digit counters |
+| `stat` | 48 | 3.692x | single/digest document title, desktop counters, and chapter numbers |
 
 `markdown_to_html()` derives its `#`–`####` heading sizes from the same dict.
 `test_font_sizes_follow_the_type_scale` fails the build if a rendered email
@@ -219,9 +225,10 @@ style without a selector. Add the matching class when you add an element:
 |-------|--------------------|
 | `azb-outer` | Outer gutter shrinks to 6px |
 | `azb-pad` | Section gutters 32px → 20px (→ 16px at ≤400px); inline-only fallback stays 32px |
-| `azb-hero-title` | Main hero title uses 25px |
+| `azb-hero-title` | Main and digest-detail titles use 29px |
+| `azb-heading` / `azb-summary` | Section headings and takeaways use 15.75px; weights remain 525/700 |
 | `azb-masthead-brand` / `azb-masthead-edition` | Full-width baseline; desktop uses 44%/56% columns |
-| `azb-section-label` / `azb-section-copy` | Full-width baseline; at >=800px uses a 24%/76% label/content rail |
+| `azb-section-label` / `azb-section-copy` | Full-width baseline; at >=800px uses an 18%/82% label/content rail |
 | `azb-stack-cell` / `azb-stack-tail` | Masthead metadata cells stack with spacing between them |
 | `azb-digest-row` / `azb-digest-entry` | The spanning row contains a full-width title table followed by a metric table |
 | `azb-digest-copy` / `azb-digest-metrics` | Full-width by default; media-query desktops set 52%/48% widths for side-by-side comparison |

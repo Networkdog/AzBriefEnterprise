@@ -168,6 +168,14 @@ def test_semantic_color_bars_are_prominent_including_inline_fallback(report_mark
             assert element.get_text(strip=True)
     for badge in soup.select(".azb-verify, [class^='azb-badge-']"):
         assert re.search(r"padding:\s*4px (4|8)px", badge["style"])
+    assert FONT_SIZE_PX["badge"] == 12 * 1.5
+    for badge in soup.select("[class^='azb-badge-']"):
+        assert f'font-size:{FONT_SIZE_PX["badge"]}px' in badge["style"]
+        metric = badge.find_parent("table", class_="azb-metric")
+        assert metric is not None
+        assert metric["width"] == "33%"
+        assert metric["align"] == "left"
+        assert "table-layout: auto" in metric["style"]
 
 
 def test_digest_fallback_gives_titles_full_width_and_labels_each_metric(report_markup):
@@ -191,11 +199,19 @@ def test_report_typography_uses_larger_sizes_without_scaling_layout_reset(report
     markup = report_markup(kind, "ko")
     soup = BeautifulSoup(markup, "html.parser")
     assert "font-size: 13px" in soup.body["style"]
-    title_size = FONT_SIZE_PX["cover"]
+    title_size = FONT_SIZE_PX["stat"]
     assert f"font-size: {title_size}px" in soup.find("h1")["style"]
+    assert FONT_SIZE_PX["section"] == 25 * 0.75
+    assert FONT_SIZE_PX["section_mobile"] == 21 * 0.75
     for heading in soup.select("h2.azb-heading"):
-        assert "font-size: 21px" in heading["style"]
-    assert "h1.azb-hero-title { font-size: 25px !important; }" in markup
+        assert f'font-size: {FONT_SIZE_PX["section"]}px' in heading["style"]
+        assert f"font-weight: {700 * 0.75:g}" in heading["style"]
+    for summary in soup.select(".azb-summary"):
+        assert f'font-size: {FONT_SIZE_PX["section"]}px' in summary["style"]
+        assert "font-weight: 700" in summary["style"]
+    assert ".azb-hero-title { font-size: 29px !important; }" in markup
+    assert ".azb-heading { font-size: 15.75px !important; }" in markup
+    assert ".azb-summary { font-size: 15.75px !important; }" in markup
     assert "font-size: 0 !important" in markup
     assert not re.search(r"font-size:\s*(?:10|14|16|20|24|28)px", markup)
 
@@ -207,7 +223,9 @@ def test_sections_have_a_label_rail_with_a_full_width_fallback(report_markup, ki
     assert soup.select(".azb-section-label h2")
     for table in soup.select(".azb-section-label, .azb-section-copy"):
         assert table["width"] == "100%"
-    assert ".azb-section-label { width: 24% !important; }" in report_markup(kind, "en")
+    assert ".azb-section-label { width: 18% !important; }" in report_markup(kind, "en")
+    assert ".azb-section-copy { width: 82% !important; }" in report_markup(kind, "en")
+    assert ".azb-section-label h2 { padding-right: 18px !important; }" in report_markup(kind, "en")
 
 
 def test_digest_uses_a_publication_masthead_and_separate_statistic_panels(report_markup):
@@ -318,6 +336,7 @@ def _luminance(color: str) -> float:
 
 
 def test_email_text_palette_meets_normal_text_contrast():
+    assert EMAIL_COLORS["canvas"] == "#ffffff"
     pairs = [
         (EMAIL_COLORS[role], EMAIL_COLORS[surface])
         for role in ("ink", "body", "muted", "accent", "danger", "warning", "success")

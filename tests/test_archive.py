@@ -309,11 +309,20 @@ class TestArchivePage:
         assert '<span class="brand-mark" aria-hidden="true">AZ</span>' in page
         assert '<main id="main-content">' in page
         assert "background-image:linear-gradient" not in page
+        assert "body { background:var(--surface); background-image:none;" in page
         assert "advanced-filter" in page
         assert 'aria-expanded="false"' in page
         assert '<div class="result-head"><h2 data-i18n="archive_results">' in page
         assert '<h2 id="detail-title" class="detail-title">' in page
         assert "max-width:1120px; margin:0 auto" in page
+        assert "main.detail-view .page-intro { display:none; }" in page
+        assert "font-size:48px; font-weight:800" in page
+        assert "#detail-body > .detail-section:first-child" in page
+        assert "detail-section detail-facts" in page
+        assert "detail-section detail-impact" in page
+        assert "classList.add('detail-view')" in page
+        assert "classList.remove('detail-view')" in page
+        assert ".actions { display:grid; grid-template-columns:repeat(3,auto); }" in page
         assert "toLocaleString(document.documentElement.lang" in page
         assert "appendInlineMarkdown" in page
         assert "renderMarkdown" in page

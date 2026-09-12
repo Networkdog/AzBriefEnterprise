@@ -66,10 +66,12 @@ Archive backend가 구성됐는데 저장이 실패하면 run은 `failed`가 되
 - 분석 Markdown은 heading, paragraph, list, blockquote, fenced/inline code, bold, link를 구조화
 	DOM으로 렌더합니다. HTML은 실행하지 않고 `innerHTML`을 사용하지 않습니다.
 - Header와 main content는 같은 제한 폭으로 중앙 정렬하며 mobile에서는 viewport 폭에 맞춥니다.
-- Admin과 같은 neutral canvas/white surface/teal command shell을 사용하고 Feedback과는 디자인
+- 목록은 Admin과 같은 control shell을 유지하고 상세는 pure white canvas/teal accent의 편집 지면을 사용하며 Feedback과는 디자인
 	token을 공유합니다. 검색과 서비스는
 	기본 도구 모음에 두고 고급 필터는 `aria-expanded` toggle로 펼칩니다. 상세는 1120px 이내에서
-	목차와 본문을 나란히 배치하고 모바일에서는 목차를 위로 이동합니다.
+	번호가 있는 sticky 목차와 본문을 나란히 배치합니다. 제목/section/body는 데스크톱 48/25/16px,
+	모바일 32/21/14px이며 판정·리소스·액션은 반복 card 대신 얇은 선으로 나눕니다. 모바일에서는
+	목차를 한 줄 가로 탐색으로 바꾸고 상세가 열리면 중복되는 목록 소개를 숨깁니다.
 - Archive browser UI는 report language와 독립적으로 English를 기본값으로 사용합니다. 모든 filter는
 	visible Optional 표식과 예시 placeholder를 제공하며 input/select와 command는 공통 40px 높이를
 	사용합니다. 도구 모음 버튼은 내용에 맞는 폭을 사용하고 mobile action row는 세 칸을 균등 분배합니다.

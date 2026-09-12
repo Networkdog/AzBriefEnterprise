@@ -96,10 +96,10 @@ Learn 본문 allow-list 경로에만 한정합니다.
 
 | 참고 요소 | 이메일에 적용한 방식 |
 |---|---|
-| Monzo 표지의 크기 대비 | 36px 발행물 이름·문서 제목, 21px 핵심 문장과 13px 본문 |
+| Monzo 표지의 크기 대비 | 36px 발행물 이름, 48px 문서 제목, 18.75px 핵심 문장과 13px 본문 |
 | Monzo 주요 수치의 독립된 면 | 48px 건수를 세 개의 옅은 의미 색면에 배치하고 분석 건수 비율의 8px 막대 유지 |
 | 38번 Great Typography의 면과 큰 제목 | 전체 폭 청록색 장 구분대에 48px 번호·목차 복귀 링크 배치 |
-| 57번 Company Data Sheet의 정보 열 | 데스크톱 제목 24%·본문 76% 그리드, 목차는 전체 너비, 좁은 화면은 세로 배치 |
+| 57번 Company Data Sheet의 정보 열 | 데스크톱 제목 18%·본문 82% 그리드, 목차는 전체 너비, 좁은 화면은 세로 배치 |
 | 59번 Interactive Layout의 문서 내 탐색 | 목차 번호를 29px 별도 열로 분리, 17px 제목·13px 요약과 3축 보존 |
 
 반복 절차는 다음과 같습니다.
@@ -123,7 +123,7 @@ Learn 본문 allow-list 경로에만 한정합니다.
 
 ## Email client 불변식
 
-- `EMAIL_COLORS`의 흰 지면, 잉크색 `#182b32`, 청록색 `#08746b`, 옅은 중성 바탕을 사용합니다.
+- `EMAIL_COLORS`의 순백색 바탕과 지면, 잉크색 `#182b32`, 청록색 `#08746b`를 사용합니다.
   짙은 남색 hero나 둥근 그림자 카드를 복원하지 않습니다. 별도 dark-mode override는 없습니다.
 - 기본 layout은 table과 inline CSS이며 flex/grid/JavaScript에 의존하지 않습니다.
 - 모바일 표는 table·tbody·행을 함께 재배치해 암묵적 셀 축소를 막습니다. 다이제스트 목차의
@@ -136,16 +136,19 @@ Learn 본문 allow-list 경로에만 한정합니다.
 - `azb-pad` 좌우 여백은 기본 32px, 화면 1100px 이상 48px, 640px 이하 20px, 400px 이하
   16px입니다. Inline-only fallback은 32px를 유지합니다.
 - `FONT_SIZE_PX`의 본문 13px 단계는 유지하고 `cover=36`, `stat=48`을 표시용으로 추가합니다.
-  발행물 이름과 문서 제목은 36px이며, 모바일에서는 각각 29px·25px입니다. 공통 section 제목과
-  핵심 문장은 21px, 주요 본문 블록 행간은 1.8~1.85입니다. 목차는 별도의 29px 번호 열과
+  발행물 이름은 36px, 문서 제목은 48px이며 모바일에서는 모두 29px입니다. 공통 section 제목과
+  핵심 문장은 데스크톱 18.75px·모바일 15.75px이며 굵기는 각각 525·700입니다.
+  Inline-only 출력은 기본 크기를 유지합니다. 주요 본문 블록 행간은 1.8~1.85입니다. 목차는 별도의 29px 번호 열과
   17px 제목·13px 요약을 사용합니다. 건수·상세 번호는 48px tabular numerals이며 세 자리 건수는
   모두 29px로 표시합니다. 제목 자간은 0으로 유지합니다.
-- `format_email_section_html()`은 화면 800px 이상에서 제목 24%·본문 76% 그리드로 배치하고
+- `format_email_section_html()`은 화면 800px 이상에서 제목 18%·본문 82% 그리드로 배치하고
   inline/MSO 기본값은 전체 너비 표를 세로로 쌓습니다. `full_width=True`인 목차는 전체 너비를
   유지합니다. 발행물 이름·날짜도 기본값은 세로이며 데스크톱에서만 44%/56%로 나란히 놓습니다.
 - 등급·검증 배지, 핵심 요약, concept box, 추가 확인의 세로 강조선에는 공통
   `SEMANTIC_ACCENT_WIDTH_PX = 4`를 적용합니다. 배지의 위아래
-  padding은 각각 4px를 유지합니다. 상태 텍스트·기존 색상과 텍스트 대비 **4.5:1 이상**을 유지하고
+  padding은 각각 4px를 유지하고 등급 배지 글자는 18px를 사용합니다. 각 평가축 이름·배지는
+  독립된 너비 33%의 auto-layout 표로 묶어 좁은 화면에서 함께 줄바꿈하며, inline-only에서도
+  `Medium` 글자를 줄이거나 자르지 않습니다. 상태 텍스트·기존 색상과 텍스트 대비 **4.5:1 이상**을 유지하고
   중성 구분선은 기존의 얇은 두께를 유지합니다.
 - 공통 `FONT_STACK_SANS`는
   `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif` 순서입니다.
