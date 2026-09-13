@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "698606295683786248"
+      "templateHash": "11408602433216824603"
     },
     "description": "AzBrief Enterprise — Microsoft Foundry Hosted Agent analysis runtime + Container Apps control plane and scheduler + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
@@ -45,16 +45,16 @@
     },
     "modelDeploymentName": {
       "type": "string",
-      "defaultValue": "gpt-4o",
+      "defaultValue": "gpt-5-terra",
       "metadata": {
-        "description": "Model deployment name used by the agents."
+        "description": "Core model deployment name used by all specialists except Azure MCP."
       }
     },
     "modelName": {
       "type": "string",
-      "defaultValue": "gpt-4o",
+      "defaultValue": "gpt-5-terra",
       "metadata": {
-        "description": "Model to deploy into the Foundry account."
+        "description": "Core model ID. Verify availability, reasoning, tool and structured-output support before deployment."
       }
     },
     "modelVersion": {
@@ -83,6 +83,60 @@
       "maxValue": 1000,
       "metadata": {
         "description": "Model deployment capacity units. Confirm the selected model/SKU capacity-to-TPM/RPM mapping and quota; long multi-agent prompts share the deployment."
+      }
+    },
+    "coreReasoningEffort": {
+      "type": "string",
+      "defaultValue": "medium",
+      "allowedValues": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "metadata": {
+        "description": "Required reasoning effort for core Prompt Agents, including report writing and subscriber customization."
+      }
+    },
+    "simpleModelDeploymentName": {
+      "type": "string",
+      "defaultValue": "gpt-5-luna",
+      "metadata": {
+        "description": "Separate deployment name for the Azure MCP specialist. Must differ from modelDeploymentName."
+      }
+    },
+    "simpleModelName": {
+      "type": "string",
+      "defaultValue": "gpt-5-luna",
+      "metadata": {
+        "description": "Simple-task model ID. Verify managed MCP and strict structured-output support before deployment."
+      }
+    },
+    "simpleModelVersion": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Simple-task model version. Verify and pin the approved version before production use."
+      }
+    },
+    "simpleModelSkuName": {
+      "type": "string",
+      "defaultValue": "GlobalStandard",
+      "allowedValues": [
+        "GlobalStandard",
+        "Standard",
+        "DataZoneStandard"
+      ],
+      "metadata": {
+        "description": "Simple-task model deployment SKU. Confirm this model supports the selected type and region."
+      }
+    },
+    "simpleModelCapacity": {
+      "type": "int",
+      "defaultValue": 200,
+      "minValue": 1,
+      "maxValue": 1000,
+      "metadata": {
+        "description": "Simple-task model capacity units. Check its own quota and capacity mapping independently of the core model."
       }
     },
     "foundryHostedAgentName": {
@@ -680,7 +734,7 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
-        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), parameters('modelDeploymentName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), parameters('simpleModelDeploymentName'))]",
         "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
       ]
     },
@@ -1006,6 +1060,27 @@
       ]
     },
     {
+      "type": "Microsoft.CognitiveServices/accounts/deployments",
+      "apiVersion": "2025-06-01",
+      "name": "[format('{0}/{1}', variables('foundryAccountName'), parameters('simpleModelDeploymentName'))]",
+      "sku": {
+        "name": "[parameters('simpleModelSkuName')]",
+        "capacity": "[parameters('simpleModelCapacity')]"
+      },
+      "properties": {
+        "model": {
+          "format": "OpenAI",
+          "name": "[parameters('simpleModelName')]",
+          "version": "[if(empty(parameters('simpleModelVersion')), null(), parameters('simpleModelVersion'))]"
+        },
+        "versionUpgradeOption": "OnceCurrentVersionExpired"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), parameters('modelDeploymentName'))]"
+      ]
+    },
+    {
       "type": "Microsoft.CognitiveServices/accounts/projects",
       "apiVersion": "2025-06-01",
       "name": "[format('{0}/{1}', variables('foundryAccountName'), variables('foundryProjectName'))]",
@@ -1021,7 +1096,7 @@
       "dependsOn": [
         "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName'))]",
         "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', format('pe-{0}', variables('foundryAccountName')), 'default')]",
-        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), parameters('modelDeploymentName'))]"
+        "[resourceId('Microsoft.CognitiveServices/accounts/deployments', variables('foundryAccountName'), parameters('simpleModelDeploymentName'))]"
       ]
     },
     {
@@ -1365,6 +1440,10 @@
                   "value": "[parameters('modelDeploymentName')]"
                 },
                 {
+                  "name": "ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT",
+                  "value": "[parameters('simpleModelDeploymentName')]"
+                },
+                {
                   "name": "ADMIN_READINESS_CONTAINER_ENVIRONMENTS",
                   "value": "[base64(string(createArray(variables('containerEnvName'), variables('azureMcpContainerEnvName'))))]"
                 },
@@ -1654,6 +1733,10 @@
                 {
                   "name": "ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT",
                   "value": "[parameters('modelDeploymentName')]"
+                },
+                {
+                  "name": "ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT",
+                  "value": "[parameters('simpleModelDeploymentName')]"
                 },
                 {
                   "name": "ADMIN_READINESS_CONTAINER_ENVIRONMENTS",
@@ -2319,9 +2402,9 @@
     "provisionAgentsCommand": {
       "type": "string",
       "metadata": {
-        "description": "Command that creates the Prompt Agent roster. ARM cannot: agents are data-plane objects, so the project stays empty until this runs."
+        "description": "Guarded customer Agents stage: publish/check the role-scoped Prompt Agent roster and deploy the Hosted Agent. Run Configure and Mcp first."
       },
-      "value": "[format('python -m scripts.provision_foundry_agents --model {0}', parameters('modelDeploymentName'))]"
+      "value": "[format('./scripts/setup_customer.ps1 -SubscriptionId \"{0}\" -ResourceGroup \"{1}\" -DeploymentName \"{2}\" -Environment \"{3}-customer\" -Stage Agents', subscription().subscriptionId, resourceGroup().name, deployment().name, parameters('baseName'))]"
     },
     "configureHostedAgentCommand": {
       "type": "string",
@@ -2336,7 +2419,7 @@
         "description": "Versioned non-secret setup contract. Do not add credentials, API keys, connection strings, or subscriber data."
       },
       "value": {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "tenantId": "[tenant().tenantId]",
         "subscriptionId": "[subscription().subscriptionId]",
         "resourceGroup": "[resourceGroup().name]",
@@ -2347,6 +2430,8 @@
         "foundryProjectId": "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]",
         "foundryProjectEndpoint": "[variables('foundryProjectEndpoint')]",
         "modelDeploymentName": "[parameters('modelDeploymentName')]",
+        "simpleModelDeploymentName": "[parameters('simpleModelDeploymentName')]",
+        "coreReasoningEffort": "[parameters('coreReasoningEffort')]",
         "hostedAgentName": "[parameters('foundryHostedAgentName')]",
         "specialistAgentNames": {
           "coordinator": "[variables('foundryCoordinatorAgentName')]",

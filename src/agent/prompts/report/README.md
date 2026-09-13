@@ -44,8 +44,11 @@ assert "CATEGORY: `retirement`" not in prompt
   않고 SDK 사용·간접 의존성 등 중요한 근거가 없으면 `unknown`으로 판단 한계를 보존합니다.
 - `affected_resources`: 실제 query property가 왜 영향을 입증하는지 resource별로 기록
 - `resource_queries`: 대량의 전체 조회 결과가 적용될 때만 실행 카탈로그의 `reference`/`reason`을
-  선택합니다. 런타임이 목록과 고유 건수를 복원하므로 수백 개 이름·KQL·URL을 다시 쓰지 않습니다.
-  일부만 적용되는 목록은 이 참조로 확대하지 않으며 부분 조회와 그룹 간 중복은 그대로 명시합니다.
+  선택합니다. 런타임이 전체 식별 목록과 고유 건수를 복원하므로 이름·KQL·URL을 다시 만들지 않습니다.
+  일부만 적용되는 목록은 참조로 확대하지 않으며 부분 조회와 그룹 간 중복을 명시합니다.
+  구독자 맞춤화는 사유만 번역하고 참조·수량·식별 정보는 유지합니다.
+- 파서는 `영향_리소스`와 `영향받는_리소스`를 호환하되 `affected_resources`가 있으면 빈 배열도
+  그대로 우선합니다. 이 별칭 지원은 작성자에게 표준 필드 대신 번역된 키를 요구하는 규칙이 아닙니다.
 - `action_items`: 실제 대상, 절차, 주의사항, rollback, 근거 있는 deadline을 구조화
 - `impact_details`: category family에 맞는 구체적 impact 또는 opportunity만 기록
 - `impact_summary.cost_impact` (생성 JSON): 비용 관련 업데이트의 실제 지출 기준선은 조회

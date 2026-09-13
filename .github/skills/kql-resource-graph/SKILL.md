@@ -175,6 +175,13 @@ Static methods in `src/services/resource_graph.py` that return KQL strings:
   a resource-type distribution) must precede the detail rows, because truncation always eats the
   tail. `get_service_region_availability` and `find_related_resources` both do this.
 
+The `format_rg_result()` renderer registers executed results in the current `resource_evidence_context`.
+Keep `query_purpose` with the executed query. The analyzer passes the catalog to the report writer,
+resolves selected references into full ARM identities, and retains deterministic count/scope facts
+for review. `AnalysisResult.resource_queries` survives serialization and reason-only customization;
+narrower scopes remove broader query metadata. These links are one tested contract, not optional
+renderer metadata. Run `tests/test_resource_evidence.py` together with parser and Archive tests.
+
 ### Adding a New Service Query
 
 1. Add a static method: `_query_<service_name>() -> str`

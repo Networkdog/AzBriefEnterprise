@@ -114,7 +114,7 @@ def test_customer_setup_preview_is_offline(tmp_path: Path, setup_contract: dict)
 @pytest.mark.parametrize(
     ("field", "value", "error"),
     [
-        ("schemaVersion", 2, "Unsupported customerSetup"),
+        ("schemaVersion", 3, "Unsupported customerSetup"),
         ("subscriptionId", "00000000-0000-0000-0000-000000000009", "do not match"),
         ("resourceGroup", "rg-another", "do not match"),
         ("foundryProjectId", "/subscriptions/wrong", "does not belong"),
@@ -128,6 +128,30 @@ def test_customer_setup_rejects_cross_target_contracts(
     tmp_path: Path, setup_contract: dict, field: str, value: object, error: str
 ) -> None:
     setup_contract[field] = value
+    result = run_preview(tmp_path, setup_contract)
+
+    assert result.returncode != 0
+    assert error in result.stderr
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
+@pytest.mark.parametrize(
+    ("field", "value", "error"),
+    [
+        ("simpleModelDeploymentName", "", "Missing customerSetup field"),
+        ("simpleModelDeploymentName", "TEST-MODEL", "must be distinct"),
+        ("coreReasoningEffort", "", "Missing customerSetup field"),
+        ("coreReasoningEffort", "none", "Invalid coreReasoningEffort"),
+    ],
+)
+def test_v2_setup_rejects_incomplete_model_policy(
+    tmp_path: Path, setup_contract: dict, field: str, value: str, error: str
+) -> None:
+    setup_contract.update(
+        schemaVersion=2, simpleModelDeploymentName="simple-model", coreReasoningEffort="medium"
+    )
+    setup_contract[field] = value
+
     result = run_preview(tmp_path, setup_contract)
 
     assert result.returncode != 0
@@ -199,7 +223,13 @@ def test_portal_wizard_outputs_match_the_deployment_contract() -> None:
     assert "adminSecret.password" not in outputs["adminEntraClientSecret"]
     assert controls["model"]["constraints"]["required"] is True
     assert controls["version"]["constraints"]["required"] is True
-    assert "defaultValue" not in controls["model"]
+    assert controls["model"]["defaultValue"] == "gpt-5-terra"
+    assert controls["simpleModel"]["defaultValue"] == "gpt-5-luna"
+    assert controls["simpleVersion"]["constraints"]["required"] is True
+    assert "defaultValue" not in controls["version"]
+    assert "defaultValue" not in controls["simpleVersion"]
+    assert outputs["simpleModelDeploymentName"] == "[steps('foundry').simpleModel]"
+    assert outputs["coreReasoningEffort"] == "[steps('foundry').reasoningEffort]"
 
 
 def test_readme_buttons_publish_the_same_arm_and_ui_pair() -> None:
@@ -341,6 +371,13 @@ function global:azd {
             FOUNDRY_HOSTED_AGENT_NAME = $global:fixture.hostedAgentName; FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED = 'true'
             AZURE_MCP_PROJECT_CONNECTION_NAME = "$($global:fixture.azureMcpContainerAppName)-read-only"
         }
+        if ($global:fixture.schemaVersion -eq 2) {
+            $values.FOUNDRY_MODEL_DEPLOYMENT = ''
+            $values.FOUNDRY_CORE_MODEL_DEPLOYMENT = $global:fixture.modelDeploymentName
+            $values.FOUNDRY_SIMPLE_MODEL_DEPLOYMENT = $global:fixture.simpleModelDeploymentName
+            $values.FOUNDRY_CORE_REASONING_EFFORT = $global:fixture.coreReasoningEffort
+        }
+        if ($env:SCENARIO -eq 'stale-simple-model') { $values.FOUNDRY_SIMPLE_MODEL_DEPLOYMENT = 'wrong-model' }
         $roles = @{ coordinator = 'COORDINATOR'; resourceGraph = 'RESOURCE_GRAPH'; azureMcp = 'AZURE_MCP'; azureApi = 'AZURE_API'; reportWriter = 'REPORT_WRITER'; qualityReviewer = 'QUALITY_REVIEWER' }
         foreach ($role in $roles.Keys) {
             $values["FOUNDRY_$($roles[$role])_AGENT_NAME"] = $global:fixture.specialistAgentNames[$role]
@@ -356,6 +393,11 @@ function global:azd {
 function global:python {
     $global:LASTEXITCODE = 0
     $global:calls.Add(@('python') + $args)
+    if ($args -contains 'scripts.provision_foundry_agents') {
+        $global:calls.Add(@('model-policy', [string]$env:FOUNDRY_MODEL_DEPLOYMENT,
+            [string]$env:FOUNDRY_CORE_MODEL_DEPLOYMENT, [string]$env:FOUNDRY_SIMPLE_MODEL_DEPLOYMENT,
+            [string]$env:FOUNDRY_CORE_REASONING_EFFORT))
+    }
     if ($env:SCENARIO -eq 'roster-failure' -and $args -contains '--check') { $global:LASTEXITCODE = 8 }
 }
 function global:git {
@@ -413,6 +455,62 @@ def test_configure_writes_one_value_per_azd_command(tmp_path: Path, setup_contra
     )
     account_call = next(call for call in calls if call[:3] == ["az", "account", "show"])
     assert "--subscription" not in account_call
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
+def test_v2_configure_binds_both_models_without_legacy_override(
+    tmp_path: Path, setup_contract: dict
+) -> None:
+    setup_contract.update(
+        schemaVersion=2, simpleModelDeploymentName="simple-model", coreReasoningEffort="high"
+    )
+
+    result, calls = run_mock_stage(tmp_path, setup_contract, "Configure")
+
+    assert result.returncode == 0, result.stderr
+    settings = {call[3]: call[4] for call in calls if call[:3] == ["azd", "env", "set"]}
+    assert settings["FOUNDRY_MODEL_DEPLOYMENT"] == ""
+    assert settings["FOUNDRY_CORE_MODEL_DEPLOYMENT"] == "test-model"
+    assert settings["FOUNDRY_SIMPLE_MODEL_DEPLOYMENT"] == "simple-model"
+    assert settings["FOUNDRY_CORE_REASONING_EFFORT"] == "high"
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
+@pytest.mark.parametrize("schema_version", [1, 2])
+def test_agent_stage_uses_the_customer_model_policy(
+    tmp_path: Path, setup_contract: dict, schema_version: int
+) -> None:
+    setup_contract.update(
+        schemaVersion=schema_version,
+        simpleModelDeploymentName="simple-model",
+        coreReasoningEffort="high",
+    )
+
+    result, calls = run_mock_stage(tmp_path, setup_contract, "Agents")
+
+    assert result.returncode == 0, result.stderr
+    expected = (
+        ["", "test-model", "simple-model", "high"]
+        if schema_version == 2
+        else ["test-model", "", "", "medium"]
+    )
+    assert [call[1:] for call in calls if call[0] == "model-policy"] == [expected, expected]
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
+def test_v2_agent_stage_rejects_a_stale_simple_model_binding(
+    tmp_path: Path, setup_contract: dict
+) -> None:
+    setup_contract.update(
+        schemaVersion=2, simpleModelDeploymentName="simple-model", coreReasoningEffort="medium"
+    )
+
+    result, calls = run_mock_stage(tmp_path, setup_contract, "Agents", "stale-simple-model")
+
+    assert result.returncode != 0
+    assert "Customer azd binding mismatch: FOUNDRY_SIMPLE_MODEL_DEPLOYMENT" in result.stderr
+    assert not any(call[0] == "python" for call in calls)
+    assert not any(call[:2] == ["azd", "deploy"] for call in calls)
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")

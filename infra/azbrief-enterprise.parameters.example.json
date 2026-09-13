@@ -15,12 +15,30 @@
       "value": "koreacentral"
     },
     "modelDeploymentName": {
-      "value": "gpt-4o"
+      "value": "gpt-5-terra"
     },
     "modelName": {
-      "value": "gpt-4o"
+      "value": "gpt-5-terra"
+    },
+    "modelVersion": {
+      "value": ""
     },
     "modelCapacity": {
+      "value": 200
+    },
+    "coreReasoningEffort": {
+      "value": "medium"
+    },
+    "simpleModelDeploymentName": {
+      "value": "gpt-5-luna"
+    },
+    "simpleModelName": {
+      "value": "gpt-5-luna"
+    },
+    "simpleModelVersion": {
+      "value": ""
+    },
+    "simpleModelCapacity": {
       "value": 200
     },
     "foundryHostedAgentName": {

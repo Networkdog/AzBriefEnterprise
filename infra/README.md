@@ -37,6 +37,10 @@ Azure MCP template은 별도로 정적 compile할 수 있습니다.
   [setup_customer.ps1](../scripts/setup_customer.ps1)의 `Application` 단계가 수행합니다.
 - `customerSetup` 출력에는 대상·이름만 넣고 비밀 값이나 구독자 정보를 추가하지 않습니다.
   동시 분석 기본값은 1이며 인수 후 `EnableSchedule -AcceptOperationalChecks`로 정기 실행을 켭니다.
+- 새 `customerSetup` v2는 코어 `gpt-5-terra`와 Azure MCP용 `gpt-5-luna`, 코어 추론 수준
+  `medium`을 전달합니다. 기존 v1은 단일 모델 설정을 유지합니다. 두 모델을 순차 배포하고
+  Admin 준비 상태에서 각각 확인합니다. 실제 모델 ID·버전·기능·리전·할당량은 별도 검증해야 하며,
+  Portal은 두 모델의 승인된 버전을 요구합니다. 기본 이름만으로 가용성을 보장하지 않습니다.
 - `enterprise/main.bicep`이 제품 topology의 원본입니다. checkpoint와 immutable analysis archive
   container도 여기서 함께 정의하며 compiled JSON을 손으로 수정하지 않습니다.
 - Azure MCP는 `azure-mcp-server/infra/main.bicep`과 그 module이 원본입니다.

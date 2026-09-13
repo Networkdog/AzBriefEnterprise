@@ -17,6 +17,7 @@ if TYPE_CHECKING:  # analyzer imports this module's package at runtime
     from src.agent.analyzer import AzureUpdateAnalyzer
 from src.email.templates import (
     EMAIL_COLORS,
+    FONT_SIZE_PX,
     FONT_STACK_SANS,
     HTML_DIGEST_TEMPLATE,
     HTML_EMAIL_TEMPLATE,
@@ -950,7 +951,7 @@ class EmailService:
         return True
 
     # ================================================================
-    # Daily digest — consolidated email for multiple updates
+    # Digest — consolidated email for multiple updates
     # ================================================================
 
     def _build_retirement_countdown_html(self, language: str = "ko") -> str:
@@ -1002,7 +1003,7 @@ class EmailService:
             rows_html += f"""<tr>
                 <td width="80" style="padding: 14px 12px 14px 0; vertical-align: top; font-size: 17px; font-weight: 700; color: {day_color}; border-bottom: 1px solid {EMAIL_COLORS['line']};">{day_text}</td>
                 <td style="padding: 14px 0; border-bottom: 1px solid {EMAIL_COLORS['line']}; overflow-wrap: anywhere;">
-                    <p style="margin: 0; font-size: 13px; font-weight: 600; color: {EMAIL_COLORS['ink']}; line-height: 1.8;">{title}</p>
+                    <p style="margin: 0; font-size: {FONT_SIZE_PX['body']}px; font-weight: 600; color: {EMAIL_COLORS['ink']}; line-height: 1.8;">{title}</p>
                     <p style="margin: 6px 0 0; font-size: 12px; color: {EMAIL_COLORS['muted']};">{L['col_resource']}: {escape_email_text(count)} &middot; {status_label}</p>
                 </td>
             </tr>"""
@@ -1412,7 +1413,7 @@ class EmailService:
         recipient: Optional[str] = None,
         language: str = "ko",
     ) -> bool:
-        """Send a consolidated daily digest email.
+        """Send a consolidated digest email for the supplied reporting period.
 
         Args:
             items: List of dicts, each with ``update``, ``result``, ``skip_reason``.

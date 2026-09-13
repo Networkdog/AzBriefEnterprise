@@ -18,6 +18,8 @@ from src.email.templates import (
     _VERIFY_COLOR,
     EMAIL_COLORS,
     FONT_SIZE_PX,
+    FONT_STACK_DISPLAY,
+    FONT_STACK_SANS,
     SEMANTIC_ACCENT_WIDTH_PX,
     format_affected_resources_html,
     format_affected_resources_text,
@@ -43,11 +45,31 @@ def report_markup():
                     language,
                     archive_url=items[0]["archive_url"],
                 )["html_content"]
-            return service.build_digest_content(items, "2026-09-01 — 2026-09-08", language)[
+            return service.build_digest_content(items, "2026-09-07 ~ 2026-09-13", language)[
                 "html_content"
             ]
 
         yield render
+
+
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_report_uses_sans_display_without_embedded_reference_fonts(report_markup, kind):
+    markup = report_markup(kind, "ko")
+    soup = BeautifulSoup(markup, "html.parser")
+    assert FONT_STACK_DISPLAY == FONT_STACK_SANS
+    assert f"font-family: {FONT_STACK_SANS};" in soup.body["style"]
+    assert f"font-family: {FONT_STACK_SANS};" in soup.select_one(".azb-wordmark")["style"]
+    assert "@font-face" not in markup
+    assert "Georgia" not in markup
+    assert "Times New Roman" not in markup
+    assert "VerizonNHG" not in markup
+    assert "font-weight: 700" in soup.select_one(".azb-wordmark")["style"]
+    for number in soup.select(".azb-chapter-number, .azb-action-number, .azb-toc-number"):
+        assert "font-weight: 700" in number["style"]
+        assert "font-variant-numeric: tabular-nums" in number["style"]
+    for title in soup.select(".azb-action-title"):
+        assert "font-size: 17px" in title["style"]
+        assert "font-weight: 700" in title["style"]
 
 
 @pytest.mark.parametrize("kind", ["single", "digest"])
@@ -92,10 +114,10 @@ def test_digest_has_working_contents_and_separates_skipped_counts(report_markup,
     assert len(soup.select(".azb-digest-row")) == 3
     assert len(soup.select(".azb-digest-skip")) == 1
     assert len(soup.select(".azb-digest-detail")) == 3
-    assert [p.get_text() for p in soup.select(".azb-digest-counts td > p:first-child")] == [
-        "01",
-        "01",
-        "01",
+    assert [p.get_text() for p in soup.select(".azb-digest-counts .azb-count-value")] == [
+        "1",
+        "1",
+        "1",
     ]
     for index in (1, 2, 3):
         assert soup.find(id=f"azbrief-detail-{index}")
@@ -103,6 +125,7 @@ def test_digest_has_working_contents_and_separates_skipped_counts(report_markup,
     assert soup.find(id="azbrief-summary")
     assert len(soup.select('a[href="#azbrief-summary"]')) == 3
     assert get_labels(language)["digest_skipped"].format(count=1) in soup.get_text()
+    assert get_labels(language)["digest_analyzed"].format(count=3) in soup.get_text()
 
 
 @pytest.mark.parametrize("language", ["ko", "en", "ja"])
@@ -118,43 +141,65 @@ def test_digest_chapter_openers_are_numbered_and_link_back_to_contents(report_ma
             chapter.select_one('a[href="#azbrief-summary"]').get_text()
             == get_labels(language)["email_back_to_contents"]
         )
-        assert "font-size: 48px" in chapter.select_one(".azb-chapter-number")["style"]
+        assert "font-size: 32px" in chapter.select_one(".azb-chapter-number")["style"]
+        assert FONT_STACK_DISPLAY in chapter.select_one(".azb-chapter-number")["style"]
     for band in soup.select(".azb-chapter-band"):
-        assert f'background-color: {EMAIL_COLORS["accent"]}' in band["style"]
+        assert f'background-color: {EMAIL_COLORS["paper"]}' in band["style"]
     single = BeautifulSoup(report_markup("single", language), "html.parser")
     assert single.select_one(".azb-chapter") is None
     assert "letter-spacing: 0" in single.find("h1")["style"]
 
 
 @pytest.mark.parametrize("kind", ["single", "digest"])
-def test_operational_facts_have_a_distinct_inline_surface(report_markup, kind):
+def test_operational_facts_are_a_white_ruled_ledger(report_markup, kind):
     soup = BeautifulSoup(report_markup(kind, "ko"), "html.parser")
     for style in soup.find_all("style"):
         style.decompose()
     facts = soup.select_one(".azb-qd")
-    assert f'background-color: {EMAIL_COLORS["wash"]}' in facts["style"]
+    assert f'background-color: {EMAIL_COLORS["paper"]}' in facts["style"]
+    assert "border-top" not in facts["style"]
     assert "2026-12-31 (sample)" in facts.get_text()
     for cell in facts.select(".azb-fact-cell"):
-        assert "padding: 12px 16px" in cell["style"]
+        assert "padding: 12px 16px 12px 0" in cell["style"]
+        assert "border-bottom: 1px" in cell["style"]
 
 
-@pytest.mark.parametrize("counts", [(2, 1, 1), (0, 3, 1), (4, 0, 0), (0, 0, 0)])
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_concept_boxes_are_shaded_without_coloring_action_surfaces(report_markup, kind):
+    soup = BeautifulSoup(report_markup(kind, "ko"), "html.parser")
+    for selector in (".azb-concept", ".azb-checks", ".azb-action", ".azb-action-schedule"):
+        blocks = soup.select(selector)
+        assert blocks, selector
+        background = EMAIL_COLORS["wash"] if selector == ".azb-concept" else EMAIL_COLORS["paper"]
+        for block in blocks:
+            assert f"background-color: {background}" in block["style"]
+    for action in soup.select(".azb-action"):
+        assert "border: 1px" not in action["style"]
+        assert "border-top: 1px" in action["style"]
+        assert action.select_one(".azb-verify")
+        assert action.select_one(".azb-action-title")
+
+
+@pytest.mark.parametrize("counts", [(2, 1, 1), (0, 3, 1), (4, 0, 0), (0, 0, 0), (123, 9, 1)])
 def test_digest_distribution_represents_analyzed_counts_only(counts):
     high, medium, low = counts
     analyzed = sum(counts)
     markup = format_digest_intro_html(analyzed + 5, high, medium, low, 5, "en")
     soup = BeautifulSoup(markup, "html.parser")
     chart = soup.select_one(".azb-digest-distribution")
-    assert [p.get_text() for p in soup.select(".azb-digest-counts td > p:first-child")] == [
-        f"{count:02d}" for count in counts
+    assert [p.get_text() for p in soup.select(".azb-digest-counts .azb-count-value")] == [
+        str(count) for count in counts
     ]
-    if not analyzed:
-        assert chart is None
-        return
-    assert chart["aria-hidden"] == "true"
-    segments = chart.select("td")
-    assert len(segments) == sum(count > 0 for count in counts)
-    assert sum(float(segment["width"].rstrip("%")) for segment in segments) == pytest.approx(100)
+    assert chart.get("aria-hidden") is None
+    assert chart.get("role") != "presentation"
+    assert get_labels("en")["digest_analyzed"].format(count=analyzed) in chart.caption.get_text()
+    assert len(chart.select('th[scope="row"]')) == 3
+    assert len(chart.select(".azb-count-track")) == 3
+    for track in chart.select(".azb-count-track"):
+        assert track.parent["aria-hidden"] == "true"
+        assert sum(
+            float(cell["width"].rstrip("%")) for cell in track.select("td")
+        ) == pytest.approx(100)
     for level, count in zip(("high", "medium", "low"), counts):
         segment = chart.select_one(f".azb-distribution-{level}")
         if count:
@@ -166,37 +211,39 @@ def test_digest_distribution_represents_analyzed_counts_only(counts):
 
 @pytest.mark.parametrize("kind", ["single", "digest"])
 @pytest.mark.parametrize("language", ["ko", "en", "ja"])
-def test_semantic_color_bars_are_prominent_including_inline_fallback(report_markup, kind, language):
+def test_semantic_status_uses_shaded_cells_including_inline_layout(report_markup, kind, language):
     soup = BeautifulSoup(report_markup(kind, language), "html.parser")
     for style in soup.find_all("style"):
         style.decompose()
-    assert SEMANTIC_ACCENT_WIDTH_PX == 4
+    assert SEMANTIC_ACCENT_WIDTH_PX == 2
     for selector in (
-        ".azb-badge-high, .azb-badge-medium, .azb-badge-low",
         ".azb-verify",
-        ".azb-takeaway",
         ".azb-concept",
         ".azb-checks",
     ):
         elements = soup.select(selector)
         assert elements, selector
         for element in elements:
-            assert re.search(r"border-left:\s*4px solid #[0-9a-f]{6}", element["style"])
+            assert re.search(r"border-left:\s*2px solid #[0-9a-f]{6}", element["style"])
             assert element.get_text(strip=True)
-    for badge in soup.select(".azb-verify, [class^='azb-badge-']"):
+    for badge in soup.select(".azb-verify"):
         assert re.search(r"padding:\s*4px (4|8)px", badge["style"])
-    assert FONT_SIZE_PX["badge"] == 12 * 1.5
-    assert FONT_SIZE_PX["badge_text"] == FONT_SIZE_PX["badge"] * 0.75
+    assert FONT_SIZE_PX["badge_text"] == 12
     for badge in soup.select("[class^='azb-badge-']"):
         assert f'font-size:{FONT_SIZE_PX["badge_text"]}px' in badge["style"]
-        assert "line-height:27px" in badge["style"]
+        assert "line-height:18px" in badge["style"]
         assert "text-align:center" in badge["style"]
-        width_guide = badge.find("span", attrs={"aria-hidden": "true"})
-        assert width_guide is not None
-        assert f'font-size:{FONT_SIZE_PX["badge"]}px' in width_guide["style"]
-        assert "height:0" in width_guide["style"]
-        assert "visibility:hidden" in width_guide["style"]
-        assert badge.contents[-1] == width_guide.get_text()
+        assert "background-color" not in badge["style"]
+        assert "border" not in badge["style"]
+        assert "padding" not in badge["style"]
+        assert badge.find(attrs={"aria-hidden": "true"}) is None
+        level = badge["class"][0].removeprefix("azb-badge-")
+        cell = badge.find_parent("td", class_="azb-level-cell")
+        assert cell is not None
+        assert cell["bgcolor"] == _LEVEL_COLORS[level]["bg"]
+        assert f'background-color: {_LEVEL_COLORS[level]["bg"]}' in cell["style"]
+        assert cell["bgcolor"] != EMAIL_COLORS["paper"]
+        assert "border" not in cell["style"]
         metric = badge.find_parent("table", class_="azb-metric")
         assert metric is not None
         assert metric["width"] == "33%"
@@ -224,41 +271,63 @@ def test_digest_fallback_gives_titles_full_width_and_labels_each_metric(report_m
 def test_report_typography_uses_larger_sizes_without_scaling_layout_reset(report_markup, kind):
     markup = report_markup(kind, "ko")
     soup = BeautifulSoup(markup, "html.parser")
-    assert "font-size: 13px" in soup.body["style"]
-    title_size = FONT_SIZE_PX["stat"]
+    assert f'font-size: {FONT_SIZE_PX["body"]}px' in soup.body["style"]
+    title_size = FONT_SIZE_PX["cover"]
     assert f"font-size: {title_size}px" in soup.find("h1")["style"]
-    assert FONT_SIZE_PX["section"] == 25 * 0.75
-    assert FONT_SIZE_PX["section_mobile"] == 21 * 0.75
-    assert FONT_SIZE_PX["section_heading"] == pytest.approx(FONT_SIZE_PX["section"] * 1.1)
-    assert FONT_SIZE_PX["section_heading_mobile"] == pytest.approx(
-        FONT_SIZE_PX["section_mobile"] * 1.1
-    )
+    assert "word-break: keep-all" in soup.find("h1")["style"]
+    assert "overflow-wrap: anywhere" in soup.find("h1")["style"]
+    assert FONT_SIZE_PX["section"] == 18
+    assert FONT_SIZE_PX["section_mobile"] == 16
+    assert FONT_SIZE_PX["section_heading"] == 24
+    assert FONT_SIZE_PX["section_heading_mobile"] == 20
     for heading in soup.select("h2.azb-heading"):
         assert f'font-size: {FONT_SIZE_PX["section_heading"]}px' in heading["style"]
-        assert f"font-weight: {700 * 0.75:g}" in heading["style"]
+        assert "font-weight: 700" in heading["style"]
+        assert f'color: {EMAIL_COLORS["editorial"]}' in heading["style"]
     for summary in soup.select(".azb-summary"):
         assert f'font-size: {FONT_SIZE_PX["section"]}px' in summary["style"]
-        assert "font-weight: 700" in summary["style"]
-    assert ".azb-hero-title { font-size: 29px !important; }" in markup
-    assert ".azb-heading { font-size: 17.325px !important; }" in markup
-    assert ".azb-summary { font-size: 15.75px !important; }" in markup
+        assert "font-weight: 400" in summary["style"]
+    assert ".azb-hero-title { font-size: 28px !important; }" in markup
+    assert ".azb-heading { font-size: 20px !important; }" in markup
+    assert ".azb-summary { font-size: 16px !important; }" in markup
     assert "font-size: 0 !important" in markup
-    assert not re.search(r"font-size:\s*(?:10|14|16|20|24|28)px", markup)
+    assert "border-left" not in soup.select_one(".azb-takeaway")["style"]
+    assert "background-color" not in soup.select_one(".azb-takeaway")["style"]
+    assert "#08746b" not in markup
+    assert "#182b32" not in markup
+    source_links = soup.select_one(".azb-source-links")
+    assert source_links is not None
+    assert len(source_links.select("a")) == 2
+    assert "display: inline-block" in source_links.find("p")["style"]
 
 
 @pytest.mark.parametrize("kind", ["single", "digest"])
-def test_sections_have_a_label_rail_with_a_full_width_fallback(report_markup, kind):
+def test_brief_summary_and_assessment_stack_without_media_queries(report_markup, kind):
     soup = BeautifulSoup(report_markup(kind, "en"), "html.parser")
-    assert len(soup.select(".azb-section-label")) == len(soup.select(".azb-section-copy"))
-    assert soup.select(".azb-section-label h2")
-    for table in soup.select(".azb-section-label, .azb-section-copy"):
+    for style in soup.find_all("style"):
+        style.decompose()
+    for brief in soup.select(".azb-brief"):
+        summary = brief.select_one(".azb-brief-copy")
+        assessment = brief.select_one(".azb-brief-assessment")
+        assert summary["width"] == assessment["width"] == "100%"
+        assert summary.select_one(".azb-takeaway")
+        assert summary.select_one(".azb-source-links")
+        assert len(assessment.select(".azb-metric")) == 3
+        assert summary.find_next("table", class_="azb-brief-assessment") == assessment
+
+
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_sections_follow_a_full_width_reading_order_including_fallback(report_markup, kind):
+    soup = BeautifulSoup(report_markup(kind, "en"), "html.parser")
+    for style in soup.find_all("style"):
+        style.decompose()
+    assert soup.select(".azb-section-head h2")
+    assert not soup.select(".azb-section-label, .azb-heading-rest")
+    for table in soup.select(".azb-section-frame, .azb-section-wide"):
         assert table["width"] == "100%"
-    assert ".azb-section-label { width: 15% !important; }" in report_markup(kind, "en")
-    assert ".azb-section-copy { width: 85% !important; }" in report_markup(kind, "en")
-    assert ".azb-section-label h2 { padding-right: 12px !important; }" in report_markup(kind, "en")
-    assert ".azb-section-label .azb-heading-rest { display: block !important; }" in report_markup(
-        kind, "en"
-    )
+        rows = table.find_all("tr", recursive=False)
+        assert rows[0].select_one(".azb-section-head h2")
+        assert rows[1].select_one(".azb-section-copy")
 
 
 @pytest.mark.parametrize(
@@ -266,19 +335,13 @@ def test_sections_have_a_label_rail_with_a_full_width_fallback(report_markup, ki
     ["요약 판정", "연관 리소스", "Affected Resources", "References", "<em>Safe & text</em>"],
 )
 @pytest.mark.parametrize("full_width", [False, True])
-def test_section_heading_break_preserves_text_and_inline_fallback(label, full_width):
+def test_section_heading_preserves_complete_text_including_inline_fallback(label, full_width):
     markup = format_email_section_html(label, "<p>Content</p>", full_width=full_width)
     heading = BeautifulSoup(markup, "html.parser").select_one("h2.azb-heading")
     assert heading.get_text() == label
     assert heading.find("em") is None
-    continuation = heading.select_one(".azb-heading-rest")
-    if " " in label and not full_width:
-        first_word, _, remaining_words = label.partition(" ")
-        assert heading.contents[0] == first_word
-        assert continuation.get_text() == " " + remaining_words
-        assert "display:inline" in continuation["style"]
-    else:
-        assert continuation is None
+    assert heading.select_one(".azb-heading-rest") is None
+    assert heading.find("br") is None
 
 
 @pytest.mark.parametrize("kind", ["single", "digest"])
@@ -287,8 +350,8 @@ def test_resource_heading_keeps_its_count_separate_from_title_text(report_markup
     counts = soup.select(".azb-heading-count")
     assert counts
     for count in counts:
-        assert count.parent["class"] == ["azb-heading-rest"]
-        assert count.parent.contents[0] == " 리소스"
+        assert count.parent["class"] == ["azb-heading"]
+        assert count.parent.contents[0] == "연관 리소스"
         assert count.get_text().startswith(" · ")
         assert "font-size:11px" in count["style"]
         assert "white-space:nowrap" in count["style"]
@@ -633,28 +696,32 @@ def test_resource_preview_option_preserves_all_twelve_offline_outputs(tmp_path):
         assert not soup.select(".azb-resource-row")
         assert len(soup.select(".azb-resource-summary-group")) == 2
         assert "327" in soup.select_one(".azb-resource-total").get_text()
+        assert "padding-right: 8px" in soup.select_one(".azb-resource-total")["style"]
         if "inline-only" in path.name:
             assert not soup.find("style")
 
 
-def test_digest_uses_a_publication_masthead_and_separate_statistic_panels(report_markup):
+def test_digest_uses_a_sans_masthead_and_directly_labeled_statistic_rows(report_markup):
     soup = BeautifulSoup(report_markup("digest", "en"), "html.parser")
     for style in soup.find_all("style"):
         style.decompose()
-    assert "font-size: 36px" in soup.select_one(".azb-wordmark")["style"]
+    assert "font-size: 28px" in soup.select_one(".azb-wordmark")["style"]
+    assert FONT_STACK_DISPLAY in soup.select_one(".azb-wordmark")["style"]
     assert soup.select_one(".azb-masthead-brand")["width"] == "100%"
     assert soup.select_one(".azb-masthead-edition")["width"] == "100%"
-    for cell, level in zip(soup.select(".azb-count-cell"), ("high", "medium", "low")):
-        assert f'background-color: {_LEVEL_COLORS[level]["bg"]}' in cell["style"]
-        assert "font-size: 48px" in cell.select_one(".azb-count-value")["style"]
-        assert get_labels("en")["importance_" + level] in cell.get_text()
+    for row, level in zip(soup.select(".azb-count-row"), ("high", "medium", "low")):
+        label = row.find("th", scope="row")
+        assert f'color: {_LEVEL_COLORS[level]["color"]}' in label["style"]
+        assert get_labels("en")["importance_" + level] == label.get_text()
+        assert "font-size: 28px" in row.select_one(".azb-count-value")["style"]
+        assert "font-weight: 700" in row.select_one(".azb-count-value")["style"]
 
 
 def test_large_digest_counts_remain_complete_in_narrow_cells():
     soup = BeautifulSoup(format_digest_intro_html(220, 120, 90, 10, 0), "html.parser")
     values = soup.select(".azb-count-value")
     assert [value.get_text() for value in values] == ["120", "90", "10"]
-    assert all("font-size: 29px" in value["style"] for value in values)
+    assert all("font-size: 24px" in value["style"] for value in values)
 
 
 def test_digest_does_not_truncate_a_long_title():
@@ -728,9 +795,9 @@ def test_empty_digest_has_an_explicit_empty_state_and_zero_counts():
     soup = BeautifulSoup(markup, "html.parser")
     assert get_labels("en")["digest_no_updates"] in soup.get_text()
     assert [p.get_text() for p in soup.select(".azb-digest-counts td > p:first-child")] == [
-        "00",
-        "00",
-        "00",
+        "0",
+        "0",
+        "0",
     ]
     assert soup.select_one(".azb-footer")
     assert not soup.select(".azb-digest-row, .azb-digest-detail")
@@ -748,10 +815,11 @@ def test_email_text_palette_meets_normal_text_contrast():
     assert EMAIL_COLORS["canvas"] == "#ffffff"
     pairs = [
         (EMAIL_COLORS[role], EMAIL_COLORS[surface])
-        for role in ("ink", "body", "muted", "accent", "danger", "warning", "success")
+        for role in ("ink", "body", "muted", "accent", "editorial", "danger", "warning", "success")
         for surface in ("paper", "wash", "accent_wash")
     ]
     pairs.extend((scheme["color"], scheme["bg"]) for scheme in _LEVEL_COLORS.values())
+    pairs.extend((EMAIL_COLORS["muted"], scheme["bg"]) for scheme in _LEVEL_COLORS.values())
     pairs.extend((color, EMAIL_COLORS["paper"]) for color in _VERIFY_COLOR.values())
     pairs.append((EMAIL_COLORS["paper"], EMAIL_COLORS["ink"]))
     pairs.append((EMAIL_COLORS["on_accent"], EMAIL_COLORS["accent"]))

@@ -376,6 +376,9 @@ class TestAdminPage:
         assert "window.addEventListener('hashchange'" in page
         assert "function filterTable(id)" in page
         assert "tr.dataset.status = r.status" in page
+        assert "['partial', 'Partial']" in page
+        assert "partial: 'Partial'" in page
+        assert "Send weekly digest emails" in page
         assert "$('run-form').reportValidity()" in page
         assert "$('start-date').value > $('end-date').value" in page
         assert "Could not load data. Refresh to retry." in page

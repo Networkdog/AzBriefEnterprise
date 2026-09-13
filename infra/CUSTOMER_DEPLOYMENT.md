@@ -9,6 +9,28 @@ script installs the real image on port 8000 with `/health`, then enables schedul
 readiness checks and explicit operational acceptance. A foundation success, HTTP 200, or a Job
 exit code alone is not proof that analysis, archive storage, and email work.
 
+## Model Policy
+
+Core roles default to `gpt-5-terra` with `medium` reasoning. Only Azure MCP defaults to
+`gpt-5-luna`, with no reasoning option supplied. Report writing, subscriber customization, KQL/API
+interpretation, and quality/safety review remain on the core tier. The Portal suggests these names
+but requires approved versions for both; the raw parameter example leaves versions empty rather
+than inventing them. Validate the actual model IDs, reasoning options, Responses/tool/strict-JSON
+support, region, SKU, quota and cost before deployment. Default names are not a compatibility or
+performance guarantee. Run paired quality/latency/cost comparisons before production promotion.
+
+`modelDeploymentName`, `modelName`, `modelVersion`, `modelSkuName`, and `modelCapacity` configure
+the core deployment. Matching `simpleModel*` parameters configure a separate simple-task deployment;
+the two deployment names must differ. `coreReasoningEffort` accepts `low`, `medium`, or `high`.
+Capacity units must be assessed independently. The models deploy serially before the private
+endpoint and project, and Admin readiness checks both deployments without invoking a model.
+
+`customerSetup` v2 binds both model deployments and effort and clears the legacy global model
+override in the named customer environment. Existing v1 outputs remain supported as explicit
+single-model installations. Do not reapply the foundation merely to change an existing Agent's
+model; preserve existing resources/secure parameters and use reviewed provisioning configuration.
+`--check` detects expected model/reasoning/sampling drift but does not replace a live model smoke.
+
 ## Setup Stages
 
 Run every stage from the same reviewed customer checkout with explicit `SubscriptionId`,
@@ -37,7 +59,7 @@ are not globally rolled back. Preserve the stage output and inspect partial stat
 | Azure target | Choose the customer tenant, subscription, a dedicated resource group, and regional/data-residency policy. Never reuse the maintainer's development azd environment or `.env`. |
 | Azure permissions | The deployment operator needs resource creation plus role-assignment rights at the required resource-group/subscription/ACR scopes. This is not a runtime permission grant. |
 | Entra permissions | Azure MCP creates an Entra application/service principal and assigns its app role to the Foundry project identity. Obtain customer approval for these Microsoft Graph operations separately; Azure subscription Owner alone is insufficient. Use a dedicated deployment identity approved by the directory administrator. |
-| Foundry | Verify Hosted Agents, VNet injection, the exact model/version/SKU, and quota in the selected region. The form deliberately requires a model and version. Capacity is model-specific units, not universally thousands of TPM. |
+| Foundry | Verify Hosted Agents, VNet injection, both exact model/version/SKU combinations, reasoning/tool/schema support, and separate quotas in the selected region. The form requires approved versions for both suggested models. Capacity is model-specific units, not universally thousands of TPM. |
 | Residency | Global Standard can process requests outside the account region. Regional Standard and Data Zone Standard have different availability, quota, and residency boundaries. Have the customer approve the selected SKU. |
 | Network | Provide a VNet-connected deployment host with private DNS resolution. Ordinary Cloud Shell and a public hosted CI runner are not automatically inside this VNet. Do not open Foundry, Key Vault, or Storage to work around access failures. |
 | Registry | Provide an existing customer ACR, its exact login server and RBAC/ABAC permission mode. The deployment operator needs remote-build/push access; App/Job receive pull-only access later. No registry password is used. |
@@ -56,7 +78,7 @@ Resource providers must be available/registered: `Microsoft.App`, `Microsoft.Cog
 
 ## 1. Deploy The Foundation
 
-Open the README button and complete **Basics**, **Foundry and model**, **Email delivery**, and
+Open the README button and complete **Basics**, **Foundry and models**, **Email delivery**, and
 **Console access**. Keep the bootstrap image for the first deployment. The form fixes
 `networkIsolationMode=vnetInjection`, `allowPublicAccessDuringSetup=false`,
 `enableScheduledRuns=false`, and Key Vault purge protection on. Purge protection cannot be
@@ -127,7 +149,7 @@ $customer = @{
 ```
 
 `Configure` writes individual `azd env set NAME VALUE` bindings, including the project endpoint,
-ARM ID, tenant, model, Hosted name, and both name forms for each of the six specialists. It
+ARM ID, tenant, model policy, Hosted name, and both name forms for each of the six specialists. It
 refuses to rebind an existing environment to another tenant/subscription/project and restores
 a pre-existing default environment after creating the new one. It never evaluates command
 strings returned by ARM. `-SetupFile` accepts a saved `customerSetup` object **only with

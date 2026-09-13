@@ -27,10 +27,12 @@ async function checkEmailReports(page, baseUrl = '') {
               node => node.textContent.replace(/\s+/g, ' ').trim());
             const spills = [];
             const boundedText = '[class^="azb-badge-"], .azb-verify, .azb-wordmark, ' +
-              '.azb-count-value, .azb-chapter-number, .azb-toc-number, ' +
+              '.azb-count-value, .azb-count-row th, .azb-chapter-number, .azb-toc-number, ' +
+              '.azb-action-number, .azb-action-title, .azb-metric p, ' +
+              '.azb-heading, .azb-hero-title, .azb-summary, ' +
               '.azb-resource-total, .azb-resource-summary strong, .azb-resource-summary .azb-link';
             for (const badge of document.querySelectorAll(boundedText)) {
-              const cell = badge.closest('td');
+              const cell = badge.closest('td, th');
               if (!cell || !badge.getClientRects().length) continue;
               const range = document.createRange();
               range.selectNodeContents(badge);
@@ -54,7 +56,64 @@ async function checkEmailReports(page, baseUrl = '') {
                 url.hostname === domain || url.hostname.endsWith(`.${domain}`));
             });
             const railErrors = [];
+            const briefErrors = [];
+            const chartErrors = [];
+            const shadingErrors = [];
             const summaryErrors = [];
+            const paperColor = getComputedStyle(paper).backgroundColor;
+            for (const concept of document.querySelectorAll('.azb-concept')) {
+              const background = getComputedStyle(concept).backgroundColor;
+              if (background === paperColor || background === 'rgba(0, 0, 0, 0)') {
+                shadingErrors.push('Concept box is not shaded');
+              }
+            }
+            for (const label of document.querySelectorAll('[class^="azb-badge-"]')) {
+              const cell = label.closest('.azb-level-cell');
+              const style = getComputedStyle(label);
+              if (!cell || !cell.getAttribute('bgcolor') ||
+                  getComputedStyle(cell).backgroundColor === paperColor) {
+                shadingErrors.push(`Level cell is not shaded: ${label.textContent}`);
+              }
+              if (['borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth']
+                  .some(property => parseFloat(style[property]) > 0) ||
+                  style.backgroundColor !== 'rgba(0, 0, 0, 0)') {
+                shadingErrors.push(`Level text still has a box: ${label.textContent}`);
+              }
+            }
+            for (const brief of document.querySelectorAll('.azb-brief')) {
+              const copy = brief.querySelector('.azb-brief-copy').getBoundingClientRect();
+              const assessment = brief.querySelector('.azb-brief-assessment').getBoundingClientRect();
+              const wide = document.querySelector('style') && innerWidth >= 800;
+              const valid = wide
+                ? Math.abs(copy.top - assessment.top) <= 1 &&
+                  Math.abs(copy.right - assessment.left) <= 1 &&
+                  Math.abs(copy.width / (copy.width + assessment.width) - 0.66) < 0.01
+                : assessment.top >= copy.bottom - 1 &&
+                  Math.abs(copy.left - assessment.left) <= 1 &&
+                  Math.abs(copy.width - assessment.width) <= 1;
+              if (!valid) briefErrors.push(wide ? 'Desktop columns are misaligned' : 'Fallback did not stack');
+            }
+            const countRows = Array.from(document.querySelectorAll('.azb-count-row'));
+            const analyzedCount = countRows.reduce((total, row) =>
+              total + Number(row.querySelector('.azb-count-value').textContent), 0);
+            for (const row of countRows) {
+              const label = row.querySelector('th');
+              const value = row.querySelector('.azb-count-value');
+              const count = Number(value.textContent);
+              const track = row.querySelector('.azb-count-track').getBoundingClientRect();
+              const fill = row.querySelector('[class^="azb-distribution-"]');
+              const expected = analyzedCount ? count / analyzedCount * track.width : 0;
+              if (count ? !fill || Math.abs(fill.getBoundingClientRect().width - expected) > 1.5 : fill) {
+                chartErrors.push(`Incorrect bar length for ${label.textContent}`);
+              }
+              if (label.getBoundingClientRect().right > track.left + 1 ||
+                  track.right > value.closest('td').getBoundingClientRect().left + 1) {
+                chartErrors.push(`Chart labels overlap for ${label.textContent}`);
+              }
+              if (label.scope !== 'row' || row.closest('table').getAttribute('aria-hidden') === 'true') {
+                chartErrors.push('Count labels are not accessible');
+              }
+            }
             for (const summary of document.querySelectorAll('.azb-resource-summary')) {
               if (summary.querySelectorAll('.azb-resource-summary-group').length > 10) {
                 summaryErrors.push('Unbounded reason groups');
@@ -72,20 +131,21 @@ async function checkEmailReports(page, baseUrl = '') {
                 }
               }
             }
-            const hasStyles = document.querySelectorAll('style').length > 0;
-            for (const label of document.querySelectorAll('.azb-section-label')) {
-              const copy = label.nextElementSibling;
-              const labelBox = label.getBoundingClientRect();
+            for (const section of document.querySelectorAll('.azb-section-frame, .azb-section-wide')) {
+              const heading = section.querySelector('.azb-section-head');
+              const copy = section.querySelector('.azb-section-copy');
+              const headingBox = heading.getBoundingClientRect();
               const copyBox = copy.getBoundingClientRect();
-              const valid = hasStyles && innerWidth >= 800
-                ? copyBox.left >= labelBox.right - 1 && Math.abs(copyBox.top - labelBox.top) <= 1
-                : copyBox.top >= labelBox.bottom - 1;
-              if (!valid) railErrors.push(label.textContent.trim());
+              const valid = copyBox.top >= headingBox.bottom - 1 &&
+                Math.abs(copyBox.left - headingBox.left) <= 1 &&
+                Math.abs(copyBox.width - headingBox.width) <= 1;
+              if (!valid) railErrors.push(heading.textContent.trim());
             }
             const signature = JSON.stringify({
               headings: text('h1, h2, h3'),
               summaries: text('.azb-summary, .azb-digest-summary'),
               badges: text('[class^="azb-badge-"], .azb-verify'),
+              counts: text('.azb-count-row th, .azb-count-value, .azb-digest-counts caption'),
               commands: text('.azb-cli'),
               reasons: text('.azb-resource-reason, .azb-resource-summary-group, .azb-resource-total, .azb-resource-snapshot'),
               links: Array.from(document.querySelectorAll('a'), anchor => anchor.getAttribute('href'))
@@ -93,13 +153,14 @@ async function checkEmailReports(page, baseUrl = '') {
             return {
               actualWidth: innerWidth,
               overflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
-              spills, railErrors, summaryErrors, brokenAnchors, signature,
+              spills, railErrors, briefErrors, chartErrors, shadingErrors, summaryErrors, brokenAnchors, signature,
               resourceSummaries: document.querySelectorAll('.azb-resource-summary').length,
               documentTitleCount: document.querySelectorAll('h1').length,
               paperCount: document.querySelectorAll('.azb-paper').length,
               visualCount: document.querySelectorAll('.azb-visual img').length,
               unsafeRemoteMedia: document.querySelectorAll('script, link').length + unsafeRemoteImages.length,
               imagesMissingAlt: remoteImages.filter(image => !image.alt.trim()).length,
+              imagesNotLoaded: remoteImages.filter(image => !image.complete || image.naturalWidth === 0).length,
               styleCount: document.querySelectorAll('style').length,
               contentsY: firstTitle ? Math.round(firstTitle.getBoundingClientRect().top) : null,
               titleWidth: firstTitle ? Math.round(firstTitle.getBoundingClientRect().width) : null,
@@ -113,6 +174,9 @@ async function checkEmailReports(page, baseUrl = '') {
           check(report.overflow <= 1, `Document overflow ${report.overflow}px`);
           check(report.spills.length === 0, `Text spills ${JSON.stringify(report.spills)}`);
           check(report.railErrors.length === 0, `Section alignment ${JSON.stringify(report.railErrors)}`);
+          check(report.briefErrors.length === 0, `Brief alignment ${JSON.stringify(report.briefErrors)}`);
+          check(report.chartErrors.length === 0, `Count chart ${JSON.stringify(report.chartErrors)}`);
+          check(report.shadingErrors.length === 0, `Shading ${JSON.stringify(report.shadingErrors)}`);
           check(report.summaryErrors.length === 0, `Resource summary ${JSON.stringify(report.summaryErrors)}`);
           check(report.brokenAnchors.length === 0, 'Broken internal anchors');
           check(report.documentTitleCount === 1 && report.paperCount === 1, 'Invalid document hierarchy');

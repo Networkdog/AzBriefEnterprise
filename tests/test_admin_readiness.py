@@ -21,6 +21,7 @@ def _settings(**overrides) -> Settings:
         "admin_readiness_foundry_account": "account",
         "admin_readiness_foundry_project": "project",
         "admin_readiness_foundry_model_deployment": "model",
+        "admin_readiness_foundry_simple_model_deployment": None,
         "admin_readiness_container_environments": json.dumps(["app-env", "mcp-env"]),
         "admin_readiness_container_apps": json.dumps(["app", "mcp"]),
         "admin_readiness_container_jobs": json.dumps(["job"]),
@@ -176,6 +177,33 @@ class Configuration:
 
     async def get_subscribers(self):
         return [object()]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["Succeeded", "Failed", "missing"])
+async def test_simple_model_is_queried_and_required_when_configured(state):
+    inventory = Inventory()
+    if state != "missing":
+        inventory.arm["foundry_simple_model_deployment"] = {
+            "success": True,
+            "data": _resource(state, model={"name": "gpt-5-luna", "version": "test"}),
+        }
+    collector = AdminReadinessCollector(
+        settings=_settings(admin_readiness_foundry_simple_model_deployment="simple-model"),
+        inventory=inventory,
+        configuration=Configuration(),
+        runtime_ready=lambda: True,
+    )
+
+    requests = collector._arm_requests()
+    report = await collector.collect()
+    checks = {check.id: check for section in report.sections for check in section.checks}
+
+    assert requests["foundry_model_deployment"][0].endswith("/deployments/model")
+    assert requests["foundry_simple_model_deployment"][0].endswith("/deployments/simple-model")
+    assert report.ok is (state == "Succeeded")
+    assert checks["foundry_model_deployment"].ok is True
+    assert checks["foundry_simple_model_deployment"].ok is (state == "Succeeded")
 
 
 @pytest.mark.asyncio

@@ -58,13 +58,14 @@
     "steps": [
       {
         "name": "foundry",
-        "label": "Foundry and model",
+        "label": "Foundry and models",
         "elements": [
           {
             "name": "model",
             "type": "Microsoft.Common.TextBox",
-            "label": "Approved model name",
-            "toolTip": "Enter a currently available model verified for this workload. The deployment name will match the model name; no model is silently selected.",
+            "label": "Core model name",
+            "defaultValue": "gpt-5-terra",
+            "toolTip": "Verify the exact model ID and its reasoning, tool and structured-output support in the target region. The deployment name will match this value.",
             "constraints": {
               "required": true,
               "regex": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$",
@@ -75,7 +76,7 @@
           {
             "name": "version",
             "type": "Microsoft.Common.TextBox",
-            "label": "Approved model version",
+            "label": "Approved core model version",
             "toolTip": "Pin the model version approved for the customer. Model name, version and region must be compatible.",
             "constraints": {
               "required": true,
@@ -87,7 +88,7 @@
           {
             "name": "sku",
             "type": "Microsoft.Common.DropDown",
-            "label": "Model deployment type",
+            "label": "Core model deployment type",
             "defaultValue": "Global Standard",
             "toolTip": "Global Standard may process requests outside the deployment region. Choose the deployment type approved by the customer's data residency policy.",
             "constraints": {
@@ -103,9 +104,77 @@
           {
             "name": "capacity",
             "type": "Microsoft.Common.TextBox",
-            "label": "Model capacity units",
+            "label": "Core model capacity units",
             "defaultValue": "200",
             "toolTip": "Confirm the model's capacity-to-TPM/RPM mapping and available quota. Start with one concurrent analysis and measure throttling before increasing throughput.",
+            "constraints": {
+              "required": true,
+              "regex": "^(?:[1-9][0-9]{0,2}|1000)$",
+              "validationMessage": "Enter an integer from 1 to 1000."
+            },
+            "visible": true
+          },
+          {
+            "name": "reasoningEffort",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Core reasoning effort",
+            "defaultValue": "Medium",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                { "label": "Low", "value": "low" },
+                { "label": "Medium", "value": "medium" },
+                { "label": "High", "value": "high" }
+              ]
+            },
+            "visible": true
+          },
+          {
+            "name": "simpleModel",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Simple-task model name",
+            "defaultValue": "gpt-5-luna",
+            "toolTip": "Used by Azure MCP only. Verify managed MCP and strict structured-output support. Use a different name from the core deployment.",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$",
+              "validationMessage": "Enter the exact model name from Foundry."
+            },
+            "visible": true
+          },
+          {
+            "name": "simpleVersion",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Approved simple-task model version",
+            "toolTip": "Pin the version approved for the customer. Availability and quota must be checked independently of the core model.",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9._-]+$",
+              "validationMessage": "Enter the exact model version from Foundry."
+            },
+            "visible": true
+          },
+          {
+            "name": "simpleSku",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Simple-task model deployment type",
+            "defaultValue": "Global Standard",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                { "label": "Global Standard", "value": "GlobalStandard" },
+                { "label": "Data Zone Standard", "value": "DataZoneStandard" },
+                { "label": "Regional Standard", "value": "Standard" }
+              ]
+            },
+            "visible": true
+          },
+          {
+            "name": "simpleCapacity",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Simple-task model capacity units",
+            "defaultValue": "200",
+            "toolTip": "Confirm this model's capacity-to-TPM/RPM mapping and available quota; capacity units are not comparable across models.",
             "constraints": {
               "required": true,
               "regex": "^(?:[1-9][0-9]{0,2}|1000)$",
@@ -220,6 +289,12 @@
       "modelVersion": "[steps('foundry').version]",
       "modelSkuName": "[steps('foundry').sku]",
       "modelCapacity": "[int(steps('foundry').capacity)]",
+      "coreReasoningEffort": "[steps('foundry').reasoningEffort]",
+      "simpleModelName": "[steps('foundry').simpleModel]",
+      "simpleModelDeploymentName": "[steps('foundry').simpleModel]",
+      "simpleModelVersion": "[steps('foundry').simpleVersion]",
+      "simpleModelSkuName": "[steps('foundry').simpleSku]",
+      "simpleModelCapacity": "[int(steps('foundry').simpleCapacity)]",
       "containerRegistryServer": "[basics('registryServer')]",
       "containerRegistryRoleAssignmentMode": "[basics('registryMode')]",
       "emailRecipientAddress": "[steps('delivery').recipient]",

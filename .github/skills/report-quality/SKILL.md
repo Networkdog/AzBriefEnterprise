@@ -19,10 +19,6 @@ description: 'Evaluate and improve AzBrief report quality. Use when: report qual
      and limited to one grounded, non-mutating fit check.
 - Keep evidence, relevance, resource counts/reasons, and conclusions consistent. Actions name
      what, where, why, completion criteria, precautions, rollback, and only real deadlines.
-- For large matching sets, output resource_queries reference/reason pairs only from the supplied
-     executed catalog, only when every returned identity satisfies that reason. Do not repeat these
-     names in affected_resources or action targets. Runtime restores membership and exact unique
-     counts; partial evidence stays incomplete and overlapping group counts must not be summed.
 - For material financial implications, report the scoped ActualCost baseline with period and
      currency in the cost-impact field. Separate observed spending from estimates; estimates need
      documented rates and matching usage, not an advertised discount on the entire bill. Preserve
@@ -93,12 +89,6 @@ python -m scripts.run_quality_loop
 
 ## AzBrief Report Design Philosophy
 
-Legacy report parsing accepts `영향받는_리소스` and `영향_리소스` in normal JSON and regex recovery.
-The canonical `affected_resources` key takes precedence, including an explicit empty list. Keep
-display-label changes separate from resource-key compatibility, resource selection, and scoring.
-Archive evaluation fixtures exclude delivery-only `resource_queries` alongside `job_relevance`
-and `visual_assets`, matching the immutable v1 projection rather than relaxing its schema.
-
 ### Core Mission
 AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·은퇴에는 필요한 조치를, 신규 기능·서비스에는 얻을 수 있는 가치와 도입 조건을 알려주는 것"**
 
@@ -147,13 +137,13 @@ AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·
 
 **구조 표준**:
 ```
-1. Masthead + White Header → 전체 제목·출처, 핵심 요약, 독립적인 중요성/영향도/직무연관성 strip
+1. Masthead + White Header → 전체 제목·출처, 요약과 독립적인 중요성/영향도/직무연관성 판정
 2. Operational Facts → 영향 범위, 조치 필요 여부, 기한, 작업량의 2열 정보
 3. Detailed Analysis → 기술 맥락, concept boxes, 환경 설명
 4. Environment Relevance → 변경의 적용/조치 또는 신규 가치/도입 조건과 근거
 5. Key Dates → retirement/feature_change의 날짜·작업 2열 목록
 6. Impact / Opportunity → cost/security/performance/operational 차원별 정의 행
-7. Affected Resources → 20개 이하 전체 목록, 초과 시 고유 건수·최대 10개 사유 그룹·검증된 조회 링크
+7. Affected Resources → 전체 사유와 그룹별 리소스·구독·리소스 그룹·종류
 8. Action Sheets (01…) → 맥락, 절차, 고정폭 CLI, 일정, 가드레일·검증 표시
 9. Additional Checks → 추가 확인 항목
 10. Numbered References → 문서 링크, 내용 요약, 보고서별 확인 지점
@@ -162,8 +152,8 @@ AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·
 
 단건과 digest 상세는 같은 section formatter와 기존 조건부 표시 기준을 사용합니다.
 Digest의 공통 masthead·집계·목차·종료 countdown은 상세 앞에, footer는 문서 끝에 둡니다.
-집계의 비례 막대는 분석 완료 건수만 표현하고 건너뜀은 별도로 표시합니다. 상세 시작은 큰 번호와
-목차 복귀 링크로 구분하며 운영 정보는 옅은 바탕의 표로 묶습니다.
+집계는 분석 완료 분모를 명시한 3행 가로 막대와 실제 건수를 사용하고 생략 건수는 따로 표시합니다.
+상세 시작은 굵은 번호와 목차 복귀 링크로 구분하며 운영 정보는 흰색 구분선 표로 묶습니다.
 
 ### Category 3: Language Quality (20점)
 
@@ -211,28 +201,36 @@ Digest의 공통 masthead·집계·목차·종료 countdown은 상세 앞에, fo
 | `html_email_quality` | 5 | 테이블 레이아웃, AzBrief 브랜딩, 템플릿 변수 해소 |
 
 **이메일 디자인 원칙**:
-- **편집형 지면**: `EMAIL_COLORS`의 흰 지면, 잉크색 `#182b32`, 청록색 `#08746b`, 옅은 중성 바탕.
-     짙은 남색 hero·둥근 그림자 카드 대신 제목, 핵심 요약, 독립적인 3축 평가와 운영 정보를 구분
-- **공통 위계**: 단건과 digest 상세가 공통 header/section formatter를 사용. Section 제목은
-     데스크톱 20.625px·모바일 17.325px·굵기 525, 핵심 문장은 18.75px·15.75px·굵기 700.
-     본문은 13px·주요 블록 행간
-     1.8~1.85. `cover=36`, `stat=48`로 발행물 이름·문서 제목·수치를 구분하고 모바일 제목은
-     29px로 표시. 본문은 데스크톱 제목 15%·내용 85%, 목차는 전체 너비로 구성. 여러 어절인 제목은
-     데스크톱에서 첫 어절 뒤 줄바꿈하며 모바일·inline-only에서는 이어 쓰고, 리소스 건수는 11px 보조 글자로 표시
+- **기술 보고서 지면**: 흰 지면, 흑연색 `#202124`, 절제된 적색 `#a92336` 섹션 제목과 청색
+     `#365b8c` 링크. 참고 PDF는 페이지 이미지와 글꼴·경계 좌표를 대조하고, 전용 폰트·표지 그림·
+     원본 통계 대신 정보 위계와 정렬 원칙만 적용. 색을 채운 hero나 그림자 카드는 사용하지 않음
+- **공통 위계**: 굵은 sans 28px 발행물 이름, 40px 주제목, 32px digest 상세 제목,
+     24px/20px·굵기 700의 섹션 제목. 모바일 제목은 28px, 평문 리드는 18px/16px·굵기 400,
+     본문은 공통 `FONT_SIZE_PX["body"]`의 14px·행간 1.8~1.85. 어절 우선 줄바꿈과 긴 식별자 fallback을 함께 사용하고 자간은 0.
+     `FONT_STACK_DISPLAY`는 공통 sans 스택의 별칭. Noto Sans KR, AppleSDGothicR00, 맑은 고딕
+     순서로 설치된 글꼴을 우선 사용하며 원격 폰트는 쓰지 않음
+- **요약과 근거의 공간 구분**: 화면 800px 이상에서 보고서 헤더의 요약 66%·독립 판정 34%를
+     나란히 배치. 좁은 화면·inline-only에서는 요약 다음에 판정이 이어짐. 본문은 모든 폭에서
+     제목 아래 전체 폭 내용을 두고 리소스 건수만 11px 보조 글자로 표시
 - **상태는 텍스트와 색상으로 표현**: 중요성·영향도·직무연관성을 합치지 않고 각 높음/보통/낮음
-     label은 기존 배지 박스 안에 13.5px 글자로 표시. 공간이 부족하면 평가축 이름과 배지를 함께 줄바꿈하며 글자를
-     줄이거나 자르지 않음. 종료 countdown도 이모지 대신 현지화된 이행 상태 텍스트 사용
-- **의미를 전달하는 세로 강조선**: 등급·검증 배지, 핵심 요약, concept box, 추가 확인에 공통
-     `SEMANTIC_ACCENT_WIDTH_PX = 4`를 적용하고 배지 위아래 padding은 각각
-     4px로 유지. 상태 텍스트·기존 색상과 텍스트 대비 **4.5:1 이상**은 보존하고 중성 구분선은 얇게 유지
+     셀 전체에 옅은 적색·황색·녹색 음영을 적용하고 테두리 없는 12px 라벨 하나를 사용. 셀 padding은
+     8px이며 라벨 자체에는 배경·테두리·padding을 넣지 않음. 평가축·값은 함께 줄바꿈하고
+     숨김 복제 라벨이나 임의 점수·퍼센트로 바꾸지 않음. 종료 countdown도 현지화된 상태 텍스트 사용
+- **절제된 강조선**: 검증, concept box, 추가 확인에 `SEMANTIC_ACCENT_WIDTH_PX = 2`를 적용하고
+     검증 배지 위아래 padding은 4px 유지. Concept box는 옅은 중성 음영으로 본문과 구분.
+     상태 의미와 텍스트 대비 **4.5:1 이상**을 보존
+- **푸터**: 면책 고지·피드백·생성 정보만 표시하고 분석 기반 소개 문구는 제외. 실제 근거 문서와
+     Microsoft Learn 링크는 그대로 보존
 - **전체 목차와 리소스 식별 정보**: 제목을 자르지 않고 상세·목차 복귀 링크를 유지. 모바일은
      전체 너비 제목 아래 세 평가 셀을 놓고 리소스 열은 이름표가 있는 셀로 쌓되 사유·그룹·Portal 링크 보존
-- **좁은 화면 기본값**: CSS가 제거되어도 17px 제목·13px 요약 아래 3축 이름과 값을 표시하며
-     목차 번호는 별도 29px 열로 분리. 데스크톱에서만 제목 52%·평가축 각 16%로 확장.
-     발행물 로고와 날짜도 기본 세로 배치. 건수·상세 번호는 48px, 세 자리 건수는 모두 29px를 사용.
-     비례 막대는 8px이며 0건 구간을 그리지 않고 수치와 제목을 생략하지 않음
-- **반응형 fallback**: inline/MSO 640px, 화면 800px에서 760px·1100px에서 900px. `azb-pad` 여백은
-     기본 32px, 1100px 이상 48px, 640px 이하 20px, 400px 이하 16px이며 inline-only는 32px 유지.
+- **실제 수치의 직접 표시**: 중요성별 8px 가로 막대에 28px 건수와 행 이름표를 가까이 배치하고
+     `digest_analyzed`로 분석 완료 분모를 명시. 생략 건수는 별도, 0건 행은 유지하되 채움 없음,
+     세 자리 값이 있으면 모든 건수를 24px로 표시. 의미 있는 표의 캡션·행 제목은 숨기지 않음
+- **좁은 화면 기본값**: CSS가 제거되어도 17px 목차 제목·14px 요약 아래 3축 이름과 값을 표시.
+     목차·조치 번호는 24px 굵은 tabular sans, 장 번호는 32px. 데스크톱 목차만 제목 52%·축마다
+     16%로 확장하며 발행물 이름·날짜는 기본 세로 배치
+- **반응형 fallback**: inline/MSO 640px, 화면 800px에서 760px·1100px에서 840px. `azb-pad` 여백은
+     기본 32px, 1100px 이상 40px, 640px 이하 20px, 400px 이하 16px이며 inline-only는 32px 유지.
      영향 label은 HTML/CSS 너비·최소 너비 96px와 nowrap/keep-all을 유지하고 desktop 2×2로 나누지 않음
 - **CTA 링크 포함**: Microsoft 공식 문서, Azure Portal 경로 (검증된 것만)
 - **이모지 금지**: 보고서 본문에는 이모지 미사용 (이메일 제목줄은 허용)
@@ -245,7 +243,8 @@ Digest의 공통 masthead·집계·목차·종료 countdown은 상세 앞에, fo
 같은 합성 데이터를 보존한 채 `가설 → 렌더러 수정 → 집중 테스트 → 미리보기 → 화면 평가 → 수정`을
 반복합니다. `tests/browser/email_reports.cjs`는 ko/en/ja·단건/digest·full/inline-only를
 1440/768/640/390/320/844px에서 검사합니다. `passed=true`, 정보·링크 보존, 가로 넘침과 배지
-넘침 없음이 수용 조건이며, 스크린샷의 위계·줄바꿈·탐색을 따로 평가합니다. 합성 레이아웃 검사를
+넘침 없음, 66/34 브리프 정렬·fallback 순서, 막대 길이·라벨 경계가 수용 조건입니다.
+스크린샷의 위계·줄바꿈·탐색을 따로 평가합니다. 합성 레이아웃 검사를
 심미성의 객관적 점수, 실측 독해 속도, G-Eval 개선 또는 실제 Outlook/Gmail 검증으로 보고하지 않습니다.
 디자인 변화가 작다는 피드백에는 이전 구도를 유지한 간격 조정만 반복하지 않습니다. 원본 보고서의
 글자 크기 대비·면 구성·구획·그리드를 분해하고 같은 크기의 전후 지면에서 변화가 식별되는지 평가합니다.
@@ -414,7 +413,7 @@ reason: "nodeImageVersion: AKSUbuntu-2204gen2containerd-202604.01.0 — Ubuntu 2
 |------|----------|------|
 | 상태 표시 | urgency badge 텍스트 + 색상 | 다크모드/텍스트 뷰어 호환 |
 | 섹션 구분 | border-top + bold 제목 | 이메일 CSS 미지원 대비 |
-| 리소스 목록 | 20개 이하 전체, 초과 시 건수·사유·조회 링크 | 포털은 현재 상태, Archive는 분석 당시 기록 |
+| 리소스 목록 | 전체 표시 | 관리자가 전수 확인 필요 |
 | CTA | 텍스트 링크 "→" | 이미지 차단 환경 대비 |
 | 제목 라인 | `[AzBrief] [긴급] 요약 | 날짜` | 오픈율 최적화 |
 

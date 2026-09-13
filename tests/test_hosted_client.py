@@ -1,5 +1,7 @@
 """Tests for the Container Apps to Hosted Agent client boundary."""
 
+from unittest.mock import Mock
+
 import httpx
 import pytest
 
@@ -287,6 +289,35 @@ async def test_proxy_returns_complete_hosted_analysis(monkeypatch):
     assert result.one_line_summary == "Summary"
     assert result._hosted_trace_id
     assert "hosted_trace_id" not in result.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_proxy_failure_preserves_trace_for_run_logs_without_logging_payload(monkeypatch):
+    captured = {}
+    logger = Mock()
+    failure = hosted_client.HostedAgentError("Hosted analysis failed (RuntimeError)")
+
+    async def fake_invoke(settings, request):
+        captured["trace_id"] = request.trace_id
+        raise failure
+
+    monkeypatch.setattr(hosted_client, "invoke_hosted_agent", fake_invoke)
+    monkeypatch.setattr(hosted_client, "logger", logger)
+    analyzer = hosted_client.HostedAgentAnalyzer(_settings())
+
+    with pytest.raises(hosted_client.HostedAgentError) as raised:
+        await analyzer.analyze_update(_update())
+
+    assert raised.value is failure
+    assert failure.trace_id == captured["trace_id"]
+    logger.warning.assert_called_once_with(
+        "foundry_hosted_analysis_failed",
+        trace_id=captured["trace_id"],
+        update_id="update-1",
+        error_type="HostedAgentError",
+        status_code=None,
+    )
+    logger.info.assert_not_called()
 
 
 @pytest.mark.asyncio

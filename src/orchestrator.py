@@ -202,7 +202,7 @@ class RunRecord:
 
     run_id: str
     source: str = "scheduled_digest"
-    status: str = "queued"  # queued | running | completed | failed
+    status: str = "queued"  # queued | running | completed | partial | failed
     since: Optional[datetime] = None
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: Optional[datetime] = None
@@ -510,6 +510,7 @@ async def execute_run(
                         "orchestrator_update_failed",
                         run_id=record.run_id,
                         update_id=getattr(update, "id", ""),
+                        trace_id=getattr(exc, "trace_id", ""),
                         error=str(exc),
                     )
                     async with results_lock:
@@ -586,12 +587,25 @@ async def execute_run(
                     email_service,
                     deadline=deadline,
                     estimate_s=max(slowest_s, 1.0),
+                    run_id=record.run_id,
                 )
 
         record.watermark = cursor.watermark
         record.pending = cursor.pending
         await _commit_checkpoint(record)
         record.status = "completed"
+        if not record.dry_run:
+            problems = []
+            if record.failed or record.pending or record.deferred:
+                problems.append(
+                    f"Analysis incomplete: {record.analyzed} analyzed, {record.failed} failed, "
+                    f"{record.pending} pending, {record.deferred} deferred"
+                )
+            if record.send_email and not record.email_sent:
+                problems.append("One or more weekly digests were not delivered")
+            if problems:
+                record.status = "partial"
+                record.error = "; ".join(problems)
         record.finished_at = datetime.now(timezone.utc)
         logger.info(
             "orchestrator_run_complete",
@@ -600,7 +614,17 @@ async def execute_run(
             **{
                 k: v
                 for k, v in record.to_dict().items()
-                if k in ("total", "analyzed", "failed", "relevant", "deferred", "pending")
+                if k
+                in (
+                    "total",
+                    "analyzed",
+                    "failed",
+                    "relevant",
+                    "deferred",
+                    "pending",
+                    "status",
+                    "email_sent",
+                )
             },
         )
     except Exception as exc:
@@ -618,13 +642,66 @@ async def _send_digest(
     email_service: Any,
     deadline: Any = None,
     estimate_s: float = 0.0,
+    *,
+    run_id: str = "",
 ) -> bool:
-    """Send the consolidated digest, per subscriber when subscribers exist."""
+    """Send one digest per UTC Monday-Sunday release week and recipient in this run."""
     if not digest_items or email_service is None:
         return False
 
+    weekly_items: dict[str, list[dict]] = {}
+    for item in sorted(
+        digest_items,
+        key=lambda item: (
+            _ensure_utc(item["update"].published_date)
+            if item["update"].published_date
+            else datetime.max.replace(tzinfo=timezone.utc)
+        ),
+    ):
+        published = item["update"].published_date
+        if published:
+            release_date = _ensure_utc(published).date()
+            week_start = release_date - timedelta(days=release_date.weekday())
+            week_end = week_start + timedelta(days=6)
+            week_range = f"{week_start.isoformat()} ~ {week_end.isoformat()}"
+        else:
+            week_range = "N/A"
+        weekly_items.setdefault(week_range, []).append(item)
+
+    deliveries: list[bool] = []
+    for week_range, items in sorted(weekly_items.items()):
+        delivered = await _send_digest_for_period(
+            items,
+            analyzer,
+            email_service,
+            date_range=week_range,
+            deadline=deadline,
+            estimate_s=estimate_s,
+            run_id=run_id,
+        )
+        deliveries.append(delivered)
+        logger.info(
+            "orchestrator_weekly_digest_complete",
+            run_id=run_id,
+            week_range=week_range,
+            update_count=len(items),
+            delivered=delivered,
+        )
+    return all(deliveries)
+
+
+async def _send_digest_for_period(
+    digest_items: list[dict],
+    analyzer: Any,
+    email_service: Any,
+    *,
+    date_range: str,
+    deadline: Any = None,
+    estimate_s: float = 0.0,
+    run_id: str = "",
+) -> bool:
+    """Customize and deliver one release week's digest to each recipient."""
     subscribers = await get_admin_configuration().get_subscribers()
-    date_range = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     try:
         if not subscribers:
@@ -745,10 +822,17 @@ async def _send_digest(
         if delivered < len(subscribers):
             logger.warning(
                 "orchestrator_digest_partial",
+                run_id=run_id,
+                week_range=date_range,
                 delivered=delivered,
                 total=len(subscribers),
             )
-        return delivered > 0
+        return delivered == len(subscribers)
     except Exception as exc:
-        logger.warning("orchestrator_digest_failed", error=str(exc))
+        logger.warning(
+            "orchestrator_digest_failed",
+            run_id=run_id,
+            week_range=date_range,
+            error=str(exc),
+        )
         return False

@@ -33,6 +33,15 @@ entry point입니다.
 Archive 평가 fixture는 운영 v1 투영과 같이 `job_relevance`, `visual_assets`, `resource_queries`를
 제외합니다. 전달 전용 필드를 수용하려고 불변 Archive 스키마를 완화하지 않습니다.
 
+프로비저닝 기본값은 코어 5개 역할에 `gpt-5-terra`와 `medium` 추론, Azure MCP에
+`gpt-5-luna`와 추론 옵션 생략입니다. 보고서 작성과 구독자 맞춤화는 코어에 유지합니다.
+`FOUNDRY_CORE_MODEL_DEPLOYMENT`, `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT`,
+`FOUNDRY_CORE_REASONING_EFFORT`로 정책을 지정하며, `--model` 또는 레거시
+`FOUNDRY_MODEL_DEPLOYMENT`가 있으면 선택한 모든 역할에 해당 모델을 적용합니다.
+`--dry-run`은 역할별 설정을 출력하고 `--check`는 모델·추론·샘플링 정책도 검사합니다.
+모델 변경 시 이전 생성 옵션은 제거합니다. 고객 설정 v2는 두 모델을 전달하고 v1은 기존
+단일 모델을 유지합니다. 모델 가용성·호환성과 실제 품질·지연·비용 검증은 별도입니다.
+
 ## 자주 쓰는 예시
 
 새 고객 설치는 [고객 가이드](../infra/CUSTOMER_DEPLOYMENT.md)를 따릅니다. 루트 `.env`가 없는

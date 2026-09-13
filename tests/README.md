@@ -59,6 +59,14 @@ python -m pytest tests/test_email.py tests/test_email_editorial.py -o "addopts="
 [test_resource_evidence.py](test_resource_evidence.py)는 327개 복원, ID 중복 제거, 부분 조회,
 긴 URL·범위 미지원 fallback, 실행 간 격리, Hosted 왕복과 맞춤화 불변성을 검사합니다.
 Archive 테스트는 모든 리소스가 v1에 남고 전달용 조회 메타데이터는 저장되지 않는지 확인합니다.
+[test_analyzer_parsing.py](test_analyzer_parsing.py)는 JSON·정규식 fallback의 `영향_리소스`와
+`영향받는_리소스` 호환성, 빈 배열을 포함한 표준 `affected_resources` 우선순위를 검사합니다.
+조회 계약을 바꾸면 이 세 테스트 파일을 함께 실행해 도구 등록부터 파서·직렬화·범위 제한·맞춤화·
+Archive까지 연결이 유지되는지 확인합니다.
+
+[test_orchestrator.py](test_orchestrator.py)는 한 실행의 UTC 월~일 게시 주별 발송을 검증합니다.
+100개 공지의 전체 보존, 시차·naive 날짜·연도 경계·날짜 없음, 수신자 언어·범위, 일부 주의
+발송 거절/예외 후 계속 처리와 `email_sent` 집계를 포함합니다. 이 변경은 스케줄 주기를 바꾸지 않습니다.
 
 이메일 화면 검사는 `python -m scripts.preview_email --output-dir out/email-editorial-preview --language all`
 실행 후 생성된 HTML 하나를 Playwright MCP에서 엽니다. `browser_run_code_unsafe`에 `filename`으로
@@ -69,11 +77,16 @@ HTTP만 허용합니다. ko/en/ja·single/digest·full/inline-only·1440/768/640
 `passed`, `failures`, 측정값을 반환합니다. `passed=true`를 수용 조건으로 사용합니다. file 미리보기의
 대표 스크린샷은 HTML과 같은 폴더에 저장하므로 입력 폴더를 반드시 `out/` 아래에 둡니다.
 숫자와 범례의 해석, 위계, 줄바꿈은 스크린샷을 열어 따로 평가하고 실패한 조합을 수정 후 재검사합니다.
-발행물 로고, 큰 건수, 장·목차 번호와 배지는 DOM range의 실제 글자 경계로 검사하고,
-데스크톱 15%/85% 제목 레일과 좁은 화면의 세로 배치도 확인합니다. 이메일 단위 테스트는
-20.625px/17.325px 제목·굵기 525, 데스크톱 첫 어절 줄바꿈·11px 리소스 건수·연속된 inline 폴백,
-18.75px/15.75px 요약과 13.5px 등급 글자·기존 배지 박스 보존 구조를 검사합니다.
-소수 픽셀도 크기 규칙에 포함하며 심미성은 같은 크기의 전후 스크린샷으로 따로 평가합니다.
+제목·리드·발행물 로고·건수·장/목차 번호·배지의 실제 글자 경계와, 모든 폭에서 제목 아래
+전체 폭 본문이 같은 시작선에 놓이는지 검사합니다. DBIR 참고 디자인 테스트는 40px/28px
+주제목, 24px/20px 섹션 제목, 18px/16px 평문 리드, 12px 단일 상태 라벨, sans 숫자를 확인합니다.
+브리프의 66%/34% 정렬과 fallback 세로 순서, 직접 라벨 가로 막대의 실제 길이·수치 경계·행 제목도
+검사합니다. 분석 완료 분모, 0건·100%·세 자리 집계는 renderer 테스트로 검증하며 15% 제목 레일,
+어절 강제 분절, 중복 숨김 배지는 요구하지 않습니다.
+음영 검사는 설명 박스 배경, 등급 셀 전체의 색과 테두리 없는 단일 텍스트를 포함합니다.
+본문은 공통 14px 토큰을 사용하며, 푸터 소개 문구 제거는 ko/en/ja HTML·일반 텍스트로 검증합니다.
+심미성은 같은 크기의 전후 스크린샷으로 따로 평가합니다. 기본 미리보기와 이미 전달한 현재
+미리보기 경로를 최종 코드로 갱신해야 이전 파일을 새 디자인으로 오인하지 않습니다.
 `--resource-count 327` 미리보기에서도 같은 매트릭스를 실행합니다. 대량 요약의 텍스트 경계와
 사유 그룹 제한, 범위·적용 조건, 포털 링크 이동을 합성 browser route로 검사합니다. 실제 포털
 조회는 실행하지 않습니다. `file:`가 차단되면 해당 `out/` 폴더만 loopback HTTP로 제공하고,

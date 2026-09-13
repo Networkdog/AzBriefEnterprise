@@ -75,7 +75,7 @@ function Invoke-AzdJson {
 
 function Assert-SetupContract {
     param([hashtable]$Setup)
-    if ($Setup.schemaVersion -ne 1) {
+    if ($Setup.schemaVersion -notin @(1, 2)) {
         throw 'Unsupported customerSetup contract. Deploy the current foundation template first.'
     }
     foreach ($name in @(
@@ -87,6 +87,19 @@ function Assert-SetupContract {
     )) {
         if (-not $Setup.ContainsKey($name) -or [string]::IsNullOrWhiteSpace($Setup[$name])) {
             throw "Missing customerSetup field: $name"
+        }
+    }
+    if ($Setup.schemaVersion -eq 2) {
+        foreach ($name in @('simpleModelDeploymentName', 'coreReasoningEffort')) {
+            if (-not $Setup.ContainsKey($name) -or [string]::IsNullOrWhiteSpace($Setup[$name])) {
+                throw "Missing customerSetup field: $name"
+            }
+        }
+        if ($Setup.coreReasoningEffort -cnotin @('low', 'medium', 'high')) {
+            throw 'Invalid coreReasoningEffort in customerSetup.'
+        }
+        if ($Setup.modelDeploymentName -eq $Setup.simpleModelDeploymentName) {
+            throw 'Core and simple model deployment names must be distinct.'
         }
     }
     foreach ($name in @('tenantId', 'subscriptionId', 'controlPlanePrincipalId')) {
@@ -312,6 +325,12 @@ try {
         FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED = 'true'
         AZURE_MCP_PROJECT_CONNECTION_NAME = "$($setup.azureMcpContainerAppName)-read-only"
     }
+    if ($setup.schemaVersion -eq 2) {
+        $bindings.FOUNDRY_MODEL_DEPLOYMENT = ''
+        $bindings.FOUNDRY_CORE_MODEL_DEPLOYMENT = $setup.modelDeploymentName
+        $bindings.FOUNDRY_SIMPLE_MODEL_DEPLOYMENT = $setup.simpleModelDeploymentName
+        $bindings.FOUNDRY_CORE_REASONING_EFFORT = $setup.coreReasoningEffort
+    }
     $roles = @{
         coordinator = 'COORDINATOR'; resourceGraph = 'RESOURCE_GRAPH'; azureMcp = 'AZURE_MCP'
         azureApi = 'AZURE_API'; reportWriter = 'REPORT_WRITER'; qualityReviewer = 'QUALITY_REVIEWER'
@@ -327,13 +346,18 @@ try {
     }
     $values = Invoke-AzdJson @('env', 'get-values')
     foreach ($name in $bindings.Keys) {
-        if ($values[$name] -ne $bindings[$name]) {
+        if ([string]$values[$name] -cne [string]$bindings[$name]) {
             throw "Customer azd binding mismatch: $name. Run Configure in the correct environment."
         }
     }
     $savedEnvironment = @{}
     try {
         $runtimeValues = $bindings.Clone()
+        if ($setup.schemaVersion -eq 1) {
+            $runtimeValues.FOUNDRY_CORE_MODEL_DEPLOYMENT = ''
+            $runtimeValues.FOUNDRY_SIMPLE_MODEL_DEPLOYMENT = ''
+            $runtimeValues.FOUNDRY_CORE_REASONING_EFFORT = 'medium'
+        }
         $runtimeValues.AZURE_MCP_SERVER_URL = [string]$values['AZURE_MCP_SERVER_URL']
         $runtimeValues.AZURE_CLIENT_ID = ''
         $runtimeValues.AZURE_CLIENT_SECRET = ''

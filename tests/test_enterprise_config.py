@@ -146,6 +146,39 @@ class TestFoundryAgentRoster:
 
 
 class TestSpecialistDeploymentContract:
+    def test_default_models_are_separate_and_deployed_serially(self):
+        template = json.loads(
+            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
+        )
+        parameters = template["parameters"]
+        assert parameters["modelDeploymentName"]["defaultValue"] == "gpt-5-terra"
+        assert parameters["modelName"]["defaultValue"] == "gpt-5-terra"
+        assert parameters["simpleModelDeploymentName"]["defaultValue"] == "gpt-5-luna"
+        assert parameters["simpleModelName"]["defaultValue"] == "gpt-5-luna"
+        assert parameters["coreReasoningEffort"]["defaultValue"] == "medium"
+        assert (
+            json.dumps(template).count('"name": "ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT"')
+            == 2
+        )
+        deployments = [
+            resource
+            for resource in template["resources"]
+            if resource["type"].lower() == "microsoft.cognitiveservices/accounts/deployments"
+        ]
+        assert len(deployments) == 2
+        simple = next(
+            resource for resource in deployments if "simpleModelDeploymentName" in resource["name"]
+        )
+        assert simple["properties"]["model"]["name"] == "[parameters('simpleModelName')]"
+        assert simple["sku"]["capacity"] == "[parameters('simpleModelCapacity')]"
+        assert "parameters('modelDeploymentName')" in json.dumps(simple["dependsOn"])
+        project = next(
+            resource
+            for resource in template["resources"]
+            if resource["type"].lower() == "microsoft.cognitiveservices/accounts/projects"
+        )
+        assert "simpleModelDeploymentName" in json.dumps(project["dependsOn"])
+
     def test_bootstrap_image_uses_its_actual_port_and_health_path(self):
         template = json.loads(
             Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
@@ -246,7 +279,10 @@ class TestSpecialistDeploymentContract:
         assert "-Stage Configure" in command
         assert "azd env set AZURE_SUBSCRIPTION_ID=" not in command
         setup = outputs["customerSetup"]["value"]
-        assert setup["schemaVersion"] == 1
+        assert setup["schemaVersion"] == 2
+        assert setup["simpleModelDeploymentName"] == "[parameters('simpleModelDeploymentName')]"
+        assert setup["coreReasoningEffort"] == "[parameters('coreReasoningEffort')]"
+        assert "-Stage Agents" in outputs["provisionAgentsCommand"]["value"]
         assert set(setup["specialistAgentNames"]) == {
             "coordinator",
             "resourceGraph",

@@ -192,7 +192,7 @@ async def test_execute_request_rejects_invalid_request():
 @pytest.mark.asyncio
 async def test_execute_request_withholds_internal_error():
     class FakeAnalyzer:
-        async def analyze_update(self, update, trace_id=None):
+        async def analyze_update(self, update, trace_id=None, scope=None):
             raise RuntimeError("secret internal detail")
 
     request = HostedAnalysisRequest(update=_update(), trace_id="trace-1")
@@ -200,5 +200,6 @@ async def test_execute_request_withholds_internal_error():
     response = await execute_request(request.model_dump_json(), FakeAnalyzer())
 
     assert response.status == "failed"
-    assert response.error == "Hosted analysis failed"
+    assert response.error == "Hosted analysis failed (RuntimeError)"
+    assert response.trace_id == "trace-1"
     assert "secret" not in response.error

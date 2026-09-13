@@ -17,7 +17,7 @@ Do not claim success — it is only success if you actually verified it.
 ## Project Overview
 
 AzBrief Enterprise is the enterprise edition of AzBrief and shares the same product identity, analysis core, and mission. It is an **Azure Update Intelligence Agent** for Azure administrators. One Microsoft Foundry **Hosted Agent** owns the complete custom LangGraph harness, tool execution, report-quality loop, and subscriber customization. Six distinct persisted Prompt Agents provide coordination, Resource Graph, Azure MCP, Azure API, report-writing, and quality-review expertise. Container Apps is the control plane: FastAPI/Admin/Archive/MCP, RSS selection, canonical analysis archiving, digest checkpointing, scheduling, and email delivery. It invokes the Hosted Agent through a strict versioned Responses contract and never constructs the analyzer locally.
-It analyzes Azure Update RSS feeds, queries the administrator's actual Azure resources via Resource Graph to assess relevance, evaluates each update on three independent axes — importance (update's inherent significance), impact (effect on the admin's resource environment), and job relevance (fit to the subscriber's role) — generates impact analysis and action items via AI Agent (LangChain/LangGraph), and delivers a consolidated daily digest email. All updates are analyzed without pre-filtering — the email summary displays a compact table with columns for 중요성, 영향도, and 직무연관성 (높음/보통/낮음 badges), and each title links to its detailed analysis below. It aims to provide practical help to Azure administrators who manage diverse roles.
+It analyzes Azure Update RSS feeds, queries the administrator's actual Azure resources via Resource Graph to assess relevance, evaluates each update on three independent axes — importance (update's inherent significance), impact (effect on the admin's resource environment), and job relevance (fit to the subscriber's role) — generates impact analysis and action items via AI Agent (LangChain/LangGraph), and delivers digests grouped by publication week. All updates are analyzed without pre-filtering — the email summary displays a compact table with columns for 중요성, 영향도, and 직무연관성 (높음/보통/낮음 shaded cells), and each title links to its detailed analysis below. It aims to provide practical help to Azure administrators who manage diverse roles.
 
 ### Product Identity and Direction
 
@@ -95,18 +95,10 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 ### Context Management
 
 - **Tool result budget**: Results exceeding 8,000 characters are not discarded. The full text is kept in `src/agent/context_store.py` and the prompt receives a preview plus a `[ref=Rn]` handle; the agent reaches the remainder with the `query_tool_result` tool. Applied at storage time, not display time
-- **Large resource sets**: `resource_evidence.py` keeps up to 64 query sets / 20,000 identity rows
-  per analysis. The writer selects only executed `resource_queries` references whose entire result
-  satisfies the applicability reason. Runtime code restores all collected identities and deduplicates
-  ARM IDs; partial pages, limits and missing IDs never become exact totals. Preserve the actual
-  scoped query, query scope and timestamp. Customization translates reasons, never membership.
 - **Structured compression**: When building task results summary, include status, method, purpose, and truncated results per task
 - **Prompt architecture**: Static system prompt (cacheable) + dynamic update context (per-analysis). System prompt includes role identity, tool usage guides, output format rules
 - **KQL knowledge base**: Persisted schema discoveries and successful queries avoid redundant exploratory calls
 - **JSON parsing resilience**: Multi-strategy fallback: direct parse → `strict=False` → brace-balancing closure. Never crashes on malformed LLM output
-- **Legacy resource keys**: Normal JSON and regex recovery accept `영향받는_리소스` and
-  `영향_리소스`. Keep canonical `affected_resources` authoritative, including an empty list;
-  display-label changes must not silently discard resource rows.
 
 ### Safety & Validation
 
@@ -290,9 +282,7 @@ never enable scheduling, and `maxConcurrentAnalyses=1` is the initial customer d
 explicit customer targets and a matching default CLI account, rejects a root developer `.env`,
 and isolates named azd environments. Keep `FOUNDRY_HOSTED_AGENT_NAME` aligned with `azure.yaml`.
 The initial Application stage updates both images and bootstrap probes; normal guarded image
-upgrades still use `scripts/deploy_dev.ps1`. That script rechecks Docker input fingerprints after
-tests and ACR build; source drift must stop before any runtime update, never bypass the checks.
-Only after analysis/archive/auth/email acceptance
+upgrades still use `scripts/deploy_dev.ps1`. Only after analysis/archive/auth/email acceptance
 may EnableSchedule recheck readiness and PATCH the Job while preserving configuration and
 Key Vault references. Never grant Hosted evidence permissions to the Container Apps or project
 identity. Local/mocked checks are not customer ARM validation or proof of delivery. Pin the CI
@@ -344,6 +334,15 @@ one due occurrence with an ETag-protected lease before constructing the analysis
 manual runs use a bounded `RunSelection` (checkpoint/date range/recent count/Update ID/Update URL),
 allow at most 100 targets, and never advance the scheduled digest checkpoint. Admin manual runs
 default to `send_email=false`; delivery is explicit, and `dry_run=true` cannot request email.
+Digest delivery groups completed analyses by UTC `published_date` into Monday-Sunday calendar
+weeks, oldest week first, with one email per week and recipient within the run. The range includes
+both week bounds; undated targets use a separate `N/A` group. Preserve every result and subscriber
+scope/language. This does not change schedules or deduplicate separate runs. `email_sent` requires every requested weekly delivery to
+report success. Failed/pending/deferred analyses or failed requested delivery make a real run
+`partial`, not `completed`; this does not add a retry outbox or resume Manual Runs automatically.
+Weekly delivery events carry `run_id`, `week_range`, count and outcome. Hosted failures preserve
+the request trace ID through the proxy into run logs and expose only the exception type, never
+the private message or traceback. Verify log access separately from application health.
 Run diagnostics expose only the safe `RunRecord` projection. Console-managed subscribers may be
 updated with ETag protection, while deployment subscribers remain immutable and cannot be shadowed.
 
@@ -529,50 +528,52 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 
 - Keep `HTML_EMAIL_TEMPLATE` and `HTML_DIGEST_TEMPLATE` on the shared `_EMAIL_DOCUMENT_START` /
   `_EMAIL_DOCUMENT_END` shell and masthead/header/section/footer/intro formatters. `EMAIL_COLORS`
-  defines a pure white canvas and paper, ink `#182b32`, and teal `#08746b`; never restore dark
-  navy heroes or rounded, shadowed cards.
+  defines white paper, graphite `#202124`, editorial red `#a92336`, and blue `#365b8c` links.
+  Use a research-report hierarchy, never colored cover panels or rounded, shadowed cards.
 - Korean resource sections use the shared `affected_resources` label `연관 리소스` in email,
   Archive, and judge Markdown; the empty label is `연관 리소스가 없습니다.`. Keep field names,
   resource selection, and immutable archived content unchanged.
-- At most 20 resource rows use the full table. Larger sets use unique counts and at most ten
-  reason groups in both HTML and plain text; disclose overlapping groups and incomplete evidence.
-  Generate Resource Graph Explorer URLs deterministically from validated, scope-preserving queries,
-  never model URLs or hundreds of IDs. Omit links for incomplete evidence, management-group or
-  join/union scope that cannot be reproduced, and encoded URLs over 4096 characters; use the trusted
-  Archive snapshot when available. Portal uses current reader RBAC/state, not the analysis snapshot.
-  Archive v1 excludes delivery-only `resource_queries` and row `id`/`query_refs` but retains every
-  collected resource's frozen identity/reason projection. Update the App/Job before new Hosted output
-  and publish changed Prompt Agent guidance; synthetic checks do not verify live delivery.
-- Keep the 13px body scale and explicit `cover=36` / `stat=48` display steps. The wordmark uses
-  36px and the main title uses 48px; both become 29px on mobile. Contents use 17px titles, 13px summaries
-  and separate 29px number cells. Takeaways use 18.75px on desktop and 15.75px on mobile at weight
-  700. Section headings use 20.625px/17.325px at weight 525. Prose retains
-  1.8–1.85 line height. Digest figures and chapter numbers use 48px tabular numerals;
-  counts fall back uniformly to 29px at three digits. Keep letter spacing at zero.
-- `format_email_section_html()` uses a 15% label / 85% content rail at >=800px, with a desktop-only
-  break after the first word. `count_text` renders resource counts separately at 11px. Its inline/MSO
-  default stacks full-width tables without forced heading breaks; `full_width=True` keeps contents wide. The masthead also
-  stacks by default and uses 44%/56% columns only with desktop media queries.
+- Keep the request-local resource evidence chain connected: `format_rg_result()` registers
+  executed results, `analyze_update()` isolates the catalog, and the report parser resolves
+  `resource_queries` into every collected identity. Serialize the delivery metadata, preserve
+  references during customization, and drop broader query metadata when narrowing scope.
+  Archive v1 excludes that metadata, not the resource projection. Preserve legacy Korean
+  resource-key parsing without overriding a present canonical `affected_resources` value.
+- Keep the 14px `FONT_SIZE_PX["body"]` for prose, a 28px bold wordmark, 40px main titles, 32px digest-detail titles, and 24px/20px
+  section headings at weight 700. Mobile titles use 28px. Plain leads use 18px/16px at weight 400.
+  Contents and action titles use 17px; their 24px numbers and 32px chapter numbers are bold tabular
+  figures. Count labels use 28px, uniformly 24px when any tier has three digits. Prose retains
+  1.8-1.85 line height. Keep zero letter spacing, prefer whole-word title wrapping, and retain an
+  anywhere fallback for unbroken identifiers. `text-wrap: balance` is progressive enhancement only.
+- `format_email_section_html()` puts complete headings above full-width content at every width.
+  `count_text` stays at 11px; retain the `full_width` API without a side-heading rail.
+  At >=800px the report header uses 66% summary / 34% independent assessment columns; narrower
+  and inline-only/MSO output stacks them. The masthead stacks by default and uses 35%/65% columns
+  only with desktop media queries.
 - Keep the shared email `FONT_STACK_SANS` exactly as
-  `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif`.
-  Never add remote webfonts; preserve the monospace stack for commands and code blocks.
-- Use shared `SEMANTIC_ACCENT_WIDTH_PX = 4` for level/verification badges, the
-  summary takeaway, concept boxes, and additional checks; retain badge top/bottom padding at 4px.
-  Level badges use 13.5px text while preserving the previous box dimensions: a zero-height,
-  invisible, aria-hidden 18px label preserves width and a 27px line height preserves height.
-  Each assessment label/badge pair lives in its own 33%-width
-  auto-layout table so it can wrap as a unit, even in inline-only output, without shrinking text.
-  Preserve visible status text, existing colors, thin neutral dividers, and text contrast **≥4.5:1**.
-- Keep the 640px inline/MSO baseline, 760px at 800px and 900px at 1100px. `azb-pad` gutters are 32px
-  by default, 48px at ≥1100px, 20px at ≤640px, and 16px at ≤400px; inline-only stays 32px. Impact
+  `'Noto Sans KR', 'AppleSDGothicR00', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif`.
+  Use the next installed font when a family is unavailable; `Malgun Gothic` is 맑은 고딕.
+  `FONT_STACK_DISPLAY` aliases it for wordmarks and numbers. Never embed a proprietary reference
+  font or load webfonts; preserve the monospace stack for commands and code blocks.
+- Use `SEMANTIC_ACCENT_WIDTH_PX = 2` for verification, concept notes, and additional checks.
+  Concept notes use the neutral `wash` background. Fill the entire `azb-level-cell` with the
+  level's light red/amber/green background, including inline `bgcolor`; the 12px/600 level text
+  has no border, own fill, padding or hidden duplicate. Cell padding is 8px. Label/value pairs keep
+  independent 33%-width auto-layout tables in the fallback, changing to rows only in the desktop
+  header's assessment column. Preserve status semantics and text contrast **>=4.5:1**.
+- Omit the analysis-basis footer tagline in every language; retain disclaimer, feedback,
+  generation metadata and actual evidence/reference links.
+- Keep the 640px inline/MSO baseline, 760px at 800px and 840px at 1100px. `azb-pad` gutters are 32px
+  by default, 40px at >=1100px, 20px at <=640px, and 16px at <=400px; inline-only stays 32px. Impact
   labels retain HTML/CSS width and min-width 96px with nowrap/keep-all, never a desktop 2×2 split.
-- Single reports and digest details share the white hero, takeaway, independent three-axis strip,
-  and two-column operational facts on a pale inset surface. Digest HTML counts analyzed tiers
-  separately from skipped rows on three tinted statistic panels; its 8px proportional bar uses
-  analyzed counts only, omits zero
-  segments, and never substitutes for the visible count labels. Keep every supplied item and use
-  full numbered titles with detail/back anchors. A full-width teal chapter band pairs a 48px
-  number with the return link using contrast-checked `on_accent` text. Inline-only/MSO contents
+- Single reports and digest details share the summary/assessment brief and a white two-column
+  operational ledger. Digest counts are three directly labeled 8px horizontal bars, with
+  `digest_analyzed` naming the `high + medium + low` denominator and skipped items shown separately.
+  Keep exact zero counts and row labels visible; zero bars have no fill and 100% bars no remainder.
+  The semantic table retains its caption and row headers; only redundant bar cells are aria-hidden.
+  Never invent trends, estimates or chart data. Keep every supplied item and full numbered titles
+  with detail/back anchors. Digest chapters use a 32px number and return link on white paper.
+  Inline-only/MSO contents
   put full-width titles above three labeled metrics;
   media-query desktops use 52% title / 16% per metric. Never restore a narrow fallback title column.
   Mobile metrics and resource cells retain labels, complete reasons, grouping, and Portal identity.
@@ -604,10 +605,9 @@ identity, verification display, contrast ≥4.5:1, and offline preview coverage.
 full-suite, browser, or real email-client validation; report only completed verification.
 Use `tests/browser/email_reports.cjs` against these local previews to repeat the 72-layout
 matrix (ko/en/ja, single/digest, full/inline-only, 1440/768/640/390/320/844px). Require `passed=true`,
-repeat with `--resource-count 327` for large-set summaries and intercepted Portal navigation,
 inspect screenshots in `out/`, repair observed defects, and repeat before accepting a design.
 Check actual text bounds for the wordmark, figures, chapter/contents numbers and badges, plus
-desktop rail alignment. Passing geometry checks do not establish aesthetic improvement:
+summary/assessment column alignment and directly labeled count-bar lengths. Passing geometry checks do not establish aesthetic improvement:
 compare same-size before/after images and explain which reference elements changed the composition.
 Do not infer actual reading-speed or Outlook/Gmail-client improvements from synthetic checks.
 
@@ -645,9 +645,22 @@ roster check.
 python -m scripts.provision_foundry_agents --dry-run   # print instructions, no project needed
 python -m scripts.provision_foundry_agents             # create/update all six specialists
 python -m scripts.provision_foundry_agents --roles resource_graph azure_api
-python -m scripts.provision_foundry_agents --check      # names + instructions + required tools
+python -m scripts.provision_foundry_agents --check      # model policy + names + instructions + tools
 python -m scripts.provision_foundry_agents --delete    # tear the roster down
 ```
+
+Provisioning defaults to `gpt-5-terra` with `medium` reasoning for coordinator, Resource Graph,
+Azure API, report writer (including subscriber customization), and quality reviewer; Azure MCP
+uses `gpt-5-luna` with reasoning omitted. Tier aliases use `FOUNDRY_CORE_MODEL_DEPLOYMENT` and
+`FOUNDRY_SIMPLE_MODEL_DEPLOYMENT`; core effort uses `FOUNDRY_CORE_REASONING_EFFORT` (low/medium/high).
+`--model` overrides `FOUNDRY_MODEL_DEPLOYMENT`, which overrides both tiers. Legacy overrides
+preserve same-model options; model changes discard old sampling/reasoning. Managed profiles omit
+temperature/top_p and `--check` rejects model, reasoning, and sampling drift. Customer setup v2
+binds both deployments and effort, while v1 keeps the explicit single-model behavior. Bicep deploys
+core then simple before the private endpoint/project; Admin readiness checks both configured
+deployments. These are requested defaults, not verified catalog capabilities: verify actual model
+IDs/versions, Responses/tools/strict JSON/reasoning, region, quota, cost and paired live quality
+before production promotion. Do not change developer `.env` or a live deployment implicitly.
 
 Foundry normalizes persisted MCP definitions by adding a trailing slash to the
 server URL and serializing `allowed_tools` as `{"tool_names": [...]}`. Roster
@@ -667,6 +680,12 @@ schemas are stored on the three evidence-specialist versions. `--check` verifies
 exact functions, managed server tools, instructions, and schemas. Non-app-owned Foundry tools
 are preserved only when they do not violate the app-owned role boundary.
 
+The architecture runtime section supplies Foundry-only documentation traversal policy to
+Coordinator, Azure MCP and Azure API: relevant first-hop documents are read, a second hop requires
+an unresolved decision question, and depth never exceeds two. Coordinator owns document fetching;
+specialists preserve public links/questions as gaps without expanding their tools or permissions.
+This describes compiled product behavior, not a Copilot browsing instruction.
+
 
 ### Required Environment Variables
 Copy `.env.example` to `.env` and fill in:
@@ -678,7 +697,9 @@ Copy `.env.example` to `.env` and fill in:
 - `FOUNDRY_AZURE_API_AGENT_NAME` (required)
 - `FOUNDRY_REPORT_WRITER_AGENT_NAME` (required)
 - `FOUNDRY_QUALITY_REVIEWER_AGENT_NAME` (required)
-- `FOUNDRY_MODEL_DEPLOYMENT` (provisioning only)
+- `FOUNDRY_MODEL_DEPLOYMENT` (optional legacy single-model provisioning override)
+- `FOUNDRY_CORE_MODEL_DEPLOYMENT` / `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT` (optional provisioning aliases; default Terra/Luna)
+- `FOUNDRY_CORE_REASONING_EFFORT` (optional provisioning effort; default `medium`)
 - `AZURE_SUBSCRIPTION_ID` (optional — omit for tenant-wide query)
 
 ---

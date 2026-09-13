@@ -168,18 +168,20 @@ async def execute_request(raw_request: str, analyzer: AnalysisRuntime) -> Hosted
                 result_payload = result.model_dump(mode="json")
             else:  # pragma: no cover - the discriminated contract is exhaustive
                 raise TypeError(f"Unsupported request type: {type(request).__name__}")
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "hosted_analysis_failed",
             operation=request.operation,
             trace_id=request.trace_id,
+            update_id=request.update.id,
+            error_type=type(exc).__name__,
         )
         return HostedAgentResponse(
             contract_version=response_contract_version,
             operation=request.operation,
             status="failed",
             trace_id=request.trace_id,
-            error="Hosted analysis failed",
+            error=f"Hosted analysis failed ({type(exc).__name__})",
         )
 
     logger.info(

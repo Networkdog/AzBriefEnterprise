@@ -291,7 +291,7 @@ input[type=checkbox], input[type=radio] { accent-color: var(--primary); }
 .segmented input:focus-visible + span { outline-color: var(--focus); }
 .source, .msg { color: var(--muted); }
 .s-completed { color: var(--success); }
-.s-running, .s-queued { color: var(--warning); }
+.s-running, .s-queued, .s-partial { color: var(--warning); }
 .s-failed { color: var(--danger); }
 .run-detail { border-top: 1px solid var(--line); }
 .run-detail-head h3 { color: var(--ink); }
@@ -509,7 +509,7 @@ __WEB_ICONS__
         </div>
         <div class="action-row">
           <span class="msg" id="msg" role="status"></span>
-          <label class="inline-check"><input type="checkbox" id="send-email"> Send digest email</label>
+          <label class="inline-check"><input type="checkbox" id="send-email"> Send weekly digest emails</label>
           <label class="inline-check"><input type="checkbox" id="dry"> Dry run</label>
           <button id="run" type="submit">Start run</button>
         </div>
@@ -627,7 +627,7 @@ function initializeTableFilters() {
       const select = document.createElement('select'); select.id = 'runs-filter';
       select.setAttribute('aria-label', 'Run status');
       [['', 'All statuses'], ['queued', 'Queued'], ['running', 'Running'], ['completed', 'Completed'],
-        ['failed', 'Failed']].forEach(([value, title]) => { select.add(new Option(title, value)); });
+        ['partial', 'Partial'], ['failed', 'Failed']].forEach(([value, title]) => { select.add(new Option(title, value)); });
       select.addEventListener('change', () => filterTable(id)); toolbar.append(select);
     }
     const count = document.createElement('span'); count.id = id + '-count'; count.className = 'table-count';
@@ -687,7 +687,7 @@ function selectorText(selection) {
 }
 
 function runStatusText(status) {
-  return ({queued: 'Queued', running: 'Running', completed: 'Completed', failed: 'Failed'})[status] || status;
+  return ({queued: 'Queued', running: 'Running', completed: 'Completed', partial: 'Partial', failed: 'Failed'})[status] || status;
 }
 
 function dateTimeTextForBasis(value, basis) {

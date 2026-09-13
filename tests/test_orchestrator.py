@@ -2,6 +2,7 @@
 
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 
@@ -175,10 +176,14 @@ class _FakeAnalyzer:
 class _FakeEmailService:
     def __init__(self, delivered: bool = True):
         self.calls: list[dict] = []
+        self.messages: list[dict] = []
         self._delivered = delivered
 
     async def send_digest_report(self, items, date_range=None, recipient=None, language=None):
         self.calls.append({"items": len(items), "recipient": recipient})
+        self.messages.append(
+            {"items": items, "date_range": date_range, "recipient": recipient, "language": language}
+        )
         return self._delivered
 
 
@@ -304,6 +309,89 @@ class TestExecuteRun:
         assert email.calls == [{"items": 3, "recipient": None}]
 
     @pytest.mark.asyncio
+    async def test_recent_100_updates_send_one_digest_per_release_week(self):
+        base = datetime(2026, 8, 1, tzinfo=UTC)
+        targets = [
+            _update(index, base + timedelta(days=index // 10, minutes=index % 10))
+            for index in range(100)
+        ]
+        record = RunRecord(
+            run_id="weekly-100",
+            selection=RunSelection(mode="recent", recent_count=100),
+            commit_checkpoint=False,
+        )
+        email = _FakeEmailService()
+
+        await execute_run(record, _FakeAnalyzer(), email, _FakeParser(list(reversed(targets))))
+
+        assert record.analyzed == 100
+        assert record.email_sent is True
+        assert email.calls == [{"items": count, "recipient": None} for count in (20, 70, 10)]
+        assert [message["date_range"] for message in email.messages] == [
+            "2026-07-27 ~ 2026-08-02",
+            "2026-08-03 ~ 2026-08-09",
+            "2026-08-10 ~ 2026-08-16",
+        ]
+        assert [item["update"].id for message in email.messages for item in message["items"]] == [
+            target.id for target in targets
+        ]
+
+    @pytest.mark.asyncio
+    async def test_digest_groups_offset_dates_in_utc_and_keeps_undated_separate(self):
+        targets = [
+            _update(0, datetime(2026, 8, 3, 1, tzinfo=timezone(timedelta(hours=9)))),
+            _update(1, datetime(2026, 8, 2, 23)),
+            _update(2, datetime(2026, 8, 3, tzinfo=UTC)),
+            _update(3, None),
+        ]
+        email = _FakeEmailService()
+
+        delivered = await _send_digest(
+            [
+                {"update": target, "result": SimpleNamespace(should_notify=True)}
+                for target in targets
+            ],
+            _FakeAnalyzer(),
+            email,
+        )
+
+        assert delivered is True
+        assert [message["date_range"] for message in email.messages] == [
+            "2026-07-27 ~ 2026-08-02",
+            "2026-08-03 ~ 2026-08-09",
+            "N/A",
+        ]
+        assert [len(message["items"]) for message in email.messages] == [2, 1, 1]
+
+    @pytest.mark.asyncio
+    async def test_digest_week_crosses_year_boundary_and_preserves_publication_order(self):
+        targets = [
+            _update(0, datetime(2026, 12, 31, tzinfo=UTC)),
+            _update(1, datetime(2027, 1, 3, 23, 59, tzinfo=UTC)),
+            _update(2, datetime(2027, 1, 4, tzinfo=UTC)),
+        ]
+        email = _FakeEmailService()
+
+        delivered = await _send_digest(
+            [
+                {"update": target, "result": SimpleNamespace(should_notify=True)}
+                for target in reversed(targets)
+            ],
+            _FakeAnalyzer(),
+            email,
+        )
+
+        assert delivered is True
+        assert [message["date_range"] for message in email.messages] == [
+            "2026-12-28 ~ 2027-01-03",
+            "2027-01-04 ~ 2027-01-10",
+        ]
+        assert [[item["update"].id for item in message["items"]] for message in email.messages] == [
+            ["u0", "u1"],
+            ["u2"],
+        ]
+
+    @pytest.mark.asyncio
     async def test_archive_is_committed_before_digest_and_cursor_completion(self):
         events = []
 
@@ -390,6 +478,61 @@ class TestExecuteRun:
 
         assert record.email_sent is True
         assert email.calls == [{"items": 1, "recipient": "managed@example.com"}]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failed_recipient", [None, "two@example.com"])
+    async def test_weekly_digests_preserve_recipients_languages_and_run_logs(
+        self, monkeypatch, failed_recipient
+    ):
+        from src.config import Subscriber
+
+        class Configuration:
+            async def get_subscribers(self):
+                return [
+                    Subscriber(email="one@example.com", name="One", language="en"),
+                    Subscriber(email="two@example.com", name="Two", language="ko"),
+                ]
+
+        class SelectiveEmailService(_FakeEmailService):
+            async def send_digest_report(self, items, **kwargs):
+                await super().send_digest_report(items, **kwargs)
+                return kwargs["recipient"] != failed_recipient
+
+        monkeypatch.setattr("src.orchestrator.get_admin_configuration", lambda: Configuration())
+        logger = Mock()
+        monkeypatch.setattr("src.orchestrator.logger", logger)
+        record = RunRecord(
+            run_id="weekly-subscribers",
+            selection=RunSelection(mode="recent", recent_count=72),
+            commit_checkpoint=False,
+        )
+        email = SelectiveEmailService()
+
+        await execute_run(record, _FakeAnalyzer(), email, _FakeParser(_targets(72)))
+
+        assert [
+            (message["date_range"], message["recipient"], message["language"])
+            for message in email.messages
+        ] == [
+            (week, recipient, language)
+            for week in ("2026-07-27 ~ 2026-08-02", "2026-08-03 ~ 2026-08-09")
+            for recipient, language in (("one@example.com", "en"), ("two@example.com", "ko"))
+        ]
+        assert [len(message["items"]) for message in email.messages] == [48, 48, 24, 24]
+        assert record.email_sent is (failed_recipient is None)
+        assert record.status == ("completed" if failed_recipient is None else "partial")
+        week_logs = [
+            call.kwargs
+            for call in logger.info.call_args_list
+            if call.args[0] == "orchestrator_weekly_digest_complete"
+        ]
+        assert [log["week_range"] for log in week_logs] == [
+            "2026-07-27 ~ 2026-08-02",
+            "2026-08-03 ~ 2026-08-09",
+        ]
+        assert [log["update_count"] for log in week_logs] == [48, 24]
+        assert all(log["run_id"] == record.run_id for log in week_logs)
+        assert all(log["delivered"] is (failed_recipient is None) for log in week_logs)
 
     @pytest.mark.asyncio
     async def test_subscribers_with_the_same_scope_share_one_scoped_analysis(self, monkeypatch):
@@ -551,7 +694,60 @@ class TestExecuteRun:
 
         assert record.analyzed == 3
         assert record.email_sent is False
+        assert record.status == "partial"
+        assert "weekly digests were not delivered" in record.error
         assert email.calls == [{"items": 3, "recipient": None}]
+
+    @pytest.mark.asyncio
+    async def test_consecutive_failures_mark_unfinished_manual_run_partial(self, monkeypatch):
+        monkeypatch.setenv("MAX_CONCURRENT_ANALYSES", "1")
+        targets = _targets(100)
+        analyzer = _FakeAnalyzer(fail_ids={target.id for target in targets[4:]})
+        email = _FakeEmailService()
+        record = RunRecord(
+            run_id="partial-manual",
+            selection=RunSelection(mode="recent", recent_count=100),
+            commit_checkpoint=False,
+        )
+
+        await execute_run(record, analyzer, email, _FakeParser(targets))
+
+        assert record.total == 100
+        assert record.analyzed == 4
+        assert record.failed == 3
+        assert record.pending == 93
+        assert record.status == "partial"
+        assert "3 failed" in record.error
+        assert "93 pending" in record.error
+        assert record.email_sent is True
+        assert record.checkpoint_committed is False
+        assert email.calls == [{"items": 4, "recipient": None}]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("raise_error", [False, True])
+    async def test_failed_weekly_delivery_does_not_skip_later_weeks_or_report_success(
+        self, raise_error
+    ):
+        class _RejectFirstWeek(_FakeEmailService):
+            async def send_digest_report(self, items, **kwargs):
+                await super().send_digest_report(items, **kwargs)
+                if raise_error and len(self.calls) == 1:
+                    raise RuntimeError("Synthetic delivery failure")
+                return len(self.calls) > 1
+
+        email = _RejectFirstWeek()
+        record = RunRecord(
+            run_id="partial-delivery",
+            selection=RunSelection(mode="recent", recent_count=72),
+            commit_checkpoint=False,
+        )
+
+        await execute_run(record, _FakeAnalyzer(), email, _FakeParser(_targets(72)))
+
+        assert len(email.messages) == 2
+        assert record.analyzed == 72
+        assert record.email_sent is False
+        assert record.status == "partial"
 
     @pytest.mark.asyncio
     async def test_archive_only_run_analyses_without_sending_email(self):

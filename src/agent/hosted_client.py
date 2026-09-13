@@ -36,6 +36,7 @@ class HostedAgentError(RuntimeError):
     def __init__(self, message: str, *, status_code: Optional[int] = None):
         super().__init__(message)
         self.status_code = status_code
+        self.trace_id = ""
 
 
 def hosted_agent_responses_endpoint(project_endpoint: str, agent_name: str) -> str:
@@ -179,14 +180,26 @@ class HostedAgentAnalyzer:
             scope=scope or AnalysisScope(),
             trace_id=uuid.uuid4().hex[:12],
         )
-        response = await invoke_hosted_agent(self.settings, request)
+        try:
+            response = await invoke_hosted_agent(self.settings, request)
+            result = AnalysisResult.model_validate(response.result)
+        except Exception as exc:
+            if isinstance(exc, HostedAgentError):
+                exc.trace_id = request.trace_id
+            logger.warning(
+                "foundry_hosted_analysis_failed",
+                trace_id=request.trace_id,
+                update_id=update.id,
+                error_type=type(exc).__name__,
+                status_code=getattr(exc, "status_code", None),
+            )
+            raise
         logger.info(
             "foundry_hosted_analysis_done",
             trace_id=request.trace_id,
             update_id=update.id,
             scoped=request.scope.is_bounded,
         )
-        result = AnalysisResult.model_validate(response.result)
         result._hosted_trace_id = request.trace_id
         return result
 

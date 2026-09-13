@@ -136,12 +136,21 @@ class AdminReadinessCollector:
                     f"{account_id}/projects/{quote(project, safe='')}",
                     _COGNITIVE_API_VERSION,
                 )
-            model = self.settings.admin_readiness_foundry_model_deployment
-            if model:
-                requests["foundry_model_deployment"] = (
-                    f"{account_id}/deployments/{quote(model, safe='')}",
-                    _MODEL_DEPLOYMENT_API_VERSION,
-                )
+            for check_id, model in (
+                (
+                    "foundry_model_deployment",
+                    self.settings.admin_readiness_foundry_model_deployment,
+                ),
+                (
+                    "foundry_simple_model_deployment",
+                    self.settings.admin_readiness_foundry_simple_model_deployment,
+                ),
+            ):
+                if model:
+                    requests[check_id] = (
+                        f"{account_id}/deployments/{quote(model, safe='')}",
+                        _MODEL_DEPLOYMENT_API_VERSION,
+                    )
         for name in self.settings.get_admin_readiness_container_environments():
             requests[f"environment:{name}"] = (
                 f"{base}/providers/Microsoft.App/managedEnvironments/{quote(name, safe='')}",
@@ -251,32 +260,48 @@ class AdminReadinessCollector:
                 "Check the Foundry project name and provisioning state.",
             ),
         ]
-        model_name = settings.admin_readiness_foundry_model_deployment or "Not configured"
-        model_envelope = arm.get("foundry_model_deployment", {})
-        model_data = model_envelope.get("data") or {}
-        model_properties = model_data.get("properties", {})
-        model_state = str(model_properties.get("provisioningState", "") or "")
-        model = model_properties.get("model", {}) or {}
-        sku = model_data.get("sku", {}) or {}
-        model_ok = bool(model_envelope.get("success") and model_state.casefold() == "succeeded")
-        model_detail = (
-            f"{model_name} · {model_state or 'no status'} · "
-            f"{model.get('name', 'no model')} {model.get('version', '')} · "
-            f"{sku.get('name', 'no SKU')} capacity {sku.get('capacity', 'none')}"
-        )
-        if not model_envelope.get("success"):
-            model_detail = (
-                f"{model_name} · lookup failed " f"({model_envelope.get('error', 'UnknownError')})"
-            )
-        checks.append(
-            _check(
+        model_checks = [
+            (
                 "foundry_model_deployment",
                 "Foundry model deployment",
-                model_ok,
-                model_detail,
-                "Check the model deployment name, version, SKU, quota, and provisioning state.",
+                settings.admin_readiness_foundry_model_deployment or "Not configured",
             )
-        )
+        ]
+        if settings.admin_readiness_foundry_simple_model_deployment:
+            model_checks.append(
+                (
+                    "foundry_simple_model_deployment",
+                    "Foundry simple-task model deployment",
+                    settings.admin_readiness_foundry_simple_model_deployment,
+                )
+            )
+        for check_id, label, model_name in model_checks:
+            model_envelope = arm.get(check_id, {})
+            model_data = model_envelope.get("data") or {}
+            model_properties = model_data.get("properties", {})
+            model_state = str(model_properties.get("provisioningState", "") or "")
+            model = model_properties.get("model", {}) or {}
+            sku = model_data.get("sku", {}) or {}
+            model_ok = bool(model_envelope.get("success") and model_state.casefold() == "succeeded")
+            model_detail = (
+                f"{model_name} · {model_state or 'no status'} · "
+                f"{model.get('name', 'no model')} {model.get('version', '')} · "
+                f"{sku.get('name', 'no SKU')} capacity {sku.get('capacity', 'none')}"
+            )
+            if not model_envelope.get("success"):
+                model_detail = (
+                    f"{model_name} · lookup failed "
+                    f"({model_envelope.get('error', 'UnknownError')})"
+                )
+            checks.append(
+                _check(
+                    check_id,
+                    label,
+                    model_ok,
+                    model_detail,
+                    "Check the model deployment name, version, SKU, quota, and provisioning state.",
+                )
+            )
 
         agents = agent_result.get("data") or {}
         data_plane_ok = bool(agent_result.get("success"))

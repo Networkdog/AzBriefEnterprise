@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
@@ -97,6 +98,54 @@ _APP_OWNED_FUNCTION_NAMES = (
     frozenset().union(*SPECIALIST_LOCAL_TOOL_NAMES.values()) | _RETIRED_APP_FUNCTION_NAMES
 )
 _PRESERVE_DEFINITION_VALUE = object()
+
+
+@dataclass(frozen=True)
+class ModelProfile:
+    """Resolved provisioning policy for one specialist's model deployment."""
+
+    model: str
+    reasoning_effort: Optional[str] = None
+    manage_reasoning: bool = True
+
+
+def resolve_model_profile(role: str, model: Optional[str] = None) -> ModelProfile:
+    """Resolve CLI, legacy environment, then role-tier model configuration."""
+    if role not in SPECIALIST_AGENT_ROLES:
+        raise ValueError(f"Unknown specialist role: {role}")
+    settings = get_settings()
+    override = (model or "").strip() or (settings.foundry_model_deployment or "").strip()
+    if override:
+        return ModelProfile(override, manage_reasoning=False)
+    if role == "azure_mcp":
+        deployment = (settings.foundry_simple_model_deployment or "").strip() or "gpt-5-luna"
+        return ModelProfile(deployment)
+    deployment = (settings.foundry_core_model_deployment or "").strip() or "gpt-5-terra"
+    return ModelProfile(deployment, settings.foundry_core_reasoning_effort)
+
+
+def _model_profile_drift(version: Any, profile: ModelProfile) -> list[str]:
+    """Return model and managed generation options that differ from policy."""
+    definition = getattr(version, "definition", None)
+    issues = []
+    if getattr(definition, "model", None) != profile.model:
+        issues.append(f"model must be {profile.model}")
+    if profile.manage_reasoning:
+        reasoning = getattr(definition, "reasoning", None)
+        effort = (
+            reasoning.get("effort")
+            if isinstance(reasoning, dict)
+            else getattr(reasoning, "effort", None)
+        )
+        if effort != profile.reasoning_effort or (
+            profile.reasoning_effort is None and reasoning is not None
+        ):
+            issues.append(f"reasoning effort must be {profile.reasoning_effort or 'omitted'}")
+        if any(
+            getattr(definition, option, None) is not None for option in ("temperature", "top_p")
+        ):
+            issues.append("temperature and top_p must be omitted")
+    return issues
 
 
 def specialist_instructions(role: str) -> str:
@@ -262,6 +311,7 @@ class _FoundryAdminClient:
         previous_definition: Any = None,
         managed_tools: Optional[list[Any]] = None,
         managed_text: Any = _PRESERVE_DEFINITION_VALUE,
+        managed_reasoning: Any = _PRESERVE_DEFINITION_VALUE,
     ):
         """Create an immutable Prompt Agent version, preserving prior configuration."""
         from azure.ai.projects.models import PromptAgentDefinition
@@ -278,12 +328,20 @@ class _FoundryAdminClient:
             and _server_tool_key(tool) not in _APP_OWNED_SERVER_TOOL_KEYS
             and _server_tool_key(tool) not in managed_server_keys
         ]
+        same_model = getattr(previous_definition, "model", None) == model
+        preserve_sampling = same_model and managed_reasoning is _PRESERVE_DEFINITION_VALUE
         definition = PromptAgentDefinition(
             model=model,
             instructions=instructions,
-            temperature=getattr(previous_definition, "temperature", None),
-            top_p=getattr(previous_definition, "top_p", None),
-            reasoning=getattr(previous_definition, "reasoning", None),
+            temperature=(
+                getattr(previous_definition, "temperature", None) if preserve_sampling else None
+            ),
+            top_p=getattr(previous_definition, "top_p", None) if preserve_sampling else None,
+            reasoning=(
+                managed_reasoning
+                if managed_reasoning is not _PRESERVE_DEFINITION_VALUE
+                else getattr(previous_definition, "reasoning", None) if same_model else None
+            ),
             tools=[*(managed_tools or []), *preserved_tools],
             tool_choice=getattr(previous_definition, "tool_choice", None),
             text=(
@@ -434,7 +492,9 @@ def _roster_conflicts(roster: list[tuple[str, str]]) -> dict[str, set[str]]:
     }
 
 
-def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: bool) -> int:
+def provision(
+    roster: list[tuple[str, str]], model: Optional[str], dry_run: bool, delete: bool
+) -> int:
     """Create, update or delete the roster. Returns a process exit code."""
     conflicts = _roster_conflicts(roster)
     if conflicts:
@@ -451,8 +511,15 @@ def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: 
     # Output goes to a Windows console too, where the default code page cannot
     # encode em dashes or box drawing.
     print(f"Project : {endpoint or '(not set)'}")
-    print(f"Model   : {model}")
     print(f"Agents  : {', '.join(f'{n} ({s})' for n, s in roster)}\n")
+    profiles = {role: resolve_model_profile(role, model) for _, role in roster}
+    for role, profile in profiles.items():
+        reasoning = (
+            profile.reasoning_effort or "omitted"
+            if profile.manage_reasoning
+            else "unmanaged (single-model override)"
+        )
+        print(f"Model   : {role} -> {profile.model} (reasoning={reasoning})")
 
     if dry_run:
         for name, role in roster:
@@ -493,18 +560,26 @@ def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: 
                     *_managed_function_tools().get(role, ()),
                 ]
                 managed_text = build_specialist_text_options(role)
+                profile = profiles[role]
+                managed_reasoning = _PRESERVE_DEFINITION_VALUE
+                if profile.manage_reasoning:
+                    managed_reasoning = (
+                        {"effort": profile.reasoning_effort} if profile.reasoning_effort else None
+                    )
                 latest = _latest_version(existing) if existing is not None else None
                 if existing is None:
                     created = client.create_version(
                         name,
-                        model,
+                        profile.model,
                         instructions,
                         managed_tools=managed_tools,
                         managed_text=managed_text,
+                        managed_reasoning=managed_reasoning,
                     )
                     print(f"created {name} (version {created.version})")
                 elif (
-                    _definition_matches(latest, model, instructions)
+                    _definition_matches(latest, profile.model, instructions)
+                    and not _model_profile_drift(latest, profile)
                     and _has_managed_tools(latest, role)
                     and not _server_tool_drift(latest, role)
                     and _has_managed_text(latest, role)
@@ -513,11 +588,12 @@ def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: 
                 else:
                     created = client.create_version(
                         name,
-                        model,
+                        profile.model,
                         instructions,
                         previous_definition=getattr(latest, "definition", None),
                         managed_tools=managed_tools,
                         managed_text=managed_text,
+                        managed_reasoning=managed_reasoning,
                     )
                     print(f"updated {name} (version {created.version})")
             except Exception as exc:  # one bad role must not abort the rest
@@ -531,7 +607,7 @@ def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: 
     return 1 if failures else 0
 
 
-def validate_roster(roster: list[tuple[str, str]]) -> int:
+def validate_roster(roster: list[tuple[str, str]], model: Optional[str] = None) -> int:
     """Validate the deployed roster without changing Foundry data-plane objects."""
     conflicts = _roster_conflicts(roster)
     if conflicts:
@@ -563,6 +639,11 @@ def validate_roster(roster: list[tuple[str, str]]) -> int:
                 print(f"NO-VERSION {name} ({purpose})")
                 continue
             definition = getattr(latest, "definition", None)
+            profile = resolve_model_profile(purpose, model)
+            model_issues = _model_profile_drift(latest, profile)
+            if model_issues:
+                failures += 1
+                print(f"MODEL-POLICY {name} ({purpose}) {'; '.join(model_issues)}")
             configuration_error = _server_tool_configuration_error(purpose)
             if configuration_error:
                 failures += 1
@@ -622,7 +703,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default=None,
-        help="Model deployment name (default: FOUNDRY_MODEL_DEPLOYMENT)",
+        help="Override all selected roles with one deployment (or FOUNDRY_MODEL_DEPLOYMENT)",
     )
     parser.add_argument(
         "--roles",
@@ -638,14 +719,10 @@ def main() -> None:
     operation.add_argument("--delete", action="store_true", help="Delete the roster instead")
     args = parser.parse_args()
 
-    settings = get_settings()
-    model = args.model or settings.foundry_model_deployment
-    if not model and not args.delete and not args.check:
-        parser.error("--model or FOUNDRY_MODEL_DEPLOYMENT is required")
     roster = resolve_specialist_roster(args.roles)
     if args.check:
-        sys.exit(validate_roster(roster))
-    sys.exit(provision(roster, model or "(not used)", args.dry_run, args.delete))
+        sys.exit(validate_roster(roster, args.model))
+    sys.exit(provision(roster, args.model, args.dry_run, args.delete))
 
 
 if __name__ == "__main__":

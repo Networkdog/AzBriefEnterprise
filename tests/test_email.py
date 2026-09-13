@@ -38,6 +38,26 @@ class TestEmailContentBuilding:
         assert "html_content" in content
         assert "plain_content" in content
 
+    @pytest.mark.parametrize("builder", ["single", "digest"])
+    @pytest.mark.parametrize("language", ["ko", "en", "ja"])
+    def test_report_omits_analysis_basis_tagline(
+        self, sample_update, sample_analysis_result, builder, language
+    ):
+        service = EmailService()
+        if builder == "single":
+            content = service.build_email_content(
+                sample_update, sample_analysis_result, language=language
+            )
+        else:
+            content = service.build_digest_content(
+                [{"update": sample_update, "result": sample_analysis_result, "skip_reason": ""}],
+                date_range="2026-09-07 ~ 2026-09-13",
+                language=language,
+            )
+        for channel in ("html_content", "plain_content"):
+            assert get_labels(language)["footer_basis"] not in content[channel]
+        assert get_labels(language)["disclaimer_title"] in content["html_content"]
+
     def test_email_subject_format(self, sample_update, sample_analysis_result):
         """Subject line contains [AzBrief] prefix and update title."""
         service = EmailService()
@@ -446,7 +466,7 @@ class TestEmailContentBuilding:
 
     @pytest.mark.parametrize("builder", ["single", "digest"])
     def test_font_sizes_follow_the_type_scale(self, sample_update, sample_analysis_result, builder):
-        """Every rendered size is a step on the 13px-body scale."""
+        """Every rendered size is a step on the body type scale."""
         service = EmailService()
         if builder == "single":
             html = service.build_email_content(
@@ -469,24 +489,24 @@ class TestEmailContentBuilding:
         assert f"font-size: {FONT_SIZE_PX['heading']}px" in html
 
     def test_type_scale_is_ordered_and_body_is_the_email_default(self):
-        """The scale keeps its hierarchy and anchors body copy at 13px."""
+        """The scale keeps its hierarchy and anchors body copy at 14px."""
         assert FONT_SIZE_PX == {
             "meta": 11,
             "secondary": 12,
-            "body": 13,
-            "badge_text": 13.5,
+            "body": 14,
+            "badge_text": 12,
             "heading": 15,
-            "section_mobile": 15.75,
+            "section_mobile": 16,
             "title": 17,
-            "section_heading_mobile": 17.325,
+            "section_heading_mobile": 20,
             "badge": 18,
-            "section": 18.75,
-            "section_heading": 20.625,
-            "masthead": 21,
-            "display": 25,
-            "hero": 29,
-            "cover": 36,
-            "stat": 48,
+            "section": 18,
+            "section_heading": 24,
+            "masthead": 24,
+            "display": 28,
+            "hero": 32,
+            "cover": 40,
+            "stat": 40,
         }
         steps = [
             FONT_SIZE_PX[k]
@@ -494,12 +514,9 @@ class TestEmailContentBuilding:
                 "meta",
                 "secondary",
                 "body",
-                "badge_text",
                 "heading",
                 "section_mobile",
                 "title",
-                "section_heading_mobile",
-                "badge",
                 "section",
                 "section_heading",
                 "masthead",
@@ -510,7 +527,7 @@ class TestEmailContentBuilding:
             )
         ]
         assert steps == sorted(steps)
-        assert len(set(steps)) == len(steps)
+        assert FONT_SIZE_PX["section_heading"] < FONT_SIZE_PX["cover"]
 
     def test_digest_metric_columns_are_shrinkable(self, sample_update, sample_analysis_result):
         """Digest importance/impact/job-relevance cells carry the narrow-screen class."""
@@ -527,7 +544,7 @@ class TestEmailContentBuilding:
     def test_font_stacks_follow_email_policy(self):
         """Prose uses the requested font order while code remains monospaced."""
         assert FONT_STACK_SANS == (
-            "'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif"
+            "'Noto Sans KR', 'AppleSDGothicR00', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif"
         )
 
         for family in (

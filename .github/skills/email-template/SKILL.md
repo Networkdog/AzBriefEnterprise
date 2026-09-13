@@ -28,6 +28,19 @@ description: 'Edit HTML email templates for AzBrief reports. Use when: email tem
 - Modifying `EmailService` in `src/email/service.py`
 - Adding plain text fallback content
 
+## Weekly Delivery Boundary
+
+`src/orchestrator.py` groups results by UTC Monday-Sunday publication week before customization
+and delivery. Send one email per week and recipient within the run, oldest week and update first;
+show both week bounds. Undated targets use `N/A`, not the current week. Keep every report,
+scoped evidence boundary and subscriber language. This does not change schedules or deduplicate
+separate runs. Admin's `Send weekly digest emails` still requires explicit delivery opt-in.
+An individual week/recipient failure must not suppress later sends, but aggregate `email_sent`
+is true only if all requested weekly deliveries report success. Runs with analysis gaps or failed
+delivery are `partial`; the processing checkpoint is not a delivery outbox. Cover 100 updates
+across ten release dates, UTC/naive timestamps, year/week boundaries, and mixed delivery outcomes
+in `tests/test_orchestrator.py`. Log `orchestrator_weekly_digest_complete` with `week_range`.
+
 ## File Structure
 
 | File | Purpose |
@@ -69,36 +82,39 @@ Both use `str.format()` placeholders and the shared `_EMAIL_DOCUMENT_START` / `_
 shell: one preheader, masthead, white paper surface, and footer. Inline CSS is the fallback;
 head styles add client resets and responsive enhancements. This is not a Jinja template.
 
-`EMAIL_COLORS` centralizes a pure white canvas and paper, ink `#182b32`, and teal `#08746b`.
-Keep the editorial hierarchy, not the former dark navy hero or rounded, shadowed cards. Shared
-section headings use 20.625px on desktop and 17.325px on mobile at weight 525. Takeaways retain
-18.75px/15.75px at weight 700; prose uses 13px
-text with 1.8–1.85 line height. Single reports and digest details share a white hero, takeaway,
-independent importance/impact/job-relevance strip, and two-column operational facts.
+`EMAIL_COLORS` centralizes white paper, graphite `#202124`, body `#404348`, muted `#62666d`,
+rules `#dedfe3`, editorial red `#a92336`, and blue `#365b8c` links. The reference-led research-report
+composition uses full-width body sections and plain leads, never tinted cover panels or side-heading
+rails. At >=800px the report header pairs a 66% summary with a 34% independent assessment column;
+narrower and inline-only layouts stack them. Main titles use 40px, digest-detail titles 32px and
+section headings 24px at weight 700. Mobile titles use 28px and section headings 20px. Leads use
+18px/16px at weight 400; prose uses the 14px `FONT_SIZE_PX["body"]` with 1.8-1.85 line height. Titles prefer whole words,
+retain an anywhere fallback for long identifiers, and use `text-wrap: balance` only as enhancement.
 
-Use shared `SEMANTIC_ACCENT_WIDTH_PX = 4` for level and verification badges,
-the summary takeaway, concept boxes, and additional checks. Retain badge top/bottom padding at
-4px. Level badges use 13.5px text with unchanged box dimensions: an invisible, zero-height,
-aria-hidden 18px label preserves width and a 27px line height preserves height.
-Assessment label/badge pairs use independent 33%-width
-auto-layout tables that wrap together when space is insufficient, including inline-only output.
-Preserve visible status text, existing colors, thin neutral dividers, and text contrast
-**≥4.5:1**.
+`FONT_STACK_DISPLAY` aliases `FONT_STACK_SANS`; wordmarks and numerals use the same sans family at
+weight 700. Do not embed a reference document's proprietary font, graphics or statistics. The
+Korean-friendly body and monospace command stacks remain unchanged; no remote font is loaded.
+Verification, concept notes and additional checks use 2px rules.
+Concept notes also use the neutral `wash` fill. Each `azb-level-cell` uses the level's light
+red/amber/green fill in both inline CSS and `bgcolor`, with 8px padding. Level text is one visible
+12px label, weight 600 and 18px line height, without its own border, fill or padding. Do not add
+duplicate hidden labels. Label/value pairs keep independent 33%-width auto-layout tables for inline-only wrapping.
+Preserve status semantics and text contrast **≥4.5:1** on all retained surfaces.
 
 ### Helper Functions
 
 | Function | Purpose |
 |----------|---------|
-| `format_email_masthead_html()` | 36px publication wordmark and edition/date metadata; stacked baseline, desktop columns |
-| `format_report_header_html()` | White 48px single/36px digest title area, 18.75px takeaway, independent three-axis strip, safe source/Archive links, and digest back-link; title/takeaway become 29px/15.75px on mobile |
-| `format_email_section_html()` | 20.625px desktop/17.325px mobile heading at weight 525, 15%/85% desktop label/content rail with first-word breaks, continuous stacked fallback; optional `count_text` stays at 11px and `full_width=True` keeps contents wide |
-| `format_email_footer_html()` | Shared localized disclaimer, generation metadata, and Feedback link |
-| `format_digest_intro_html()` | HTML digest totals with analyzed high/medium/low counts separate from skipped items |
+| `format_email_masthead_html()` | 28px bold sans wordmark and issue/date metadata over a 1px rule; stacked baseline, 35%/65% desktop columns |
+| `format_report_header_html()` | 40px single/32px digest title, 18px lead, 66%/34% summary/assessment at >=800px; full-width stacked fallback, source/Archive links and numbered digest opener |
+| `format_email_section_html()` | Complete 24px desktop/20px mobile editorial-red heading at weight 700 above full-width content; `count_text` stays at 11px; `full_width` remains compatible without a side rail |
+| `format_email_footer_html()` | Localized disclaimer, generation metadata and Feedback link; no analysis-basis tagline |
+| `format_digest_intro_html()` | Three directly labeled count bars with an explicit analyzed-only denominator and separately reported skipped items |
 | `format_impact_section_html()` | 영향/기회 차원(비용·보안·성능·운영). `update_category`가 `CAPABILITY_CATEGORIES`(new_feature, new_service, region_expansion, preview, sdk_tooling)면 섹션 제목이 `impact_analysis`(영향 분석) 대신 `opportunity_analysis`(활용 기회)로 바뀜다 |
 | `format_affected_resources_html()` | Full identity grid through 20 rows; larger sets use unique-ID totals, at most 10 reason groups, and validated query/Archive links |
 | `format_affected_resources_text()` | Shared evidence-based resource section for single and digest plain text, without HTML-to-text conversion |
 | `format_resource_count_text()` | Deduplicated confirmed counts with explicit unknown totals for partial or legacy evidence |
-| `format_action_items_html()` | Numbered `01` action sheets: context, procedure, dark monospaced command, schedule, guardrails; verification and safe Portal/Cloud Shell links are unchanged |
+| `format_action_items_html()` | Unboxed action sheets with 24px bold sans numbers, 17px titles, rules, context, procedure, dark monospaced command, schedule and guardrails; safety and links are unchanged |
 | `format_reference_docs_html()` | Numbered references with a factual 1-2 sentence `description` and report-specific `related_content` |
 | `format_additional_checks_html()` | Additional verification items, placed before references |
 | `format_quick_decision_html()` | Two-column operational facts (scope, action, deadline, work), stacked on mobile |
@@ -119,16 +135,19 @@ Preserve visible status text, existing colors, thin neutral dividers, and text c
 | `get_importance_colors(importance)` | Color scheme by importance level |
 | `_urgency_to_level(urgency, impact_level)` | Map impact_level to three-tier level; falls back to urgency if not available |
 | `_relevance_to_level(relevance, job_relevance)` | Map job_relevance to three-tier level; falls back to relevance if not available |
-| `_level_badge_html(level, lang)` | Color-coded badge span for a level (높음/보통/낮음) |
+| `_level_badge_html(level, lang)` | Unboxed level text (높음/보통/낮음); its parent cell owns the shading |
 
-Digest counts use 48px tabular numerals on three tinted panels and an 8px proportional bar. Its denominator
-is `high + medium + low`, never total items including skipped rows; omit zero segments and the
-whole bar for zero analyzed items. The bar is redundant/aria-hidden, with exact localized counts
-always visible. At three digits all counters use 29px. Contents use 17px titles, 13px summaries
-and separate 29px number cells. Digest details open with a full-width teal band holding a 48px
-number and contents-return link in `on_accent`; single reports omit chapter navigation. Takeaways
-use 18.75px text, reduced to 15.75px by mobile media queries. Operational
-facts use a pale inline background with a teal top rule and 12px/16px cell padding. Title letter
+Digest counts use 28px bold tabular numerals in three labeled rows beside 8px horizontal bars.
+Use 24px for all three values when any count reaches three digits. Each bar's denominator is
+`high + medium + low`, explicitly named by `digest_analyzed`, never a total including skipped rows.
+Keep zero labels/counts without fill; a 100% bar has no remainder cell. The table retains its
+caption and `scope="row"` headers; only redundant graphic cells are aria-hidden. Counts have no
+leading zeros, text inside fills or fabricated trend data. Contents use 17px titles, 14px summaries
+and separate 24px bold number cells.
+Digest details open on white with a 32px bold number and contents-return link below a rule;
+single reports omit chapter navigation. Leads use 18px text, reduced to 16px on mobile, without
+a background or accent border. Operational facts use white cells with 1px row rules and 15px
+values; the heading and content share one left edge. Title letter
 spacing is zero. Remote images are limited to deterministic `visual_assets` extracted from fetched
 Microsoft Learn article bodies: PNG/JPEG/GIF over HTTPS on the dedicated Microsoft image allow-list,
 with non-empty alt text, captions, and source links. Single reports show at most two; digests show at
@@ -197,7 +216,7 @@ fixtures for the three web surfaces without Azure calls or delivery; pair page t
 2. **Head styles enhance the baseline** — `_CLIENT_COMPAT_STYLE` supplies resets and `_RESPONSIVE_STYLE` supplies media queries; neither replaces inline defaults
 3. **CSS classes for responsive targeting** — retain matching `azb-*` classes so media queries can override inline styles. `azb-card` is the width hook, not a rounded-card design
 4. **No custom dark-mode overrides** — `_DARK_MODE_STYLE` is intentionally inert and the document declares `light only`; client auto-dark-mode remains client-controlled
-5. **`_CLIENT_COMPAT_STYLE` constant (Outlook/Windows hardening)** — head `<style>` block with `table { mso-table-lspace/rspace: 0pt }` (removes Outlook Word-engine cell spacing), `img` resets, and `word-break` for `.azb-cli`/`.azb-code`. Windows Outlook honors `<head>` styles (Gmail strips them, but Gmail needs no `mso-*`). Use `_CLIENT_COMPAT_STYLE_ESCAPED` in `.format()` contexts. Set the shared `FONT_STACK_SANS` exactly to `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif`; commands and code blocks retain the separate monospace stack
+5. **`_CLIENT_COMPAT_STYLE` constant (Outlook/Windows hardening)** — head `<style>` block with `table { mso-table-lspace/rspace: 0pt }` (removes Outlook Word-engine cell spacing), `img` resets, and `word-break` for `.azb-cli`/`.azb-code`. Windows Outlook honors `<head>` styles (Gmail strips them, but Gmail needs no `mso-*`). Use `_CLIENT_COMPAT_STYLE_ESCAPED` in `.format()` contexts. Set the shared `FONT_STACK_SANS` exactly to `'Noto Sans KR', 'AppleSDGothicR00', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif`; unavailable families fall back to the next installed font without remote font loading. Commands and code blocks retain the separate monospace stack
 6. **`_RESPONSIVE_STYLE` constant (hybrid responsive layout)** — see "Responsive Layout" below. Use `_RESPONSIVE_STYLE_ESCAPED` in `.format()` contexts
 7. **Table-based layout** — do not rely on flexbox or grid
 8. **No JavaScript** — email clients strip all scripts
@@ -205,7 +224,7 @@ fixtures for the three web surfaces without Azure calls or delivery; pair page t
      - Visuals must also retain a visible caption and source-document link; absence or rejection omits
          the entire visual section without removing any report text
 10. **`{` braces escape** — literal `{` in HTML must use `_escape_braces()` to avoid `KeyError` in `str.format()`
-11. **Paper width** — fluid `width="100%"` with inline `max-width: 640px`; only the MSO ghost table uses fixed `width="640"`. Media-query caps are 760px at 800px and 900px at 1100px
+11. **Paper width** — fluid `width="100%"` with inline `max-width: 640px`; only the MSO ghost table uses fixed `width="640"`. Media-query caps are 760px at 800px and 840px at 1100px
 12. **Untrusted report values** — RSS text, tool output, and LLM fields must pass through `escape_email_text()` or a renderer that calls `_inline_format()`; never interpolate them directly into markup
 13. **Link allow-list** — call `safe_email_href()` before writing `href`. HTTP, credentials in URLs, non-approved hosts, `javascript:`, and `data:` never become links. Apply the same validation to HTML and plain-text archive links
 14. **No remote webfonts** — Admin/Archive may use the pinned browser font policy from `src/web_fonts.py`, but email HTML must keep its system-font stack. Do not add `@font-face`, remote font URLs, or an Apple font binary to email templates
@@ -219,27 +238,27 @@ fixtures for the three web surfaces without Azure calls or delivery; pair page t
 
 ## Type Scale
 
-`FONT_SIZE_PX` is the single source of truth. Body copy stays **13px**; `cover=36` and `stat=48`
-are separate publication display steps, not a global text increase. Ratios use the body baseline.
+`FONT_SIZE_PX` is the single source of truth. Body copy uses **14px** through the shared token,
+not hard-coded sizes; `cover=40` is the main title step. Role aliases may share a size.
 
 | Key | px | Ratio | Used for |
 |-----|----|-------|----------|
-| `meta` | 11 | 0.846x | field labels, table headers, timestamps, footer fine print |
-| `secondary` | 12 | 0.923x | verification badges, table cells, action detail lines, CLI blocks, inline code |
-| `body` | 13 | 1x | prose paragraphs, list items, concept boxes, impact values |
-| `badge_text` | 13.5 | 1.038x | visible level-badge text |
-| `heading` | 15 | 1.154x | action `h3` titles |
-| `section_mobile` | 15.75 | 1.212x | mobile takeaways |
-| `title` | 17 | 1.308x | contents titles and retirement countdown values |
-| `section_heading_mobile` | 17.325 | 1.333x | mobile section headings |
-| `badge` | 18 | 1.385x | hidden width guide for unchanged level-badge boxes |
-| `section` | 18.75 | 1.442x | desktop/inline-only takeaways |
-| `section_heading` | 20.625 | 1.587x | desktop/inline-only section headings |
-| `masthead` | 21 | 1.615x | action numbers and display accents |
-| `display` | 25 | 1.923x | available display step |
-| `hero` | 29 | 2.231x | mobile document title, contents numbers, three-digit counters, mobile wordmark |
-| `cover` | 36 | 2.769x | wordmark, digest detail titles, mobile two-digit counters |
-| `stat` | 48 | 3.692x | single/digest document title, desktop counters, and chapter numbers |
+| `meta` | 11 | 0.786x | field labels, table headers, timestamps, footer fine print |
+| `secondary` | 12 | 0.857x | verification badges, table cells, action detail lines, CLI blocks, inline code |
+| `body` | 14 | 1x | prose paragraphs, list items, concept boxes, impact values |
+| `badge_text` | 12 | 0.857x | unboxed level text in shaded cells |
+| `heading` | 15 | 1.071x | operational fact values |
+| `section_mobile` | 16 | 1.143x | mobile leads |
+| `title` | 17 | 1.214x | contents/action titles and retirement countdown values |
+| `section_heading_mobile` | 20 | 1.429x | mobile section headings |
+| `badge` | 18 | 1.286x | compatibility token; no hidden width guide is rendered |
+| `section` | 18 | 1.286x | desktop/inline-only leads |
+| `section_heading` | 24 | 1.714x | desktop/inline-only section headings |
+| `masthead` | 24 | 1.714x | contents/action numbers and three-digit count rows |
+| `display` | 28 | 2x | wordmark, mobile titles and count rows |
+| `hero` | 32 | 2.286x | digest detail titles and chapter numbers |
+| `cover` | 40 | 2.857x | main titles |
+| `stat` | 40 | 2.857x | compatibility display alias |
 
 `markdown_to_html()` derives its `#`–`####` heading sizes from the same dict.
 `test_font_sizes_follow_the_type_scale` fails the build if a rendered email
@@ -264,11 +283,11 @@ style without a selector. Add the matching class when you add an element:
 |-------|--------------------|
 | `azb-outer` | Outer gutter shrinks to 6px |
 | `azb-pad` | Section gutters 32px → 20px (→ 16px at ≤400px); inline-only fallback stays 32px |
-| `azb-hero-title` | Main and digest-detail titles use 29px |
-| `azb-heading` / `azb-summary` | Section headings use 17.325px, takeaways 15.75px; weights remain 525/700 |
-| `azb-masthead-brand` / `azb-masthead-edition` | Full-width baseline; desktop uses 44%/56% columns |
-| `azb-section-label` / `azb-section-copy` | Full-width baseline; at >=800px uses a 15%/85% label/content rail |
-| `azb-heading-rest` | Inline text by default; at >=800px starts a new line only in the label rail |
+| `azb-hero-title` | Main and digest-detail titles use 28px |
+| `azb-heading` / `azb-summary` | Section headings use 20px at weight 700; plain leads 16px at weight 400 |
+| `azb-brief-copy` / `azb-brief-assessment` | Full-width stacked baseline; 66%/34% columns only at >=800px |
+| `azb-masthead-brand` / `azb-masthead-edition` | Full-width baseline; desktop uses 35%/65% columns |
+| `azb-section-head` / `azb-section-copy` | Heading then full-width content at every viewport, including inline-only; no side rail |
 | `azb-stack-cell` / `azb-stack-tail` | Masthead metadata cells stack with spacing between them |
 | `azb-digest-row` / `azb-digest-entry` | The spanning row contains a full-width title table followed by a metric table |
 | `azb-digest-copy` / `azb-digest-metrics` | Full-width by default; media-query desktops set 52%/48% widths for side-by-side comparison |
@@ -281,8 +300,8 @@ Desktop media queries add room for content while retaining a bounded reading wid
 
 | Breakpoint | Effect |
 |-----------|--------|
-| `min-width: 800px` | Paper 640px → 760px; section gutters remain 32px |
-| `min-width: 1100px` | Paper → 900px; section gutters → 48px |
+| `min-width: 800px` | Paper 640px → 760px; gutters remain 32px; header summary/assessment use 66%/34% columns |
+| `min-width: 1100px` | Paper → 840px; section gutters → 40px |
 
 Inline-only/MSO digest entries use a **full-width title and summary above three labeled metrics**.
 Only media-query desktops use **52% title / 16% per metric**. The earlier 28%/24% fallback made
@@ -367,9 +386,11 @@ Playwright MCP and pass the absolute path of `tests/browser/email_reports.cjs` a
 report type, style fallback, and viewport; require `passed=true`. It writes representative screenshots
 beside file previews, which must remain under `out/`. Inspect them, state the observed defect,
 make the smallest correction, and repeat. See `src/email/README.md` for the design rationale.
-The display-scale redesign checks wordmark/number text bounds and rail alignment as well as
-badge bounds. Keep same-size before/after images, decompose reference compositions explicitly,
-and never present passing regression tests as proof that a design looks better.
+The annual-report checks include actual title/lead/wordmark/number/badge text bounds and
+full-width heading/body alignment. Keep same-size before/after images, compare the composition,
+and never present passing regression tests as proof that a design looks better. Refresh the
+previously shared current-preview path after acceptance; generating a new directory alone leaves
+the user's old HTML link stale.
 
 ## Common Pitfalls
 

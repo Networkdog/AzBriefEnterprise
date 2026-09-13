@@ -70,7 +70,7 @@ AzBrief Enterprise는 [AzBrief](https://github.com/Networkdog/AzBrief)의 Enterp
 
 AzBrief는 Azure 관리자를 위한 **Azure Update Intelligence Agent**입니다. Azure 업데이트를
 수집하고 테넌트의 실제 리소스와 연계해 각 업데이트의 중요성, 영향도, 직무 연관성을 독립적으로
-평가합니다. 그 결과를 근거와 구체적인 조치가 포함된 역할별 일일 digest로 만듭니다.
+평가합니다. 그 결과를 근거와 구체적인 조치가 포함된 역할별 digest로 만들어 공지 게시 주별로 묶습니다.
 
 ### 미션
 
@@ -121,7 +121,7 @@ Azure는 매주 수십 건의 업데이트를 게시합니다. 새 기능, 서�
   보안 담당자에게는 규정 준수 영향이 필요합니다. 같은 공지라도 필요한 관점은 다릅니다.
 
 AzBrief는 Azure 업데이트를 수집하고 Resource Graph를 통해 테넌트의 실제 리소스와 대조합니다.
-각 항목을 중요성, 영향도, 직무 연관성으로 분류하고 CLI 명령, 절차, 기한이 포함된 통합 일일
+각 항목을 중요성, 영향도, 직무 연관성으로 분류하고 CLI 명령, 절차, 기한이 포함된 게시 주별 통합
 digest를 팀 구성원의 받은 편지함으로 전달합니다.
 
 **Enterprise** 에디션은 이 분석에 규제 환경에 필요한 기능을 더합니다.
@@ -170,45 +170,40 @@ digest를 팀 구성원의 받은 편지함으로 전달합니다.
   미수행 badge가 붙습니다. 상태를 변경하지 않는 평가는 `advisory_review`로 검토하므로 CLI나
   rollback이 필수가 아닙니다. go/no-go 확인이 불완전하면 `caution`이 될 수 있지만 명령이 없다는
   이유만으로 차단되지는 않습니다. 명령과 상태를 바꾸는 Portal 절차는 계속 fail closed합니다.
-- **편집형 이메일 레이아웃** — 순백색 바탕과 지면에 잉크색 `#182b32`, 청록색 `#08746b`를
-  사용하며, 짙은 남색 제목 패널이나 둥근 그림자 카드는 쓰지 않습니다. 단건과 digest 상세는
-  제목, 핵심 요약, 독립적인 3축 평가, 2열 운영 정보를 공유합니다. Digest는 분석 완료 항목의
-  높음/보통/낮음 집계와 건너뜀을 분리하고 전달받은 모든 항목을 남깁니다. 번호가 있는 목차의
-  제목은 자르지 않으며 상세 이동·목차 복귀 링크를 제공합니다. 비례를 지킨 8px 막대와 색면 위의
-  48px 건수는 분석 완료 항목만 시각화합니다. 36px 발행물 이름, 48px 문서 제목, 별도 번호 열을 가진 17px 목차 제목,
-  전체 폭 청록색 장 구분대로 위계를 나눕니다. 데스크톱 본문은 제목 15%·내용 85% 그리드와
-  20.625px·굵기 525의 섹션 제목을 사용합니다. 여러 어절인 제목은 데스크톱에서 첫 어절 뒤를
-  줄바꿈하며 모바일·inline-only에서는 이어 씁니다. 핵심 문장은 18.75px·굵기 700을 유지합니다.
-  좁은 화면과 CSS 제거 상태에서는 세로로 쌓습니다. 모바일 media query는 문서 제목을 29px,
-  섹션 제목을 17.325px, 핵심 문장을 15.75px로 줄이며 inline-only 출력은 기본 크기를 유지합니다.
-  Inline-only/MSO에서는 전체 너비 제목 아래
-  평가축 이름과 값을 놓고, media query 지원 데스크톱에서는 제목과 3축을 나란히 표시합니다.
-  등급 배지는 기존 박스 크기 안에 13.5px 글자를 사용하며 inline-only에서도 공간이 부족하면 평가축 이름과 배지가
-  함께 다음 줄로 이동합니다. 모바일에서는 평가 축 이름을
-  표시하고 리소스 필드를 쌓되 사유·그룹·Portal 식별 정보를 유지합니다. 본문은 13px를 유지하고
-  36px·48px 표시 단계를 별도로 사용합니다. 한국어 이메일·Archive·평가용 보고서의 리소스 섹션은
-  `연관 리소스`로 표시하며 `affected_resources` 필드와 보관 데이터는 변경하지 않습니다.
-  기존 보고서 파서는 `영향받는_리소스`와 `영향_리소스` 키를 모두 지원하고, 빈 목록을 포함해
-  canonical `affected_resources` 키를 우선합니다. 이메일 글꼴은
-  `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif` 순서로 적용하고
-  코드 블록은 기존 고정폭 글꼴을 유지합니다. 등급·검증 배지, 핵심 요약, concept box,
-  추가 확인에는 공통 4px 세로 강조선을 사용합니다. 상태 텍스트와 기존 색상은 보존하고 중성
-  구분선은 얇게 유지합니다.
-  640px inline/MSO 기본 너비는 media query 지원 시 화면 800px에서 760px, 1100px에서 900px로
+- **기술 보고서형 이메일 레이아웃** — 흰 지면에 흑연색 `#202124`, 절제된 적색 `#a92336` 섹션 제목,
+  청색 `#365b8c` 링크를 사용하며 색을 채운 표지 패널이나 그림자 카드는 쓰지 않습니다.
+  굵은 산세리프 28px 발행물 이름, 40px 주제목, 24px 섹션 제목, 18px 평문 리드와 14px 본문으로
+  위계를 나눕니다. 모바일 제목·섹션 제목·리드는 28px·20px·16px입니다. 제목은 어절을 우선 유지하고
+  긴 식별자도 안전하게 줄바꿈합니다. 화면 800px 이상에서 단건과 digest 상세의 요약·독립 3축 평가는
+  66%/34% 열로 나란히 배치하고 좁은 화면과 inline-only에서는 세로로 쌓습니다. 본문 섹션은 제목
+  아래 전체 폭 내용을 두며 운영 정보는 흰색 구분선 표로 표시합니다.
+  Digest는 이름표가 붙은 8px 가로 막대 세 개와 28px 실제 건수를 표시하며, 세 자리 건수가 있으면
+  모두 24px로 표시합니다. 분모인 분석 완료 건수를 명시하고 생략 항목은 따로 표시합니다. 0건 행도
+  남기며 길이가 0인 막대에 인위적인 최소 채움을 넣지 않습니다. 모든 분석의 전체 목차 제목에
+  상세 이동·목차 복귀 링크를 제공합니다. 목차·액션 번호는 24px 굵은 tabular 숫자, 장 번호는 32px,
+  액션 제목은 17px입니다. 각 평가 셀 전체에 옅은 적색·황색·녹색 음영을 넣고 테두리 없는 12px 등급
+  텍스트를 한 번만 표시합니다. 개념 설명 박스는 옅은 중성 음영을 사용하며 검증·추가 확인의 2px 선은
+  유지합니다. 푸터에는 분석 기반 소개 문구 없이 면책 고지·피드백·생성 정보를 남깁니다.
+  상태 의미, 대비 4.5:1 이상, 리소스 사유·그룹·Portal 식별 정보를 유지합니다.
+  Inline-only/MSO 목차는 전체 너비 제목 아래 평가축 이름과 값을 놓고, media query 지원 데스크톱은
+  제목 52%·평가축 각 16%로 나란히 배치합니다. 이메일 본문·발행물 이름·숫자는 모두
+  `'Noto Sans KR', 'AppleSDGothicR00', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif`
+  순서로 적용합니다. 설치되지 않은 글꼴은 다음 글꼴로 넘어가며 폰트 파일이나 웹폰트는 포함하지
+  않습니다. `Malgun Gothic`은 맑은 고딕이며 코드는 기존 고정폭 글꼴을 유지합니다.
+  한국어 이메일·Archive·평가용 보고서의 리소스 섹션은 `연관 리소스`로 표시하며 `affected_resources`
+  필드와 보관 데이터는 변경하지 않습니다. 640px inline/MSO 기본 너비는 media query 지원 시
+  화면 800px에서 760px, 1100px에서 840px로
   확장됩니다. 공식 Microsoft Learn 문서에 설명이 있는 PNG/JPEG/GIF가 있으면 단건 보고서에
   원문 링크·대체 텍스트·캡션을 갖춘 스크린샷을 최대 2개 표시할 수 있습니다. Digest는 업데이트당
   1개, 전체 4개로 제한합니다. 렌더러는 Microsoft 외 호스트, 지원하지 않는 형식, 자격 증명·포트,
   HTTPS가 아닌 주소를 거부합니다. 이 시각 자료는 전달 전용이라 불변 Archive v1에 저장하지 않으며,
   메일 client가 원격 이미지를 차단해도 전체 텍스트 보고서는 그대로 읽을 수 있습니다. 렌더링
   불변식은 [src/email/README.md](src/email/README.md)를 참고하십시오.
-- **대량 리소스 요약** — 이메일에는 최대 20개까지 개별 목록을 표시합니다. 그보다 많으면
-  고유 리소스 건수, 최대 10개 사유 그룹, 조회 시각, 범위를 보존한 Resource Graph Explorer
-  링크를 표시합니다. 작성 모델은 수백 개 이름 대신 실행된 조회 참조를 선택하고, 런타임이 수집한
-  전체 ARM 식별 정보를 복원하며 겹치는 대상을 중복 제거합니다. 부분·과거 근거는 정확한 총수가
-  아닌 미완전한 결과로 표시합니다. 포털은 독자의 현재 RBAC와 리소스 상태로 조회하며 링크는 쿼리만
-  엽니다. 범위를 재현할 수 없는 관리 그룹·join/union 조회나 인코딩 후 4096자를 넘는 URL은
-  제공 가능한 경우 인증된 Archive 기록으로 안내합니다. 수백 개 ID를 URL에 나열하지 않습니다.
-  구독자 맞춤화는 사유만 번역하며 검증된 대상과 쿼리는 바꾸지 않습니다.
+- **전체 리소스 근거 보존** — 대량의 조회 결과 전체가 적용되면 보고서는 해당 분석의
+  `resource_queries` 참조와 사유를 선택하고 런타임이 수집된 모든 ARM 식별 정보를 복원합니다.
+  직렬화와 구독자 맞춤화에서도 조회 범위·건수·완전성을 유지하며, 구독자 범위가 좁아지면 더 넓은
+  조회 메타데이터는 제거합니다. Archive v1에는 전달 전용 조회 메타데이터 없이 전체 리소스 내용을
+  보존합니다. 파서는 기존 한국어 리소스 키를 호환하되 표준 `affected_resources` 필드를 우선합니다.
 - **역할 기반 보고서** — 같은 업데이트를 구독자의 역할에 맞는 관점으로 제공합니다.
 - **다국어** — 플러그형 registry에서 구독자별 언어를 선택합니다. 한국어, 영어, 일본어는
   엄선된 style guide를 제공하며, 다른 언어도 fallback label과 생성된 style guide로 렌더링합니다.
@@ -333,18 +328,26 @@ sequenceDiagram
 6. Hosted 결과는 구독자 맞춤화 전에 `azbrief-archive`의 불변 문서로 저장합니다. Archive가
   구성된 환경에서 저장에 실패하면 해당 항목은 watermark 완료로 표시되지 않으며 digest와
   checkpoint도 중단됩니다. 따라서 처리 구간이 archive보다 앞서갈 수 없습니다.
-7. 저장된 결과를 하나의 digest 후보 목록으로 모읍니다. 기본 digest는 관련성과 관계없이
-  분석한 모든 업데이트를 보여 주며, `should_notify`는 관련 항목 수와 badge 계산에 사용합니다.
-  이메일의 공용 canonical 분석 링크는 맞춤화 전에 저장한 문서를 가리킵니다.
+7. 저장된 결과는 업데이트의 UTC `published_date`를 월요일~일요일의 달력 주로 묶어 오래된 주부터
+  발송합니다. 한 실행에서 게시 주별로 수신자당 한 통입니다. 예를 들어 2026년 8월 1~10일에 하루
+  10건씩 나온 공지 100건은 20건·70건·10건을 담은 세 통이 되며, 메일에 해당 주의 시작일과 종료일을
+  표시합니다. 날짜가 없는 대상은 오늘 날짜로 간주하지 않고
+  별도 `N/A` 그룹으로 묶습니다. 기본 digest는 관련성과 관계없이 분석한 모든 업데이트를
+  보여 주며, `should_notify`는 관련 항목 수와 badge 계산에 사용합니다. 공용 canonical 분석
+  링크는 맞춤화 전에 저장한 문서를 가리킵니다.
 8. 구독자가 있으면 같은 근거 기반 결과를 Hosted Agent에 다시 보내 역할과 언어에 맞게 병렬
   맞춤화합니다. 개별 맞춤화가 실패하면 원본 분석을 사용하고, 한 이메일의 실패는 다른
-  구독자의 전송을 막지 않습니다. 한 명 이상에게 전달되면 `email_sent`는 true입니다.
+  구독자나 다음 주의 전송을 막지 않습니다. 요청한 모든 주별 전송이 성공을 반환해야
+  `email_sent`가 true입니다. 이 묶음 기준은 실행 스케줄을 변경하거나 별도 실행 사이의 중복 발송을
+  막는 기능이 아닙니다.
 
 ### 완료 상태의 정확한 의미
 
-`RunRecord.status == "completed"`는 orchestration 함수가 끝까지 실행됐다는 뜻이며, 모든 단건
-분석과 이메일이 성공했다는 뜻은 아닙니다. Scheduler의 프로세스 종료 코드도 이 status만
-기준으로 결정하므로 운영 검증에서는 다음 필드를 함께 확인해야 합니다.
+대상이 있는 실제 실행에서 `RunRecord.status == "completed"`가 되려면 실패·미처리·보류 분석이
+없고 요청한 모든 주별 전송이 성공해야 합니다. 그렇지 않으면 제한된 설명과 함께 `partial`로
+표시하며, Archive 또는 실행 전체 오류는 `failed`입니다. 대상이 없거나 드라이런이면 메일 없이
+완료될 수 있습니다. Scheduler는 부분 완료에 0이 아닌 종료 코드를 반환합니다.
+운영 검증에서는 다음 카운터와 발송 로그를 함께 확인해야 합니다.
 
 | 필드 | 의미 |
 |---|---|
@@ -354,7 +357,7 @@ sequenceDiagram
 | `failed` | 격리된 단건 실패 수. 영구적인 checkpoint 고정을 막기 위해 실패 항목도 처리된 것으로 간주합니다 |
 | `deferred` | 실행 시간 예산 때문에 시작하지 않고 다음 window로 넘긴 항목 수 |
 | `pending` | 연속 완료 prefix 뒤에 남아 checkpoint가 아직 포함하지 못한 항목 수 |
-| `email_sent` | 구독자가 없을 때 기본 digest가 전송됐는지, 구독자가 있을 때 한 명 이상에게 전달됐는지 여부 |
+| `email_sent` | 요청한 모든 날짜·수신자별 digest가 전송 성공을 반환했는지 여부. 받은편지함 도착이나 분석 전체 완료의 증명은 아님 |
 | `checkpoint_committed` | 계산한 watermark가 durable store에서 실제로 전진했는지 여부 |
 
 현재 checkpoint는 **분석 window의 처리 상태**를 추적하며 delivery queue가 아닙니다. Archive
@@ -448,14 +451,6 @@ Advisor, 구성 profile, dependency, 지역 가용성처럼 놓치기 쉬운 검
 운영 적용에는 변경된 FunctionTool 스키마와 Runtime Guidance를 담은 새 Prompt Agent 버전 및
 Hosted Agent 배포가 필요합니다. 로컬 검사와 제한된 실제 쿼리 검증은 배포된 전체 보고서 흐름의
 종단 간 평가를 대신하지 않습니다.
-
-[조회 근거 카탈로그](src/agent/resource_evidence.py)는 실행별로 격리하며 최대 64개 조회 집합과
-수집된 식별 정보 20,000행으로 제한합니다. `resource_queries`는 Hosted 결과의 선택적 전달용
-메타데이터입니다. Archive v1에는 이 필드와 행별 `id`/`query_refs`를 제외하고, 기존 리소스 필드의
-전체 목록을 저장합니다. 평가기는 독립적으로 계산한 조회 건수를 근거로 받고 이메일과 같은 요약을
-검토합니다. 새 Hosted 출력을 활성화하기 전에 호환되는 App/Job 이미지를 배포하고, Resource Graph·
-Report Writer·Quality Reviewer의 Prompt Agent 지침도 새 버전으로 게시해야 합니다. 로컬 합성 검사는
-실제 생성·포털 실행·이메일 전달의 검증을 대신하지 않습니다.
 
 **실제 비용을 반영하는 보고서.** 가격·과금 단위 변경, 유료 기능, 문서로 확인된 절감 가능성이
 있으면 Cost Analysis의 기반 API인 Azure Cost Management에서 최근 30일 `ActualCost`를
@@ -595,7 +590,7 @@ archive 저장까지 검증하지는 않습니다.
 
 ### 원클릭 배포
 
-Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + Admin + MCP), 일일 digest를
+Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + Admin + MCP), 예약 digest를
 실행하는 Container Apps Job, Key Vault, 상태·archive 저장소, 별도 평가 저장소, Communication Services로 구성된 Azure
 기반과 제어면을 배포합니다. Prompt Agent와 Hosted Agent는 Foundry 데이터 평면 객체이므로
 배포 후 단계에서 별도로 배포합니다.
@@ -762,10 +757,6 @@ $customer = @{
 참조를 보존하며 디스패처 cron을 확인합니다. 초기 포트 전환에 이미지 전용 CI를 사용하거나
 기존 보안 파라미터를 보존하지 않은 채 전체 템플릿을 다시 적용하지 마십시오.
 
-이미지 전용 업그레이드에서는 [scripts/deploy_dev.ps1](scripts/deploy_dev.ps1)이 테스트 후와
-ACR 빌드 후 Docker 입력 지문을 다시 확인합니다. 소스가 바뀌면 두 런타임을 갱신하기 전에
-중단하므로 검증을 우회하지 말고 변경이 끝난 소스로 다시 실행하십시오.
-
 **검증 범위:** 로컬 테스트·스키마 검사·Bicep 컴파일은 고객의 정책·할당량, Graph 동의,
 비공개 네트워크, 원격 빌드, 권한 전파, 분석 품질, 이메일 수신을 증명하지 않습니다. 가이드의
 고객 인수 검사를 완료한 뒤에만 서비스 준비 완료로 판단합니다. 릴리스용 버튼을 공유하기 전에
@@ -838,6 +829,28 @@ Agent는 `azure.yaml`의 예약되지 않은 `AZBRIEF_PROMPT_*` alias를 통해 
 정확한 tenant ID와 구성된 subscription ID도 전달합니다. 런타임 준비 상태에는 이 여섯 역할
 alias만 참여하며 누락되거나 알 수 없는 설정으로 gate를 충족할 수 없습니다.
 
+기본 프로비저닝 정책은 추론이 필요한 핵심 작업과 범위가 제한된 MCP 작업을 구분합니다.
+
+| 등급 | 역할 | 기본 배포명 | 추론 설정 |
+|---|---|---|---|
+| 코어 | Coordinator, Resource Graph, Azure API, Report Writer, Quality Reviewer | `gpt-5-terra` | `medium` |
+| 단순 작업 | Azure MCP | `gpt-5-luna` | 옵션 생략 |
+
+구독자 맞춤화는 번역뿐 아니라 직무 관련성도 판단하므로 코어 Report Writer에 유지합니다.
+배포 별칭은 `FOUNDRY_CORE_MODEL_DEPLOYMENT`와 `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT`로 지정합니다.
+`FOUNDRY_CORE_REASONING_EFFORT`는 `low`, `medium`, `high`를 지원합니다. 명시적 `--model`이
+`FOUNDRY_MODEL_DEPLOYMENT`보다 우선하며, 이 환경변수는 두 등급을 모두 덮어씁니다.
+기존 단일 모델 설정은 자동 전환하지 않습니다. 등급별 정책을 사용하려면 단일 모델 지정을
+비워야 합니다. 단일 모델 지정 시 같은 모델의 생성 옵션은 보존하지만, 모델이 달라지면 이전
+모델의 샘플링·추론 옵션을 제거합니다.
+
+`--dry-run`은 역할별 모델과 추론 수준을 출력합니다. `--check`는 모델 정책 불일치도 감지합니다.
+관리되는 코어 추론 수준은 설정과 일치해야 하며, 단순 작업의 추론 옵션과 두 등급의
+`temperature`, `top_p`는 생략합니다. 이는 구성 검사이며 모델 가용성이나 품질의 증명이
+아닙니다. 실제 모델 ID, 승인된 버전, Responses·도구·strict JSON·추론 지원, 리전별 할당량과
+비용을 확인하고 같은 사례로 비교한 뒤 운영에 적용하십시오. 요청한 Terra/Luna 기본값이
+카탈로그 가용성이나 성능을 보장하지는 않습니다.
+
 다음 명령으로 roster를 만들거나 갱신합니다.
 
 ```bash
@@ -856,6 +869,16 @@ Resource Graph에는 KQL guidance, Azure API에는 service-integration guidance,
 report/language/email guidance, Quality Reviewer에는 evaluation rubric을 제공합니다. 개발 절차,
 파일 경로, test 명령은 모델 context에 들어가지 않습니다. Runtime guidance 변경은 `--check`에서
 instruction drift로 나타나며 새 Prompt Agent version이 필요합니다.
+
+분석 중 Microsoft Learn MCP 또는 Azure MCP에서 찾은 기술 문서는 원문을 깊이 0으로 두고,
+판단에 영향을 주는 본문 링크를 1단계까지 탐색합니다. 1단계 문서로도 구체적인 질문에 답할 수
+없을 때만 2단계로 확장하며, 기존 도구 호출·시간 예산 안에서 최대 2단계를 넘지 않습니다.
+Coordinator가 Microsoft Learn MCP로 문서 본문을 읽고, Azure MCP/API 전문가는 도구나 권한을
+늘리지 않은 채 공개 문서 링크와 미해결 질문을 전달합니다. 조사 근거에는 원문부터 이어진
+출처와 실제로 읽어 확인한 사실을 남기며, 접근 실패나 예산 제한으로 필요한 문서를 읽지
+못하면 명시적인 근거 공백으로 유지합니다. 이는 Copilot의 탐색 지침이 아니라 Foundry에
+컴파일되는 런타임 정책입니다. 로컬 지침 테스트만으로 배포된 Agent의 실제 링크 탐색을
+검증했다고 볼 수는 없습니다.
 
 이 결정론적 instruction 컴파일은 public-preview Foundry Skills API에 의존하지 않습니다. Native
 versioned Skill과 toolbox MCP discovery는 향후 선택 가능한 전달 경로입니다. 도입할 때는 검증한
@@ -879,8 +902,10 @@ Admin과 Archive는 밝은 운영 화면, 일정한 높이의 입력란, 반응�
 독립 폼 전용 헤더를 사용합니다. 넓은 화면에서는 제한된 본문을 중앙에 둡니다. Admin은 섹션 탐색으로
 작업 영역 하나씩 표시하며 선택한 섹션을 URL fragment에 유지합니다. 변경 버튼은 관련
 입력과 같은 테두리 작업면 안에 두고, 결과 목록은 별도 하위 제목 아래에 표시합니다. 수동 실행은
-기본적으로 분석과 Archive 저장만 수행하고 이메일은 보내지 않습니다. **Digest 이메일 발송**을
-선택해야 전달하며, 드라이런은 대상만 확인하므로 발송과 동시에 요청할 수 없습니다. 실행 진단은
+기본적으로 분석과 Archive 저장만 수행하고 이메일은 보내지 않습니다. **Send weekly digest emails**를
+선택하면 한 실행의 공지를 UTC 월요일~일요일 게시 주별로 수신자당 한 통씩 전달합니다. 실행 스케줄은
+그대로이며, 드라이런은 발송과 동시에 요청할 수 없습니다.
+수동 실행의 미완료 대상은 자동 재개되지 않으며 예약 실행 checkpoint도 변경하지 않습니다. 실행 진단은
 처리 수, Archive/checkpoint/전달 상태와 제한된 오류를 표시합니다. 최근 업데이트는 URL 입력으로
 바로 가져올 수 있습니다. 관리 콘솔에서 만든 구독자는 제자리에서 수정할 수 있고 배포 구독자는
 계속 보호됩니다. 관리 표는 작업 열을 첫 열에 두므로 mobile 운영자는 부가 필드를 가로로
@@ -1092,7 +1117,10 @@ Prompt 예산보다 큰 도구 결과도 버리지 않습니다. 전체 텍스�
 | `FOUNDRY_AZURE_API_AGENT_NAME` | ARM, Health, Policy, Advisor, Cost Management/Billing Prompt Agent | 예² | — |
 | `FOUNDRY_REPORT_WRITER_AGENT_NAME` | 구조화된 보고서 및 구독자 맞춤화 Prompt Agent | 예² | — |
 | `FOUNDRY_QUALITY_REVIEWER_AGENT_NAME` | 근거, 보고서 품질, 조치 안전성 Prompt Agent | 예² | — |
-| `FOUNDRY_MODEL_DEPLOYMENT` | Agent definition을 provisioning할 때만 사용하는 model | * | — |
+| `FOUNDRY_MODEL_DEPLOYMENT` | 선택적 레거시 단일 모델 프로비저닝 지정 | | — |
+| `FOUNDRY_CORE_MODEL_DEPLOYMENT` | 코어 프로비저닝 배포명. 비어 있으면 기본값 사용 | | `gpt-5-terra` |
+| `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT` | Azure MCP 프로비저닝 배포명. 비어 있으면 기본값 사용 | | `gpt-5-luna` |
+| `FOUNDRY_CORE_REASONING_EFFORT` | 코어 추론 수준: `low`, `medium`, `high` | | `medium` |
 | `FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED` | Coordinator의 기본 Microsoft Learn MCP 출처 뒤에 Web Search 추가 | | `false` |
 | `AZURE_MCP_SERVER_URL` | 읽기 전용 Azure MCP Container App의 HTTPS endpoint | Azure MCP specialist용 | — |
 | `AZURE_MCP_PROJECT_CONNECTION_NAME` | Azure MCP 인증에 사용하는 Foundry project connection | Azure MCP specialist용 | — |
@@ -1113,6 +1141,7 @@ Prompt 예산보다 큰 도구 결과도 버리지 않습니다. 전체 텍스�
 | `ADMIN_UI_ENABLED` | `/admin`과 `/api/admin/*` 제공 여부 | | `false` |
 | `ADMIN_REQUIRE_AUTH` | 인증된 principal 요구 여부. `false`는 로컬 개발 전용입니다 | | `true` |
 | `ADMIN_ALLOWED_PRINCIPALS` | 쉼표로 구분한 UPN/object ID 허용 목록. 비어 있으면 모두 거부합니다 | | — |
+| `ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT` | Admin 준비 상태에서 추가로 확인할 모델 배포명. 고객 템플릿이 설정 | | — |
 | `COMMUNICATION_SERVICES_CONNECTION_STRING` | Email service | | — |
 | `COMMUNICATION_SERVICES_ENDPOINT` | Managed identity를 통한 email endpoint. 저장한 secret이 필요 없습니다 | | — |
 | `EMAIL_SENDER_ADDRESS` / `EMAIL_RECIPIENT_ADDRESS` | 보내는 주소 / fallback 받는 주소 | | — |
@@ -1132,8 +1161,9 @@ Prompt 예산보다 큰 도구 결과도 버리지 않습니다. 전체 텍스�
 | `OTEL_ENABLED` | Application Insights로 보내는 OpenTelemetry tracing | | `false` |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | Span export용 App Insights connection string | | — |
 
-\* `FOUNDRY_MODEL_DEPLOYMENT`는 `--model`을 지정하지 않으면
-`scripts.provision_foundry_agents.py`에 필요합니다. 실행 중인 application은 이 값을 읽지 않습니다.
+프로비저닝 모델 설정은 저장된 Prompt Agent 정의에만 적용하며 실행 중인 애플리케이션의
+직접 모델 fallback을 만들지 않습니다. 고객 설정 v2는 두 등급과 코어 추론 수준을 연결하고,
+기존 v1 설정 계약은 명시적인 단일 모델 지정을 유지합니다.
 
 ¹ Container App과 scheduler에 필요합니다. ² 여섯 값 모두 Hosted Agent 내부에서 필요하고 서로
 다른 Agent 이름으로 확인돼야 하며, 직접 로컬 분석을 실행하는 script에도 필요합니다.
@@ -1197,7 +1227,6 @@ python -c "import src"                        # import check — must pass befor
 ```powershell
 & .\.venv\Scripts\Activate.ps1
 python -m scripts.preview_email --output-dir out/email-editorial-preview --language all
-python -m scripts.preview_email --output-dir out/email-resource-summary --language all --resource-count 327
 ```
 
 [tests/test_email_editorial.py](tests/test_email_editorial.py)는 공통 구조, 탐색 링크, 집계,
@@ -1209,8 +1238,6 @@ Playwright 레이아웃을 반복 검사합니다. 실제 뷰포트 크기, 문�
 목차·상세 왕복을 확인하고 대표 스크린샷을 미리보기 파일 옆에 저장합니다. 전후 미리보기를
 `out/`에 보존하고 화면을 평가한 뒤 발견한 결함을 수정해 `passed=true`가 될 때까지 반복합니다.
 브라우저 검사는 실제 Outlook/Gmail이나 독해 속도 측정을 대신하지 않습니다.
-대량 미리보기에서는 요약 글자 경계와 쿼리 범위·조건도 검사하며, 포털 이동은 합성 browser route로
-가로채므로 실제 테넌트는 조회하지 않습니다.
 디자인 근거와 루프는 [src/email/README.md](src/email/README.md)에 설명되어 있습니다.
 
 ### 컨테이너 이미지
@@ -1481,6 +1508,38 @@ README를 추가하면 현재 `.gitignore` 정책에 따라 추적되지 않거�
 | 야간 digest가 이전 build를 실행 | Job이 App과 함께 갱신되지 않음 | App과 Job을 모두 갱신하는 `deploy-container-app.yml`로 다시 배포 |
 | Email이 전송되지 않고 console에 출력됨 | Communication Services 구성 없음 | `COMMUNICATION_SERVICES_ENDPOINT`(managed identity) 또는 connection string 설정 |
 | 같은 window가 두 번 분석됨 | 이전 실행이 commit 전에 실패 | 예상된 동작. Checkpoint는 완료된 실행 뒤에만 전진함 |
+
+### 배포 후 진단
+
+1. Admin의 Run ID, UTC 시작 시각, 선택 조건과 `total/analyzed/failed/pending/deferred`를
+  확인합니다. 실행 이력은 메모리에 있으므로 재시작 후 행이 없다고 실행이 없었다고 판단하지 않습니다.
+2. 제어면 Log Analytics에서 `run_id`로 조회합니다. `orchestrator_update_failed`는 업데이트
+  ID와 Hosted `trace_id`를 연결하며, `orchestrator_weekly_digest_complete`는 같은 실행의
+  `week_range`, 포함 건수, 발송 결과를 기록합니다.
+3. 같은 trace로 Hosted의 `hosted_analysis_failed`와 specialist lifecycle 로그를 확인합니다.
+  응답에는 예외 유형만 전달하고 비공개 메시지나 traceback은 노출하지 않습니다. Container App/Job
+  이미지 digest와 Hosted 버전은 별도로 기록합니다. 두 런타임은 각각 배포됩니다.
+4. 앱 상태뿐 아니라 진단 권한과 연결도 확인합니다. `azd ai agent show`, 페이지를 빠짐없이 읽는
+  `azd ai agent sessions list --output table`, `azd ai agent monitor --session-id <id>`에는
+  올바른 프로젝트·운영자 로그인·네트워크 접근이 필요합니다. 종료 코드가 0이어도 오류 출력을
+  확인합니다. CLI/MCP 로그인 실패를 Hosted identity의 장애로 해석하지 않습니다.
+5. 확인된 원인을 수정한 뒤 같은 Update ID를 메일 없이 검증하고, 소규모 여러 주의 실행으로
+  명시적으로 승인된 발송을 확인합니다. 모든 주의 전송 결과를 확인한 뒤 대량 실행합니다.
+  분석 checkpoint는 이메일 재시도 outbox가 아닙니다.
+
+Manual Run을 조회하는 읽기 전용 쿼리입니다. 앱 이름과 Run ID를 실제 값으로 바꿉니다.
+
+```kusto
+ContainerAppConsoleLogs_CL
+| where TimeGenerated > ago(24h)
+| where ContainerAppName_s == "<container-app>" and Log_s contains "<run-id>"
+| extend entry = parse_json(substring(Log_s, indexof(Log_s, "{")))
+| project TimeGenerated, event=tostring(entry.event), update_id=tostring(entry.update_id),
+  trace_id=tostring(entry.trace_id), week_range=tostring(entry.week_range),
+   update_count=toint(entry.update_count), delivered=tostring(entry.delivered),
+   error=tostring(entry.error)
+| order by TimeGenerated asc
+```
 
 ## 라이선스
 

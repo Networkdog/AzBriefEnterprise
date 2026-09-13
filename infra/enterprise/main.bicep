@@ -74,11 +74,11 @@ param tags object = {
 @description('Region for Microsoft Foundry. In vnetInjection mode it must match the deployment/VNet region; choose a region that supports the required model and Hosted Agents.')
 param foundryLocation string = location
 
-@description('Model deployment name used by the agents.')
-param modelDeploymentName string = 'gpt-4o'
+@description('Core model deployment name used by all specialists except Azure MCP.')
+param modelDeploymentName string = 'gpt-5-terra'
 
-@description('Model to deploy into the Foundry account.')
-param modelName string = 'gpt-4o'
+@description('Core model ID. Verify availability, reasoning, tool and structured-output support before deployment.')
+param modelName string = 'gpt-5-terra'
 
 @description('Model version. Leave empty to let Azure pick the default version for the model.')
 param modelVersion string = ''
@@ -95,6 +95,36 @@ param modelSkuName string = 'GlobalStandard'
 @minValue(1)
 @maxValue(1000)
 param modelCapacity int = 200
+
+@description('Required reasoning effort for core Prompt Agents, including report writing and subscriber customization.')
+@allowed([
+  'low'
+  'medium'
+  'high'
+])
+param coreReasoningEffort string = 'medium'
+
+@description('Separate deployment name for the Azure MCP specialist. Must differ from modelDeploymentName.')
+param simpleModelDeploymentName string = 'gpt-5-luna'
+
+@description('Simple-task model ID. Verify managed MCP and strict structured-output support before deployment.')
+param simpleModelName string = 'gpt-5-luna'
+
+@description('Simple-task model version. Verify and pin the approved version before production use.')
+param simpleModelVersion string = ''
+
+@description('Simple-task model deployment SKU. Confirm this model supports the selected type and region.')
+@allowed([
+  'GlobalStandard'
+  'Standard'
+  'DataZoneStandard'
+])
+param simpleModelSkuName string = 'GlobalStandard'
+
+@description('Simple-task model capacity units. Check its own quota and capacity mapping independently of the core model.')
+@minValue(1)
+@maxValue(1000)
+param simpleModelCapacity int = 200
 
 @description('Name of the Foundry Hosted Agent that owns the complete analysis and subscriber-customization runtime. Deploy this name from azure.yaml before starting the Container App or scheduler.')
 param foundryHostedAgentName string = '${baseName}-analysis-hosted'
@@ -505,6 +535,7 @@ var runtimeEnv = [
   { name: 'ADMIN_READINESS_FOUNDRY_ACCOUNT', value: foundryAccountName }
   { name: 'ADMIN_READINESS_FOUNDRY_PROJECT', value: foundryProjectName }
   { name: 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', value: modelDeploymentName }
+  { name: 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', value: simpleModelDeploymentName }
   { name: 'ADMIN_READINESS_CONTAINER_ENVIRONMENTS', value: base64(string([containerEnvName, azureMcpContainerEnvName])) }
   { name: 'ADMIN_READINESS_CONTAINER_APPS', value: base64(string([containerAppName, azureMcpContainerAppName])) }
   { name: 'ADMIN_READINESS_CONTAINER_JOBS', value: base64(string([schedulerJobName])) }
@@ -640,13 +671,13 @@ resource foundryPrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' 
       }
     ]
   }
-  // modelDeployment, not just the account: a Cognitive Services account accepts
+  // simpleModelDeployment, not just the account: a Cognitive Services account accepts
   // only ONE operation at a time, and the account PUT returns while the account
   // is still 'Accepted'. Attaching a private endpoint to an account in that
   // state fails with AccountProvisioningStateInvalid.
   dependsOn: [
     vnet
-    modelDeployment
+    simpleModelDeployment
   ]
 }
 
@@ -933,7 +964,7 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' = {
 // Everything below hangs off the Foundry account, which serialises operations
 // on its own: two children deployed in parallel make the second one fail with
 // RequestConflict. ARM parallelises by default, so the chain is explicit —
-// model deployment, then the private endpoint and its DNS, then the project.
+// core model, simple model, private endpoint and its DNS, then the project.
 resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
   parent: foundryAccount
   name: modelDeploymentName
@@ -951,6 +982,26 @@ resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-
   }
 }
 
+resource simpleModelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = {
+  parent: foundryAccount
+  name: simpleModelDeploymentName
+  sku: {
+    name: simpleModelSkuName
+    capacity: simpleModelCapacity
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: simpleModelName
+      version: empty(simpleModelVersion) ? null : simpleModelVersion
+    }
+    versionUpgradeOption: 'OnceCurrentVersionExpired'
+  }
+  dependsOn: [
+    modelDeployment
+  ]
+}
+
 resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
   parent: foundryAccount
   name: foundryProjectName
@@ -966,7 +1017,7 @@ resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-0
   // A conditional resource that is not deployed drops out of dependsOn, so this
   // stays correct when networkIsolationMode is not vnetInjection.
   dependsOn: [
-    modelDeployment
+    simpleModelDeployment
     foundryPrivateDnsZoneGroup
   ]
 }
@@ -1705,15 +1756,15 @@ output grantAcrPullCommand string = hasRegistry
 @description('Customer setup entry point. Build an immutable image first; the guide covers the bootstrap port/probe transition and updating BOTH runtimes without replacing secrets.')
 output deployContainerImageCommand string = './scripts/setup_customer.ps1 -SubscriptionId "${subscription().subscriptionId}" -ResourceGroup "${resourceGroup().name}" -DeploymentName "${deployment().name}" -Environment "${baseName}-customer" -Stage Application -Image "<registry>/azbrief-enterprise@sha256:<digest>"'
 
-@description('Command that creates the Prompt Agent roster. ARM cannot: agents are data-plane objects, so the project stays empty until this runs.')
-output provisionAgentsCommand string = 'python -m scripts.provision_foundry_agents --model ${modelDeploymentName}'
+@description('Guarded customer Agents stage: publish/check the role-scoped Prompt Agent roster and deploy the Hosted Agent. Run Configure and Mcp first.')
+output provisionAgentsCommand string = './scripts/setup_customer.ps1 -SubscriptionId "${subscription().subscriptionId}" -ResourceGroup "${resourceGroup().name}" -DeploymentName "${deployment().name}" -Environment "${baseName}-customer" -Stage Agents'
 
 @description('Initialize an explicitly named customer azd environment from structured deployment outputs. The script never evaluates command strings from ARM.')
 output configureHostedAgentCommand string = './scripts/setup_customer.ps1 -SubscriptionId "${subscription().subscriptionId}" -ResourceGroup "${resourceGroup().name}" -DeploymentName "${deployment().name}" -Environment "${baseName}-customer" -Stage Configure'
 
 @description('Versioned non-secret setup contract. Do not add credentials, API keys, connection strings, or subscriber data.')
 output customerSetup object = {
-  schemaVersion: 1
+  schemaVersion: 2
   tenantId: tenant().tenantId
   subscriptionId: subscription().subscriptionId
   resourceGroup: resourceGroup().name
@@ -1724,6 +1775,8 @@ output customerSetup object = {
   foundryProjectId: foundryProject.id
   foundryProjectEndpoint: foundryProjectEndpoint
   modelDeploymentName: modelDeploymentName
+  simpleModelDeploymentName: simpleModelDeploymentName
+  coreReasoningEffort: coreReasoningEffort
   hostedAgentName: foundryHostedAgentName
   specialistAgentNames: {
     coordinator: foundryCoordinatorAgentName

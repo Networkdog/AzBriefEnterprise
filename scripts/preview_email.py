@@ -349,7 +349,7 @@ def render_previews(
                 language,
                 archive_url=items[0]["archive_url"],
             )
-            digest = service.build_digest_content(items, "2026-09-01 — 2026-09-08", language)
+            digest = service.build_digest_content(items, "2026-09-07 ~ 2026-09-13", language)
             for name, content in (("single", single), ("digest", digest)):
                 for stripped in (False, True):
                     markup = content["html_content"]

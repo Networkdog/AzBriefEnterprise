@@ -10,7 +10,7 @@ import json
 import os as _os
 import re
 from functools import lru_cache
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -464,9 +464,21 @@ class Settings(BaseSettings):
     foundry_model_deployment: Optional[str] = Field(
         default=None,
         description=(
-            "Model deployment used only by scripts/provision_foundry_agents.py when "
-            "creating or updating agent definitions. The running app does not call it directly."
+            "Legacy single-model override for Prompt Agent provisioning. Overrides both "
+            "role tiers; existing same-model generation settings remain unmanaged."
         ),
+    )
+    foundry_core_model_deployment: Optional[str] = Field(
+        default=None,
+        description="Core Prompt Agent deployment (default: gpt-5-terra). Provisioning only.",
+    )
+    foundry_simple_model_deployment: Optional[str] = Field(
+        default=None,
+        description="Azure MCP Prompt Agent deployment (default: gpt-5-luna). Provisioning only.",
+    )
+    foundry_core_reasoning_effort: Literal["low", "medium", "high"] = Field(
+        default="medium",
+        description="Required reasoning effort for the core provisioning tier.",
     )
     foundry_coordinator_web_search_enabled: bool = Field(
         default=False,
@@ -646,6 +658,10 @@ class Settings(BaseSettings):
     admin_readiness_foundry_model_deployment: Optional[str] = Field(
         default=None,
         description="Foundry model deployment expected by the Admin readiness dashboard.",
+    )
+    admin_readiness_foundry_simple_model_deployment: Optional[str] = Field(
+        default=None,
+        description="Optional simple-task model deployment checked separately by Admin readiness.",
     )
     admin_readiness_container_environments: str = Field(
         default="",
