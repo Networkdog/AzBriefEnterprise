@@ -16,6 +16,9 @@ description: 'G-Eval and Microsoft Foundry cloud-evaluation methodology for scor
   operational responsibility, and closure evidence. Do not reward generic WAF or compliance labels.
 - Treat any fabricated resource, date, command, or URL as critical. Reward concise evidence,
   honest zero-impact findings, and explicit limits rather than verbosity.
+- Large resource summaries may replace individual names with verified unique counts, reasons and
+  runtime-generated Portal links. Check the independent query-count evidence, scope and completeness;
+  do not penalize omitted display rows or add overlapping group counts. Partial is not an exact total.
 - Judge changes by confirmed applicability/action and capabilities by documented value/adoption
   conditions. Empty ARM inventory proves neither no relevance nor SDK/code non-use. Require no
   invented migration, mandatory trial, adoption plan, or named resource for a workload-only case.
@@ -228,6 +231,10 @@ email. Judge its actual grounding: public documents establish a capability's con
 not that the tenant needs or plans to adopt it. Preserve `unknown` for material missing evidence.
 Resource-section headings likewise use the shared `affected_resources` label (`연관 리소스` in
 Korean); this does not change the resource data, selection logic, or scoring rubric.
+Above 20 resources the judge uses the same compact formatter as HTML/plain-text email. Executed
+query identities, counts, scope and predicates reach the judge separately through the analyzer's
+private evidence snapshot, without treating the writer's reason as proof. Archive v1 still preserves
+the complete collected resource projection; its delivery-only query metadata is excluded.
 The mechanical evaluator checks rationale presence and structural contradictions without requiring
 resource counts for workload/code-only cases. Its revised category-aware scoring must not be compared
 directly with old totals as evidence of a generation-quality gain; establish a fresh baseline.

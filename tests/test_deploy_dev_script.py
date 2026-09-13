@@ -31,6 +31,16 @@ def test_development_deploy_updates_and_verifies_both_runtimes(script_text: str)
     assert "Wait-HealthEndpoint" in script_text
 
 
+def test_development_deploy_rechecks_source_before_build_and_rollout(script_text: str) -> None:
+    validation_guard = script_text.index("$validatedFingerprint.Sha256 -ne $fingerprint.Sha256")
+    build = script_text.index('"acr", "build",')
+    build_guard = script_text.index("$builtFingerprint.Sha256 -ne $fingerprint.Sha256")
+    rollout = script_text.index("$appChangeAttempted = $true")
+    assert validation_guard < build < build_guard < rollout
+    assert "No image was built; rerun with stable source" in script_text
+    assert "No runtime was updated; rerun with stable source" in script_text
+
+
 def test_job_smoke_does_not_dispatch_the_scheduler(script_text: str) -> None:
     assert "Wait-JobSmokeExecution" in script_text
     assert '"--command", "python"' in script_text

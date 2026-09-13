@@ -87,7 +87,9 @@ def _document(index: int, base: datetime) -> ArchiveDocumentV1:
                 recommendations=[],
                 reference_docs=[],
                 should_notify=True,
-            ).model_dump(mode="json", exclude={"job_relevance", "visual_assets"})
+            ).model_dump(
+                mode="json", exclude={"job_relevance", "visual_assets", "resource_queries"}
+            )
         ),
     )
 

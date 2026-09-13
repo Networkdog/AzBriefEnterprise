@@ -831,7 +831,23 @@ class GEvalJudge:
                 )
 
         resources = getattr(result, "affected_resources", None) or []
-        if resources:
+        from src.agent.resource_evidence import RESOURCE_LIST_LIMIT
+
+        if len(resources) > RESOURCE_LIST_LIMIT or (
+            not resources and getattr(result, "resource_queries", None)
+        ):
+            from src.email.templates import format_affected_resources_text
+
+            resource_text = format_affected_resources_text(
+                resources,
+                language,
+                category,
+                resource_queries=getattr(result, "resource_queries", []),
+            )
+            if resource_text:
+                heading, _, body = resource_text.partition("\n")
+                parts.append(f"## {heading}\n\n{body}")
+        elif resources:
             header = (
                 f"## {get_labels(language)['affected_resources']}\n\n"
                 "| 이름 | 유형 | 리소스 그룹 | 사유 |\n|------|------|------------|------|"

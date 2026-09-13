@@ -14,7 +14,8 @@ description: 'Edit HTML email templates for AzBrief reports. Use when: email tem
 - Keep resource reasons and action fields concise, self-contained, and renderable without
     reconstructing missing context.
 - Use the requested language and verified HTTP(S) links only. Never expose HTML, tracking
-    wrappers, unsafe URLs, fabricated links, schema names, tools, queries, or delivery details.
+    wrappers, unsafe URLs, fabricated links, schema names, tools, queries, or delivery details in
+    narrative text. Runtime-owned resource query references belong only in the declared structured field.
 
 <!-- End Foundry Runtime Guidance -->
 
@@ -94,7 +95,9 @@ Preserve visible status text, existing colors, thin neutral dividers, and text c
 | `format_email_footer_html()` | Shared localized disclaimer, generation metadata, and Feedback link |
 | `format_digest_intro_html()` | HTML digest totals with analyzed high/medium/low counts separate from skipped items |
 | `format_impact_section_html()` | 영향/기회 차원(비용·보안·성능·운영). `update_category`가 `CAPABILITY_CATEGORIES`(new_feature, new_service, region_expansion, preview, sdk_tooling)면 섹션 제목이 `impact_analysis`(영향 분석) 대신 `opportunity_analysis`(활용 기회)로 바뀜다 |
-| `format_affected_resources_html()` | Full-width shared reason followed by resource/subscription/resource-group/type columns; mobile labels preserve grouping and Portal identity |
+| `format_affected_resources_html()` | Full identity grid through 20 rows; larger sets use unique-ID totals, at most 10 reason groups, and validated query/Archive links |
+| `format_affected_resources_text()` | Shared evidence-based resource section for single and digest plain text, without HTML-to-text conversion |
+| `format_resource_count_text()` | Deduplicated confirmed counts with explicit unknown totals for partial or legacy evidence |
 | `format_action_items_html()` | Numbered `01` action sheets: context, procedure, dark monospaced command, schedule, guardrails; verification and safe Portal/Cloud Shell links are unchanged |
 | `format_reference_docs_html()` | Numbered references with a factual 1-2 sentence `description` and report-specific `related_content` |
 | `format_additional_checks_html()` | Additional verification items, placed before references |
@@ -132,6 +135,35 @@ with non-empty alt text, captions, and source links. Single reports show at most
 most one per update and four total. Never accept an LLM-invented image URL, tracking image, SVG,
 `data:` URL, credentialed URL, or custom remote font. Keep the full text useful when images are blocked.
 The delivery-only field is excluded from Archive v1 rather than changing its immutable schema.
+
+### Large resource sets
+
+The resource HTML and text helpers accept optional keyword-only `resource_queries` and trusted
+`archive_url`. Use `getattr(result, "resource_queries", [])` at delivery call sites so historical
+results remain renderable. Both channels use the same identity and reason grouping logic.
+
+- Preserve the existing full grid for at most `RESOURCE_LIST_LIMIT=20` identity rows. Above 20,
+    omit individual resource-name rows and show a flat total/reason summary using existing type sizes
+    and colors. Show at most 10 groups; disclose the omitted group count and point to the analysis-time
+    Archive snapshot instead of implying a full breakdown. Never trim or mutate the source identity list.
+- Count actual normalized ARM IDs, not names, generic type inventories, aggregate query results, or
+    model-supplied totals. Preserve different subscriptions with identical resource names. Unresolved
+    IDs remain separately labeled records, not asserted unique resources. Overlapping groups are
+    explicitly non-additive.
+- Validate each `ResourceQueryEvidence.reference` against row `query_refs`, compare its count with
+    the actual unique members, and check scope against the subscription/resource group in each ARM ID.
+    Reject duplicate references or mismatched counts. Only validated complete groups may use the
+    contract's `portal_url()` followed by `safe_email_href()`; never fabricate or broaden KQL.
+- Show the analysis timestamp for validated groups. Localized Portal guidance must say that results
+    reflect current state under the reader's RBAC permissions, require the matching directory/scope,
+    and that opening the link does not execute the query.
+- Missing, Management Group, unsupported join, oversized, or rejected query links fall back to the
+    trusted HTTPS authenticated Archive URL. If Archive is unavailable or unsafe, say so explicitly.
+    Partial evidence and legacy reports cannot establish complete enumeration or confirmed absence;
+    use observed lower bounds and an unknown overall total, including zero-row operational summaries.
+- Query metadata is delivery-only and excluded from Archive v1; the complete identity snapshot is
+    retained. Do not change producer, persistence, runtime instructions, or Markdown vocabulary here.
+    Escape reasons in HTML and keep existing font sizes, inline fallback, and image policy unchanged.
 
 ### Email/Archive Markdown parity
 
@@ -271,7 +303,8 @@ table — intended, since its reading pane is usually narrow.
 - User-facing text follows the requested language; Korean is the default, with curated ko/en/ja labels
 - Add new label keys to `src/i18n/labels/ko.py` first, then translate in `en.py` / `ja.py`
 - Urgency prefixes: `[긴급]`, `[중요]`
-- Default "no data" messages: `"연관 리소스가 없습니다."`, etc.
+- Use `"연관 리소스가 없습니다."` only for a complete, verified empty resource set; partial and legacy
+    empty results retain an unknown-total notice. Do not rename the existing label keys.
 
 ## `EmailService` in `service.py`
 
@@ -311,6 +344,7 @@ Adding a new section is a **4+ file chain**:
 python -c "import src"
 python -m pytest tests/test_email.py tests/test_email_editorial.py -o "addopts=" -x
 python -m scripts.preview_email --output-dir out/email-editorial-preview --language all
+python -m scripts.preview_email --output-dir out/email-resource-summary --language all --resource-count 327
 ```
 
 The preview uses **SYNTHETIC** ko/en/ja data and mocked transport settings/history; it writes
@@ -318,6 +352,13 @@ The preview uses **SYNTHETIC** ko/en/ja data and mocked transport settings/histo
 The editorial tests check structure, links/anchors, skipped counts, full titles, resource identity,
 verification, defined text/background contrast pairs ≥4.5:1, and offline previews. Report focused,
 full-suite, browser, and real email-client validation separately; do not infer unfinished results.
+
+The optional `--resource-count` (0-20000) replaces only the first fixture's resources with fixed
+synthetic ARM IDs and two verified TLS query groups. A count of 327 yields groups of 164 and 163.
+Without the option the existing two-row demo and 12-output matrix are unchanged. Transport/history
+remain mocked. Test boundaries 20/21 and 327, overlapping IDs, same names across subscriptions,
+partial/legacy evidence, missing or rejected links, escaped reasons, URL decoding, and ko/en/ja
+single/digest HTML and plain text. These checks do not replace the full suite or browser matrix.
 
 For the visual improvement loop, keep a frozen `before` preview, make one renderer change, run
 the focused tests, and regenerate into a separate directory. Open a generated local HTML file in

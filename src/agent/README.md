@@ -75,6 +75,15 @@ Resource Graph Prompt Agent는 strict evidence envelope를 사용하므로 repai
 tool을 `tool_choice=none`으로 끄고 claim의 `text`에서 KQL을 추출합니다. Gap-only JSON을 KQL로
 실행하거나 다른 specialist로 fallback하지 않습니다.
 
+대량 대상은 [resource_evidence.py](resource_evidence.py)의 실행별 카탈로그로 전달합니다.
+작성 모델은 모든 행이 같은 적용 조건을 충족하는 조회의 `reference`와 `reason`만 선택하고,
+파서는 전체 ARM 식별 목록을 복원합니다. 최대 64개 조회·20,000개 수집 행을 보존하며 중복 ID는
+합칩니다. 부분 페이지·ID 누락·take/limit은 전체 건수로 표시하지 않습니다. `resource_queries`는
+선택적 전달 메타데이터이며, 구독자 맞춤화는 사유만 번역합니다. 분석 범위를 좁히면 더 넓은 조회
+링크는 제거합니다. 이메일과 평가기는 20개 초과 시 같은 요약을 쓰고, Archive v1은 메타데이터와
+행별 `id`/`query_refs`를 제외한 기존 전체 리소스 필드를 저장합니다. 이 변경을 배포할 때는 호환되는
+App/Job 이미지를 먼저 적용한 뒤 새 Prompt Agent 지침과 Hosted 출력을 활성화합니다.
+
 ## 사용 예시
 
 네트워크 호출 없이 hosted contract의 최소 분석 요청을 만들 수 있습니다.

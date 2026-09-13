@@ -190,7 +190,10 @@ class TestParseAnalysisResultJSON:
         assert result.relevance == RelevanceStatus.UNKNOWN
         assert result.should_notify is True
 
-    def test_korean_field_names(self):
+    @pytest.mark.parametrize(
+        "resource_field", ["영향_리소스", "영향받는_리소스", "관련 리소스 식별"]
+    )
+    def test_korean_field_names(self, resource_field: str):
         """Korean field names are recognized."""
         report = json.dumps(
             {
@@ -198,9 +201,7 @@ class TestParseAnalysisResultJSON:
                 "관련성": "관련",
                 "한줄_요약": "중요한 업데이트",
                 "상세_분석": "이 업데이트는 중요합니다.",
-                "영향_리소스": [
-                    {"name": "stor-1", "type": "Microsoft.Storage/storageAccounts"}
-                ],
+                resource_field: [{"name": "stor-1", "type": "Microsoft.Storage/storageAccounts"}],
                 "적용 방안": ["즉시 조치하세요."],
                 "참고_문서": [{"title": "가이드", "url": "https://learn.microsoft.com/azure/test"}],
                 "추가_확인_필요": ["TLS 버전 확인"],
@@ -212,6 +213,16 @@ class TestParseAnalysisResultJSON:
         assert result.one_line_summary == "중요한 업데이트"
         assert len(result.affected_resources) == 1
         assert len(result.additional_checks) == 1
+
+    def test_canonical_resource_key_takes_precedence_over_korean_aliases(self):
+        report = json.dumps(
+            {
+                "affected_resources": [],
+                "영향받는_리소스": [{"name": "legacy-resource"}],
+                "영향_리소스": [{"name": "alternate-resource"}],
+            }
+        )
+        assert _parse(report).affected_resources == []
 
     def test_korean_category_mapping(self):
         """Korean category values are mapped to English enum values."""
@@ -257,6 +268,15 @@ class TestParseAnalysisResultFallback:
         # Empty input falls to UNKNOWN (resource query may have failed)
         assert result.relevance == RelevanceStatus.UNKNOWN
         assert result.should_notify is True  # UNKNOWN triggers notification for safety
+
+    @pytest.mark.parametrize("resource_field", ["영향_리소스", "영향받는_리소스"])
+    def test_korean_resource_aliases_in_regex_fallback(self, resource_field: str):
+        resources = [
+            {"name": "stor-1", "type": "Microsoft.Storage/storageAccounts", "resourceGroup": "rg-1"}
+        ]
+        raw = "{not-json " + f'"{resource_field}": ' + json.dumps(resources) + "}"
+        result = _parse(raw)
+        assert result.affected_resources == resources
 
     def test_truncated_json_still_parses(self):
         """Truncated JSON (incomplete) is handled gracefully."""

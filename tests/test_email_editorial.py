@@ -1,12 +1,17 @@
 """Behavior contracts for the editorial email design, independent of old card styling."""
 
 import re
+from copy import deepcopy
+from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import unquote
 
 import pytest
 from bs4 import BeautifulSoup
 
 from scripts.preview_email import build_demo_items, render_previews
+from src.agent.resource_evidence import ResourceQueryEvidence, resource_identity
+from src.agent.scope import AnalysisScope
 from src.email.service import EmailService
 from src.email.templates import (
     _LEVEL_COLORS,
@@ -14,6 +19,8 @@ from src.email.templates import (
     EMAIL_COLORS,
     FONT_SIZE_PX,
     SEMANTIC_ACCENT_WIDTH_PX,
+    format_affected_resources_html,
+    format_affected_resources_text,
     format_digest_intro_html,
     format_digest_update_card_html,
     format_email_section_html,
@@ -285,6 +292,349 @@ def test_resource_heading_keeps_its_count_separate_from_title_text(report_markup
         assert count.get_text().startswith(" · ")
         assert "font-size:11px" in count["style"]
         assert "white-space:nowrap" in count["style"]
+
+
+@pytest.mark.parametrize("count", [20, 21, 327])
+def test_resource_summary_starts_after_twenty_rows(count):
+    resources = [
+        {"name": f"legacy-{index:04d}", "reason": "Shared applicability"} for index in range(count)
+    ]
+    soup = BeautifulSoup(
+        format_affected_resources_html(resources, "en", "retirement"), "html.parser"
+    )
+    assert len(soup.select(".azb-resource-row")) == (count if count <= 20 else 0)
+    assert bool(soup.select_one(".azb-resource-summary")) == (count > 20)
+
+
+def _render_resource_report(item: dict, kind: str, language: str) -> dict:
+    settings = SimpleNamespace(
+        use_email=False,
+        communication_services_connection_string=None,
+        communication_services_endpoint=None,
+        email_sender_address=None,
+        feedback_ui_enabled=False,
+        feedback_base_url="",
+    )
+    with (
+        patch("src.email.service.get_settings", return_value=settings),
+        patch("src.agent.history.get_retirement_countdown", return_value=[]),
+    ):
+        service = EmailService()
+        if kind == "single":
+            return service.build_email_content(
+                item["update"], item["result"], language, archive_url=item.get("archive_url", "")
+            )
+        return service.build_digest_content([item], "2026-09-08", language)
+
+
+@pytest.mark.parametrize("count", [20, 21, 327])
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_verified_resource_summary_is_shared_by_html_and_plain_text(count, language, kind):
+    item = build_demo_items(language, resource_count=count)[0]
+    result = item["result"]
+    before = deepcopy(result.affected_resources)
+    content = _render_resource_report(item, kind, language)
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    plain = content["plain_content"]
+    labels = get_labels(language)
+    assert result.affected_resources == before
+    assert len(soup.select(".azb-resource-row")) == (count if count <= 20 else 0)
+    if count <= 20:
+        for resource in result.affected_resources:
+            assert resource["name"] in soup.get_text()
+            assert resource["name"] in plain
+        return
+    summary = soup.select_one(".azb-resource-summary")
+    assert len(summary.select(".azb-resource-summary-group")) == 2
+    assert labels["resource_summary_total"].format(count=count) in soup.get_text()
+    assert labels["resource_summary_total"].format(count=count) in plain
+    assert labels["resource_query_caveat"] in soup.get_text()
+    assert labels["resource_query_caveat"] in plain
+    assert labels["resource_snapshot_open"] in soup.get_text()
+    assert labels["resource_snapshot_open"] in plain
+    assert result.affected_resources[-1]["name"] not in content["html_content"]
+    assert result.affected_resources[-1]["name"] not in plain
+    for group, evidence in zip(
+        summary.select(".azb-resource-summary-group"), result.resource_queries
+    ):
+        assert evidence.reason in group.get_text()
+        assert evidence.reason in plain
+        assert labels["resource_group_count"].format(count=evidence.count) in group.get_text()
+        assert "2026-09-08 09:00:00+00:00" in group.get_text()
+        assert "2026-09-08 09:00:00+00:00" in plain
+        assert evidence.reference not in content["html_content"]
+        assert evidence.reference not in plain
+        assert group.find("a")["href"] == evidence.portal_url()
+        assert evidence.portal_url() in plain
+        decoded = unquote(group.find("a")["href"].split("/query/", 1)[1])
+        assert decoded == evidence.portal_query
+        assert "where properties.minimumTlsVersion =~ 'TLS1_" in decoded
+        assert evidence.scope.subscriptions[0] in decoded
+
+
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_summary_deduplicates_arm_ids_without_merging_names_across_subscriptions(kind):
+    item = build_demo_items("en", resource_count=21)[0]
+    resources = item["result"].affected_resources
+    first, second = item["result"].resource_queries
+    other_subscription = "00000000-0000-0000-0000-000000000002"
+    resources[-1] = {
+        **resources[-1],
+        "name": resources[0]["name"],
+        "id": f"/subscriptions/{other_subscription}/resourceGroups/rg-platform-production/providers/Microsoft.Storage/storageAccounts/{resources[0]['name']}",
+        "subscriptionId": other_subscription,
+    }
+    for index, resource in enumerate(resources):
+        resource["query_refs"] = ([first.reference] if index < 20 else []) + (
+            [second.reference] if index >= 19 else []
+        )
+    resources.append({**resources[0], "id": resources[0]["id"].upper()})
+    queries = [
+        first.model_copy(update={"count": 20}),
+        second.model_copy(
+            update={
+                "count": 2,
+                "scope": AnalysisScope(
+                    subscriptions=(*first.scope.subscriptions, other_subscription)
+                ),
+                "portal_query": (
+                    "Resources | where subscriptionId in~ "
+                    f"('{first.scope.subscriptions[0]}', '{other_subscription}') "
+                    "| where properties.minimumTlsVersion =~ 'TLS1_1' | project id"
+                ),
+            }
+        ),
+    ]
+    item["result"] = item["result"].model_copy(update={"resource_queries": queries})
+    content = _render_resource_report(item, kind, "en")
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    for text in (soup.get_text(), content["plain_content"]):
+        assert "Total: 21 unique resources" in text
+        assert get_labels("en")["resource_summary_overlap"] in text
+    groups = soup.select(".azb-resource-summary-group")
+    assert "20 resources" in groups[0].get_text()
+    assert "2 resources" in groups[1].get_text()
+    assert all(group.find("a") for group in groups)
+
+
+@pytest.mark.parametrize("count", [0, 21, 327])
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_partial_evidence_never_reports_an_exact_total_or_confirmed_absence(count, language, kind):
+    item = build_demo_items(language, resource_count=count)[0]
+    queries = [
+        evidence.model_copy(update={"complete": False})
+        for evidence in item["result"].resource_queries
+    ]
+    item["result"] = item["result"].model_copy(update={"resource_queries": queries})
+    content = _render_resource_report(item, kind, language)
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    labels = get_labels(language)
+    assert not soup.select('a[href*="ArgQueryBlade"]')
+    for text in (soup.get_text(), content["plain_content"]):
+        assert labels["resource_summary_partial"].format(count=count) in text
+        assert labels["resource_summary_incomplete"] in text
+        assert labels["no_affected_resources"] not in text
+        assert labels["resource_snapshot_open"] in text
+
+
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_legacy_many_unique_reasons_are_bounded_and_do_not_invent_query_links(language, kind):
+    item = build_demo_items(language, resource_count=327)[0]
+    resources = [
+        {"name": "ambiguous-name", "reason": f"Reason {index:04d}"} for index in range(327)
+    ]
+    item["result"] = item["result"].model_copy(
+        update={"affected_resources": resources, "resource_queries": []}
+    )
+    item["archive_url"] = ""
+    content = _render_resource_report(item, kind, language)
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    labels = get_labels(language)
+    assert len(soup.select(".azb-resource-summary-group")) == 10
+    assert not soup.select('a[href*="ArgQueryBlade"]')
+    for text in (soup.get_text(), content["plain_content"]):
+        assert labels["resource_summary_records"].format(records=327) in text
+        assert labels["resource_summary_remaining"].format(count=317) in text
+        assert labels["resource_snapshot_unavailable"] in text
+        assert "Reason 0009" in text
+        assert "Reason 0010" not in text
+        assert "Reason 0326" not in text
+        assert "ambiguous-name" not in text
+
+
+@pytest.mark.parametrize(
+    "mode", ["legacy", "count", "membership", "duplicate_ref", "scope", "id_scope"]
+)
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_unverified_metadata_cannot_supply_exact_counts_or_query_links(mode, kind):
+    item = build_demo_items("en", resource_count=21)[0]
+    result = item["result"]
+    resources = result.affected_resources
+    queries = result.resource_queries
+    other_subscription = "00000000-0000-0000-0000-000000000002"
+    if mode == "legacy":
+        queries = []
+        for resource in resources:
+            resource.pop("query_refs")
+    elif mode == "count":
+        queries = [evidence.model_copy(update={"count": 9999}) for evidence in queries]
+    elif mode == "membership":
+        for resource in resources:
+            resource["query_refs"] = ["rq-" + "f" * 32]
+    elif mode == "duplicate_ref":
+        queries = queries + queries
+    elif mode == "scope":
+        queries = [
+            evidence.model_copy(
+                update={"scope": AnalysisScope(subscriptions=(other_subscription,))}
+            )
+            for evidence in queries
+        ]
+    else:
+        for resource in resources:
+            resource["id"] = resource["id"].replace(resource["subscriptionId"], other_subscription)
+    item["result"] = result.model_copy(update={"resource_queries": queries})
+    content = _render_resource_report(item, kind, "en")
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    assert not soup.select('a[href*="ArgQueryBlade"]')
+    for text in (soup.get_text(), content["plain_content"]):
+        assert "Confirmed: 21 unique resources; overall total unknown" in text
+        assert "9999" not in text
+        assert item["archive_url"] in content["html_content"]
+        assert get_labels("en")["resource_snapshot_open"] in text
+
+
+@pytest.mark.parametrize(
+    "mode", ["missing", "join_unavailable", "long", "management_group", "rejected"]
+)
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_unavailable_portal_query_falls_back_to_analysis_time_archive(mode, kind):
+    item = build_demo_items("en", resource_count=21)[0]
+    changes = {"portal_query": ""}
+    if mode == "long":
+        changes = {
+            "portal_query": "Resources | where name in (" + "'synthetic'," * 1000 + "'last')"
+        }
+    elif mode == "management_group":
+        changes = {"scope": AnalysisScope(management_groups=("synthetic-mg",))}
+    elif mode == "rejected":
+        changes = {}
+    queries = [evidence.model_copy(update=changes) for evidence in item["result"].resource_queries]
+    item["result"] = item["result"].model_copy(update={"resource_queries": queries})
+    if mode == "rejected":
+        with patch.object(
+            ResourceQueryEvidence, "portal_url", return_value="https://evil.example/query"
+        ):
+            content = _render_resource_report(item, kind, "en")
+    else:
+        content = _render_resource_report(item, kind, "en")
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    assert not soup.select('a[href*="ArgQueryBlade"]')
+    assert soup.select_one(".azb-resource-snapshot a")["href"] == item["archive_url"]
+    for text in (soup.get_text(), content["plain_content"]):
+        assert "Total: 21 unique resources" in text
+        assert get_labels("en")["resource_query_unavailable"] in text
+        assert get_labels("en")["resource_snapshot_open"] in text
+        assert "evil.example" not in text
+
+
+@pytest.mark.parametrize(
+    "archive_url",
+    [
+        "",
+        "javascript:alert(1)",
+        "https://user:secret@azbrief.example/archive",
+        "https://azbrief.example:bad/archive",
+    ],
+)
+def test_rejected_archive_links_have_an_explicit_unavailable_fallback(archive_url):
+    item = build_demo_items("en", resource_count=21)[0]
+    queries = [
+        evidence.model_copy(update={"portal_query": ""})
+        for evidence in item["result"].resource_queries
+    ]
+    markup = format_affected_resources_html(
+        item["result"].affected_resources,
+        "en",
+        "retirement",
+        resource_queries=queries,
+        archive_url=archive_url,
+    )
+    plain = format_affected_resources_text(
+        item["result"].affected_resources,
+        "en",
+        "retirement",
+        resource_queries=queries,
+        archive_url=archive_url,
+    )
+    soup = BeautifulSoup(markup, "html.parser")
+    assert not soup.find("a")
+    for text in (soup.get_text(), plain):
+        assert get_labels("en")["resource_snapshot_unavailable"] in text
+        assert "secret" not in text
+
+
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+@pytest.mark.parametrize("kind", ["single", "digest"])
+def test_resource_summary_escapes_untrusted_reasons_and_preserves_encoded_query(language, kind):
+    item = build_demo_items(language, resource_count=21)[0]
+    reason = '<img src=x onerror="alert(1)"> & <script>alert(2)</script>'
+    queries = [
+        evidence.model_copy(
+            update={
+                "reason": reason,
+                "portal_query": evidence.portal_query + " | where strlen(name) > 3",
+            }
+        )
+        for evidence in item["result"].resource_queries
+    ]
+    item["result"] = item["result"].model_copy(update={"resource_queries": queries})
+    content = _render_resource_report(item, kind, language)
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    summary = soup.select_one(".azb-resource-summary")
+    assert not summary.select("img, script, [onerror]")
+    assert reason in summary.get_text()
+    assert reason in content["plain_content"]
+    assert "&lt;img" in content["html_content"]
+    for link, evidence in zip(summary.find_all("a"), queries):
+        assert unquote(link["href"].split("/query/", 1)[1]) == evidence.portal_query
+        assert "%3E%203" in link["href"]
+
+
+@pytest.mark.parametrize("count", [0, 1, 20, 21, 327])
+def test_preview_resource_option_generates_complete_fixed_synthetic_identity_evidence(count):
+    item = build_demo_items("en", resource_count=count)[0]
+    resources = item["result"].affected_resources
+    queries = item["result"].resource_queries
+    assert len(resources) == count
+    assert len({resource_identity(resource) for resource in resources}) == count
+    for evidence in queries:
+        members = [
+            resource for resource in resources if evidence.reference in resource["query_refs"]
+        ]
+        assert isinstance(evidence, ResourceQueryEvidence)
+        assert evidence.count == len(members)
+        assert evidence.complete
+        assert evidence.scope.subscriptions == ("00000000-0000-0000-0000-000000000001",)
+        assert evidence.portal_url()
+    assert len(build_demo_items("en")[0]["result"].affected_resources) == 2
+
+
+def test_resource_preview_option_preserves_all_twelve_offline_outputs(tmp_path):
+    with patch("src.email.service.get_email_client_class") as transport:
+        files = render_previews(tmp_path, ["ko", "en", "ja"], resource_count=327)
+    transport.assert_not_called()
+    assert len(files) == 12
+    for path in files:
+        soup = BeautifulSoup(path.read_text(encoding="utf-8"), "html.parser")
+        assert not soup.select(".azb-resource-row")
+        assert len(soup.select(".azb-resource-summary-group")) == 2
+        assert "327" in soup.select_one(".azb-resource-total").get_text()
+        if "inline-only" in path.name:
+            assert not soup.find("style")
 
 
 def test_digest_uses_a_publication_masthead_and_separate_statistic_panels(report_markup):

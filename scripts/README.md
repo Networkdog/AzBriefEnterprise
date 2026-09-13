@@ -27,6 +27,12 @@ entry point입니다.
 | [`run_quality_loop.py`](run_quality_loop.py) | mock 결과의 빠른 deterministic 품질 loop | 로컬 artifact 가능 |
 | [`optimize_prompt.py`](optimize_prompt.py) | 고정 sample로 한국어 prompt A/B 최적화 | prompt source를 수정할 수 있음 |
 
+`deploy_dev.ps1`은 테스트와 ACR 빌드 직후 Docker 입력 지문을 다시 비교합니다. 검증 중 소스가
+바뀌면 원격 빌드 전, 빌드 중 바뀌면 App/Job 갱신 전에 중단합니다. 검토가 끝난 안정된 소스로
+재실행하며 테스트·검증을 건너뛰어 배포하지 않습니다.
+Archive 평가 fixture는 운영 v1 투영과 같이 `job_relevance`, `visual_assets`, `resource_queries`를
+제외합니다. 전달 전용 필드를 수용하려고 불변 Archive 스키마를 완화하지 않습니다.
+
 ## 자주 쓰는 예시
 
 새 고객 설치는 [고객 가이드](../infra/CUSTOMER_DEPLOYMENT.md)를 따릅니다. 루트 `.env`가 없는
@@ -61,6 +67,8 @@ python -m scripts.preview_email --output-dir out/email-editorial-preview --langu
 ```
 
 `--language`는 `ko`, `en`, `ja`도 받습니다. 출력 디렉터리를 생략하면 임시 디렉터리를 만듭니다.
+`--resource-count 327`을 추가하면 대량 리소스의 두 사유 그룹과 검증된 조회 메타데이터를 포함한
+합성 미리보기를 만듭니다. 기본 미리보기와 다른 `out/` 폴더를 사용해 소규모/대량 결과를 보존합니다.
 합성 미리보기는 전송 성공, 전체 suite 또는 브라우저·이메일 client 검증의 근거가 아닙니다.
 
 웹 화면은 같은 합성 예제를 재사용하는 루프백 전용 서버에서 확인합니다.

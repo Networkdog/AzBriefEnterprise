@@ -80,7 +80,9 @@ def _document(archive_id: str, update_id: str = "570120") -> ArchiveDocumentV1:
         source=ArchiveSource.API_ANALYZE,
         update=_update(update_id).to_dict(),
         result=ArchiveAnalysisResultV1.model_validate(
-            _result(update_id).model_dump(mode="json", exclude={"job_relevance", "visual_assets"})
+            _result(update_id).model_dump(
+                mode="json", exclude={"job_relevance", "visual_assets", "resource_queries"}
+            )
         ),
     )
 
@@ -237,6 +239,36 @@ class TestArchiveService:
         assert document.hosted_agent_name == "azbrief-analysis-hosted"
         assert not ({"subscriber", "recipient", "email"} & set(document.model_dump()))
         assert "visual_assets" not in document.result.model_dump()
+
+    @pytest.mark.asyncio
+    async def test_query_sets_archive_every_resource_without_changing_v1(self, tmp_path):
+        from src.agent.resource_evidence import (
+            register_resource_query,
+            resolve_resource_queries,
+            resource_evidence_context,
+        )
+        from tests.test_resource_evidence import query_result
+
+        result = _result()
+        with resource_evidence_context():
+            query = register_resource_query(query_result())
+            result.affected_resources, result.resource_queries = resolve_resource_queries(
+                [{"reference": query["resource_query_ref"], "reason": "Verified reason"}], []
+            )
+        service = ArchiveService(store=FileArchiveStore(str(tmp_path)), settings=_settings())
+        receipt = await service.archive_analysis(_update(), result, ArchiveSource.API_ANALYZE)
+        document = await service.get(receipt.archive_id)
+
+        assert document.schema_version == "1"
+        assert len(document.result.affected_resources) == 327
+        assert document.result.affected_resources[-1].name == "account326"
+        payload = document.model_dump_json()
+        assert "resource_queries" not in payload
+        assert "query_refs" not in payload
+        assert "portal_query" not in payload
+        assert query["resource_query_ref"] not in payload
+        page = await service.list(ArchiveQuery())
+        assert page.items[0].affected_resource_count == 327
 
     def test_detail_url_requires_the_archive_ui_to_be_enabled(self):
         disabled = ArchiveService(

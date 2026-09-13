@@ -54,6 +54,10 @@ Note: `job_relevance` evaluates role fit — it is independent of `importance` (
 - **one_line_summary**: Rewrite from the subscriber's role perspective. MUST remain 30-80 characters. Do NOT expand into a full sentence.
 - **detailed_analysis**: Emphasize content relevant to the subscriber's role. Use ONLY information from the original — do NOT add new content. Preserve `> ` blockquote concept boxes exactly. Preserve the decision hinge, recommendation boundary, supported trade-off or hidden failure mode, owning operational responsibility, and decision-closure evidence; role tailoring may reprioritize these elements but must not delete them or turn them into generic advice. **Do NOT mention the subscriber's role name or title in the report text** — the report should read as a general professional analysis, not as "as a Security Engineer, you should...".
 - **affected_resources**: Move role-relevant resources to the top. May remove irrelevant resources
+  only when no `resource_queries` are present. Verified query membership is immutable.
+- **resource_queries**: Preserve every `reference` exactly and translate only its `reason`.
+  The runtime retains the full resource list, counts, scope and query; never expand these sets
+  into individual rows, remove references, or add counts, KQL or URLs to this field.
 - **action_items**: Re-prioritize urgency based on role. May remove irrelevant items
 - **impact_summary**: Keep original values (translate only)
 - **relevance_evidence**: Preserve the original applicability/value evidence, analysis-time scope,
@@ -96,6 +100,7 @@ Translation targets:
 - action_items values (task, procedure, risk_if_not_done, deadline, estimated_time)
 - relevance_evidence
 - affected_resources values for reason
+- resource_queries values for reason (never translate reference)
 - additional_checks items
 - reference_docs description and related_content (keep title and url unchanged)
 

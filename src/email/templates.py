@@ -1,11 +1,20 @@
 """Professional HTML email templates for AzBrief reports."""
 
 import re
+from dataclasses import dataclass
+from datetime import timezone
 
 # Aliased: several renderers below bind a local name `html` for their output.
 from html import escape as _escape
 from html import unescape as _unescape
+from typing import Optional
 from urllib.parse import quote, urlparse
+
+from src.agent.resource_evidence import (
+    RESOURCE_LIST_LIMIT,
+    ResourceQueryEvidence,
+    resource_identity,
+)
 
 # Canonical UI label bundles live in src/i18n/labels/<code>.py. Re-exported so the
 # renderers below (and their callers) keep importing get_labels from templates.
@@ -664,8 +673,18 @@ def safe_archive_url(archive_url: str) -> str:
     """Return a normalized HTTPS archive URL, or an empty string when unsafe."""
     if not archive_url:
         return ""
-    parsed = urlparse(archive_url)
-    if parsed.scheme != "https" or not parsed.netloc:
+    try:
+        parsed = urlparse(archive_url)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+            or parsed.port
+            or re.search(r"[\x00-\x20\\]", archive_url)
+        ):
+            return ""
+    except ValueError:
         return ""
     return archive_url
 
@@ -1170,10 +1189,286 @@ def format_impact_section_html(
     )
 
 
+_RESOURCE_REASON_LIMIT = 10
+
+
+@dataclass(frozen=True)
+class _ResourceReasonGroup:
+    reason: str
+    count: int
+    complete: bool
+    identified: bool
+    queried_at: str = ""
+    portal_url: str = ""
+
+    def count_text(self, labels: dict[str, str]) -> str:
+        key = "resource_group_count" if self.complete else "resource_group_partial_count"
+        if not self.identified:
+            key = "resource_group_records"
+        return labels[key].format(count=self.count)
+
+
+@dataclass(frozen=True)
+class _ResourceSummary:
+    unique_count: int
+    unresolved_count: int
+    complete: bool
+    groups: list[_ResourceReasonGroup]
+    overlapping: bool
+
+    def count_text(self, labels: dict[str, str]) -> str:
+        key = "resource_summary_total" if self.complete else "resource_summary_partial"
+        if self.unresolved_count:
+            key = "resource_summary_mixed" if self.unique_count else "resource_summary_records"
+        return labels[key].format(count=self.unique_count, records=self.unresolved_count)
+
+
+def _summarize_resources(
+    resources: list, resource_queries: Optional[list[ResourceQueryEvidence]] = None
+) -> _ResourceSummary:
+    """Count actual identities and validate query membership without changing evidence."""
+    rows: dict[str, dict] = {}
+    reasons: dict[str, list[str]] = {}
+    members_by_ref: dict[str, set[str]] = {}
+    identities: set[str] = set()
+    for index, resource in enumerate(resources):
+        identity = resource_identity(resource)
+        key = identity or f"unresolved-{index}"
+        scope_row = resource
+        if identity:
+            identities.add(identity)
+            parts = identity.split("/")
+            scope_row = {**resource, "subscriptionId": parts[2], "resourceGroup": parts[4]}
+        rows.setdefault(key, scope_row)
+        reason = str(resource.get("reason") or "").strip()
+        reasons.setdefault(key, [])
+        if reason and reason not in reasons[key]:
+            reasons[key].append(reason)
+        references = resource.get("query_refs") or []
+        if isinstance(references, list):
+            for reference in references:
+                if isinstance(reference, str):
+                    members_by_ref.setdefault(reference, set()).add(key)
+
+    queries = resource_queries or []
+    reference_counts: dict[str, int] = {}
+    for evidence in queries:
+        if isinstance(evidence, ResourceQueryEvidence):
+            reference_counts[evidence.reference] = reference_counts.get(evidence.reference, 0) + 1
+    complete = bool(queries) and not (members_by_ref.keys() - reference_counts.keys())
+    covered: set[str] = set()
+    groups: list[_ResourceReasonGroup] = []
+    seen: set[str] = set()
+    for evidence in queries:
+        if not isinstance(evidence, ResourceQueryEvidence):
+            complete = False
+            continue
+        if evidence.reference in seen:
+            continue
+        seen.add(evidence.reference)
+        members = members_by_ref.get(evidence.reference, set())
+        identified = members <= identities
+        valid = (
+            reference_counts[evidence.reference] == 1
+            and identified
+            and len(members) == evidence.count
+            and all(evidence.scope.contains_resource(rows[key]) for key in members)
+        )
+        group_complete = valid and evidence.complete
+        complete = complete and group_complete
+        portal_url = ""
+        if group_complete and evidence.scope.subscriptions and not evidence.scope.management_groups:
+            candidate = evidence.portal_url()
+            if safe_email_href(candidate):
+                portal_url = candidate
+        queried_at = ""
+        if valid:
+            timestamp = evidence.queried_at
+            if timestamp.utcoffset() is not None:
+                timestamp = timestamp.astimezone(timezone.utc)
+            queried_at = timestamp.isoformat(sep=" ", timespec="seconds")
+        groups.append(
+            _ResourceReasonGroup(
+                evidence.reason,
+                len(members),
+                group_complete,
+                identified,
+                queried_at,
+                portal_url,
+            )
+        )
+        covered.update(members)
+
+    legacy_groups: dict[str, set[str]] = {}
+    for key in rows:
+        if key in covered:
+            continue
+        reason = "\n".join(reasons[key])
+        legacy_groups.setdefault(reason, set()).add(key)
+    for reason, members in legacy_groups.items():
+        groups.append(_ResourceReasonGroup(reason, len(members), False, members <= identities))
+    return _ResourceSummary(
+        unique_count=len(identities),
+        unresolved_count=len(rows) - len(identities),
+        complete=complete and covered == rows.keys() and len(identities) == len(rows),
+        groups=groups,
+        overlapping=sum(group.count for group in groups) > len(rows),
+    )
+
+
+def format_resource_count_text(
+    resources: list,
+    language: str = "ko",
+    *,
+    resource_queries: Optional[list[ResourceQueryEvidence]] = None,
+) -> str:
+    """Describe deduplicated observed counts, never an unverified overall total."""
+    return _summarize_resources(resources, resource_queries).count_text(get_labels(language))
+
+
+def _resource_summary_notes(summary: _ResourceSummary, labels: dict[str, str]) -> list[str]:
+    notes = []
+    if not summary.complete:
+        notes.append(labels["resource_summary_incomplete"])
+    if summary.overlapping:
+        notes.append(labels["resource_summary_overlap"])
+    if len(summary.groups) > _RESOURCE_REASON_LIMIT:
+        notes.append(
+            labels["resource_summary_remaining"].format(
+                count=len(summary.groups) - _RESOURCE_REASON_LIMIT
+            )
+        )
+    if any(group.portal_url for group in summary.groups[:_RESOURCE_REASON_LIMIT]):
+        notes.append(labels["resource_query_caveat"])
+    return notes
+
+
+def _format_resource_summary_html(
+    summary: _ResourceSummary, language: str, archive_url: str
+) -> str:
+    labels = get_labels(language)
+    cell_style = (
+        f"padding: 12px 0; border-bottom: 1px solid {EMAIL_COLORS['line']}; "
+        f"font-size: {FONT_SIZE_PX['body']}px; color: {EMAIL_COLORS['body']}; "
+        "vertical-align: top; line-height: 1.8; overflow-wrap: anywhere;"
+    )
+    meta_style = (
+        f"font-size: {FONT_SIZE_PX['meta']}px; color: {EMAIL_COLORS['muted']}; "
+        "line-height: 1.8; overflow-wrap: anywhere;"
+    )
+    html = (
+        f'<p class="azb-resource-total" style="margin: 0; {cell_style}">'
+        f"{escape_email_text(summary.count_text(labels))}</p>"
+        '<table class="azb-resource-summary" cellspacing="0" cellpadding="0" border="0" '
+        'width="100%" style="table-layout: fixed; border-collapse: collapse;">'
+    )
+    for group in summary.groups[:_RESOURCE_REASON_LIMIT]:
+        detail = escape_email_text(labels["resource_query_unavailable"])
+        if group.portal_url:
+            detail = _portal_link_html(labels["resource_query_open"], group.portal_url)
+        timestamp = (
+            escape_email_text(labels["resource_queried_at"].format(time=group.queried_at)) + "<br>"
+            if group.queried_at
+            else ""
+        )
+        html += (
+            f'<tr class="azb-resource-summary-group"><td style="{cell_style}">'
+            f'{escape_email_text(group.reason or labels["resource_reason_unknown"])}<br>'
+            f"<strong>{escape_email_text(group.count_text(labels))}</strong><br>"
+            f'<span style="{meta_style}">{timestamp}{detail}</span></td></tr>'
+        )
+    html += "</table>"
+    for note in _resource_summary_notes(summary, labels):
+        html += f'<p style="margin: 10px 0 0; {meta_style}">{escape_email_text(note)}</p>'
+    archive_url = safe_archive_url(archive_url)
+    detail = escape_email_text(labels["resource_snapshot_unavailable"])
+    if archive_url:
+        detail = (
+            f'<a class="azb-link" href="{escape_email_text(archive_url)}" '
+            f'style="color: {EMAIL_COLORS["accent"]}; text-decoration: underline;">'
+            f'{escape_email_text(labels["resource_snapshot_open"])}</a>'
+        )
+    return (
+        html
+        + f'<p class="azb-resource-snapshot" style="margin: 10px 0 0; {meta_style}">{detail}</p>'
+    )
+
+
+def format_affected_resources_text(
+    resources: list,
+    language: str = "ko",
+    update_category: str = "new_feature",
+    *,
+    resource_queries: Optional[list[ResourceQueryEvidence]] = None,
+    archive_url: str = "",
+) -> str:
+    """Render the same resource evidence as HTML without parsing HTML into text."""
+    if update_category in ("new_service", "region_expansion", "sdk_tooling"):
+        return ""
+    labels = get_labels(language)
+    opportunity = update_category in ("new_feature", "preview")
+    heading = labels["replaceable_resources" if opportunity else "affected_resources"]
+    summary = _summarize_resources(resources, resource_queries)
+    if len(resources) > RESOURCE_LIST_LIMIT or (
+        not resources
+        and not summary.complete
+        and (resource_queries or update_category in ("retirement", "feature_change"))
+    ):
+        lines = [heading, summary.count_text(labels)]
+        for group in summary.groups[:_RESOURCE_REASON_LIMIT]:
+            lines.append(
+                f"  - {group.reason or labels['resource_reason_unknown']}: {group.count_text(labels)}"
+            )
+            if group.queried_at:
+                lines.append("    " + labels["resource_queried_at"].format(time=group.queried_at))
+            lines.append(
+                f"    {labels['resource_query_open']}: {group.portal_url}"
+                if group.portal_url
+                else "    " + labels["resource_query_unavailable"]
+            )
+        lines.extend(_resource_summary_notes(summary, labels))
+        archive_url = safe_archive_url(archive_url)
+        lines.append(
+            f"{labels['resource_snapshot_open']}: {archive_url}"
+            if archive_url
+            else labels["resource_snapshot_unavailable"]
+        )
+        return "\n".join(lines)
+    if not resources:
+        if update_category in ("retirement", "feature_change"):
+            return heading + "\n" + labels["no_affected_resources"]
+        return ""
+    lines = [f"{heading} ({len(resources)}{labels['count_suffix']})"]
+    for resource in resources:
+        name = resource.get("name") or "Unknown"
+        resource_type = resource.get("type") or "Unknown"
+        subscription = (
+            resource.get("subscription")
+            or resource.get("subscriptionName")
+            or resource.get("subscriptionId")
+            or labels["unknown_scope"]
+        )
+        resource_group = resource.get("resourceGroup") or labels["unknown_scope"]
+        lines.extend(
+            [
+                f"  - {name} ({resource_type})",
+                f"    {labels['subscription']}: {subscription} | {labels['resource_group']}: {resource_group}",
+            ]
+        )
+        if resource.get("reason"):
+            lines.append("    " + str(resource["reason"]))
+    if not summary.complete:
+        lines.append(labels["resource_summary_incomplete"])
+    return "\n".join(lines)
+
+
 def format_affected_resources_html(
     resources: list,
     language: str = "ko",
     update_category: str = "new_feature",
+    *,
+    resource_queries: Optional[list[ResourceQueryEvidence]] = None,
+    archive_url: str = "",
 ) -> str:
     """Format affected resources as a full data grid table.
 
@@ -1185,15 +1480,16 @@ def format_affected_resources_html(
     changes to "replaceable resources" to reflect that these are existing
     resources that could benefit from the new capability.
 
-    All resources are displayed without truncation. Each reason spans one full
-    row, followed by resource name, subscription, resource group, and type
-    columns for the resources sharing that reason.
+    Up to RESOURCE_LIST_LIMIT rows retain the full identity grid. Larger sets
+    show verified reason counts and safe links, not individual resource rows.
 
     Args:
         resources: List of resource dicts with name, type, resourceGroup,
             subscription, reason
         language: Language code for UI labels
         update_category: Update category — sections hidden for non-applicable categories
+        resource_queries: Delivery-only metadata from executed identity queries
+        archive_url: Trusted authenticated link to the analysis-time snapshot
 
     Returns:
         Complete <tr> HTML block; empty string if no resources or category not applicable.
@@ -1209,6 +1505,16 @@ def format_affected_resources_html(
     is_opportunity = update_category in opportunity_categories
     section_label = L["replaceable_resources"] if is_opportunity else L["affected_resources"]
     empty_label = L["no_replaceable_resources"] if is_opportunity else L["no_affected_resources"]
+
+    summary = _summarize_resources(resources, resource_queries)
+    if len(resources) > RESOURCE_LIST_LIMIT or (
+        not resources
+        and not summary.complete
+        and (resource_queries or update_category in ("retirement", "feature_change"))
+    ):
+        return format_email_section_html(
+            section_label, _format_resource_summary_html(summary, language, archive_url)
+        )
 
     # For mandatory categories (retirement, feature_change), show section even when empty
     if not resources:
@@ -1313,6 +1619,11 @@ def format_affected_resources_html(
             html += "</tr>\n"
 
     html += "</table>"
+    if not summary.complete:
+        html += (
+            f'<p style="margin: 10px 0 0; font-size: 11px; color: {EMAIL_COLORS["muted"]}; '
+            f'line-height: 1.8;">{escape_email_text(L["resource_summary_incomplete"])}</p>'
+        )
     return format_email_section_html(section_label, html, count_text=count_display)
 
 
@@ -1902,9 +2213,13 @@ def format_quick_decision_html(
     affected = result.affected_resources if result.affected_resources else []
     action_items = result.action_items if hasattr(result, "action_items") else []
     count = len(affected)
+    resource_queries = getattr(result, "resource_queries", [])
+    resource_summary = _summarize_resources(affected, resource_queries)
 
     # Scope
-    if count > 0:
+    if count > RESOURCE_LIST_LIMIT or not resource_summary.complete:
+        scope_text = escape_email_text(resource_summary.count_text(L))
+    elif count > 0:
         types = set()
         for r in affected:
             t = r.get("type", "")

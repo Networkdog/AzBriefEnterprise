@@ -228,6 +228,7 @@ async def execute_kql_with_retry(
             return {
                 **result,
                 "executed_query": result.get("executed_query", current_query),
+                "query_purpose": purpose,
                 "query_attempts": attempt,
                 "result_rewrites": _result_improvements,
                 "query_status": "partial" if gaps else "complete",
@@ -850,6 +851,9 @@ def format_rg_result(result: dict, label: str) -> str:
     if not isinstance(result, dict):
         return str(result)
 
+    from src.agent.resource_evidence import register_resource_query
+
+    result = register_resource_query(result)
     rows = result.get("data") or []
     meta = {k: v for k, v in result.items() if k != "data"}
     meta_text = ", ".join(
@@ -877,6 +881,9 @@ class ResourceGraphQueryTool(BaseTool):
     Syntax errors, empty filtered results and missing required values can trigger specialist repair.
     Results include the executed query, retry counts and explicit gaps. A partial result is not
     confirmed absence. Diagnostic samples never replace the matching resources.
+    For large affected sets, query exact applicability predicates with id and property evidence,
+    without take/limit. A resource_query_ref lets the writer select the whole verified result
+    without repeating every resource. Never label a broad inventory as an affected set.
     """
     args_schema: Type[BaseModel] = ResourceGraphQueryInput
 

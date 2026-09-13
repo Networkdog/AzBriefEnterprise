@@ -20,6 +20,8 @@ from src.agent.analyzer import (
     RelevanceStatus,
     UrgencyLevel,
 )
+from src.agent.resource_evidence import ResourceQueryEvidence
+from src.agent.scope import AnalysisScope
 from src.email.service import EmailService
 from src.rss.parser import AzureUpdate
 
@@ -29,6 +31,9 @@ _COPY = {
     "ko": {
         "title": "Storage 계정의 TLS 연결 정책 변경",
         "summary": "예제 환경의 Storage 계정 2개를 확인하고 TLS 1.2 클라이언트 호환성을 점검합니다.",
+        "summary_count": "합성 Storage 계정 {count}개의 설정과 TLS 1.2 클라이언트 호환성을 검토합니다.",
+        "evidence_count": "합성 계정 {count}개의 설정을 조회한 예제입니다. 실제 테넌트의 증거가 아닙니다.",
+        "reason_tls11": "합성 인벤토리에서 최소 TLS 버전이 TLS 1.1로 설정되어 있습니다.",
         "analysis": (
             "이 보고서는 **디자인 검증용 합성 데이터**로 구성했습니다. 실제 서비스 공지나 고객 환경을 나타내지 않습니다.\n\n"
             "연결 정책을 바꾸기 전에 애플리케이션과 파일 전송 작업이 사용하는 **TLS 버전**을 확인합니다. "
@@ -63,6 +68,9 @@ _COPY = {
     "en": {
         "title": "Reviewing a Storage account TLS policy change",
         "summary": "Review two sample Storage accounts and validate TLS 1.2 client compatibility.",
+        "summary_count": "Review the settings of {count} synthetic Storage accounts and TLS 1.2 client compatibility.",
+        "evidence_count": "This fixture contains settings for {count} synthetic accounts, not live tenant evidence.",
+        "reason_tls11": "The synthetic inventory records a minimum TLS version of TLS 1.1.",
         "analysis": (
             "This report contains **synthetic design data**, not a live announcement or customer environment.\n\n"
             "Check the **TLS version** used by applications and transfer jobs before changing connection policies. "
@@ -96,6 +104,9 @@ _COPY = {
     "ja": {
         "title": "Storage アカウントの TLS 接続ポリシー変更",
         "summary": "サンプルの Storage アカウント2件を確認し、TLS 1.2 クライアントとの互換性を調べます。",
+        "summary_count": "合成データの Storage アカウント {count} 件の設定と TLS 1.2 クライアントの互換性を確認します。",
+        "evidence_count": "合成アカウント {count} 件の設定を照会した例です。実際のテナントの根拠ではありません。",
+        "reason_tls11": "合成インベントリでは最小 TLS バージョンが TLS 1.1 に設定されています。",
         "analysis": (
             "このレポートは**デザイン検証用の合成データ**です。実際の発表や顧客環境を示すものではありません。\n\n"
             "接続ポリシーを変更する前に、アプリケーションや転送ジョブで使われる **TLS バージョン**を確認します。 "
@@ -129,8 +140,10 @@ _COPY = {
 }
 
 
-def build_demo_items(language: str) -> list[dict]:
+def build_demo_items(language: str, *, resource_count: int | None = None) -> list[dict]:
     """Build high, medium, low and skipped examples with no tenant data."""
+    if resource_count is not None and not 0 <= resource_count <= 20_000:
+        raise ValueError("resource_count must be between 0 and 20000")
     text = _COPY[language]
     doc_url = "https://learn.microsoft.com/azure/storage/common/transport-layer-security-configure-minimum-version"
     update = AzureUpdate(
@@ -155,6 +168,48 @@ def build_demo_items(language: str) -> list[dict]:
         }
         for name in ("stsampleapplication01", "stsamplebatchprocessing02")
     ]
+    resource_queries = []
+    if resource_count is not None:
+        subscription_id = "00000000-0000-0000-0000-000000000001"
+        scope = AnalysisScope(subscriptions=(subscription_id,))
+        names = [resource["name"] for resource in resources]
+        resources = []
+        for group_index, minimum_tls in enumerate(("TLS1_0", "TLS1_1")):
+            reference = f"rq-{group_index + 1:032x}"
+            reason = text["reason" if group_index == 0 else "reason_tls11"]
+            group_rows = []
+            for index in range(group_index, resource_count, 2):
+                name = names[index] if index < len(names) else f"stsynthetic{index + 1:05d}"
+                group_rows.append(
+                    {
+                        "id": f"/subscriptions/{subscription_id}/resourceGroups/rg-platform-production/providers/Microsoft.Storage/storageAccounts/{name}",
+                        "name": name,
+                        "type": "Microsoft.Storage/storageAccounts",
+                        "resourceGroup": "rg-platform-production",
+                        "subscriptionId": subscription_id,
+                        "subscriptionName": "Production sample",
+                        "location": "koreacentral",
+                        "reason": reason,
+                        "query_refs": [reference],
+                    }
+                )
+            resources.extend(group_rows)
+            resource_queries.append(
+                ResourceQueryEvidence(
+                    reference=reference,
+                    reason=reason,
+                    count=len(group_rows),
+                    complete=True,
+                    queried_at=datetime(2026, 9, 8, 9, tzinfo=timezone.utc),
+                    scope=scope,
+                    portal_query=(
+                        f"Resources | where subscriptionId in~ ('{subscription_id}') "
+                        "| where type =~ 'Microsoft.Storage/storageAccounts' "
+                        f"| where properties.minimumTlsVersion =~ '{minimum_tls}' "
+                        "| project id, name, type, resourceGroup, subscriptionId, location"
+                    ),
+                )
+            )
     result = AnalysisResult(
         update_id=update.id,
         update_title=update.title,
@@ -164,9 +219,17 @@ def build_demo_items(language: str) -> list[dict]:
         importance="high",
         impact_level="high",
         job_relevance="medium",
-        one_line_summary=text["summary"],
+        one_line_summary=(
+            text["summary"]
+            if resource_count is None
+            else text["summary_count"].format(count=resource_count)
+        ),
         relevance_reason=text["analysis"],
-        relevance_evidence=text["evidence"],
+        relevance_evidence=(
+            text["evidence"]
+            if resource_count is None
+            else text["evidence_count"].format(count=resource_count)
+        ),
         affected_resources=resources,
         impact_summary=text["security"],
         impact_details=ImpactSummary(
@@ -177,7 +240,7 @@ def build_demo_items(language: str) -> list[dict]:
                 step=1,
                 task=text["task"],
                 why=text["reason"],
-                target_resources=[resources[0]["name"]],
+                target_resources=[resources[0]["name"]] if resources else [],
                 procedure=text["procedure"],
                 cli_command="az storage account show --name stsampleapplication01 --resource-group rg-platform-production --query '{minimumTlsVersion:minimumTlsVersion,allowBlobPublicAccess:allowBlobPublicAccess}'",
                 deadline="2026-12-31 (sample)",
@@ -215,6 +278,8 @@ def build_demo_items(language: str) -> list[dict]:
         ],
         should_notify=True,
     )
+    if resource_count is not None:
+        result = result.model_copy(update={"resource_queries": resource_queries})
     items = [
         {
             "update": update,
@@ -241,6 +306,7 @@ def build_demo_items(language: str) -> list[dict]:
                 "job_relevance": "high" if kind == "opportunity" else "low",
                 "one_line_summary": text[kind + "_summary"],
                 "affected_resources": [],
+                "resource_queries": [],
                 "action_items": [],
                 "impact_details": None,
             },
@@ -256,7 +322,9 @@ def build_demo_items(language: str) -> list[dict]:
     return items
 
 
-def render_previews(output_dir: Path, languages: list[str]) -> list[Path]:
+def render_previews(
+    output_dir: Path, languages: list[str], *, resource_count: int | None = None
+) -> list[Path]:
     """Write full and head-style-stripped HTML previews, never initialize a transport."""
     output_dir.mkdir(parents=True, exist_ok=True)
     settings = SimpleNamespace(
@@ -274,7 +342,7 @@ def render_previews(output_dir: Path, languages: list[str]) -> list[Path]:
     ):
         service = EmailService()
         for language in languages:
-            items = build_demo_items(language)
+            items = build_demo_items(language, resource_count=resource_count)
             single = service.build_email_content(
                 items[0]["update"],
                 items[0]["result"],
@@ -302,10 +370,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--language", choices=("all", "ko", "en", "ja"), default="all")
+    parser.add_argument("--resource-count", type=int, help="Synthetic identity rows (0-20000)")
     args = parser.parse_args()
+    if args.resource_count is not None and not 0 <= args.resource_count <= 20_000:
+        parser.error("--resource-count must be between 0 and 20000")
     output_dir = args.output_dir or Path(tempfile.mkdtemp(prefix="azbrief-email-preview-"))
     languages = list(_COPY) if args.language == "all" else [args.language]
-    paths = render_previews(output_dir, languages)
+    paths = render_previews(output_dir, languages, resource_count=args.resource_count)
     logger.info(
         "email_design_previews_written",
         directory=str(output_dir.resolve()),

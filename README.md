@@ -201,7 +201,9 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif` in that order;
   code blocks retain their monospace stack. Korean resource sections use `연관 리소스` across
   email, Archive, and judge rendering; the `affected_resources` field and archived data remain
-  unchanged. Shared 4px semantic vertical accents emphasize
+  unchanged. The legacy report parser accepts both Korean resource keys `영향받는_리소스` and
+  `영향_리소스`; the canonical `affected_resources` key takes precedence, including an empty list.
+  Shared 4px semantic vertical accents emphasize
   level/verification badges, takeaways, concept boxes, and additional checks; visible status text
   and existing colors are preserved, while neutral dividers remain thin. The 640px inline/MSO baseline grows to 760px
   at 800px and 900px at 1100px where media queries
@@ -211,6 +213,15 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   formats, credentials, ports, and non-HTTPS sources. These delivery-only visuals do not enter the
   immutable Archive v1 schema, and the complete text report remains usable when a mail client blocks
   remote images. See [src/email/README.md](src/email/README.md) for rendering invariants.
+- **Large resource sets** — Email lists up to 20 resources individually. Larger sets show the
+  unique resource count, up to 10 reason groups, query timestamps, and scope-preserving Resource
+  Graph Explorer links. The writer selects executed query references instead of repeating hundreds
+  of names; the runtime restores every collected ARM identity and deduplicates overlapping sets.
+  Partial or legacy evidence is explicitly incomplete, not an exact total. Portal uses the reader's
+  current RBAC and resource state; the link opens a query, not an execution. Management-group or
+  join/union queries that cannot retain scope, and encoded URLs over 4096 characters, fall back to
+  the authenticated Archive snapshot when available. No resource IDs are expanded into giant URLs.
+  Subscriber customization translates reasons without changing verified membership or queries.
 - **Role-based reports** — Same update, different perspective per subscriber
 - **Multilingual** — Per-subscriber language from a pluggable registry (Korean, English and
   Japanese ship curated style guides; any other language still renders through fallback
@@ -461,6 +472,14 @@ but rejects `kind=tostring(kind)`; use direct `kind` or another alias with consi
 Updated FunctionTool schemas and runtime guidance require new Prompt Agent versions and a Hosted
 Agent deployment for production activation. Local and targeted live query checks do not constitute
 a full deployed end-to-end report evaluation.
+
+[Resource query evidence](src/agent/resource_evidence.py) is request-local and bounded to 64 query
+sets and 20,000 collected identity rows. `resource_queries` is optional delivery metadata in the
+Hosted result; Archive v1 excludes it and per-row `id`/`query_refs`, while retaining the complete
+existing resource projection. The reviewer receives independently computed query counts and sees
+the same compact resource summary as email. Deploy the compatible App/Job image before enabling
+new Hosted output, and publish updated Resource Graph, report-writer and reviewer Prompt Agent
+instructions. Local synthetic tests are not proof of live generation, Portal execution or delivery.
 
 **Cost-aware reports.** Pricing, billing/meter changes, paid capabilities, and documented savings
 can trigger a recent 30-day `ActualCost` lookup through Azure Cost Management, the API behind
@@ -770,6 +789,10 @@ it submits rollback on an update failure. `Verify` is read-only and does not sen
 a model. `EnableSchedule` rechecks readiness, preserves existing Job settings and Key Vault
 references, and confirms the dispatcher cron. Do not use an image-only CI rollout for the
 bootstrap port transition or reapply the whole template without preserving secure parameters.
+
+For image-only upgrades, [scripts/deploy_dev.ps1](scripts/deploy_dev.ps1) rechecks the Docker
+input fingerprint after tests and after ACR build. Source changes stop the rollout before either
+runtime is updated; retry with stable source rather than bypassing the validation gates.
 
 **Verification boundary:** local tests, schema checks and Bicep compilation do not establish
 customer policy/quota, Graph consent, private-network access, remote builds, role propagation,
@@ -1227,6 +1250,7 @@ initializes an email transport, and makes no Azure calls or email deliveries.
 ```powershell
 & .\.venv\Scripts\Activate.ps1
 python -m scripts.preview_email --output-dir out/email-editorial-preview --language all
+python -m scripts.preview_email --output-dir out/email-resource-summary --language all --resource-count 327
 ```
 
 [tests/test_email_editorial.py](tests/test_email_editorial.py) covers the shared structure,
@@ -1236,6 +1260,8 @@ offline previews. These checks do not establish full-suite, browser, or email-cl
 [tests/browser/email_reports.cjs](tests/browser/email_reports.cjs) repeats a 72-layout Playwright
 matrix over those local previews, checking actual viewport sizes, document/badge bounds, content
 parity, and contents/detail navigation. It saves representative screenshots beside file previews.
+Large-set previews also check summary text bounds and query scope/conditions; Portal navigation is
+intercepted by a synthetic browser route and never queries a tenant.
 Keep before/after previews under `out/`, review screenshots, correct observed defects, and repeat
 until `passed=true`; browser checks are not real Outlook/Gmail or measured reading-speed validation.
 The design rationale and loop are documented in [src/email/README.md](src/email/README.md).

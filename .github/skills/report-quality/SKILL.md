@@ -19,6 +19,10 @@ description: 'Evaluate and improve AzBrief report quality. Use when: report qual
      and limited to one grounded, non-mutating fit check.
 - Keep evidence, relevance, resource counts/reasons, and conclusions consistent. Actions name
      what, where, why, completion criteria, precautions, rollback, and only real deadlines.
+- For large matching sets, output resource_queries reference/reason pairs only from the supplied
+     executed catalog, only when every returned identity satisfies that reason. Do not repeat these
+     names in affected_resources or action targets. Runtime restores membership and exact unique
+     counts; partial evidence stays incomplete and overlapping group counts must not be summed.
 - For material financial implications, report the scoped ActualCost baseline with period and
      currency in the cost-impact field. Separate observed spending from estimates; estimates need
      documented rates and matching usage, not an advertised discount on the entire bill. Preserve
@@ -89,6 +93,12 @@ python -m scripts.run_quality_loop
 
 ## AzBrief Report Design Philosophy
 
+Legacy report parsing accepts `영향받는_리소스` and `영향_리소스` in normal JSON and regex recovery.
+The canonical `affected_resources` key takes precedence, including an explicit empty list. Keep
+display-label changes separate from resource-key compatibility, resource selection, and scoring.
+Archive evaluation fixtures exclude delivery-only `resource_queries` alongside `job_relevance`
+and `visual_assets`, matching the immutable v1 projection rather than relaxing its schema.
+
 ### Core Mission
 AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·은퇴에는 필요한 조치를, 신규 기능·서비스에는 얻을 수 있는 가치와 도입 조건을 알려주는 것"**
 
@@ -143,7 +153,7 @@ AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·
 4. Environment Relevance → 변경의 적용/조치 또는 신규 가치/도입 조건과 근거
 5. Key Dates → retirement/feature_change의 날짜·작업 2열 목록
 6. Impact / Opportunity → cost/security/performance/operational 차원별 정의 행
-7. Affected Resources → 전체 사유와 그룹별 리소스·구독·리소스 그룹·종류
+7. Affected Resources → 20개 이하 전체 목록, 초과 시 고유 건수·최대 10개 사유 그룹·검증된 조회 링크
 8. Action Sheets (01…) → 맥락, 절차, 고정폭 CLI, 일정, 가드레일·검증 표시
 9. Additional Checks → 추가 확인 항목
 10. Numbered References → 문서 링크, 내용 요약, 보고서별 확인 지점
@@ -404,7 +414,7 @@ reason: "nodeImageVersion: AKSUbuntu-2204gen2containerd-202604.01.0 — Ubuntu 2
 |------|----------|------|
 | 상태 표시 | urgency badge 텍스트 + 색상 | 다크모드/텍스트 뷰어 호환 |
 | 섹션 구분 | border-top + bold 제목 | 이메일 CSS 미지원 대비 |
-| 리소스 목록 | 전체 표시 | 관리자가 전수 확인 필요 |
+| 리소스 목록 | 20개 이하 전체, 초과 시 건수·사유·조회 링크 | 포털은 현재 상태, Archive는 분석 당시 기록 |
 | CTA | 텍스트 링크 "→" | 이미지 차단 환경 대비 |
 | 제목 라인 | `[AzBrief] [긴급] 요약 | 날짜` | 오픈율 최적화 |
 

@@ -351,6 +351,27 @@ def test_render_report_markdown_checks_precede_references(sample_result, sample_
     assert md.index("## 추가 검토 항목") < md.index("## 참고 문서")
 
 
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+def test_large_resource_summary_matches_email_and_keeps_count_evidence(language):
+    from scripts.preview_email import build_demo_items
+    from src.email.templates import format_affected_resources_text
+
+    item = build_demo_items(language, resource_count=327)[0]
+    result = item["result"]
+    markdown = GEvalJudge.render_report_markdown(result, item["update"], language)
+    summary = format_affected_resources_text(
+        result.affected_resources,
+        language,
+        result.update_category,
+        resource_queries=result.resource_queries,
+    )
+    _, _, body = summary.partition("\n")
+    assert body in markdown
+    assert "327" in markdown
+    assert result.resource_queries[0].portal_url() in markdown
+    assert result.affected_resources[-1]["name"] not in markdown
+
+
 def test_render_subscriber_none_and_present():
     judge = GEvalJudge(llm=_FakeJudgeLLM({}), settings=_fake_settings())
     assert "No specific subscriber" in judge._render_subscriber(None)

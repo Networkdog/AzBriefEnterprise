@@ -56,6 +56,10 @@ python -m pytest tests/test_email.py tests/test_email_editorial.py -o "addopts="
 생성되는지도 확인합니다. 구조와 오프라인 동작 검사는 전체 suite, 브라우저 레이아웃 또는
 실제 이메일 client 검증을 대신하지 않습니다. 완료하지 않은 검증의 통과 건수를 기록하지 않습니다.
 
+[test_resource_evidence.py](test_resource_evidence.py)는 327개 복원, ID 중복 제거, 부분 조회,
+긴 URL·범위 미지원 fallback, 실행 간 격리, Hosted 왕복과 맞춤화 불변성을 검사합니다.
+Archive 테스트는 모든 리소스가 v1에 남고 전달용 조회 메타데이터는 저장되지 않는지 확인합니다.
+
 이메일 화면 검사는 `python -m scripts.preview_email --output-dir out/email-editorial-preview --language all`
 실행 후 생성된 HTML 하나를 Playwright MCP에서 엽니다. `browser_run_code_unsafe`에 `filename`으로
 [browser/email_reports.cjs](browser/email_reports.cjs)의 절대 경로를 전달합니다. 이 파일은 직접
@@ -70,6 +74,10 @@ HTTP만 허용합니다. ko/en/ja·single/digest·full/inline-only·1440/768/640
 20.625px/17.325px 제목·굵기 525, 데스크톱 첫 어절 줄바꿈·11px 리소스 건수·연속된 inline 폴백,
 18.75px/15.75px 요약과 13.5px 등급 글자·기존 배지 박스 보존 구조를 검사합니다.
 소수 픽셀도 크기 규칙에 포함하며 심미성은 같은 크기의 전후 스크린샷으로 따로 평가합니다.
+`--resource-count 327` 미리보기에서도 같은 매트릭스를 실행합니다. 대량 요약의 텍스트 경계와
+사유 그룹 제한, 범위·적용 조건, 포털 링크 이동을 합성 browser route로 검사합니다. 실제 포털
+조회는 실행하지 않습니다. `file:`가 차단되면 해당 `out/` 폴더만 loopback HTTP로 제공하고,
+검사 완료 후 임시 서버를 종료합니다.
 
 웹 검증은 먼저 `python -m scripts.preview_web --port 8765`로 합성 서버를 시작한 뒤 Playwright MCP의
 `browser_run_code_unsafe`에 `filename`으로 [browser/control_surfaces.cjs](browser/control_surfaces.cjs)의

@@ -113,6 +113,9 @@ Choose the query shape from the evidence question, never from a fixed service te
 3. Pass purpose and expected_columns to query_azure_resources. Inspect executed_query and evidence_gaps:
   syntax failures, empty/off-topic results and missing required values warrant evidence-based
   rewrites, not removing thresholds or returning a generic builder. A correct zero is acceptable.
+  For a large affected set, use a focused all-matching query with scalar id and relevant evidence,
+  without take/limit. Preserve its resource_query_ref and shared applicability reason for reporting;
+  inventory/probe references must never be presented as confirmed affected sets.
 4. Follow a schema probe with a query based on its actual output in the next tool round/revision.
   Independent queries can run together; do not guess dependent queries in the same batch.
 5. Stop once the question is answered or bounded attempts expose an unresolved gap. Repeating an

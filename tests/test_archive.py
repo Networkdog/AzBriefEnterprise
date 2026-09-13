@@ -119,7 +119,9 @@ def _document(update_id: str = "570120") -> ArchiveDocumentV1:
             update_type="General Availability",
         ),
         result=ArchiveAnalysisResultV1.model_validate(
-            _result(update_id).model_dump(mode="json", exclude={"job_relevance", "visual_assets"})
+            _result(update_id).model_dump(
+                mode="json", exclude={"job_relevance", "visual_assets", "resource_queries"}
+            )
         ),
     )
 

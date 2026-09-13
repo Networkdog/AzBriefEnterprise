@@ -43,6 +43,10 @@ description: 'Write and debug KQL queries for Azure Resource Graph. Use when: KQ
 - Complete enumerations must not contain take/limit; retain scalar IDs for SDK paging. The service
   collects at most ten 1000-row pages. For result_truncated=true, narrow or partition KQL. A local
   [ref=Rn] search can recover a stored preview, not uncollected Azure pages or capped storage.
+- For large affected sets, execute a focused all-matching query with scalar id and property
+  evidence, then preserve its resource_query_ref and applicability reason. The writer can select
+  the result without repeating every identity. Inventory, diagnostic samples and count-only rows
+  are not affected sets; incomplete results remain lower bounds, never exact population counts.
 
 <!-- End Foundry Runtime Guidance -->
 
@@ -248,6 +252,25 @@ query/scope on each page and marks missing/repeated tokens or exhausted budgets 
 Service details retain every received row and null value, instead of discarding everything after
 row 20. JSON metadata stays on one header line. Query-tool refs can recover stored previews, not
 pages never fetched; partition/narrow KQL when result_truncated is true.
+
+### Large-Set Portal Navigation
+
+`query_resources()` returns the actual post-scope `executed_query`, `query_scope` and `queried_at`.
+The retry tool must not overwrite this with pre-scope KQL. `resource_evidence.py` registers identity
+rows before prompt truncation in an analysis-local catalog; the report selects `reference`/`reason`
+pairs and the parser restores all collected resources. Count unique full ARM IDs, never raw rows,
+model-repeated names, approximate dcount, or overlapping group totals. Keep reason translations
+separate from immutable query membership.
+
+Portal links follow the official `#blade/HubsExtension/ArgQueryBlade/query/<URL-encoded KQL>`
+pattern. Reapply explicit subscription bounds before opening it; a query sent with separate SDK
+scope is not safe to link unchanged. Unsupported scope replay (management groups or join/union),
+partial evidence and URLs over 4096 characters have no direct link. Use the authenticated Archive
+snapshot when available, never broaden the query or expand hundreds of IDs into the URL. The
+link opens the query for the reader's current directory/RBAC/state and does not execute it.
+Metadata crosses Hosted delivery but is excluded explicitly from Archive v1, whose full existing
+resource projection remains intact. New Prompt Agent versions and a compatible App/Job plus Hosted
+deployment are required to activate this feature outside local tests.
 
 ### Specialist failure boundary
 

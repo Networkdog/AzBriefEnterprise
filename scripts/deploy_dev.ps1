@@ -727,6 +727,11 @@ try {
         )
     }
 
+    $validatedFingerprint = Get-DockerInputFingerprint
+    if ($validatedFingerprint.Sha256 -ne $fingerprint.Sha256) {
+        throw "Docker inputs changed during validation. No image was built; rerun with stable source."
+    }
+
     if (Test-AcrImageExists -Registry $AcrName -Image "$ImageName`:$ImageTag") {
         throw "Refusing to overwrite existing immutable image tag $ImageName`:$ImageTag."
     }
@@ -751,6 +756,11 @@ try {
         throw "ACR returned an invalid image digest: $imageDigest"
     }
     $deployedImage = "$acrLoginServer/$ImageName@$imageDigest"
+
+    $builtFingerprint = Get-DockerInputFingerprint
+    if ($builtFingerprint.Sha256 -ne $fingerprint.Sha256) {
+        throw "Docker inputs changed during ACR build. No runtime was updated; rerun with stable source."
+    }
 
     $appChangeAttempted = $false
     $jobChangeAttempted = $false

@@ -27,7 +27,8 @@ async function checkEmailReports(page, baseUrl = '') {
               node => node.textContent.replace(/\s+/g, ' ').trim());
             const spills = [];
             const boundedText = '[class^="azb-badge-"], .azb-verify, .azb-wordmark, ' +
-              '.azb-count-value, .azb-chapter-number, .azb-toc-number';
+              '.azb-count-value, .azb-chapter-number, .azb-toc-number, ' +
+              '.azb-resource-total, .azb-resource-summary strong, .azb-resource-summary .azb-link';
             for (const badge of document.querySelectorAll(boundedText)) {
               const cell = badge.closest('td');
               if (!cell || !badge.getClientRects().length) continue;
@@ -53,6 +54,24 @@ async function checkEmailReports(page, baseUrl = '') {
                 url.hostname === domain || url.hostname.endsWith(`.${domain}`));
             });
             const railErrors = [];
+            const summaryErrors = [];
+            for (const summary of document.querySelectorAll('.azb-resource-summary')) {
+              if (summary.querySelectorAll('.azb-resource-summary-group').length > 10) {
+                summaryErrors.push('Unbounded reason groups');
+              }
+              if (summary.closest('.azb-section-copy').querySelector('.azb-resource-row')) {
+                summaryErrors.push('Summary repeats the full resource list');
+              }
+              for (const anchor of summary.querySelectorAll('a')) {
+                const url = new URL(anchor.href);
+                const query = decodeURIComponent(url.hash.split('/query/')[1] || '');
+                if (url.hostname !== 'portal.azure.com' ||
+                    !query.includes('subscriptionId in~ (') ||
+                    !query.includes('minimumTlsVersion')) {
+                  summaryErrors.push('Synthetic query lost its scope or TLS predicate');
+                }
+              }
+            }
             const hasStyles = document.querySelectorAll('style').length > 0;
             for (const label of document.querySelectorAll('.azb-section-label')) {
               const copy = label.nextElementSibling;
@@ -68,13 +87,14 @@ async function checkEmailReports(page, baseUrl = '') {
               summaries: text('.azb-summary, .azb-digest-summary'),
               badges: text('[class^="azb-badge-"], .azb-verify'),
               commands: text('.azb-cli'),
-              reasons: text('.azb-resource-reason'),
+              reasons: text('.azb-resource-reason, .azb-resource-summary-group, .azb-resource-total, .azb-resource-snapshot'),
               links: Array.from(document.querySelectorAll('a'), anchor => anchor.getAttribute('href'))
             });
             return {
               actualWidth: innerWidth,
               overflow: Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
-              spills, railErrors, brokenAnchors, signature,
+              spills, railErrors, summaryErrors, brokenAnchors, signature,
+              resourceSummaries: document.querySelectorAll('.azb-resource-summary').length,
               documentTitleCount: document.querySelectorAll('h1').length,
               paperCount: document.querySelectorAll('.azb-paper').length,
               visualCount: document.querySelectorAll('.azb-visual img').length,
@@ -93,6 +113,7 @@ async function checkEmailReports(page, baseUrl = '') {
           check(report.overflow <= 1, `Document overflow ${report.overflow}px`);
           check(report.spills.length === 0, `Text spills ${JSON.stringify(report.spills)}`);
           check(report.railErrors.length === 0, `Section alignment ${JSON.stringify(report.railErrors)}`);
+          check(report.summaryErrors.length === 0, `Resource summary ${JSON.stringify(report.summaryErrors)}`);
           check(report.brokenAnchors.length === 0, 'Broken internal anchors');
           check(report.documentTitleCount === 1 && report.paperCount === 1, 'Invalid document hierarchy');
           check(report.visualCount > 0, 'Synthetic report does not exercise the visual section');
@@ -105,6 +126,21 @@ async function checkEmailReports(page, baseUrl = '') {
           if (preview.directory && ((language === 'ko' && [1440, 390].includes(width)) ||
               (inline && width === 320))) {
             await page.screenshot({path: `${preview.directory}${file.replace('.html', '')}-${width}.png`, scale: 'css'});
+          }
+          if (language === 'ko' && width === 1440 && report.resourceSummaries > 0) {
+            const link = page.locator('.azb-resource-summary a').first();
+            if (await link.count()) {
+              const href = await link.getAttribute('href');
+              await page.route('https://portal.azure.com/**', route => route.fulfill({
+                contentType: 'text/html',
+                body: '<!doctype html><title>Synthetic Portal navigation</title><p>Intercepted locally.</p>'
+              }));
+              await link.click();
+              await page.waitForURL(href);
+              check(await page.title() === 'Synthetic Portal navigation', 'Portal link bypassed the local fixture');
+              await page.unroute('https://portal.azure.com/**');
+              await page.goto(root + file);
+            }
           }
           if (kind === 'digest') {
             await page.locator('.azb-digest-title a').first().click();

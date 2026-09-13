@@ -40,6 +40,14 @@ from src.agent.resilience import (
     parse_json_resilient,
     retry_with_backoff,
 )
+from src.agent.resource_evidence import (
+    ResourceQueryEvidence,
+    customize_resource_queries,
+    resolve_resource_queries,
+    resource_evidence_context,
+    resource_query_evidence_facts,
+    resource_query_prompt_context,
+)
 from src.agent.scope import (
     SCOPED_ANALYSIS_TOOL_NAMES,
     AnalysisScope,
@@ -330,6 +338,7 @@ class AnalysisResult(BaseModel):
     relevance_evidence: str = ""  # category-aware applicability/value and evidence limits
     relevance_reason: str
     affected_resources: list[dict[str, Any]]
+    resource_queries: list[ResourceQueryEvidence] = Field(default_factory=list)
     impact_summary: str
     impact_details: Optional[ImpactSummary] = None
     action_items: list[ActionItem] = []  # structured action items
@@ -1916,6 +1925,9 @@ class AzureUpdateAnalyzer:
             task_results_summary=_escape_braces(results_summary),
             report_language=report_language,
         )
+        query_context = resource_query_prompt_context()
+        if query_context:
+            prompt_text += "\n\n" + query_context
 
         logger.debug(
             "llm_prompt",
@@ -2121,7 +2133,7 @@ class AzureUpdateAnalyzer:
     ) -> AnalysisResult:
         """Attach a non-serialized evidence snapshot to one analysis result."""
         result._evidence_resource_summary = resource_summary
-        result._evidence_task_results = dict(task_results)
+        result._evidence_task_results = {**task_results, **resource_query_evidence_facts()}
         result._evidence_update_context = update_context
         return result
 
@@ -2973,7 +2985,7 @@ class AzureUpdateAnalyzer:
         scope: Optional[AnalysisScope] = None,
     ) -> AnalysisResult:
         """Analyze an update within an async-safe hard resource boundary."""
-        with analysis_scope_context(scope):
+        with analysis_scope_context(scope), resource_evidence_context():
             result = await self._analyze_update_scoped(update, trace_id=trace_id)
             return self._filter_result_to_scope(result, current_analysis_scope())
 
@@ -2985,13 +2997,39 @@ class AzureUpdateAnalyzer:
         """Apply the hard boundary to the final structured report result."""
         if not scope.is_bounded:
             return result
+        queries = [
+            evidence
+            for evidence in result.resource_queries
+            if all(
+                not getattr(scope, field)
+                or (
+                    getattr(evidence.scope, field)
+                    and {value.casefold() for value in getattr(evidence.scope, field)}
+                    <= {value.casefold() for value in getattr(scope, field)}
+                )
+                for field in ("subscriptions", "management_groups", "resource_groups")
+            )
+        ]
+        references = {evidence.reference for evidence in queries}
         return result.model_copy(
             update={
                 "affected_resources": [
-                    resource
+                    (
+                        {
+                            **resource,
+                            "query_refs": [
+                                reference
+                                for reference in resource.get("query_refs", [])
+                                if reference in references
+                            ],
+                        }
+                        if "query_refs" in resource
+                        else resource
+                    )
                     for resource in result.affected_resources
                     if scope.contains_resource(resource)
-                ]
+                ],
+                "resource_queries": queries,
             }
         )
 
@@ -3255,7 +3293,7 @@ class AzureUpdateAnalyzer:
         # the report was built from the resource summary + tool results, so a judge must
         # see the same ground truth to fairly assess environment-specific claims.
         self._last_resource_summary = resource_summary
-        self._last_task_results = dict(final_state.get("task_results", {}))
+        self._last_task_results = dict(result._evidence_task_results)
         # The full source context includes the pre-fetched official Learn docs, which
         # ground product-detail claims (e.g. plan requirements, networking limits).
         self._last_update_context = final_state.get("update_context", "")
@@ -3511,7 +3549,13 @@ class AzureUpdateAnalyzer:
             "one_line_summary": result.one_line_summary,
             "relevance_evidence": result.relevance_evidence,
             "detailed_analysis": result.relevance_reason,
-            "affected_resources": result.affected_resources,
+            "affected_resources": [
+                resource for resource in result.affected_resources if not resource.get("query_refs")
+            ],
+            "resource_queries": [
+                {"reference": evidence.reference, "reason": evidence.reason}
+                for evidence in result.resource_queries
+            ],
             "action_items": [
                 {
                     "step": a.step,
@@ -3832,6 +3876,14 @@ class AzureUpdateAnalyzer:
         )
 
         affected_resources = customized.get("affected_resources", original.affected_resources)
+        resource_queries = original.resource_queries
+        if resource_queries:
+            affected_resources, resource_queries = customize_resource_queries(
+                original.affected_resources,
+                resource_queries,
+                customized.get("resource_queries", []),
+                affected_resources,
+            )
         if scope and scope.is_bounded:
             affected_resources = [
                 resource for resource in affected_resources if scope.contains_resource(resource)
@@ -3867,6 +3919,7 @@ class AzureUpdateAnalyzer:
             relevance_evidence=customized.get("relevance_evidence", original.relevance_evidence),
             relevance_reason=customized.get("detailed_analysis", original.relevance_reason),
             affected_resources=affected_resources,
+            resource_queries=resource_queries,
             impact_summary=original.impact_summary,
             impact_details=impact_details,
             action_items=action_items if action_items else original.action_items,
@@ -3876,7 +3929,9 @@ class AzureUpdateAnalyzer:
             additional_checks=customized.get("additional_checks", original.additional_checks),
             should_notify=should_notify,
         )
-        return self._copy_result_evidence(original, customized_result)
+        return self._copy_result_evidence(
+            original, self._filter_result_to_scope(customized_result, scope or AnalysisScope())
+        )
 
     def _parse_analysis_result(self, state: AgentState, update: AzureUpdate) -> AnalysisResult:
         """Parse the analysis result from agent state."""
@@ -4091,7 +4146,7 @@ class AzureUpdateAnalyzer:
             )
             if not resources_match:
                 resources_match = re.search(
-                    r'"영향받는_리소스"\s*:\s*\[(.*?)\]', clean_raw, re.DOTALL
+                    r'"영향(?:받는)?_리소스"\s*:\s*\[(.*?)\]', clean_raw, re.DOTALL
                 )
             if not resources_match:
                 resources_match = re.search(
@@ -4233,7 +4288,10 @@ class AzureUpdateAnalyzer:
             # Extract affected resources (supports both old and new format)
             resources = parsed_json.get(
                 "affected_resources",
-                parsed_json.get("영향받는_리소스", parsed_json.get("관련 리소스 식별", [])),
+                parsed_json.get(
+                    "영향받는_리소스",
+                    parsed_json.get("영향_리소스", parsed_json.get("관련 리소스 식별", [])),
+                ),
             )
             if isinstance(resources, list):
                 affected_resources = resources
@@ -4396,6 +4454,10 @@ class AzureUpdateAnalyzer:
                 )
             # Don't copy relevance_reason to impact_summary to avoid display duplication
 
+        affected_resources, resource_queries = resolve_resource_queries(
+            parsed_json.get("resource_queries", []) if parsed_json else [], affected_resources
+        )
+
         # Should notify based on urgency and relevance
         # NOT_RELEVANT always suppresses notification, regardless of urgency
         should_notify = relevance != RelevanceStatus.NOT_RELEVANT and (
@@ -4436,6 +4498,7 @@ class AzureUpdateAnalyzer:
             relevance_evidence=relevance_evidence,
             relevance_reason=relevance_reason,
             affected_resources=affected_resources,
+            resource_queries=resource_queries,
             impact_summary=impact_summary,
             impact_details=impact_details,
             action_items=action_items,

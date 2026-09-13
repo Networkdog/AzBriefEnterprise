@@ -187,7 +187,9 @@ digest를 팀 구성원의 받은 편지함으로 전달합니다.
   함께 다음 줄로 이동합니다. 모바일에서는 평가 축 이름을
   표시하고 리소스 필드를 쌓되 사유·그룹·Portal 식별 정보를 유지합니다. 본문은 13px를 유지하고
   36px·48px 표시 단계를 별도로 사용합니다. 한국어 이메일·Archive·평가용 보고서의 리소스 섹션은
-  `연관 리소스`로 표시하며 `affected_resources` 필드와 보관 데이터는 변경하지 않습니다. 이메일 글꼴은
+  `연관 리소스`로 표시하며 `affected_resources` 필드와 보관 데이터는 변경하지 않습니다.
+  기존 보고서 파서는 `영향받는_리소스`와 `영향_리소스` 키를 모두 지원하고, 빈 목록을 포함해
+  canonical `affected_resources` 키를 우선합니다. 이메일 글꼴은
   `'Apple SD Gothic Neo', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif` 순서로 적용하고
   코드 블록은 기존 고정폭 글꼴을 유지합니다. 등급·검증 배지, 핵심 요약, concept box,
   추가 확인에는 공통 4px 세로 강조선을 사용합니다. 상태 텍스트와 기존 색상은 보존하고 중성
@@ -199,6 +201,14 @@ digest를 팀 구성원의 받은 편지함으로 전달합니다.
   HTTPS가 아닌 주소를 거부합니다. 이 시각 자료는 전달 전용이라 불변 Archive v1에 저장하지 않으며,
   메일 client가 원격 이미지를 차단해도 전체 텍스트 보고서는 그대로 읽을 수 있습니다. 렌더링
   불변식은 [src/email/README.md](src/email/README.md)를 참고하십시오.
+- **대량 리소스 요약** — 이메일에는 최대 20개까지 개별 목록을 표시합니다. 그보다 많으면
+  고유 리소스 건수, 최대 10개 사유 그룹, 조회 시각, 범위를 보존한 Resource Graph Explorer
+  링크를 표시합니다. 작성 모델은 수백 개 이름 대신 실행된 조회 참조를 선택하고, 런타임이 수집한
+  전체 ARM 식별 정보를 복원하며 겹치는 대상을 중복 제거합니다. 부분·과거 근거는 정확한 총수가
+  아닌 미완전한 결과로 표시합니다. 포털은 독자의 현재 RBAC와 리소스 상태로 조회하며 링크는 쿼리만
+  엽니다. 범위를 재현할 수 없는 관리 그룹·join/union 조회나 인코딩 후 4096자를 넘는 URL은
+  제공 가능한 경우 인증된 Archive 기록으로 안내합니다. 수백 개 ID를 URL에 나열하지 않습니다.
+  구독자 맞춤화는 사유만 번역하며 검증된 대상과 쿼리는 바꾸지 않습니다.
 - **역할 기반 보고서** — 같은 업데이트를 구독자의 역할에 맞는 관점으로 제공합니다.
 - **다국어** — 플러그형 registry에서 구독자별 언어를 선택합니다. 한국어, 영어, 일본어는
   엄선된 style guide를 제공하며, 다른 언어도 fallback label과 생성된 style guide로 렌더링합니다.
@@ -438,6 +448,14 @@ Advisor, 구성 profile, dependency, 지역 가용성처럼 놓치기 쉬운 검
 운영 적용에는 변경된 FunctionTool 스키마와 Runtime Guidance를 담은 새 Prompt Agent 버전 및
 Hosted Agent 배포가 필요합니다. 로컬 검사와 제한된 실제 쿼리 검증은 배포된 전체 보고서 흐름의
 종단 간 평가를 대신하지 않습니다.
+
+[조회 근거 카탈로그](src/agent/resource_evidence.py)는 실행별로 격리하며 최대 64개 조회 집합과
+수집된 식별 정보 20,000행으로 제한합니다. `resource_queries`는 Hosted 결과의 선택적 전달용
+메타데이터입니다. Archive v1에는 이 필드와 행별 `id`/`query_refs`를 제외하고, 기존 리소스 필드의
+전체 목록을 저장합니다. 평가기는 독립적으로 계산한 조회 건수를 근거로 받고 이메일과 같은 요약을
+검토합니다. 새 Hosted 출력을 활성화하기 전에 호환되는 App/Job 이미지를 배포하고, Resource Graph·
+Report Writer·Quality Reviewer의 Prompt Agent 지침도 새 버전으로 게시해야 합니다. 로컬 합성 검사는
+실제 생성·포털 실행·이메일 전달의 검증을 대신하지 않습니다.
 
 **실제 비용을 반영하는 보고서.** 가격·과금 단위 변경, 유료 기능, 문서로 확인된 절감 가능성이
 있으면 Cost Analysis의 기반 API인 Azure Cost Management에서 최근 30일 `ActualCost`를
@@ -743,6 +761,10 @@ $customer = @{
 발송을 하지 않습니다. `EnableSchedule`은 준비 상태를 다시 확인하고 기존 Job 설정·Key Vault
 참조를 보존하며 디스패처 cron을 확인합니다. 초기 포트 전환에 이미지 전용 CI를 사용하거나
 기존 보안 파라미터를 보존하지 않은 채 전체 템플릿을 다시 적용하지 마십시오.
+
+이미지 전용 업그레이드에서는 [scripts/deploy_dev.ps1](scripts/deploy_dev.ps1)이 테스트 후와
+ACR 빌드 후 Docker 입력 지문을 다시 확인합니다. 소스가 바뀌면 두 런타임을 갱신하기 전에
+중단하므로 검증을 우회하지 말고 변경이 끝난 소스로 다시 실행하십시오.
 
 **검증 범위:** 로컬 테스트·스키마 검사·Bicep 컴파일은 고객의 정책·할당량, Graph 동의,
 비공개 네트워크, 원격 빌드, 권한 전파, 분석 품질, 이메일 수신을 증명하지 않습니다. 가이드의
@@ -1175,6 +1197,7 @@ python -c "import src"                        # import check — must pass befor
 ```powershell
 & .\.venv\Scripts\Activate.ps1
 python -m scripts.preview_email --output-dir out/email-editorial-preview --language all
+python -m scripts.preview_email --output-dir out/email-resource-summary --language all --resource-count 327
 ```
 
 [tests/test_email_editorial.py](tests/test_email_editorial.py)는 공통 구조, 탐색 링크, 집계,
@@ -1186,6 +1209,8 @@ Playwright 레이아웃을 반복 검사합니다. 실제 뷰포트 크기, 문�
 목차·상세 왕복을 확인하고 대표 스크린샷을 미리보기 파일 옆에 저장합니다. 전후 미리보기를
 `out/`에 보존하고 화면을 평가한 뒤 발견한 결함을 수정해 `passed=true`가 될 때까지 반복합니다.
 브라우저 검사는 실제 Outlook/Gmail이나 독해 속도 측정을 대신하지 않습니다.
+대량 미리보기에서는 요약 글자 경계와 쿼리 범위·조건도 검사하며, 포털 이동은 합성 browser route로
+가로채므로 실제 테넌트는 조회하지 않습니다.
 디자인 근거와 루프는 [src/email/README.md](src/email/README.md)에 설명되어 있습니다.
 
 ### 컨테이너 이미지

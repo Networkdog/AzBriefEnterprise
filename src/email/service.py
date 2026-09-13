@@ -24,6 +24,7 @@ from src.email.templates import (
     format_action_items_html,
     format_additional_checks_html,
     format_affected_resources_html,
+    format_affected_resources_text,
     format_batch_context_html,
     format_digest_intro_html,
     format_digest_table_header_html,
@@ -36,6 +37,7 @@ from src.email.templates import (
     format_reference_docs_html,
     format_relevance_evidence_html,
     format_report_header_html,
+    format_resource_count_text,
     format_timeline_html,
     format_visual_assets_html,
     format_visual_assets_text,
@@ -337,6 +339,8 @@ class EmailService:
                 result.affected_resources,
                 language,
                 update_category=update_category,
+                resource_queries=getattr(result, "resource_queries", []),
+                archive_url=archive_url,
             ),
             # Action items (self-contained <tr>, conditional by update category)
             action_items_section_html=format_action_items_html(
@@ -481,57 +485,16 @@ class EmailService:
 
         # Affected resources (conditional by update category)
         update_cat = getattr(result, "update_category", "new_feature")
-        skip_resources_categories = {"new_service", "region_expansion", "sdk_tooling"}
         skip_actions_categories = {"new_service", "region_expansion", "preview"}
-
-        # Opportunity categories use "replaceable resources" label
-        opportunity_categories = {"new_feature", "preview"}
-        is_opportunity = update_cat in opportunity_categories
-        resources_label = L["replaceable_resources"] if is_opportunity else L["affected_resources"]
-        no_resources_label = (
-            L["no_replaceable_resources"] if is_opportunity else L["no_affected_resources"]
+        resources_text = format_affected_resources_text(
+            result.affected_resources,
+            language,
+            update_cat,
+            resource_queries=getattr(result, "resource_queries", []),
+            archive_url=archive_url,
         )
-
-        if update_cat not in skip_resources_categories:
-            if result.affected_resources:
-                count_display = f"{len(result.affected_resources)}{L['count_suffix']}"
-                lines.extend(
-                    [
-                        "-" * 40,
-                        f"{resources_label} ({count_display})",
-                        "-" * 40,
-                    ]
-                )
-
-                for resource in result.affected_resources:
-                    name = resource.get("name", "Unknown")
-                    res_type = resource.get("type", "Unknown")
-                    subscription = resource.get("subscription", resource.get("subscriptionId", ""))
-                    rg = resource.get("resourceGroup", "")
-                    reason = resource.get("reason", "")
-                    location_parts = []
-                    if subscription:
-                        location_parts.append(f"{L['subscription']}: {subscription}")
-                    if rg:
-                        location_parts.append(f"RG: {rg}")
-                    location_info = " | ".join(location_parts)
-                    lines.append(f"  - {name} ({res_type})")
-                    if location_info:
-                        lines.append(f"    {location_info}")
-                    if reason:
-                        lines.append(f"    {reason}")
-                lines.append("")
-            elif update_cat in ("retirement", "feature_change"):
-                # Show section header with "none found" for mandatory categories
-                lines.extend(
-                    [
-                        "-" * 40,
-                        resources_label,
-                        "-" * 40,
-                        f"  {no_resources_label}",
-                        "",
-                    ]
-                )
+        if resources_text:
+            lines.extend(["-" * 40, resources_text, ""])
 
         # Action items (conditional by update category)
         if (
@@ -1093,6 +1056,8 @@ class EmailService:
             result.affected_resources,
             language,
             update_category=update_category,
+            resource_queries=getattr(result, "resource_queries", []),
+            archive_url=archive_url,
         )
         actions_html = format_action_items_html(
             result.action_items if hasattr(result, "action_items") else [],
@@ -1344,12 +1309,16 @@ class EmailService:
             rel = result.relevance.value if hasattr(result.relevance, "value") else "?"
             one_line = result.one_line_summary or ""
             evidence = getattr(result, "relevance_evidence", "")
-            affected = len(result.affected_resources) if result.affected_resources else 0
+            affected = format_resource_count_text(
+                result.affected_resources,
+                language,
+                resource_queries=getattr(result, "resource_queries", []),
+            )
             actions = len(result.action_items) if hasattr(result, "action_items") else 0
 
             lines.append(f"  {idx}. [{urg}] {title}")
             lines.append(
-                f"     {L['relevance']}: {rel} | {L['affected_resources']}: {affected}{L['count_suffix']} | {L['action_items']}: {actions}{L['count_suffix']}"
+                f"     {L['relevance']}: {rel} | {L['affected_resources']}: {affected} | {L['action_items']}: {actions}{L['count_suffix']}"
             )
             if one_line:
                 lines.append(f"     {one_line}")
@@ -1404,15 +1373,15 @@ class EmailService:
                         f"  {L['operational']}: {result.impact_details.operational_impact}"
                     )
                 lines.append("")
-            if result.affected_resources:
-                lines.append(
-                    f"{L['affected_resources']} ({len(result.affected_resources)}{L['count_suffix']}):"
-                )
-                for res in result.affected_resources:
-                    name = res.get("name", "?")
-                    reason = res.get("reason", "")
-                    lines.append(f"  - {name}" + (f": {reason}" if reason else ""))
-                lines.append("")
+            resources_text = format_affected_resources_text(
+                result.affected_resources,
+                language,
+                getattr(result, "update_category", "new_feature"),
+                resource_queries=getattr(result, "resource_queries", []),
+                archive_url=item.get("archive_url", ""),
+            )
+            if resources_text:
+                lines.extend([resources_text, ""])
             if hasattr(result, "action_items") and result.action_items:
                 lines.append(
                     f"{L['action_items']} ({len(result.action_items)}{L['count_suffix']}):"

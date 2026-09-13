@@ -76,7 +76,15 @@ class ArchiveService:
             report_language=self.settings.report_language,
             update=ArchiveUpdateV1.model_validate(update.to_dict()),
             result=ArchiveAnalysisResultV1.model_validate(
-                result.model_dump(mode="json", exclude={"job_relevance", "visual_assets"})
+                result.model_dump(
+                    mode="json",
+                    exclude={
+                        "job_relevance": True,
+                        "visual_assets": True,
+                        "resource_queries": True,
+                        "affected_resources": {"__all__": {"id", "query_refs"}},
+                    },
+                )
             ),
         )
         return await self.store.put(document)

@@ -95,10 +95,18 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 ### Context Management
 
 - **Tool result budget**: Results exceeding 8,000 characters are not discarded. The full text is kept in `src/agent/context_store.py` and the prompt receives a preview plus a `[ref=Rn]` handle; the agent reaches the remainder with the `query_tool_result` tool. Applied at storage time, not display time
+- **Large resource sets**: `resource_evidence.py` keeps up to 64 query sets / 20,000 identity rows
+  per analysis. The writer selects only executed `resource_queries` references whose entire result
+  satisfies the applicability reason. Runtime code restores all collected identities and deduplicates
+  ARM IDs; partial pages, limits and missing IDs never become exact totals. Preserve the actual
+  scoped query, query scope and timestamp. Customization translates reasons, never membership.
 - **Structured compression**: When building task results summary, include status, method, purpose, and truncated results per task
 - **Prompt architecture**: Static system prompt (cacheable) + dynamic update context (per-analysis). System prompt includes role identity, tool usage guides, output format rules
 - **KQL knowledge base**: Persisted schema discoveries and successful queries avoid redundant exploratory calls
 - **JSON parsing resilience**: Multi-strategy fallback: direct parse → `strict=False` → brace-balancing closure. Never crashes on malformed LLM output
+- **Legacy resource keys**: Normal JSON and regex recovery accept `영향받는_리소스` and
+  `영향_리소스`. Keep canonical `affected_resources` authoritative, including an empty list;
+  display-label changes must not silently discard resource rows.
 
 ### Safety & Validation
 
@@ -282,7 +290,9 @@ never enable scheduling, and `maxConcurrentAnalyses=1` is the initial customer d
 explicit customer targets and a matching default CLI account, rejects a root developer `.env`,
 and isolates named azd environments. Keep `FOUNDRY_HOSTED_AGENT_NAME` aligned with `azure.yaml`.
 The initial Application stage updates both images and bootstrap probes; normal guarded image
-upgrades still use `scripts/deploy_dev.ps1`. Only after analysis/archive/auth/email acceptance
+upgrades still use `scripts/deploy_dev.ps1`. That script rechecks Docker input fingerprints after
+tests and ACR build; source drift must stop before any runtime update, never bypass the checks.
+Only after analysis/archive/auth/email acceptance
 may EnableSchedule recheck readiness and PATCH the Job while preserving configuration and
 Key Vault references. Never grant Hosted evidence permissions to the Container Apps or project
 identity. Local/mocked checks are not customer ARM validation or proof of delivery. Pin the CI
@@ -524,6 +534,15 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 - Korean resource sections use the shared `affected_resources` label `연관 리소스` in email,
   Archive, and judge Markdown; the empty label is `연관 리소스가 없습니다.`. Keep field names,
   resource selection, and immutable archived content unchanged.
+- At most 20 resource rows use the full table. Larger sets use unique counts and at most ten
+  reason groups in both HTML and plain text; disclose overlapping groups and incomplete evidence.
+  Generate Resource Graph Explorer URLs deterministically from validated, scope-preserving queries,
+  never model URLs or hundreds of IDs. Omit links for incomplete evidence, management-group or
+  join/union scope that cannot be reproduced, and encoded URLs over 4096 characters; use the trusted
+  Archive snapshot when available. Portal uses current reader RBAC/state, not the analysis snapshot.
+  Archive v1 excludes delivery-only `resource_queries` and row `id`/`query_refs` but retains every
+  collected resource's frozen identity/reason projection. Update the App/Job before new Hosted output
+  and publish changed Prompt Agent guidance; synthetic checks do not verify live delivery.
 - Keep the 13px body scale and explicit `cover=36` / `stat=48` display steps. The wordmark uses
   36px and the main title uses 48px; both become 29px on mobile. Contents use 17px titles, 13px summaries
   and separate 29px number cells. Takeaways use 18.75px on desktop and 15.75px on mobile at weight
@@ -585,6 +604,7 @@ identity, verification display, contrast ≥4.5:1, and offline preview coverage.
 full-suite, browser, or real email-client validation; report only completed verification.
 Use `tests/browser/email_reports.cjs` against these local previews to repeat the 72-layout
 matrix (ko/en/ja, single/digest, full/inline-only, 1440/768/640/390/320/844px). Require `passed=true`,
+repeat with `--resource-count 327` for large-set summaries and intercepted Portal navigation,
 inspect screenshots in `out/`, repair observed defects, and repeat before accepting a design.
 Check actual text bounds for the wordmark, figures, chapter/contents numbers and badges, plus
 desktop rail alignment. Passing geometry checks do not establish aesthetic improvement:

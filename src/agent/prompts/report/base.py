@@ -411,6 +411,17 @@ Evaluate based on Resource Graph query results — how many resources are affect
 | medium | Service type owned but not directly affected (settings compliant), OR in non-primary region, OR optional improvement |
 | low | Complete applicable checks establish no current operational target/change in scope; this does not determine potential value or job relevance |
 
+### Large Resource Sets
+For more than 20 matching resources, prefer `resource_queries` entries with only `reference`
+and `reason`, copied from the executed resource query catalog. Select a reference only when
+EVERY returned resource satisfies the update's applicability conditions and shared reason.
+Never promote a broad inventory, sample, distribution or API-only finding into an affected set.
+The runtime restores the full identity list and computes unique counts; do not repeat selected
+resources in `affected_resources` or enumerate their names in action targets. Keep individually
+verified subsets in `affected_resources` when a whole result does not apply. Never invent a
+reference, count, KQL or Portal URL. `complete=false` is a confirmed lower bound, not a total;
+preserve its gap. Overlapping query counts must not be summed. Empty selections use [].
+
 ### Output Format (JSON only, no markdown fences)
 {{
   "update_category": "retirement | feature_change | new_feature | new_service | region_expansion | preview | sdk_tooling | pricing",
@@ -421,6 +432,7 @@ Evaluate based on Resource Graph query results — how many resources are affect
   "one_line_summary": "Executive one-liner the admin can grasp in 10 seconds (30-80 chars, see guide above)",
   "relevance_evidence": "1-2 sentences explaining environment relevance at the analysis time and within the analyzed scope, NOT why the report was selected. Change/retirement: connect the applicability condition to confirmed resource/workload/code/dependency evidence, then state whether action is needed; keep procedures and dates in action_items. Capability: connect the documented gain to a known workload/workflow or supplied requirement and its adoption condition; do not substitute 'no impact' for value. Resource names/counts are optional when no Azure resources are involved. Confirmed non-applicability: state the missing applicability condition and scoped consequence. Material gap: state what cannot be determined and why. Never infer no relevance from an empty resource list or invent a future plan. Example for a confirmed scoped absence: '분석 당시 조회 범위에는 Azure Databricks 워크스페이스가 없습니다. 이 범위에서 마이그레이션할 대상은 없습니다.'",
   "detailed_analysis": "Narrative explaining the update and its business implications (no individual resources, settings, or impact dimensions — those go in other fields)",
+  "resource_queries": [],
   "affected_resources": [
     {{
       "name": "resource name",
@@ -481,7 +493,7 @@ an empty string is the correct value when there is no concrete effect or gain.
    - `action_items`: step-by-step procedures, deadlines, CLI commands — NOT in analysis body
    - If the same fact appears in 2+ sections, that is a violation
 8. **Duplicate entries within `affected_resources`** — each resource must appear EXACTLY ONCE.
-   De-duplicate by resource name + resource group before output. If one resource is affected for
+  De-duplicate by full ARM ID, or subscription + resource group + type + name. If one resource is affected for
    multiple reasons, merge them into that single entry's `reason` — never emit two rows for the
    same resource.
 
@@ -507,7 +519,7 @@ A violation in ANY item degrades the report quality and should be corrected.
 - [ ] `detailed_analysis` does NOT duplicate content from `affected_resources`, `action_items`, or `impact_summary`
 - [ ] `impact_summary` follows the category family — Change: the dimensions the update actually affects (retirement/feature_change typically security+operational); Capability: only the dimensions where adoption produces a concrete gain. No dimension states an absence ("영향 없음" / "운영 변경 없음") — leave it empty instead
 - [ ] `affected_resources` entries each have a `reason` with actual Resource Graph property values
-- [ ] `affected_resources` has NO duplicate rows — each resource name appears exactly once (merge multi-reason resources into one entry)
+- [ ] `affected_resources` has NO duplicate ARM identities; selected `resource_queries` contain only applicable rows and are not repeated in the array
 - [ ] At least 1 `reference_docs` entry with title and URL
 
 **Language Quality:**

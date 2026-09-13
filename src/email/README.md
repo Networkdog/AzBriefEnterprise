@@ -69,6 +69,37 @@ html = markdown_to_html(
 
 ## 오프라인 미리보기와 검증
 
+### 대규모 리소스 요약
+
+`format_affected_resources_html()`과 `format_affected_resources_text()`는 선택적 keyword 인자
+`resource_queries`와 신뢰된 `archive_url`을 받습니다. 단건과 digest 모두 같은 증거 집계 함수를
+사용하며, `format_resource_count_text()`는 digest 목차와 동일한 건수 의미를 제공합니다.
+
+- **20개 이하**는 기존 이름·구독·리소스 그룹·종류의 전체 표를 유지합니다. **20개 초과**는
+  개별 이름 행 대신 총수와 사유별 건수를 평면 목록으로 표시합니다. 사유는 최대 **10개**이며,
+  나머지 사유 개수를 명시하고 Archive의 분석 당시 목록으로 안내합니다. 원본 identity 목록을
+  잘라내거나 변경하지 않습니다.
+- 총수는 실제 행의 정규화된 **ARM ID**로 중복 제거합니다. 구독이 다른 동명 리소스를 합치지
+  않으며, ID 미확인 기록은 별도 건수로 표시합니다. 겹치는 조회는 사유별 건수의 합이 총수와
+  다를 수 있으므로 합산할 수 없다는 안내를 남깁니다.
+- `ResourceQueryEvidence`의 `reference`와 행의 `query_refs`, 실제 고유 ID 건수와 `count`,
+  ID에 포함된 구독·리소스 그룹과 분석 범위를 대조합니다. 검증되고 완전한 조회만
+  `portal_url()`과 `safe_email_href()`를 거쳐 Azure Resource Graph Explorer 링크가 됩니다.
+  집계 쿼리의 숫자나 모델이 주장한 총수로 건수를 대체하지 않고, 렌더러가 KQL을 만들지 않습니다.
+- 검증된 그룹에는 분석 시점을 표시합니다. Portal에서는 **열람자의 RBAC 권한으로 현재 상태**를
+  조회하므로 일치하는 디렉터리와 범위를 선택해야 합니다. 링크는 쿼리를 열 뿐 실행하지 않습니다.
+  Management Group, 재현할 수 없는 join, 길이 초과 등의 이유로 링크가 없으면 신뢰된 HTTPS
+  Archive 링크를 사용합니다. Archive도 없거나 URL이 거부되면 세부 목록을 열 수 없음을 명시합니다.
+- 부분 증거나 메타데이터 없는 과거 결과는 전체 목록으로 확정하지 않습니다. 확인된 ID 건수는
+  하한이고 ID 없는 데이터는 기록 수일 뿐입니다. 확인된 행이 0개여도 불완전한 결과는
+  **전체 규모 미확인**으로 표시합니다. 동일한 규칙이 운영 요약과 단건·digest plain text에도 적용됩니다.
+
+조회 메타데이터는 전달 전용이며 Archive v1에는 포함하지 않습니다. 분석 당시의 전체 identity
+목록은 보존됩니다. 런타임의 증거 수집·검증과 Archive 직렬화는 이 렌더러의 책임이 아닙니다.
+모든 사유 텍스트를 HTML escape하며 새 이미지·웹폰트나 프런트엔드 의존성을 추가하지 않습니다.
+
+### 합성 데이터 옵션
+
 [preview_email.py](../../scripts/preview_email.py)는 고객 데이터가 아닌 **SYNTHETIC 합성 데이터**로
 ko/en/ja 단건·digest의 전체 스타일 및 inline-only HTML 12개를 저장합니다. 전송 설정과 종료
 이력을 mock하고 전송 client를 만들지 않으며 Azure 호출이나 이메일 발송도 하지 않습니다.
@@ -78,8 +109,14 @@ Inline-only 버전은 `<style>` 블록을 제거해 fallback을 점검합니다.
 ```powershell
 & .\.venv\Scripts\Activate.ps1
 python -m scripts.preview_email --output-dir out/email-editorial-preview --language all
+python -m scripts.preview_email --output-dir out/email-resource-summary --language all --resource-count 327
 python -m pytest tests/test_email.py tests/test_email_editorial.py -o "addopts=" -q
 ```
+
+`--resource-count`는 첫 합성 보고서에 0~20,000개의 고정 ID와 두 TLS 조건의 검증 가능한
+`ResourceQueryEvidence`를 만듭니다. 327개에서는 164개와 163개의 두 그룹이 표시됩니다.
+옵션 생략 시 기존 2개 리소스 예제와 12개 파일 구성을 유지합니다. Azure 호출·전송·이력 mock은
+동일하며 새 유틸리티나 실테넌트 조회 경로를 만들지 않습니다.
 
 구조·색상 대비·오프라인 동작 검사는 전체 suite와 브라우저·실제 이메일 client 검증을
 대체하지 않습니다. 각각 실행한 범위만 검증 결과로 보고합니다.
@@ -166,11 +203,13 @@ Learn 본문 allow-list 경로에만 한정합니다.
 - 영향 차원 label 열은 HTML `width="96"`, inline `width: 96px` / `min-width: 96px`,
   `white-space: nowrap`, `word-break: keep-all`을 모두 유지합니다. Desktop 2×2 배치로 바꾸지 않습니다.
 - 한국어 리소스 섹션 제목은 이메일·Archive·평가용 보고서 모두 `연관 리소스`이며,
-  빈 상태는 `연관 리소스가 없습니다.`로 표시합니다. 내부 `affected_resources` 필드는 유지합니다.
-  연관 리소스는 사유별 병합 행 다음에 이름, 구독, 리소스 그룹, 종류의 네 열로 표시합니다.
+  완전한 증거로 확인한 빈 상태는 `연관 리소스가 없습니다.`로 표시합니다. 불완전한 빈 결과를
+  확정 부재로 바꾸지 않습니다. 내부 `affected_resources` 필드는 유지합니다.
+  20개 이하의 연관 리소스는 사유별 병합 행 다음에 이름, 구독, 리소스 그룹, 종류의 네 열로 표시합니다.
   구독 GUID와 ARM 식별 정보가 충분할 때 앞의 세 열은 Azure Portal 범위 링크가 되며, 모호한
   중첩 리소스는 텍스트로 남깁니다. 화면 640px 이하에서는 각 열을 이름표가 있는 셀로 쌓되,
-  전체 사유·그룹·리소스 및 Portal 식별 정보를 보존합니다.
+  전체 사유·그룹·리소스 및 Portal 식별 정보를 보존합니다. 20개 초과는 위의 대규모 리소스
+  요약 규칙을 사용하며 메일에 수백 개의 개별 이름 행을 넣지 않습니다.
 - 액션은 `01`부터 번호를 매긴 작업지로 표시하며 맥락, 절차, 어두운 고정폭 CLI 블록, 일정,
   가드레일 순으로 나눕니다. 검증 상태·주의 사항과 안전한 링크 동작은 유지합니다. 유일하게
   식별되는 대상과 절차의 `Azure Portal` 시작점은 해당 리소스로 연결합니다. Cloud Shell 링크는
