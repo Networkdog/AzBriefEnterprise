@@ -89,6 +89,13 @@ jobs:
             exit 1
           fi
           az bicep build --file infra/azure-mcp-server/infra/main.bicep --outfile /tmp/mcp.json
+      - name: KT compiled ARM template matches the Bicep source
+        run: |
+          az bicep build --file infra/kt/main.bicep --outfile /tmp/kt.json
+          if ! diff -q /tmp/kt.json infra/kt/azuredeploy.json >/dev/null; then
+            echo "::error::infra/kt/azuredeploy.json is stale. Rebuild from infra/kt/main.bicep."
+            exit 1
+          fi
 
   customer-deployment:
     runs-on: windows-latest
@@ -114,4 +121,4 @@ jobs:
           AZBRIEF_VERBOSE: "false"
         run: |
           & .\.venv\Scripts\Activate.ps1
-          python -m pytest tests/test_customer_deployment.py tests/test_deploy_dev_script.py tests/test_enterprise_config.py -o addopts= -x -q
+          python -m pytest tests/test_customer_deployment.py tests/test_deploy_dev_script.py tests/test_enterprise_config.py tests/test_kt_deployment.py -o addopts= -x -q

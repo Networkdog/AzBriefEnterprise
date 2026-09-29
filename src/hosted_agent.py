@@ -19,6 +19,7 @@ from azure.ai.agentserver.responses import (  # noqa: E402
 )
 from pydantic import ValidationError  # noqa: E402
 from structlog import get_logger  # noqa: E402
+from structlog.contextvars import bound_contextvars  # noqa: E402
 
 from src.agent.analyzer import AnalysisResult, AzureUpdateAnalyzer  # noqa: E402
 from src.agent.foundry_backend import foundry_invocation_context  # noqa: E402
@@ -126,6 +127,7 @@ async def execute_request(raw_request: str, analyzer: AnalysisRuntime) -> Hosted
             raw_request = json.dumps(payload)
         request = HOSTED_AGENT_REQUEST_ADAPTER.validate_json(raw_request)
     except (json.JSONDecodeError, ValidationError):
+        logger.warning("hosted_request_invalid", status="failed", trace_id="invalid-request")
         return HostedAgentResponse(
             operation="analyze_update",
             status="failed",
@@ -142,7 +144,14 @@ async def execute_request(raw_request: str, analyzer: AnalysisRuntime) -> Hosted
     )
     try:
         update = _to_azure_update(request.update)
-        with foundry_invocation_context(request.trace_id, f"hosted:{request.operation}"):
+        with (
+            bound_contextvars(
+                trace_id=request.trace_id,
+                update_id=request.update.id,
+                operation=request.operation,
+            ),
+            foundry_invocation_context(request.trace_id, f"hosted:{request.operation}"),
+        ):
             if isinstance(request, HostedAnalysisRequest):
                 result = await analyzer.analyze_update(
                     update,
@@ -200,7 +209,10 @@ async def execute_request(raw_request: str, analyzer: AnalysisRuntime) -> Hosted
     )
 
 
-app = ResponsesAgentServerHost(options=ResponsesServerOptions(default_fetch_history_count=1))
+app = ResponsesAgentServerHost(
+    options=ResponsesServerOptions(default_fetch_history_count=1),
+    configure_observability=None,
+)
 
 
 @app.response_handler
@@ -215,7 +227,11 @@ async def handle_create(
         if cancellation_signal.is_set():
             return
         raw_request = await context.get_input_text() or ""
-        response = await execute_request(raw_request, get_analysis_runtime())
+        try:
+            response = await execute_request(raw_request, get_analysis_runtime())
+        except Exception:
+            logger.exception("hosted_request_dispatch_failed")
+            raise
         yield response.model_dump_json()
 
     return TextResponse(context, request, text=run())

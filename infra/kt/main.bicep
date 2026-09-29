@@ -1,0 +1,566 @@
+targetScope = 'resourceGroup'
+
+@description('Azure public-cloud region of the EXISTING VNet. Foundry must use the same region.')
+param location string
+
+@description('Existing VNet resource group, in the deployment subscription.')
+param virtualNetworkResourceGroupName string
+
+@description('Existing VNet name. This template never deploys a VNet resource.')
+param virtualNetworkName string
+
+@description('Globally unique name for a NEW network-injected Foundry account.')
+param foundryAccountName string
+
+@description('Globally unique name for the Foundry agent backing StorageV2 account.')
+@maxLength(24)
+param agentStorageAccountName string
+
+@description('Separate StorageV2 account for AzBrief state/archive; never shared with project identity.')
+@maxLength(24)
+param stateStorageAccountName string
+
+@description('Globally unique name for the single-region Cosmos DB for NoSQL account.')
+param cosmosAccountName string
+
+@description('Globally unique name for Azure AI Search.')
+param searchServiceName string
+
+param projectName string = 'azbrief-kt'
+param containerAppsEnvironmentName string = 'cae-azbrief-kt'
+param containerAppName string = 'ca-azbrief-kt'
+
+@description('Used ONLY for a missing PESubnet. Minimum for this nine-IP endpoint budget is /28.')
+param peSubnetAddressPrefix string = ''
+
+@description('Used ONLY for a missing FoundrySubnet. /27 minimum; /24 recommended for growth.')
+param foundrySubnetAddressPrefix string = ''
+
+@description('Used ONLY for a missing ContainerAppsSubnet. Workload-profile minimum is /27.')
+param containerAppsSubnetAddressPrefix string = ''
+
+@description('Derived by scripts/deploy_kt.ps1 after inventory. Do not set these flags manually.')
+param createPESubnet bool = false
+param createFoundrySubnet bool = false
+param createContainerAppsSubnet bool = false
+
+@description('Zone-name to existing private-DNS-zone ARM ID. Existing zones and links are NOT modified.')
+param existingPrivateDnsZoneIds object = {}
+
+@description('Optional existing Log Analytics workspace for ACA console logs. No workspace is created.')
+param logAnalyticsWorkspaceResourceId string = ''
+
+@description('Basic is the lowest Search tier with private endpoints. Validate capacity before production.')
+@allowed([
+  'basic'
+  'standard'
+])
+param searchSku string = 'basic'
+
+@description('False is a foundation-only staging operation, not a completed installation.')
+param deployCapabilityHost bool = true
+
+@description('Infrastructure bootstrap only: no customer secrets, analysis, email, or scheduler.')
+@allowed([
+  'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+])
+param bootstrapImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+
+param tags object = {
+  application: 'AzBrief'
+  customer: 'KT'
+  deploymentProfile: 'kt-private-foundation'
+}
+
+var vnetId = resourceId(
+  virtualNetworkResourceGroupName,
+  'Microsoft.Network/virtualNetworks',
+  virtualNetworkName
+)
+var peSubnetId = '${vnetId}/subnets/PESubnet'
+var foundrySubnetId = '${vnetId}/subnets/FoundrySubnet'
+var containerAppsSubnetId = '${vnetId}/subnets/ContainerAppsSubnet'
+var foundryAccountId = resourceId('Microsoft.CognitiveServices/accounts', foundryAccountName)
+var agentStorageId = resourceId('Microsoft.Storage/storageAccounts', agentStorageAccountName)
+var stateStorageId = resourceId('Microsoft.Storage/storageAccounts', stateStorageAccountName)
+var cosmosId = resourceId('Microsoft.DocumentDB/databaseAccounts', cosmosAccountName)
+var searchId = resourceId('Microsoft.Search/searchServices', searchServiceName)
+var environmentId = resourceId('Microsoft.App/managedEnvironments', containerAppsEnvironmentName)
+var dnsZoneNames = [
+  'privatelink.cognitiveservices.azure.com'
+  'privatelink.openai.azure.com'
+  'privatelink.services.ai.azure.com'
+  'privatelink.blob.${environment().suffixes.storage}'
+  'privatelink.documents.azure.com'
+  'privatelink.search.windows.net'
+  'privatelink.${location}.azurecontainerapps.io'
+]
+
+module peSubnet 'br/public:avm/res/network/virtual-network/subnet:0.2.0' = if (createPESubnet) {
+  name: 'kt-pe-subnet'
+  scope: resourceGroup(virtualNetworkResourceGroupName)
+  params: {
+    virtualNetworkName: virtualNetworkName
+    name: 'PESubnet'
+    addressPrefix: peSubnetAddressPrefix
+    privateEndpointNetworkPolicies: 'Disabled'
+    enableTelemetry: false
+  }
+}
+
+module foundrySubnet 'br/public:avm/res/network/virtual-network/subnet:0.2.0' = if (createFoundrySubnet) {
+  name: 'kt-foundry-subnet'
+  scope: resourceGroup(virtualNetworkResourceGroupName)
+  params: {
+    virtualNetworkName: virtualNetworkName
+    name: 'FoundrySubnet'
+    addressPrefix: foundrySubnetAddressPrefix
+    delegation: 'Microsoft.App/environments'
+    enableTelemetry: false
+  }
+  // 동일 VNet의 서브넷 쓰기는 직렬화한다.
+  dependsOn: [
+    peSubnet
+  ]
+}
+
+module containerAppsSubnet 'br/public:avm/res/network/virtual-network/subnet:0.2.0' = if (createContainerAppsSubnet) {
+  name: 'kt-container-apps-subnet'
+  scope: resourceGroup(virtualNetworkResourceGroupName)
+  params: {
+    virtualNetworkName: virtualNetworkName
+    name: 'ContainerAppsSubnet'
+    addressPrefix: containerAppsSubnetAddressPrefix
+    delegation: 'Microsoft.App/environments'
+    enableTelemetry: false
+  }
+  dependsOn: [
+    foundrySubnet
+  ]
+}
+
+module dnsZones 'br/public:avm/res/network/private-dns-zone:0.8.1' = [
+  for (zoneName, index) in dnsZoneNames: if (!contains(existingPrivateDnsZoneIds, zoneName)) {
+    name: 'kt-dns-${index}'
+    params: {
+      name: zoneName
+      virtualNetworkLinks: [
+        {
+          name: 'kt-${uniqueString(vnetId)}'
+          virtualNetworkResourceId: vnetId
+          registrationEnabled: false
+        }
+      ]
+      tags: tags
+      enableTelemetry: false
+    }
+  }
+]
+
+module foundry 'br/public:avm/res/cognitive-services/account:0.19.1' = {
+  name: 'kt-foundry'
+  params: {
+    name: foundryAccountName
+    location: location
+    kind: 'AIServices'
+    sku: 'S0'
+    customSubDomainName: foundryAccountName
+    allowProjectManagement: true
+    managedIdentities: {
+      systemAssigned: true
+    }
+    publicNetworkAccess: 'Disabled'
+    disableLocalAuth: true
+    networkAcls: {
+      defaultAction: 'Deny'
+    }
+    networkInjections: {
+      scenario: 'agent'
+      subnetResourceId: foundrySubnetId
+      useMicrosoftManagedNetwork: false
+    }
+    tags: tags
+    enableTelemetry: false
+  }
+  dependsOn: [
+    foundrySubnet
+  ]
+}
+
+module agentStorage 'br/public:avm/res/storage/storage-account:0.33.1' = {
+  name: 'kt-agent-storage'
+  params: {
+    name: agentStorageAccountName
+    location: location
+    kind: 'StorageV2'
+    skuName: 'Standard_LRS'
+    publicNetworkAccess: 'Disabled'
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    supportsHttpsTrafficOnly: true
+    minimumTlsVersion: 'TLS1_2'
+    networkAcls: {
+      defaultAction: 'Deny'
+      bypass: 'None'
+    }
+    tags: tags
+    enableTelemetry: false
+  }
+}
+
+module stateStorage 'br/public:avm/res/storage/storage-account:0.33.1' = {
+  name: 'kt-state-storage'
+  params: {
+    name: stateStorageAccountName
+    location: location
+    kind: 'StorageV2'
+    skuName: 'Standard_LRS'
+    publicNetworkAccess: 'Disabled'
+    allowBlobPublicAccess: false
+    allowSharedKeyAccess: false
+    supportsHttpsTrafficOnly: true
+    minimumTlsVersion: 'TLS1_2'
+    networkAcls: {
+      defaultAction: 'Deny'
+      bypass: 'None'
+    }
+    blobServices: {
+      containerDeleteRetentionPolicyEnabled: true
+      containerDeleteRetentionPolicyDays: 7
+      deleteRetentionPolicyEnabled: true
+      deleteRetentionPolicyDays: 7
+      containers: [
+        { name: 'azbrief-state', publicAccess: 'None' }
+        { name: 'azbrief-archive', publicAccess: 'None' }
+      ]
+    }
+    tags: tags
+    enableTelemetry: false
+  }
+}
+
+module cosmos 'br/public:avm/res/document-db/database-account:0.21.1' = {
+  name: 'kt-cosmos'
+  params: {
+    name: cosmosAccountName
+    location: location
+    databaseAccountOfferType: 'Standard'
+    capacityMode: 'Serverless'
+    failoverLocations: [
+      {
+        locationName: location
+        failoverPriority: 0
+        isZoneRedundant: false
+      }
+    ]
+    zoneRedundant: false
+    enableAutomaticFailover: false
+    enableMultipleWriteLocations: false
+    disableLocalAuthentication: true
+    disableKeyBasedMetadataWriteAccess: true
+    networkRestrictions: {
+      publicNetworkAccess: 'Disabled'
+      networkAclBypass: 'None'
+      ipRules: []
+      virtualNetworkRules: []
+    }
+    tags: tags
+    enableTelemetry: false
+  }
+}
+
+module search 'br/public:avm/res/search/search-service:0.13.0' = {
+  name: 'kt-search'
+  params: {
+    name: searchServiceName
+    location: location
+    sku: searchSku
+    replicaCount: 1
+    partitionCount: 1
+    publicNetworkAccess: 'Disabled'
+    disableLocalAuth: true
+    tags: tags
+    enableTelemetry: false
+  }
+}
+
+module controlPlaneIdentity 'br/public:avm/res/managed-identity/user-assigned-identity:0.6.0' = {
+  name: 'kt-control-plane-identity'
+  params: {
+    name: 'id-${containerAppName}'
+    location: location
+    tags: tags
+    enableTelemetry: false
+  }
+}
+
+module containerEnvironment 'br/public:avm/res/app/managed-environment:0.16.0' = {
+  name: 'kt-container-environment'
+  params: {
+    name: containerAppsEnvironmentName
+    location: location
+    infrastructureSubnetResourceId: containerAppsSubnetId
+    internal: false
+    publicNetworkAccess: 'Disabled'
+    zoneRedundant: false
+    workloadProfiles: [
+      {
+        name: 'Consumption'
+        workloadProfileType: 'Consumption'
+      }
+    ]
+    appLogsConfiguration: empty(logAnalyticsWorkspaceResourceId)
+      ? { destination: 'none' }
+      : {
+          destination: 'log-analytics'
+          logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceResourceId
+        }
+    tags: tags
+    enableTelemetry: false
+  }
+  dependsOn: [
+    containerAppsSubnet
+  ]
+}
+
+var endpointSpecs = [
+  {
+    name: 'pe-${foundryAccountName}'
+    target: foundryAccountId
+    groupId: 'account'
+    zones: take(dnsZoneNames, 3)
+  }
+  {
+    name: 'pe-${agentStorageAccountName}'
+    target: agentStorageId
+    groupId: 'blob'
+    zones: [dnsZoneNames[3]]
+  }
+  {
+    name: 'pe-${stateStorageAccountName}'
+    target: stateStorageId
+    groupId: 'blob'
+    zones: [dnsZoneNames[3]]
+  }
+  {
+    name: 'pe-${cosmosAccountName}'
+    target: cosmosId
+    groupId: 'Sql'
+    zones: [dnsZoneNames[4]]
+  }
+  {
+    name: 'pe-${searchServiceName}'
+    target: searchId
+    groupId: 'searchService'
+    zones: [dnsZoneNames[5]]
+  }
+  {
+    name: 'pe-${containerAppsEnvironmentName}'
+    target: environmentId
+    groupId: 'managedEnvironments'
+    zones: [dnsZoneNames[6]]
+  }
+]
+
+@batchSize(1)
+module privateEndpoints 'br/public:avm/res/network/private-endpoint:0.12.1' = [
+  for (endpoint, index) in endpointSpecs: {
+    name: 'kt-private-endpoint-${index}'
+    params: {
+      name: endpoint.name
+      location: location
+      subnetResourceId: peSubnetId
+      privateLinkServiceConnections: [
+        {
+          name: endpoint.name
+          properties: {
+            privateLinkServiceId: endpoint.target
+            groupIds: [endpoint.groupId]
+          }
+        }
+      ]
+      privateDnsZoneGroup: {
+        name: 'default'
+        privateDnsZoneGroupConfigs: [
+          for zoneName in endpoint.zones: {
+            privateDnsZoneResourceId: existingPrivateDnsZoneIds[?zoneName] ?? resourceId('Microsoft.Network/privateDnsZones', zoneName)
+          }
+        ]
+      }
+      tags: tags
+      enableTelemetry: false
+    }
+    dependsOn: [
+      peSubnet
+      dnsZones
+      foundry
+      agentStorage
+      stateStorage
+      cosmos
+      search
+      containerEnvironment
+    ]
+  }
+]
+
+resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+  name: foundryAccountName
+}
+
+resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
+  parent: account
+  name: projectName
+  location: location
+  identity: {
+    type: 'SystemAssigned'
+  }
+  properties: {
+    displayName: projectName
+    description: 'KT private AzBrief project with customer-owned agent storage.'
+  }
+  dependsOn: [
+    privateEndpoints
+  ]
+}
+
+module agentBindings 'agent-bindings.bicep' = {
+  name: 'kt-agent-bindings'
+  params: {
+    foundryAccountName: foundryAccountName
+    projectName: projectName
+    projectPrincipalId: project.identity.principalId
+    agentStorageAccountName: agentStorageAccountName
+    cosmosAccountName: cosmosAccountName
+    searchServiceName: searchServiceName
+  }
+}
+
+module capabilityHost 'capability-host.bicep' = if (deployCapabilityHost) {
+  name: 'kt-project-capability-host'
+  params: {
+    foundryAccountName: foundryAccountName
+    projectName: projectName
+    projectPrincipalId: project.identity.principalId
+    // 공식 Standard Setup 샘플이 사용하는 내부 ID이며 생성된 Bicep 형식에는 빠져 있다.
+    #disable-next-line BCP053
+    projectInternalId: project.properties.internalId
+    agentStorageAccountName: agentStorageAccountName
+    cosmosAccountName: cosmosAccountName
+  }
+  dependsOn: [
+    agentBindings
+  ]
+}
+
+module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
+  name: 'kt-container-app'
+  params: {
+    name: containerAppName
+    location: location
+    environmentResourceId: containerEnvironment.outputs.resourceId
+    workloadProfileName: 'Consumption'
+    managedIdentities: {
+      userAssignedResourceIds: [controlPlaneIdentity.outputs.resourceId]
+    }
+    ingressExternal: true
+    ingressAllowInsecure: false
+    ingressTargetPort: 80
+    activeRevisionsMode: 'Single'
+    scaleSettings: {
+      minReplicas: 0
+      maxReplicas: 1
+    }
+    containers: [
+      {
+        name: 'bootstrap'
+        image: bootstrapImage
+        resources: {
+          cpu: json('0.25')
+          memory: '0.5Gi'
+        }
+        probes: [
+          {
+            type: 'Readiness'
+            httpGet: {
+              path: '/'
+              port: 80
+            }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          }
+        ]
+      }
+    ]
+    tags: tags
+    enableTelemetry: false
+  }
+  dependsOn: [
+    privateEndpoints
+  ]
+}
+
+resource stateAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: stateStorageAccountName
+}
+
+resource controlPlaneStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: stateAccount
+  name: guid(stateStorageId, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-${containerAppName}'), 'blob-contributor')
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+    )
+    principalId: controlPlaneIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    stateStorage
+  ]
+}
+
+resource controlPlaneFoundryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: project
+  name: guid(project.id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-${containerAppName}'), 'foundry-user')
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      '53ca6127-db72-4b80-b1b0-d745d6d5456d'
+    )
+    principalId: controlPlaneIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    capabilityHost
+  ]
+}
+
+output ktFoundation object = {
+  schemaVersion: 1
+  profile: 'kt-private-foundation'
+  applicationReady: false
+  capabilityHostRequested: deployCapabilityHost
+  tenantId: tenant().tenantId
+  subscriptionId: subscription().subscriptionId
+  resourceGroup: resourceGroup().name
+  location: location
+  vnetResourceId: vnetId
+  privateEndpointSubnetId: peSubnetId
+  foundrySubnetId: foundrySubnetId
+  containerAppsSubnetId: containerAppsSubnetId
+  foundryAccountResourceId: foundryAccountId
+  foundryProjectResourceId: project.id
+  foundryProjectEndpoint: 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${projectName}'
+  foundryProjectPrincipalId: project.identity.principalId
+  agentStorageAccountResourceId: agentStorageId
+  stateStorageAccountResourceId: stateStorageId
+  stateContainerUrl: '${stateStorage.outputs.primaryBlobEndpoint}azbrief-state'
+  archiveContainerUrl: '${stateStorage.outputs.primaryBlobEndpoint}azbrief-archive'
+  containerAppsEnvironmentResourceId: environmentId
+  containerAppResourceId: containerApp.outputs.resourceId
+  bootstrapUrl: 'https://${containerApp.outputs.fqdn}'
+  controlPlaneIdentityResourceId: controlPlaneIdentity.outputs.resourceId
+  controlPlanePrincipalId: controlPlaneIdentity.outputs.principalId
+  controlPlaneClientId: controlPlaneIdentity.outputs.clientId
+  logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceResourceId
+}

@@ -1,6 +1,7 @@
 """Container Apps proxy for the AzBrief Foundry Hosted Agent runtime."""
 
 import asyncio
+import time
 import uuid
 from typing import Any, Optional, Union
 from urllib.parse import quote
@@ -18,7 +19,7 @@ from src.agent.hosted_contract import (
     HostedSubscriber,
     HostedUpdate,
 )
-from src.agent.resilience import calculate_backoff
+from src.agent.resilience import _extract_retry_after, calculate_backoff
 from src.agent.scope import AnalysisScope
 from src.config import Settings, Subscriber, get_azure_credential, get_settings
 from src.rss.parser import AzureUpdate
@@ -90,6 +91,7 @@ async def invoke_hosted_agent(
         )
         async with httpx.AsyncClient(timeout=settings.foundry_hosted_agent_timeout_s) as client:
             for attempt in range(max_attempts):
+                started = time.monotonic()
                 try:
                     response = await client.post(
                         endpoint,
@@ -101,13 +103,30 @@ async def invoke_hosted_agent(
                             "stream": False,
                         },
                     )
+                    logger.info(
+                        "hosted_agent_http_response",
+                        operation=request.operation,
+                        trace_id=request.trace_id,
+                        update_id=request.update.id,
+                        agent_name=agent_name,
+                        attempt=attempt + 1,
+                        status_code=response.status_code,
+                        elapsed_s=round(time.monotonic() - started, 2),
+                        agent_session_id=response.headers.get("x-agent-session-id", ""),
+                        request_id=response.headers.get("apim-request-id", ""),
+                    )
                     response.raise_for_status()
                     payload = response.json()
                     break
                 except httpx.HTTPStatusError as exc:
                     status_code = exc.response.status_code
                     if status_code in _TRANSIENT_STATUS_CODES and attempt + 1 < max_attempts:
-                        delay = calculate_backoff(attempt)
+                        retry_after = _extract_retry_after(exc)
+                        delay = calculate_backoff(
+                            attempt,
+                            base_delay=10.0 if status_code == 429 else 1.0,
+                            retry_after=retry_after,
+                        )
                         logger.warning(
                             "hosted_agent_transient_retry",
                             operation=request.operation,
@@ -115,6 +134,7 @@ async def invoke_hosted_agent(
                             status_code=status_code,
                             attempt=attempt + 1,
                             delay_s=round(delay, 2),
+                            retry_after=retry_after,
                         )
                         await asyncio.sleep(delay)
                         continue

@@ -5,26 +5,9 @@ description: 'Add new Azure service integration to AzBrief. Use when: new servic
 
 # Azure Service Integration
 
-## Foundry Runtime Guidance
-
-- Stay inside the assigned evidence specialty. Azure API owns ARM, Health, Policy,
-    Advisor, Activity Log, Cost Management, and Billing; Azure MCP never uses these local
-    FunctionTools as a fallback.
-- Treat services and FunctionTools as evidence providers, not decision makers. Accept a
-    result as evidence only when its explicit success indicator is true.
-- Prefer live read-only evidence with exact tenant and subscription scope; never treat one
-    subscription as the whole tenant.
-- Billing hierarchy is tenant-scoped and needs billing-scope read access. Preserve 403,
-    unsupported agreement types, and an empty visible-account set as distinct gaps.
-- For material financial implications in any update category, collect a recent 30-day ActualCost
-    baseline through the Azure API specialty. Filter to exact resource types or verified billing
-    service labels and retain subscription, period, currency, and filter in claims. Never confuse
-    historical spending with projected savings, infer zero from empty rows, or query outside scope.
-- Make the minimum calls needed to close a named gap. Execute serially when concurrency
-    safety is undeclared.
-- Preserve service errors and lower confidence. Missing evidence never proves absence.
-
-<!-- End Foundry Runtime Guidance -->
+This is a GitHub Copilot developer skill, not an AzBrief Agent runtime instruction.
+Foundry operational guidance is maintained in
+[foundry_instructions.py](../../../src/agent/foundry_instructions.py), independently of this file.
 
 ## When to Use
 
@@ -151,11 +134,44 @@ python -m scripts.test_local resources     # Integration test
 | `ResourceGraphService` | `resource_graph.py` | `azure-mgmt-resourcegraph` | Query resources across tenant |
 | `CostManagementService` | `cost_management.py` | `azure-mgmt-costmanagement` | Cost data by service/period |
 | `BillingService` | `billing.py` | `httpx` via `AzureRestClient` | Accessible billing accounts/profiles through Microsoft.Billing `2024-04-01` |
-| `LogAnalyticsService` | `log_analytics.py` | `azure-monitor-query` | Log Analytics workspace queries |
+| `LogAnalyticsService` | `log_analytics.py` | `azure-monitor-query` | Read-only Log Analytics workspace queries |
 | `MicrosoftLearnService` | `microsoft_learn.py` | `httpx` (REST API) | Search Microsoft Learn docs |
 | `AzureRestService` | `azure_rest.py` | `httpx` (REST API) | Direct ARM REST calls (`call_api` for paginated `value` lists; `get_resource` for single-object endpoints like `providers/{namespace}`) |
 | `ArchiveStore` / `BlobArchiveStore` | `archive.py` | `httpx` (Blob REST) | Immutable canonical analysis versions plus metadata-only list projection; control-plane data access, not an Agent evidence tool |
 | `RuntimeInventoryService` | `runtime_inventory.py` | `httpx` + `azure-ai-projects` | Admin readiness용 병렬 ARM 조회, thread-safe lazy credential, safe Agent latest-version kind/status projection |
+
+Failure-event ingestion is intentionally not an Agent evidence service. `src/logging_config.py`
+uses `azure-monitor-ingestion` to send only Error/Critical records, captured exceptions,
+failure-suffixed events, failed/partial statuses, false success results, and positive failure
+counters to the `AzBriefFailures_CL` custom table through a Direct DCR. The enterprise template
+creates the table/DCR and grants the App/Job UAMI DCR-scoped `Monitoring Metrics Publisher`; the
+dedicated Hosted Agent identity receives that role separately after publication. Keep ordinary
+successful INFO/WARNING records out of this table, redact every payload, and make exporter failure
+non-recursive and non-fatal to the primary operation.
+
+Cross-tenant image distribution is deployment configuration, not an Agent evidence service.
+`containerRegistryAuthMode=Credentials` uses a publisher-issued repository pull token stored in
+the customer Key Vault, with matching App/Job secret references. Preserve the ManagedIdentity
+default for same-tenant registries. Do not add an ACR SDK service/tool, publisher credentials to
+`Settings`, a cross-tenant identity grant, or a tenant switch. Customer setup and
+`deploy_dev.ps1 -PrebuiltImage` validate existing bindings without reading passwords; prebuilt
+digest rollout retains health/smoke/rollback gates and requires separate artifact provenance
+and fresh-pull/network acceptance. See [the customer guide](../../../infra/CUSTOMER_DEPLOYMENT.md#external-tenant-registry).
+
+`MicrosoftLearnService.fetch_documentation_page()` returns a typed `success/data/error`
+envelope with the full article body, final/requested URL, headings, body links, code blocks,
+and descriptive visuals. HTTPS/host validation runs before every redirect request; shorteners
+are redirect-only, and non-HTML/oversized responses fail explicitly. Keep technical warnings,
+relative links and functional version/query parameters. Link extraction bounds are disclosed.
+Learn can split its title and body into sibling `div.content` regions: retain all outer regions
+without duplicating nested content, and never accept a title-only response as article evidence.
+`fetch_page_content()` remains a bounded-preview compatibility adapter; do not use it as the
+full-evidence source for recursive analysis. Traversal decisions, source depth, shared budgets,
+ref storage and follow-up authorization belong to `src/agent/documentation.py`, not the service.
+The coordinator's explicit `FOUNDRY_COORDINATOR_LEARN_TRANSPORT=hosted` provisioning mode reuses
+these existing public-document tools when managed Learn MCP discovery is unavailable. Preserve
+the official-source/URL restrictions, real tool results and evidence gaps. Do not add a model
+fallback or reuse Azure MCP credentials/tenant tools for public documentation.
 
 `AzureRestClient` resolves a subscription only when the path contains `{subscriptionId}`.
 Tenant-scope endpoints such as `/providers/Microsoft.Billing/billingAccounts` must not fail merely
@@ -173,6 +189,13 @@ non-finite amounts, and extra result pages; adapters propagate failures rather t
 strings. Bounded subscriber scopes remain blocked because these tools cannot enforce their full
 hierarchy. Cost Management Reader at the query scope is separate from Billing hierarchy permission.
 Tests in `tests/test_services.py` and `tests/test_analyzer.py` cover this contract without Azure calls.
+
+Cost query 429 recovery uses `retry_with_backoff` with three retries, `retry_total=0` on the SDK
+call to prevent nested attempts, and a 10/20/40-second jittered fallback. Server retry hints take
+priority: standard seconds/HTTP dates, millisecond headers, the documented consumption retry-after
+header, and costmanagement retry-after limits. Use the longest valid hint and reject invalid,
+negative or non-finite values. Do not shorten a server delay, sleep after exhaustion, retry 403,
+or turn a throttled query into empty successful cost evidence. Existing runtime timeouts still apply.
 
 ## Resilience Patterns for Services
 

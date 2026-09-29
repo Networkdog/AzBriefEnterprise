@@ -11,13 +11,14 @@ entry point입니다.
 | Module | 용도 | 부작용 |
 |---|---|---|
 | [setup_customer.ps1](setup_customer.ps1) | ARM 출력 기반 고객 환경 구성, MCP/Agent 게시, 초기 이미지 전환, 준비 검사·스케줄 활성화 | 단계별 로컬/원격 변경. 일반 `-WhatIf`도 ARM은 조회하며 완전 오프라인은 `-SetupFile ... -WhatIf`만 해당. `Verify`는 읽기 전용이며 모델·이메일 호출 없음 |
-| [deploy_dev.ps1](deploy_dev.ps1) | 이미 기동한 App/Job의 동일 digest 업그레이드와 실패 시 되돌림 | ACR 빌드와 두 리소스 이미지 갱신. 새 설치의 포트 전환에는 사용하지 않음 |
+| [deploy_kt.py](deploy_kt.py) | KT 기존 VNet/subnet/DNS 사전검사 및 no-Insights 인프라 bootstrap | 기본 `preflight`는 live 읽기만 수행. 명시적 `--mode deploy`만 두 단계 ARM 배포. 모델·Agent 게시나 실제 앱/메일 설정은 하지 않음 |
+| [deploy_dev.ps1](deploy_dev.ps1) | 이미 기동한 App/Job의 동일 digest 업그레이드와 실패 시 되돌림 | 기본 ACR 빌드 또는 `-PrebuiltImage`의 승인된 digest로 두 이미지 갱신. 새 설치의 포트 전환에는 사용하지 않음 |
 | [deploy_hosted_agent.ps1](deploy_hosted_agent.ps1) | 검토된 Hosted 패키지의 검사·게시·smoke | Foundry 버전 생성 및 명시적 모델 smoke 호출 |
 | [`test_local.py`](test_local.py) | 설정, RSS, resource 요약, 단건/기간 분석 | Azure/Foundry 조회; `--jsonl` 없으면 이메일 경로 사용 가능 |
 | [smoke_hosted_agent.py](smoke_hosted_agent.py) | 배포된 Hosted 계약으로 단건 분석·trace 요약 확인 | 모델 비용 발생. 이메일·제어면 archive 저장 없음 |
 | [preview_email.py](preview_email.py) | SYNTHETIC ko/en/ja 단건·digest 디자인 미리보기 | 로컬 HTML만 저장; Azure 호출·이메일 발송·전송 client 초기화 없음 |
 | [preview_web.py](preview_web.py) | SYNTHETIC Admin/Archive/Feedback 브라우저 미리보기 | 루프백 서버, 메모리 내 관리 변경, 모의 저장·알림 상태; 실분석·이메일 발송·영구 저장 없음 |
-| [`crawl_azure_updates.py`](crawl_azure_updates.py) | rolling RSS 밖의 update history archive 갱신 | Git 제외 `data/`에 파일 기록 |
+| [`crawl_azure_updates.py`](crawl_azure_updates.py) | 반복 가능하거나 오프라인인 기간 조회용 선택적 history archive 갱신 | Git 제외 `data/`에 파일 기록 |
 | [`provision_foundry_agents.py`](provision_foundry_agents.py) | 여섯 specialist Prompt Agent 생성·검사·삭제 | 기본/`--delete`는 원격 변경; `--dry-run`, `--check`는 비변경 |
 | [`evaluate_report.py`](evaluate_report.py) | 단건 rule-based + G-Eval 평가와 반복 rewrite | Azure/Foundry 호출, `eval_runs/` 기록 |
 | [`evaluate_batch.py`](evaluate_batch.py) | category 층화 fleet/holdout 평가 | Azure/Foundry 호출, `eval_runs/` 기록 |
@@ -30,8 +31,23 @@ entry point입니다.
 `deploy_dev.ps1`은 테스트와 ACR 빌드 직후 Docker 입력 지문을 다시 비교합니다. 검증 중 소스가
 바뀌면 원격 빌드 전, 빌드 중 바뀌면 App/Job 갱신 전에 중단합니다. 검토가 끝난 안정된 소스로
 재실행하며 테스트·검증을 건너뛰어 배포하지 않습니다.
+로컬 pytest 실행 구간에만 `OTEL_SDK_DISABLED=true`를 설정하고 성공·실패 후 기존 프로세스
+환경값을 복원합니다. 닫힌 pytest 출력 스트림에 exporter가 쓰는 오류를 방지하며, Azure
+리소스의 계측 설정이나 `.env`는 변경하지 않습니다.
+
+외부 테넌트의 ACR은 기반 배포의 `containerRegistryAuthMode=Credentials`와 고객별 pull-only
+토큰으로 연결합니다. 비밀번호는 고객사 Key Vault에만 저장하며 설치 스크립트는 값을 읽지
+않고 App/Job의 인증 방식·연결 ID·비밀 참조를 검증합니다. 기존 출력에서 인증 모드가 없으면
+ManagedIdentity로 처리합니다. `deploy_dev.ps1 -PrebuiltImage '<registry>/azbrief-enterprise@sha256:<digest>'`는
+ACR 조회·빌드를 건너뛰지만 로컬 검사, 상태 확인, import-only Job 스모크와 롤백을 유지합니다.
+빌드 옵션 `-AcrName`·`-ImageName`·`-ImageTag`와 함께 쓸 수 없고 레지스트리 인증도 자동 변경하지
+않습니다. 로컬 소스 지문과 개발자 이미지의 출처 증명은 구분합니다.
+[고객 가이드](../infra/CUSTOMER_DEPLOYMENT.md#external-tenant-registry)의 토큰 회전·네트워크·실제 pull 검증이 별도로 필요합니다.
+
 Archive 평가 fixture는 운영 v1 투영과 같이 `job_relevance`, `visual_assets`, `resource_queries`를
 제외합니다. 전달 전용 필드를 수용하려고 불변 Archive 스키마를 완화하지 않습니다.
+단위 테스트는 통제된 시간으로 P95 임계값의 양쪽을 검사하고, 독립 평가 CLI는 실제 시간을
+측정해 기존 1,000ms 미만 기준을 적용합니다.
 
 프로비저닝 기본값은 코어 5개 역할에 `gpt-5-terra`와 `medium` 추론, Azure MCP에
 `gpt-5-luna`와 추론 옵션 생략입니다. 보고서 작성과 구독자 맞춤화는 코어에 유지합니다.
@@ -39,8 +55,30 @@ Archive 평가 fixture는 운영 v1 투영과 같이 `job_relevance`, `visual_as
 `FOUNDRY_CORE_REASONING_EFFORT`로 정책을 지정하며, `--model` 또는 레거시
 `FOUNDRY_MODEL_DEPLOYMENT`가 있으면 선택한 모든 역할에 해당 모델을 적용합니다.
 `--dry-run`은 역할별 설정을 출력하고 `--check`는 모델·추론·샘플링 정책도 검사합니다.
-모델 변경 시 이전 생성 옵션은 제거합니다. 고객 설정 v2는 두 모델을 전달하고 v1은 기존
+모델 변경 시 이전 생성 옵션은 제거합니다. 고객 설정 v2/v3는 두 모델을 전달하고 v1은 기존
 단일 모델을 유지합니다. 모델 가용성·호환성과 실제 품질·지연·비용 검증은 별도입니다.
+
+Coordinator의 `FOUNDRY_COORDINATOR_LEARN_TRANSPORT`는 기본 `managed_mcp`와 명시적 `hosted`를
+지원합니다. `hosted`는 관리형 Learn MCP attachment만 제거하고 기존 Hosted 공개 문서 도구를
+사용합니다. 같은 프로비저닝 환경에서 `--roles coordinator` 게시와 `--check`를 수행합니다.
+기존 모델·다른 전문가·근거 검증은 바꾸지 않으며 개발용 `.env`는 자동 수정하지 않습니다.
+
+고객 설정 v3는 공용 Environment·workload profile·Application Insights를 MCP 배포에 전달하고,
+현재 출력은 Hosted용 `AzBriefFailures_CL` Direct DCR binding도 선택적으로 제공합니다.
+`Mcp`는 v3를 요구하며 App/Job의 Environment와 Application Insights, 같은 Log Analytics 목적지를
+확인합니다. 배포 후와 `Verify`·`EnableSchedule`에서도 MCP 연결과 로그 설정을 다시 확인합니다.
+MCP는 콘솔 로그를 공유하고 직접 Application Insights 추적·메트릭은 비활성화합니다. 다른
+Environment에 있는 기존 MCP를 자동 삭제하지 않으며 [통합 절차](../infra/CUSTOMER_DEPLOYMENT.md#consolidating-existing-installations)를 따릅니다.
+
+`Configure`는 기존 App/Job의 Application Insights 목적지가 비어 있지 않고 일치하는지 확인한 뒤
+같은 `APPLICATIONINSIGHTS_CONNECTION_STRING`을 로컬 도구용 azd 환경에 기록합니다. Hosted에는
+직접 선언하지 않습니다. Foundry 프로젝트의 `AppInsights` 연결이 예약 환경 변수를 주입하며,
+foundation은 공용 component를 `ProjectManagedIdentity` 방식으로 연결합니다. 기존 프로젝트는
+같은 연결을 별도로 확인해야 합니다. v3는 공유 component와도 대조합니다.
+DCR binding이 있는 v3는 endpoint·immutable ID·stream도 Hosted 환경에 연결합니다.
+기존 azd 환경은 이 단계로 설정을 갱신하고 Hosted 전용 identity에 Application Insights component와
+failure DCR 각각의 범위로 Monitoring Metrics Publisher를 별도 부여해야 합니다. 루트 `.env`나 공개 ARM 출력에는 값을
+추가하지 않습니다. 상세 오류의 실제 workspace 수신은 별도 인수 검증입니다.
 
 ## 자주 쓰는 예시
 
@@ -89,7 +127,11 @@ python -m scripts.preview_web --port 8765
 
 `http://127.0.0.1:8765/admin`, `/archive`, `/feedback`를 엽니다. 포트가 사용 중이면 `--port`를
 바꾸십시오. 관리 변경은 메모리 내에서만 반영되며 서버 재시작 때 초기화합니다. Archive는 실제 v1
-스키마로 검증한 30개 합성 기록을 제공하고, run 요청은 409로 차단합니다. 피드백은 모의 접수 API
+스키마로 검증한 30개 합성 기록을 제공하고, run 요청은 409로 차단합니다.
+Admin 오류 이력은 스키마를 검증한 합성 이벤트 3건을 반환하며 운영 API와
+동일한 시간·Run ID·건수 제한을 적용합니다. Run 상세에서 오류 이력으로 이동할 수 있도록
+합성 Run ID도 32자리 16진수입니다. Log Analytics나 실제 비밀·분석 데이터는 읽지 않습니다.
+피드백은 모의 접수 API
 응답을 상태 메시지로 표시하며 실제로 저장하지 않습니다. 현재의 세 인자 Feedback renderer와
 전용 헤더를 사용하고 `SYNTHETIC PREVIEW` 표시는 유지합니다. 미리보기 서버를 외부에 배포하거나
 운영 인증 검증의 근거로 쓰지 않습니다.

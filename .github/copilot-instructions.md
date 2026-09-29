@@ -82,10 +82,35 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 ### Resilience & Error Recovery
 
 - **Differential retry strategy**: Foreground (user-facing) calls retry with exponential backoff + jitter; background tasks (subscriber customization) fail immediately on overload to prevent gateway amplification
+- **429 delay contract**: Planning, evaluation, reporting and Cost Management honor the longest
+  valid server retry hint (seconds, milliseconds, HTTP date or cost-specific retry-after), falling
+  back to 10/20/40 seconds plus jitter within their retry limits. Planning retries do not consume
+  tool turns. Cost queries disable nested SDK retries, allow three application retries, and never
+  sleep after exhaustion. Hosted HTTP retries also honor server hints; customization stays
+  fail-fast. An explicit non-retryable HTTP status wins over digits in an error message.
 - **Circuit breaker**: Track consecutive failures; after 3 consecutive failures, fall back to alternative model or abort gracefully. Auto-reset after timeout (half-open state)
 - **Model fallback**: After `MAX_CONSECUTIVE_OVERLOAD_ERRORS` (3) consecutive 529 errors, raise `ModelFallbackError` to trigger model switch. Cleanly separates retry exhaustion from model switching logic
 - **Stale connection detection**: Detect ECONNRESET/EPIPE for targeted recovery (disable keep-alive pooling + reconnect) instead of generic retry
 - **LLM-assisted tool repair**: On tool failure, the Resource Graph specialist repairs KQL and the coordinator repairs other tool arguments, with bounded retries and a circuit breaker. Never fall back across specialist roles; use meaning-preserving lexical repair or preserve a gap, never replace a failed question with a generic builder/count
+- **Learn transport recovery**: `FOUNDRY_COORDINATOR_LEARN_TRANSPORT=hosted` is an explicit
+  provisioning alternative to the default `managed_mcp`. It removes only the coordinator's
+  managed Learn MCP attachment and uses the existing allow-listed public-document tools through
+  `local_tool_calls`. Keep Learn-first evidence, the same Agent/model and all scope/URL/validation
+  guards. A managed discovery 504 may surface as 400 `tool_user_error` even with `tool_choice=none`;
+  do not broadly retry 400s or infer an Azure MCP permission problem. Publish the coordinator and
+  run `--check` with the same setting; never edit developer `.env` implicitly.
+- **Reviewer output integrity**: Persist Quality Reviewer JSON-object mode for evidence verdicts,
+  dimension scores and action reviews. Keep their distinct runtime schemas, rubrics and fail-closed
+  parsing; valid JSON is not a sufficient verdict. `--check` must reject missing output mode.
+  Foundry logprob normalization stays disabled, so no plain single-digit response is required.
+- **Public MCP discovery retry**: `foundry_backend.py` allows three retries after the initial
+  request for structured 400 `tool_user_error` discovery failures at the explicit public endpoint
+  allow-list (currently only HTTPS `learn.microsoft.com/api/mcp`), with upstream
+  408/429/500/502/503/504/529. Honor server retry hints or 10/20/40 seconds plus jitter within one
+  existing Agent timeout. Never retry auth/invalid requests, unknown or tenant MCP endpoints, or
+  replay native local-tool invocations. Cancellation stops retries; exhaustion propagates the
+  original failure without another sleep. Log trace/task and attempt metadata, not error bodies.
+  This is Hosted runtime policy; a control-plane deployment alone does not activate it.
 - **Multi-turn output recovery**: If LLM hits output token limit, inject meta-message ("Resume directly — no apology, no recap") and retry up to 3 times
 - **Error withholding**: Recoverable errors (prompt-too-long, max-output-tokens) are not surfaced to callers until recovery is attempted. Surface only if recovery fails
 - **Graceful degradation**: If Resource Graph, Azure MCP, or Azure API evidence fails, preserve an explicit `partial` gap and reduce confidence. Missing specialist evidence never becomes confirmed absence and never falls back to a general-purpose Prompt Agent
@@ -183,8 +208,8 @@ updated Prompt Agent definitions, and Hosted deployment are separate from local 
 | AI Runtime | Microsoft Foundry Hosted Agent + persisted Prompt Agents |
 | Web/MCP Framework | FastAPI + Uvicorn + MCP Python SDK v2 |
 | Settings | pydantic-settings (`.env` → `Settings` class) |
-| Logging | structlog (JSON structured logging) |
-| Azure SDKs | `azure-identity`, `azure-mgmt-resourcegraph`, `azure-mgmt-costmanagement`, `azure-communication-email`, `azure-monitor-query` |
+| Logging | structlog JSON + OpenTelemetry/Application Insights + failure-only Logs Ingestion |
+| Azure SDKs | `azure-identity`, `azure-mgmt-resourcegraph`, `azure-mgmt-costmanagement`, `azure-communication-email`, `azure-monitor-query`, `azure-monitor-ingestion` |
 | HTTP | httpx (async) |
 | HTML Parsing | BeautifulSoup4 with `html.parser` (stdlib, **NOT** lxml) |
 | IaC | Bicep (`infra/main.bicep`) |
@@ -273,6 +298,22 @@ AzBriefEnterprise/
 
 ## Deployment Topology
 
+The customer-specific `infra/kt` profile is a separate private infrastructure bootstrap, not a
+replacement for the standard product template. It requires an existing VNet; only missing
+PESubnet (/28), FoundrySubnet (/27) and ContainerAppsSubnet (/27) child resources are created
+after `scripts/deploy_kt.py` live preflight. Preserve existing NSGs, routes, delegation and CIDRs;
+never redeploy the VNet/subnet collection or infer customer targets from developer `.env`.
+Use Consumption 0.25 vCPU/0.5 GiB and scale-to-zero only for the bootstrap App. Before actual
+in-process Manual Runs, use minReplicas >= 1 and validate memory. Foundry Standard Setup needs
+private Blob, Cosmos and Search plus project Capability Host; do not duplicate the automatically
+created injected-account host. Keep project storage isolated from canonical archive storage.
+KT creates no Application Insights; existing Log Analytics is optional. Its `ktFoundation`
+output is not `customerSetup`, and standard setup/MCP scripts require an explicit KT adaptation.
+Models, Agent versions, application auth/email and scheduler are a separate handoff, not silently
+completed by foundation success. Compile KT ARM with the pinned Bicep version and test its
+read-only/default, minimum-size, ownership, host-binding and create/reuse guards. Do not reapply
+bootstrap over a promoted application. Minimum allocations are not live capacity acceptance.
+
 New customer installations start from the paired README ARM/UI button
 (`infra/azbrief-enterprise-deploy.json` + `infra/createUiDefinition.json`) and follow
 `infra/CUSTOMER_DEPLOYMENT.md`. Bootstrap hello-world uses port 80 and `/`; real AzBrief uses
@@ -282,7 +323,11 @@ never enable scheduling, and `maxConcurrentAnalyses=1` is the initial customer d
 explicit customer targets and a matching default CLI account, rejects a root developer `.env`,
 and isolates named azd environments. Keep `FOUNDRY_HOSTED_AGENT_NAME` aligned with `azure.yaml`.
 The initial Application stage updates both images and bootstrap probes; normal guarded image
-upgrades still use `scripts/deploy_dev.ps1`. Only after analysis/archive/auth/email acceptance
+upgrades still use `scripts/deploy_dev.ps1`. Its local pytest gate temporarily sets
+`OTEL_SDK_DISABLED=true` and restores the caller's value in `finally`, including failed tests;
+never persist this test-only setting to Azure or `.env`. Archive unit tests control the clock
+and cover the P95 gate's pass/fail boundary; the standalone evaluator retains real timing and
+the unchanged 1,000 ms limit. Only after analysis/archive/auth/email acceptance
 may EnableSchedule recheck readiness and PATCH the Job while preserving configuration and
 Key Vault references. Never grant Hosted evidence permissions to the Container Apps or project
 identity. Local/mocked checks are not customer ARM validation or proof of delivery. Pin the CI
@@ -290,6 +335,34 @@ Bicep compiler to the version that generated the checked-in ARM, and test setup 
 The guided VNet profile must bind Foundry and the VNet to the same deployment region.
 Keep CI `contents: read` permissions at the workflow root, never inside an event. Include the CI
 file itself in both push/PR path filters and retain its deployment-contract regression assertions.
+
+Control-plane images may reside in a publisher/developer tenant. Keep
+`containerRegistryAuthMode=ManagedIdentity` as the same-tenant default; `Credentials` uses a
+customer-specific repository pull token stored in the customer Key Vault and referenced by both
+App and Job. Never enable the ACR administrator, grant customer Managed Identity across tenants,
+copy registry credentials into application settings/setup outputs, or switch the deployment
+tenant implicitly. Setup outputs carry only the mode and ordinary Key Vault base URI; validate
+the fixed secret path locally. Initial Application/Verify/EnableSchedule check both bindings.
+`deploy_dev.ps1 -PrebuiltImage` accepts an approved immutable digest without ACR lookup/build;
+preserve health, import-only Job smoke, unchanged authentication and rollback gates. Its local
+checkout fingerprint is not publisher-image provenance. Network access, fresh pulls and token
+rotation require separate customer acceptance. Do not change Hosted/Prompt Agent policy for this.
+
+Customer setup v3 binds one shared Container Apps environment, workload profile, Application
+Insights component and its Log Analytics workspace. New v3 outputs may additionally carry the
+Direct DCR endpoint/immutable ID/stream/resource ID for the `AzBriefFailures_CL` custom table;
+older v3 outputs without that optional binding remain valid. App/Job get DCR-scoped Monitoring
+Metrics Publisher automatically, while the dedicated Hosted identity needs it after publication.
+MCP remains a separate app/system identity, not a separate environment. Its deployment requires
+the existing environment ID and Insights name; never create a second component/workspace as an
+empty-input fallback. Mcp preflight/readback and v3 Verify/EnableSchedule check shared targets.
+Legacy v1/v2 remain valid for non-MCP stages only.
+The pinned MCP exporter does not configure TokenCredential. Disable its direct Application Insights
+traces/metrics and Microsoft telemetry, retain stdout/stderr in the environment's shared workspace,
+and preserve Entra-only Insights; do not add ineffective auth environment variables or unused roles.
+Do not auto-delete or move a legacy MCP app. Follow the customer consolidation procedure, update
+the changed MCP URL/project connection and Agent definitions, and retain historical logs until
+approved retirement. Internal environments require verified Foundry-to-MCP routing and DNS.
 
 This repository ships **one** topology. There is no Automation Account, no Function App and
 no fat wheel. Analysis runs in a Foundry Hosted Agent; Container Apps hosts only control-plane
@@ -331,8 +404,10 @@ The Job cron is a lightweight dispatcher (`scheduleDispatcherCronExpression`, fi
 default), not the digest schedule itself. It merges the protected deployment cron from
 `SCHEDULE_CRON_EXPRESSION` with Admin-managed daily UTC times in `admin-config.json`, then claims
 one due occurrence with an ETag-protected lease before constructing the analysis runtime. Admin
-manual runs use a bounded `RunSelection` (checkpoint/date range/recent count/Update ID/Update URL),
-allow at most 100 targets, and never advance the scheduled digest checkpoint. Admin manual runs
+manual runs use a validated `RunSelection` (checkpoint/date range/recent count/Update ID/Update URL)
+with no fixed target-count cap and never advance the scheduled digest checkpoint. Recent count
+must remain a positive integer and selects only available live RSS entries; date ranges include
+the local history archive. Preserve the existing run-time budget and concurrency limits. Admin manual runs
 default to `send_email=false`; delivery is explicit, and `dry_run=true` cannot request email.
 Digest delivery groups completed analyses by UTC `published_date` into Monday-Sunday calendar
 weeks, oldest week first, with one email per week and recipient within the run. The range includes
@@ -343,6 +418,25 @@ report success. Failed/pending/deferred analyses or failed requested delivery ma
 Weekly delivery events carry `run_id`, `week_range`, count and outcome. Hosted failures preserve
 the request trace ID through the proxy into run logs and expose only the exception type, never
 the private message or traceback. Verify log access separately from application health.
+Log safe Hosted HTTP response metadata before validation so trace/update IDs join to the Foundry
+session and service request even for failed responses. Never log authorization headers or bodies.
+Hosted `setup_logging()` owns redaction and Entra-authenticated telemetry. Pass
+`configure_observability=None` to the Responses server so SDK auto-configuration cannot replace
+that pipeline or flood the bounded session log with console metrics; do not disable application OTel.
+Foundry injects the reserved `APPLICATIONINSIGHTS_CONNECTION_STRING` only after the project has an
+`AppInsights` connection. Never redeclare it in the Hosted manifest. Bind the shared component with
+`ProjectManagedIdentity`, `ResourceId`, and required `ApplicationInsightsConnectionString` metadata,
+and grant component-scoped Monitoring Metrics Publisher to project and Hosted identities separately.
+The Hosted identity also requires project-scoped Foundry User for native FunctionTool conversations;
+subscription Reader does not grant those data actions. Large-run acceptance starts at concurrency 1
+unless actual shared model TPM, including parallel specialists and judges, supports more.
+Record consecutive-failure termination as `orchestrator_analysis_halted`; a finished run's Pending
+count is not an automatically resuming queue. Before stopping queued work, wait for in-flight
+analyses: a late success resets the streak. Preserve sustained-failure stopping, recheck the deadline
+after waiting, and keep the configured concurrency limit and contiguous watermark.
+Route critic revisions through the same bounded schema-repair parser as initial reports. Retain
+the critique feedback and evidence in repair state; do not rescore or accept an invalid candidate,
+weaken validation, or replace the keep-only-if-improved rule.
 Run diagnostics expose only the safe `RunRecord` projection. Console-managed subscribers may be
 updated with ETag protection, while deployment subscribers remain immutable and cannot be shadowed.
 
@@ -371,9 +465,18 @@ is planning memory, not the browser archive source of truth.
 The Archive detail renderer must preserve the email narrative's restricted Markdown structure,
 including `> **Term**:` concept boxes, while constructing DOM nodes without `innerHTML`. A Markdown
 feature added to email requires the matching safe Archive rendering path and behavior coverage.
+`src/report_presentation.py` is the shared display boundary for narrative numbering, capability
+placement and impact values. Normalize isolated outline-style paragraph prefixes only in the analysis
+body; retain real lists, explicit start numbers, nested content and code. Parse legacy impact JSON
+into known non-empty dimensions; never print its internal keys or empty objects. Preserve real prose.
+The authenticated detail `view=report` adds a separate `presentation`; default API documents and
+immutable stored bytes remain unchanged. Do not import delivery-only data or subscriber context.
 Archive detail uses a pure white editorial canvas with a 48px/32px title, 25px/21px section headings,
-16px/14px prose, a numbered sticky/horizontal outline, one emphasized lead, and flat rule-separated
-facts and lists. Hide the duplicate list-page introduction only while detail is open; preserve the
+16px/14px prose, a numbered sticky/horizontal outline, a plain 18px/16px lead, and flat rule-separated
+facts and lists. Put capability dimensions in the overview, resources with environment evidence,
+and reference/glossary boxes near related prose. No separate Opportunity/References footer or tinted
+summary panel. Keep all stored action explanations, verification notes and safe links. Hide the
+duplicate list-page introduction only while detail is open; preserve the
 responsive toolbar, visible focus, and all report content.
 The Admin and Archive shells keep explicit `width: 100%`, bounded `max-width`, and `margin: 0 auto`
 on their main content so operational panels stay centered on wide viewports without mobile overflow.
@@ -397,7 +500,11 @@ Native form validation and the in-flight submit lock remain. Failed requests ret
 successful storage resets the form and restores its original report reference. Status messages
 distinguish notification failure from failed storage, while receipt IDs remain in API responses.
 Use `python -m scripts.preview_web --port 8765` for loopback-only synthetic checks, never a live
-tenant for styling tests. `tests/browser/control_surfaces.cjs` is a standalone Playwright page
+tenant for styling tests. Its Admin error-history fixture must use the real response schema,
+valid run IDs and bounded hour/run/limit filters, without opening a Log Analytics client.
+Customer-deployment test harnesses render PowerShell errors as UTF-8 plain-text NormalView so
+line wrapping/color cannot break guard assertions; preserve exit-code and no-mutation checks.
+`tests/browser/control_surfaces.cjs` is a standalone Playwright page
 function covering workflows and 1440/768/390/320px layouts, but its Feedback section still targets
 retired controls and must be updated before claiming current browser coverage. Keep generated
 screenshots in `out/` and do not substitute Python renderer tests for browser interaction checks.
@@ -459,7 +566,7 @@ state. The Azure API specialist owns read-only ARM, Policy, Health, Advisor, Act
 Cost Management, and Billing calls. Failures remain explicit gaps and never cross-fallback to
 another specialist.
 
-The Azure MCP Server is a separate Container App defined under `infra/azure-mcp-server`.
+The Azure MCP Server is a separate Container App in the shared environment, defined under `infra/azure-mcp-server`.
 It pins the verified official `3.0.0-beta.38` image through the `azureMcpImage` Bicep
 parameter; never use `latest` in the production template. Upgrade that parameter only after
 validating direct tool schemas and a live read-only inventory call. It runs in `all` mode
@@ -526,6 +633,20 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 
 ### Email Rendering
 
+- `one_line_summary` comes from `_summarize_announcement()`, an isolated tool-disabled Report Writer
+  call with only the original title/body and target language. Never pass tenant evidence, role hints,
+  analysis text or custom system context into it. Preserve the exact English source title. Require a
+  non-empty source excerpt, valid bounded JSON, completed output and ko/ja script presence; these are
+  basic checks, not semantic proof. Keep the accepted summary through critic rescoring and subscriber
+  editing. Generate the target-language summary separately before customization, including skipped
+  items; failure cannot silently return the old summary. Foreground calls honor bounded retry hints
+  and allow one output correction against unchanged source; customization stays fail-fast without
+  output recovery. The mechanical length warning starts above 240 characters, not 100.
+  Publishing only the control-plane image does not update Hosted summarization or Prompt Agent policy.
+- Keep Korean GA phrasing aligned in the language guide, translation notes and isolated summary
+  prompt: use direct support/launch predicates, not literal release-status narration. Preserve
+  Preview and source scope without inferring SLA/support entitlements. Test both the reported
+  defect and valid wording; never rewrite immutable reports with a display-time phrase replacement.
 - Keep `HTML_EMAIL_TEMPLATE` and `HTML_DIGEST_TEMPLATE` on the shared `_EMAIL_DOCUMENT_START` /
   `_EMAIL_DOCUMENT_END` shell and masthead/header/section/footer/intro formatters. `EMAIL_COLORS`
   defines white paper, graphite `#202124`, editorial red `#a92336`, and blue `#365b8c` links.
@@ -542,13 +663,14 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 - Keep the 14px `FONT_SIZE_PX["body"]` for prose, a 28px bold wordmark, 40px main titles, 32px digest-detail titles, and 24px/20px
   section headings at weight 700. Mobile titles use 28px. Plain leads use 18px/16px at weight 400.
   Contents and action titles use 17px; their 24px numbers and 32px chapter numbers are bold tabular
-  figures. Count labels use 28px, uniformly 24px when any tier has three digits. Prose retains
+  figures. Digest count labels and values use compact 14px text, including large counts. Prose retains
   1.8-1.85 line height. Keep zero letter spacing, prefer whole-word title wrapping, and retain an
   anywhere fallback for unbroken identifiers. `text-wrap: balance` is progressive enhancement only.
 - `format_email_section_html()` puts complete headings above full-width content at every width.
   `count_text` stays at 11px; retain the `full_width` API without a side-heading rail.
-  At >=800px the report header uses 66% summary / 34% independent assessment columns; narrower
-  and inline-only/MSO output stacks them. The masthead stacks by default and uses 35%/65% columns
+  Report headers keep the summary full-width without the `importance_section` subtitle and place
+  compact independent assessment labels below it. Keep the summary, source links and all axes;
+  never restore a separate assessment column or fixed heights. The masthead stacks by default and uses 35%/65% columns
   only with desktop media queries.
 - Keep the shared email `FONT_STACK_SANS` exactly as
   `'Noto Sans KR', 'AppleSDGothicR00', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif`.
@@ -558,24 +680,26 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 - Use `SEMANTIC_ACCENT_WIDTH_PX = 2` for verification, concept notes, and additional checks.
   Concept notes use the neutral `wash` background. Fill the entire `azb-level-cell` with the
   level's light red/amber/green background, including inline `bgcolor`; the 12px/600 level text
-  has no border, own fill, padding or hidden duplicate. Cell padding is 8px. Label/value pairs keep
-  independent 33%-width auto-layout tables in the fallback, changing to rows only in the desktop
-  header's assessment column. Preserve status semantics and text contrast **>=4.5:1**.
+  has no border, own fill, padding or hidden duplicate. Contents cell padding is 8px. Header
+  label/value pairs use 11px/12px text and 4px/8px padding in auto-width tables that wrap together
+  on narrow screens, including inline-only output. Preserve status semantics and text contrast **>=4.5:1**.
 - Omit the analysis-basis footer tagline in every language; retain disclaimer, feedback,
   generation metadata and actual evidence/reference links.
-- Keep the 640px inline/MSO baseline, 760px at 800px and 840px at 1100px. `azb-pad` gutters are 32px
-  by default, 40px at >=1100px, 20px at <=640px, and 16px at <=400px; inline-only stays 32px. Impact
+- Keep the 640px inline/MSO baseline, 760px at 800px and 840px at 1100px. `azb-pad` gutters are 20px
+  by default, 24px at >=1100px, 16px at <=640px, and 12px at <=400px; inline-only stays 20px. Impact
   labels retain HTML/CSS width and min-width 96px with nowrap/keep-all, never a desktop 2×2 split.
 - Single reports and digest details share the summary/assessment brief and a white two-column
-  operational ledger. Digest counts are three directly labeled 8px horizontal bars, with
-  `digest_analyzed` naming the `high + medium + low` denominator and skipped items shown separately.
-  Keep exact zero counts and row labels visible; zero bars have no fill and 100% bars no remainder.
-  The semantic table retains its caption and row headers; only redundant bar cells are aria-hidden.
-  Never invent trends, estimates or chart data. Keep every supplied item and full numbered titles
+  operational ledger. Digest counts are a compact 14px line of three labels and exact counts,
+  without charts. `digest_analyzed` names the `high + medium + low` total; skipped items stay separate.
+  Keep zero and large counts, accessible labels, every supplied item and full numbered titles
   with detail/back anchors. Digest chapters use a 32px number and return link on white paper.
   Inline-only/MSO contents
   put full-width titles above three labeled metrics;
-  media-query desktops use 52% title / 16% per metric. Never restore a narrow fallback title column.
+  media queries at >=800px use 70% title / 10% per metric. Below 800px retain the stacked layout.
+  Contents metric cells fill the whole row height with centered headers/values; titles stay left-aligned.
+  Keep vertical padding on the title cell, not the spanning entry, and preserve the MSO fallback.
+  Resource grids and mobile labels use Resource / Type / Resource Group / Subscription order;
+  keep Portal links attached to resource, group and subscription values, not column positions.
   Mobile metrics and resource cells retain labels, complete reasons, grouping, and Portal identity.
 - Number action sheets from `01`; preserve context, procedure, dark monospaced commands, schedule,
   guardrails, verification, and safe links. Additional checks precede numbered references; countdowns
@@ -586,6 +710,12 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
   Single reports show at most two; digests show at most one per update and four total. Preserve the
   complete text report when images are absent or blocked. `visual_assets` is delivery-only and must
   be excluded explicitly from immutable Archive v1 projections.
+  Single/digest callers use `include_heading=False` in both visual helpers. Embed image HTML
+  after the analysis text inside its section; preserve captions/source URLs in plain text without
+  a separate visual heading. An unused template argument must never discard accepted images.
+  Capability-family HTML embeds its opportunity dimensions in the same analysis section using
+  `format_impact_section_html(..., include_heading=False)`; Change-family impact sections remain
+  independent. Preserve meaningful dimension text and the existing empty/placeholder filtering.
 - Styling-only changes add no Markdown vocabulary, analysis behavior, transport, or Archive schema.
   Leave bounded Foundry Runtime Guidance byte-identical for styling-only documentation work.
   See [src/email/README.md](../src/email/README.md) and the [email template skill](skills/email-template/SKILL.md).
@@ -607,7 +737,7 @@ Use `tests/browser/email_reports.cjs` against these local previews to repeat the
 matrix (ko/en/ja, single/digest, full/inline-only, 1440/768/640/390/320/844px). Require `passed=true`,
 inspect screenshots in `out/`, repair observed defects, and repeat before accepting a design.
 Check actual text bounds for the wordmark, figures, chapter/contents numbers and badges, plus
-summary/assessment column alignment and directly labeled count-bar lengths. Passing geometry checks do not establish aesthetic improvement:
+full-width summaries, compact assessment wrapping and labeled counts. Passing geometry checks do not establish aesthetic improvement:
 compare same-size before/after images and explain which reference elements changed the composition.
 Do not infer actual reading-speed or Outlook/Gmail-client improvements from synthetic checks.
 
@@ -628,10 +758,11 @@ python -m scripts.test_local resources               # View resource summary
 
 > **Historical date ranges** (`--from`/`--to`): the live RSS feed only returns a rolling
 > window of the most recent ~200 items, so older months age out of it.
-> `AzureUpdateParser.get_updates_by_date_range()` automatically merges the locally crawled
-> history archive (`data/azure_updates_history.jsonl`, de-duplicated against the live feed by
-> canonical id) so historical periods are covered. Refresh the archive with
-> `python -m scripts.crawl_azure_updates`. Pass `include_history=False` to disable the merge.
+> `AzureUpdateParser.get_updates_by_date_range()` uses the locally crawled history archive when
+> present and otherwise pages the public Release Communications API with a bounded `created`
+> filter. Both sources are de-duplicated against the live feed by canonical id. Refresh the
+> optional archive with `python -m scripts.crawl_azure_updates` for repeatable/offline runs.
+> Pass `include_history=False` to keep the live-feed-only behavior.
 
 ### Foundry agent provisioning
 
@@ -655,7 +786,7 @@ uses `gpt-5-luna` with reasoning omitted. Tier aliases use `FOUNDRY_CORE_MODEL_D
 `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT`; core effort uses `FOUNDRY_CORE_REASONING_EFFORT` (low/medium/high).
 `--model` overrides `FOUNDRY_MODEL_DEPLOYMENT`, which overrides both tiers. Legacy overrides
 preserve same-model options; model changes discard old sampling/reasoning. Managed profiles omit
-temperature/top_p and `--check` rejects model, reasoning, and sampling drift. Customer setup v2
+temperature/top_p and `--check` rejects model, reasoning, and sampling drift. Customer setup v2/v3
 binds both deployments and effort, while v1 keeps the explicit single-model behavior. Bicep deploys
 core then simple before the private endpoint/project; Admin readiness checks both configured
 deployments. These are requested defaults, not verified catalog capabilities: verify actual model
@@ -976,7 +1107,7 @@ Past mistakes and workarounds discovered during development.
 - Report quality is scored by a two-layer system: a fast **rule-based** mechanical evaluator (`scripts/evaluate_report.py` `ReportQualityEvaluator`, regex heuristics, 100-pt) as a pre-filter, plus a **G-Eval LLM-as-a-Judge** (`src/agent/geval.py` `GEvalJudge`) that scores five orthogonal 1-5 dimensions (actionability, faithfulness, job_relevance, structure, architectural_depth). The judge uses Chain-of-Thought form-filling (reasoning before score) and refines integer scores into continuous values via token log-probabilities (weighted sum over score tokens {1..5}). 5.0 is defined as an *unreachable* ideal and 4.0 as production-excellent to prevent score saturation. Dimensions run in parallel (`asyncio.gather`) with per-dimension error isolation; logprob normalization auto-disables for o-series reasoning models and degrades gracefully. `GEvalJudge.build_feedback_prompt()` produces weakest-first rewrite instructions that the `--iterate` loop injects into `settings.custom_system_prompt` to regenerate. Config knobs: `geval_enabled`, `geval_target_score` (default 4.5), `geval_logprob_normalization`, `geval_max_iterations`. `geval_runtime_enabled` (default **False**) additionally runs the judge inside `analyze_update` (`_critic_pass`): score → if below target or any critical flaw, inject `build_feedback_prompt()` and regenerate **once**, keeping the rewrite only when the score improves. Rewrite instructions travel through the `report_feedback` **state** key, never `settings.custom_system_prompt` — the settings object is a process-wide singleton and concurrent analyses would cross-contaminate each other's feedback. The judge is fed `build_evidence_context()`, which uses the analyzer's own `TOOL_RESULT_BUDGET_CHARS`. See the `report-evaluation` skill for the full methodology.
 - Report delivery filtering is gated by the `report_filtering_enabled` setting (default **False** = no filtering, every analyzed update is delivered). When True, `not_relevant` updates (`should_notify=False`) are suppressed from the single-update email paths (`EmailService.send_analysis_report`, `send_to_subscribers`, `main.py`, `test_local.py`) to reduce noise. The **digest** email (`send_digest_report` / `build_digest_content`) never omits — it always shows every analyzed update, classified into high/medium/low importance tiers. The `should_notify` value itself (derived from `relevance != not_relevant`) is unchanged and still drives digest counters, badges, and logging; only the email-omission checks are gated on the flag. Per-subscriber `alert_level` (critical_only / important_and_above) is a separate, opt-in preference (default `all`) and is NOT affected by this flag.
 - The affected-resources display (`format_affected_resources_html` in `src/email/templates.py`, and the judge's `render_report_markdown`) groups resources that share the **same non-empty impact reason** into a single row (resource names stacked with a dashed divider + a group-size badge; reason shown once). Resources with empty reasons are never merged. This is a display-layer grouping, complementary to the prompt-level rule that forbids duplicate `affected_resources` data entries.
-- The live Azure Update RSS feed (`.../releasecommunications/api/v2/azure/rss`) is a **rolling window capped at ~200 items**, ordered by modification recency, so older months age out entirely (e.g., on 2026-07-18 the feed only spanned ~June–July with a few stray re-surfaced items — March and May returned zero). This is *not* a date-filter bug. `AzureUpdateParser.get_updates_by_date_range()` therefore **merges the locally crawled history archive** (`data/azure_updates_history.jsonl`, produced by `scripts/crawl_azure_updates.py`, ~9,755 records back to 2013) with the live feed, de-duplicated by canonical id (`_canonical_id()` extracts numeric/slug id from guid/link/URL). History records are converted via `_history_record_to_update()` (products → `azure_services`, `status` → `update_type` fallback, `created` → `published_date` via `_parse_iso_date()` which handles the API's 7-digit fractional seconds + trailing `Z` that Python 3.10's `fromisoformat` rejects). Only the date-range path merges history; `get_updates()` (used by the runbook/digest/`--latest` paths) stays live-feed-only. The full-history API is *not* newest-first, so early-stopping pagination is impossible — the pre-crawled local archive is the pragmatic source. Refresh it with `python -m scripts.crawl_azure_updates` when historical months are missing.
+- The live Azure Update RSS feed (`.../releasecommunications/api/v2/azure/rss`) is a **rolling window capped at ~200 items**, ordered by modification recency, so older months age out entirely. This is not a date-filter bug. `AzureUpdateParser.get_updates_by_date_range()` prefers the optional local archive (`data/azure_updates_history.jsonl`) for repeatable/offline runs and otherwise queries only the requested `created` range from the public Release Communications API with 100-row pagination. It merges that source with live RSS and de-duplicates by canonical id (`_canonical_id()` extracts numeric/slug id from guid/link/URL). API/archive records are converted through `_history_record_to_update()` (HTML cleanup, products → `azure_services`, status → `update_type`, and seven-digit fractional timestamps → UTC). `include_history=False` and non-date selectors remain live-feed-only. Do not package ignored development `data/` into the production image to make Admin ranges work; the bounded API path is the deployed source.
 - **Report-quality hardening (3-month report audit, 2026-07).** A review of `results_2026-0{3,4,6}.jsonl` surfaced recurring commercial-grade defects that were fixed at the prompt/code layer:
   - **"CSA 사전 검토가 필요합니다" hedge crutch** appeared in ~90% of `additional_checks` — circular when the reader IS a CSA. `core.py` accuracy principle 2 and `writing.py` principle 5 now require **self-serviceable** checks (name WHAT/WHERE/WHY) and forbid the generic hand-off; `base.py` bans it in the output-format description + self-check.
   - **Opportunities were dead-ends**: `opportunity`-relevance updates that trigger a notification (e.g. user delegation SAS with 9 candidate accounts) shipped with `action_items: []`. `base.py` now mandates **exactly one scoped evaluation action** (named candidates, real go/no-go criteria, empty `deadline` — never fabricated), reconciled in `categories.py` `new_feature`.
@@ -1175,6 +1306,9 @@ When implementing changes, verify against this checklist:
   □ G-Eval, action verification, trajectory, report, and Hosted request events share trace_id
   □ State transitions logged with trace_id
   □ Total analysis time and token usage tracked
+  □ Error/Critical, exception, failure-suffixed, failed/partial-status and positive failure-count events enter `AzBriefFailures_CL`
+  □ Ordinary successful INFO/WARNING events do not enter the failure table
+  □ Failure-log payloads are redacted; exporter failures stay local and never recurse or change run status
 
 □ Quality Campaign
   □ Period payloads and dataset hash are frozen before source changes

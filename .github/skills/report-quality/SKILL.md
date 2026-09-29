@@ -1,41 +1,13 @@
 ---
 name: report-quality
-description: 'Evaluate and improve AzBrief report quality. Use when: report quality, report scoring, quality evaluation, improve report, report design, email report layout, scannability, actionability, CSA report standard, report structure, evaluate_report, run_quality_loop, quality metrics.'
+description: 'GitHub Copilot developer workflow for maintaining AzBrief report-quality code and tests. Model-facing policy belongs to the application Foundry instructions. Use when: report quality, report scoring, quality evaluation, improve report, report design, email report layout, scannability, actionability, CSA report standard, report structure, evaluate_report, run_quality_loop, quality metrics.'
 ---
 
 # AzBrief Report Quality Evaluation & Improvement
 
-## Foundry Runtime Guidance
-
-- Create the reader-facing artifact only from validated evidence. Evaluate it independently
-     and request only the smallest grounded correction when the assigned task is review.
-- Analyze every update before classification; never silently filter coverage. Keep
-     importance, tenant impact, and job relevance independent.
-- Match category framing: changes explain impact and inaction risk; capabilities explain
-     documented value for known workloads or supplied requirements, adoption cost, and owner.
-     Resource ownership is not a relevance gate. `relevance_evidence` explains analysis-time scoped
-     applicability/value, not selection. Preserve material gaps and never invent usage or plans.
-     Changes require actions only for confirmed applicability; capability evaluation is optional
-     and limited to one grounded, non-mutating fit check.
-- Keep evidence, relevance, resource counts/reasons, and conclusions consistent. Actions name
-     what, where, why, completion criteria, precautions, rollback, and only real deadlines.
-- For material financial implications, report the scoped ActualCost baseline with period and
-     currency in the cost-impact field. Separate observed spending from estimates; estimates need
-     documented rates and matching usage, not an advertised discount on the entire bill. Preserve
-     missing cost evidence and never treat empty data, denied access, or ActualCost zero as free use.
-- Treat the artifact as a CSA decision brief, not feature education. Name the decision hinge,
-     give a grounded recommendation plus the condition for the alternative/current state, contrast
-     supported gains and trade-offs, identify the operational responsibility, and define the evidence
-     that closes the decision. Never expose sales motions or invent customer plans.
-- Distinguish non-mutating evaluation actions from executable changes. An `advisory_review`
-     does not require CLI or rollback; treat an incomplete go/no-go check as caution, not unsafe.
-     Its command must be empty or read-only; an evaluate/review task paired with `update`, `set`,
-     `enable`, or another mutation is a blocking contradiction. Commands and state-changing
-     Portal procedures remain fail-closed.
-- Optimize for a 3-second summary and 30-second scan. Never expose internal mechanics or
-     fabricate resources, work, dates, commands, or URLs.
-
-<!-- End Foundry Runtime Guidance -->
+This is a GitHub Copilot developer skill, not an AzBrief Agent runtime instruction.
+Foundry operational guidance is maintained in
+[foundry_instructions.py](../../../src/agent/foundry_instructions.py), independently of this file.
 
 > **Two-layer scoring.** This skill covers the fast **rule-based / mechanical** evaluator
 > (`ReportQualityEvaluator`, regex heuristics, 100-pt) used as a deterministic pre-filter.
@@ -99,7 +71,12 @@ AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·
 
 ### 독자 계층 분리 원칙
 같은 보고서 안에서 C-Level 요약과 엔지니어 세부 내용을 분리:
-- **one_line_summary**: C-Level / 매니저 — 3초 판단
+- **one_line_summary**: 선택 언어로 공지 자체의 변경점을 한 문장으로 설명; 원문 영문 제목과 분리
+- 요약 결함은 `_summarize_announcement()`의 원문 전용 호출부터 검증합니다. 입력에 환경 근거·
+     기존 분석·역할 힌트가 섞이지 않는지, 발췌가 실제 원문에 있는지, critic 재평가와 맞춤화 후에도
+     같은 요약이 유지되는지 테스트합니다. 짧은 제목 번역만 통과시키지 않으며 길이 감점은 240자 초과입니다.
+     공개 원문을 이용한 실제 출력 대조와 합성 mock 검증을 구분합니다. App/Job 배포만으로 Hosted
+     프롬프트가 갱신됐다고 가정하지 말고 게시 지침과 Hosted 버전을 별도로 확인합니다.
 - **quick_decision 운영 정보**: 관리자 — 범위·조치·일정·작업량을 2열로 빠르게 확인
 - **detailed_analysis + concept boxes**: 엔지니어 — 기술적 맥락 이해
 - **action_items**: 실무자 — 즉시 실행 가능한 절차
@@ -115,7 +92,7 @@ AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·
 | Criterion | Points | What it checks |
 |-----------|--------|----------------|
 | `relevance_classification` | 5 | 판단 근거 존재와 명시적 모순 검사. 리소스 수만으로 관련성을 판정하지 않으며 의미적 정확성은 동일 근거의 G-Eval로 검증 |
-| `one_line_summary` | 5 | 30-80자, 구체적, 내부 프로세스 미노출 |
+| `one_line_summary` | 5 | 선택 언어의 공지 전용 한 문장, 영향 범위·작업량·리소스 수·역할 권고 제외 |
 | `no_fabricated_urls` | 5 | 모든 URL이 실제 도구 결과에서 획득 |
 | `relevance_evidence` | 5 | 변경의 적용 조건 또는 신규 가치와 근거. 리소스 행이 있을 때만 실제 이름/수치를 요구하고 코드·업무·요구 기반 근거도 허용 |
 | `no_fabricated_dates` | 5 | "within 2 weeks" 등 조작된 기한 없음 |
@@ -139,20 +116,34 @@ AzBrief 보고서의 핵심 목적: **"모든 업데이트를 분석해 변경·
 ```
 1. Masthead + White Header → 전체 제목·출처, 요약과 독립적인 중요성/영향도/직무연관성 판정
 2. Operational Facts → 영향 범위, 조치 필요 여부, 기한, 작업량의 2열 정보
-3. Detailed Analysis → 기술 맥락, concept boxes, 환경 설명
-4. Environment Relevance → 변경의 적용/조치 또는 신규 가치/도입 조건과 근거
+3. Overview → 기술 맥락, concept boxes, 환경 설명, Capability 활용 내용, 직접 관련된 이미지
+4. Environment Relevance + Resources → 적용/가치 근거와 리소스 표·요약·사유·조회 한계
 5. Key Dates → retirement/feature_change의 날짜·작업 2열 목록
-6. Impact / Opportunity → cost/security/performance/operational 차원별 정의 행
-7. Affected Resources → 전체 사유와 그룹별 리소스·구독·리소스 그룹·종류
-8. Action Sheets (01…) → 맥락, 절차, 고정폭 CLI, 일정, 가드레일·검증 표시
-9. Additional Checks → 추가 확인 항목
-10. Numbered References → 문서 링크, 내용 요약, 보고서별 확인 지점
-11. Footer → 면책 고지, 피드백, 생성 시각
+6. Impact (Change only) → cost/security/performance/operational 차원별 정의 행; Capability는 개요 내부
+7. Action Sheets (01…) → 맥락, 절차, 고정폭 CLI, 일정, 가드레일·검증 표시
+8. Additional Checks → 추가 확인 항목
+9. Contextual Notes → 참고문서와 용어 설명은 관련 본문 문단 아래; 독립 하단 목록 없음
+10. Footer → 면책 고지, 피드백, 생성 시각
 ```
 
 단건과 digest 상세는 같은 section formatter와 기존 조건부 표시 기준을 사용합니다.
+Archive와 이메일의 표시 데이터는 `src/report_presentation.py`에서 정규화합니다. 개요의 단독
+outline 번호와 빈 영향 JSON이 사용자 콘텐츠로 노출되지 않아야 하며, 실제 목록·시작 번호·코드와
+의미 있는 영향 설명은 보존합니다. Archive는 `view=report`의 별도 투영으로 같은 섹션 구성을 쓰고
+불변 원문은 수정하지 않습니다. UI 언어·CSS·개인별 직무연관성 등 채널 차이는 유지합니다.
+환경 근거와 리소스는 한 섹션으로 묶습니다. 참고문서는 명시적 링크·제목·확인 내용의 단어 일치로
+가까운 문단 뒤에 배치하며, 불명확하면 개요 끝에 둡니다. 용어 박스는 첫 용어 언급 뒤로 옮길 수
+있을 때만 이동합니다. HTML·plain text 모두 내용·안전한 출처를 보존하고 Archive 원문은 변경하지 않습니다.
+요약은 공지 전용 한 문장이므로 리소스 수·조치 패턴·주사용 리전 접두어가 없다고 감점하지 않습니다.
+리전 결과와 불확실성은 상세 분석·환경 근거에서 검사합니다. 원문에 명시된 리전 확장·날짜·가격은
+요약에 허용하며, 구독자 재작성은 원본 공지를 받아 제외 항목도 선택 언어로 번역합니다.
+이메일의 활용 기회·시각 자료는 독립 제목 없이 개요에 포함하고 plain text도 같은 원칙을 따릅니다.
+차원별 내용·캡션·출처는 유지하며 Archive와 judge의 기존 필드·구조는 바꾸지 않습니다.
+이미지는 서비스명이나 문서 제목이 아니라 그림 자체의 대체 텍스트·캡션에 업데이트의 핵심
+제목 단어가 모두 있을 때만 채택합니다. 모호하면 생략하는 보수적인 텍스트 검사이며 이미지
+의미를 인식하는 모델은 아닙니다. 분석과 이메일 재렌더링 모두 개수 제한 전에 적용합니다.
 Digest의 공통 masthead·집계·목차·종료 countdown은 상세 앞에, footer는 문서 끝에 둡니다.
-집계는 분석 완료 분모를 명시한 3행 가로 막대와 실제 건수를 사용하고 생략 건수는 따로 표시합니다.
+집계는 중요성별 이름과 실제 건수를 14px 한 줄로 표시하고 분석 완료·생략 건수를 구분합니다.
 상세 시작은 굵은 번호와 목차 복귀 링크로 구분하며 운영 정보는 흰색 구분선 표로 묶습니다.
 
 ### Category 3: Language Quality (20점)
@@ -166,7 +157,7 @@ Digest의 공통 masthead·집계·목차·종료 countdown은 상세 앞에, fo
 |-----------|--------|----------------|
 | `no_internal_exposure` | 5 | "Resource Graph returned", "쿼리 결과" 등 미노출 |
 | `speech_level_consistency` | 5 | 합쇼체(~합니다/~입니다) 일관, 해요체 혼용 없음 |
-| `translation_avoidance` | 5 | "~하는 것을 권장", "~에 의해", 사역형 "~할 수 있게 합니다" 등 번역체 없음. 서두 검사 포함 — 공지 프레임("이번 업데이트는…")과 환경 판정("현재 환경에는 ~가 없습니다") 둘 다 첫 문장 금지 |
+| `translation_avoidance` | 5 | "~하는 것을 권장", "~에 의해", 사역형 "~할 수 있게 합니다", "일반 공급/GA 상태로 제공" 등 번역체 없음. 서두 검사 포함 — 공지 프레임("이번 업데이트는…")과 환경 판정("현재 환경에는 ~가 없습니다") 둘 다 첫 문장 금지 |
 | `sentence_ending_variety` | 5 | 동일 종결어미 4회 이상 연속 없음 |
 
 **언어 작성 원칙**:
@@ -209,13 +200,18 @@ Digest의 공통 masthead·집계·목차·종료 countdown은 상세 앞에, fo
      본문은 공통 `FONT_SIZE_PX["body"]`의 14px·행간 1.8~1.85. 어절 우선 줄바꿈과 긴 식별자 fallback을 함께 사용하고 자간은 0.
      `FONT_STACK_DISPLAY`는 공통 sans 스택의 별칭. Noto Sans KR, AppleSDGothicR00, 맑은 고딕
      순서로 설치된 글꼴을 우선 사용하며 원격 폰트는 쓰지 않음
-- **요약과 근거의 공간 구분**: 화면 800px 이상에서 보고서 헤더의 요약 66%·독립 판정 34%를
-     나란히 배치. 좁은 화면·inline-only에서는 요약 다음에 판정이 이어짐. 본문은 모든 폭에서
+- **간결한 헤더**: "업데이트 요약" 소제목 없이 전체 폭 요약문을 유지하고 독립 판정은
+     11px 이름·12px 값과 4px/8px 여백의 작은 라벨로 표시. 별도 열·고정 높이 없이 좁은 화면과
+     inline-only에서 라벨 단위로 줄바꿈. 본문은 모든 폭에서
      제목 아래 전체 폭 내용을 두고 리소스 건수만 11px 보조 글자로 표시
 - **상태는 텍스트와 색상으로 표현**: 중요성·영향도·직무연관성을 합치지 않고 각 높음/보통/낮음
-     셀 전체에 옅은 적색·황색·녹색 음영을 적용하고 테두리 없는 12px 라벨 하나를 사용. 셀 padding은
-     8px이며 라벨 자체에는 배경·테두리·padding을 넣지 않음. 평가축·값은 함께 줄바꿈하고
-     숨김 복제 라벨이나 임의 점수·퍼센트로 바꾸지 않음. 종료 countdown도 현지화된 상태 텍스트 사용
+     셀 전체에 옅은 적색·황색·녹색 음영을 적용하고 테두리 없는 12px 라벨 하나를 사용. 목차 셀 padding은
+     8px이며 값 자체에는 배경·테두리·padding을 넣지 않음. 평가축·값은 함께 줄바꿈하고
+     숨김 복제 라벨이나 임의 점수·퍼센트로 바꾸지 않음. 데스크톱 목차의 평가 셀은 제목과 행 높이를
+     공유해 음영을 위아래 끝까지 채우고 글자를 세로 중앙에 둠. 제목 여백을 평가 열 바깥 공백으로
+     만들지 않으며 긴 제목에서도 셀 채움을 검사. 목차 평가 머리글·값은 가로 가운데 정렬하고
+     좁은 화면의 평가 라벨도 같은 정렬을 유지하되 업데이트 제목은 왼쪽 정렬. 종료 countdown도
+     현지화된 상태 텍스트 사용
 - **절제된 강조선**: 검증, concept box, 추가 확인에 `SEMANTIC_ACCENT_WIDTH_PX = 2`를 적용하고
      검증 배지 위아래 padding은 4px 유지. Concept box는 옅은 중성 음영으로 본문과 구분.
      상태 의미와 텍스트 대비 **4.5:1 이상**을 보존
@@ -223,27 +219,28 @@ Digest의 공통 masthead·집계·목차·종료 countdown은 상세 앞에, fo
      Microsoft Learn 링크는 그대로 보존
 - **전체 목차와 리소스 식별 정보**: 제목을 자르지 않고 상세·목차 복귀 링크를 유지. 모바일은
      전체 너비 제목 아래 세 평가 셀을 놓고 리소스 열은 이름표가 있는 셀로 쌓되 사유·그룹·Portal 링크 보존
-- **실제 수치의 직접 표시**: 중요성별 8px 가로 막대에 28px 건수와 행 이름표를 가까이 배치하고
-     `digest_analyzed`로 분석 완료 분모를 명시. 생략 건수는 별도, 0건 행은 유지하되 채움 없음,
-     세 자리 값이 있으면 모든 건수를 24px로 표시. 의미 있는 표의 캡션·행 제목은 숨기지 않음
+     리소스 표·모바일 라벨은 리소스·유형·리소스 그룹·구독 순서이며 Portal 링크는 값과 함께 이동
+- **실제 수치의 간결한 표시**: 중요성별 이름과 건수를 14px 한 줄로 표시하고 막대·큰 숫자는 쓰지 않음.
+     `digest_analyzed`로 분석 완료 건수를 명시하고 생략 건수는 구분. 0건·큰 건수와 접근성 이름표를 보존
 - **좁은 화면 기본값**: CSS가 제거되어도 17px 목차 제목·14px 요약 아래 3축 이름과 값을 표시.
-     목차·조치 번호는 24px 굵은 tabular sans, 장 번호는 32px. 데스크톱 목차만 제목 52%·축마다
-     16%로 확장하며 발행물 이름·날짜는 기본 세로 배치
+     목차·조치 번호는 24px 굵은 tabular sans, 장 번호는 32px. 800px 이상 목차만 제목 70%·축마다
+     10%로 확장하고 그 미만은 세로 배치를 유지. 머리글·평가 셀 정렬과 긴 영어 문구의 넘침을
+     검사하며 발행물 이름·날짜는 기본 세로 배치
 - **반응형 fallback**: inline/MSO 640px, 화면 800px에서 760px·1100px에서 840px. `azb-pad` 여백은
-     기본 32px, 1100px 이상 40px, 640px 이하 20px, 400px 이하 16px이며 inline-only는 32px 유지.
+     기본 20px, 1100px 이상 24px, 640px 이하 16px, 400px 이하 12px이며 inline-only는 20px 유지.
      영향 label은 HTML/CSS 너비·최소 너비 96px와 nowrap/keep-all을 유지하고 desktop 2×2로 나누지 않음
 - **CTA 링크 포함**: Microsoft 공식 문서, Azure Portal 경로 (검증된 것만)
 - **이모지 금지**: 보고서 본문에는 이모지 미사용 (이메일 제목줄은 허용)
 
 표시 재설계는 Markdown 문법, 분석 동작, 안전한 링크·액션 검증 정책, 전송, Archive 스키마나
-평가 배점을 바꾸지 않습니다. 스타일 문서 변경으로 bounded Foundry Runtime Guidance를 수정하지 않습니다.
+평가 배점을 바꾸지 않습니다. 스타일 문서 변경으로 애플리케이션의 Foundry 운영 지침을 수정하지 않습니다.
 
 ### 디자인 개선 루프
 
 같은 합성 데이터를 보존한 채 `가설 → 렌더러 수정 → 집중 테스트 → 미리보기 → 화면 평가 → 수정`을
 반복합니다. `tests/browser/email_reports.cjs`는 ko/en/ja·단건/digest·full/inline-only를
 1440/768/640/390/320/844px에서 검사합니다. `passed=true`, 정보·링크 보존, 가로 넘침과 배지
-넘침 없음, 66/34 브리프 정렬·fallback 순서, 막대 길이·라벨 경계가 수용 조건입니다.
+넘침 없음, 전체 폭 요약·작은 평가 라벨·fallback 줄바꿈, 간결한 집계의 글자 경계가 수용 조건입니다.
 스크린샷의 위계·줄바꿈·탐색을 따로 평가합니다. 합성 레이아웃 검사를
 심미성의 객관적 점수, 실측 독해 속도, G-Eval 개선 또는 실제 Outlook/Gmail 검증으로 보고하지 않습니다.
 디자인 변화가 작다는 피드백에는 이전 구도를 유지한 간격 조정만 반복하지 않습니다. 원본 보고서의
@@ -352,7 +349,8 @@ Generate Report → Evaluate (score) → Build Feedback Prompt
 **수정**: Resource Graph의 Region별 리소스 수로 상위 3개 주사용 Region을 정하고, Azure Update
 상세 원문 및 `search_azure_docs(include_content=true, focus_terms=[...])`의 기능 본문을 우선합니다.
 정확한 SKU/resource type API는 배치 가용성만 증명합니다. Evaluator는 Region별 네 가지 결과
-(즉시 사용/선행 조건부/미지원/공식 근거 미확인)를 요구하고, 한 줄 요약 누락 시 한 번 재작성합니다.
+(즉시 사용/선행 조건부/미지원/공식 근거 미확인)를 요구하고, 상세 분석·환경 근거에서 결과가 빠지면
+한 번 재작성합니다. 공지 전용 요약에는 주사용 Region 접두어를 요구하지 않습니다.
 
 ### Issue: 리소스 부재를 무관함으로 단정하거나 기회에 의무 작업을 붙임
 **증상**: 신규 서비스에 기존 리소스가 없다는 이유로 가치 설명을 생략하거나, `opportunity`마다
@@ -404,7 +402,7 @@ reason: "nodeImageVersion: AKSUbuntu-2204gen2containerd-202604.01.0 — Ubuntu 2
 
 ### 섹션별 Takeaway 한 줄
 독자가 해당 섹션에서 딱 하나를 기억해야 한다면 무엇인지 명시:
-- `one_line_summary`: 전체 보고서의 takeaway
+- `one_line_summary`: 공지 자체의 변경점; 환경 영향·작업량은 다른 필드에서 설명
 - `relevance_evidence`: "왜 이게 나한테 해당되는가"의 takeaway
 - 각 action_item의 `task`: 해당 조치의 takeaway
 
@@ -474,7 +472,7 @@ python -m scripts.evaluate_report --latest --with-html --iterate 3
 
 | 점수 항목 | 프롬프트 위치 | 조정 방법 |
 |-----------|-------------|----------|
-| one_line_summary | REPORT_PROMPT "Executive One-liner" | 패턴 예시 추가 |
+| one_line_summary | REPORT_PROMPT "Announcement One-liner" | 선택 언어·공지 전용 문장 계약 확인 |
 | relevance_evidence | REPORT_PROMPT "Output Format" | 근거 포함 예시 강화 |
 | detailed_analysis | REPORT_PROMPT "Analysis Body" | 구조/길이 가이드 조정 |
 | concept boxes | REPORT_PROMPT "Concept Explanation Boxes" | 필요 기반(quota 아님) — 과잉 설명 억제 |

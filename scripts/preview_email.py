@@ -29,9 +29,8 @@ logger = get_logger()
 
 _COPY = {
     "ko": {
-        "title": "Storage 계정의 TLS 연결 정책 변경",
-        "summary": "예제 환경의 Storage 계정 2개를 확인하고 TLS 1.2 클라이언트 호환성을 점검합니다.",
-        "summary_count": "합성 Storage 계정 {count}개의 설정과 TLS 1.2 클라이언트 호환성을 검토합니다.",
+        "title": "Azure Storage minimum TLS version policy",
+        "summary": "Azure Storage가 최소 TLS 버전을 설정해 이전 버전의 클라이언트 연결을 제한합니다.",
         "evidence_count": "합성 계정 {count}개의 설정을 조회한 예제입니다. 실제 테넌트의 증거가 아닙니다.",
         "reason_tls11": "합성 인벤토리에서 최소 TLS 버전이 TLS 1.1로 설정되어 있습니다.",
         "analysis": (
@@ -59,16 +58,15 @@ _COPY = {
         "context": "설정 확인 절차와 제한 사항을 확인합니다.",
         "visual_alt": "Azure Portal에서 Storage 계정의 최소 TLS 버전을 구성하는 화면",
         "visual_caption": "Storage 계정의 Configuration 화면에서 최소 TLS 버전을 선택합니다.",
-        "opportunity": "새 네트워크 기능의 적용 가능성 검토",
-        "opportunity_summary": "예제 워크로드에 필요한 운영 조건을 먼저 확인한 뒤 새 기능의 적용 가능성을 비교합니다.",
-        "low": "현재 범위 밖의 서비스 변경",
-        "low_summary": "예제 범위에서 직접 적용할 근거가 확인되지 않았습니다.",
+        "opportunity": "Azure Virtual Network routing capability",
+        "opportunity_summary": "Azure Virtual Network가 라우팅 기능을 추가해 네트워크 트래픽 경로를 관리합니다.",
+        "low": "Azure service configuration update",
+        "low_summary": "Azure 서비스가 연결 설정을 변경해 클라이언트의 접속 방식을 조정합니다.",
         "skip": "합성 예제: 분석 결과가 없는 항목도 목록에 남깁니다.",
     },
     "en": {
-        "title": "Reviewing a Storage account TLS policy change",
-        "summary": "Review two sample Storage accounts and validate TLS 1.2 client compatibility.",
-        "summary_count": "Review the settings of {count} synthetic Storage accounts and TLS 1.2 client compatibility.",
+        "title": "Azure Storage minimum TLS version policy",
+        "summary": "Azure Storage sets a minimum TLS version to restrict older client connections.",
         "evidence_count": "This fixture contains settings for {count} synthetic accounts, not live tenant evidence.",
         "reason_tls11": "The synthetic inventory records a minimum TLS version of TLS 1.1.",
         "analysis": (
@@ -95,16 +93,15 @@ _COPY = {
         "context": "Review the configuration procedure and its constraints.",
         "visual_alt": "Azure portal pane for configuring a Storage account's minimum TLS version",
         "visual_caption": "Select the minimum TLS version on the Storage account Configuration pane.",
-        "opportunity": "Evaluating a new networking capability",
-        "opportunity_summary": "Establish the sample workload's operational requirements before comparing the new capability.",
-        "low": "A service change outside the current scope",
-        "low_summary": "Direct applicability has not been established in this sample scope.",
+        "opportunity": "Azure Virtual Network routing capability",
+        "opportunity_summary": "Azure Virtual Network adds routing controls for network traffic paths.",
+        "low": "Azure service configuration update",
+        "low_summary": "An Azure service changes connection settings for client access.",
         "skip": "Synthetic sample: keep an item without an analysis result visible in the index.",
     },
     "ja": {
-        "title": "Storage アカウントの TLS 接続ポリシー変更",
-        "summary": "サンプルの Storage アカウント2件を確認し、TLS 1.2 クライアントとの互換性を調べます。",
-        "summary_count": "合成データの Storage アカウント {count} 件の設定と TLS 1.2 クライアントの互換性を確認します。",
+        "title": "Azure Storage minimum TLS version policy",
+        "summary": "Azure Storage は最小 TLS バージョンを設定し、旧バージョンのクライアント接続を制限します。",
         "evidence_count": "合成アカウント {count} 件の設定を照会した例です。実際のテナントの根拠ではありません。",
         "reason_tls11": "合成インベントリでは最小 TLS バージョンが TLS 1.1 に設定されています。",
         "analysis": (
@@ -131,10 +128,10 @@ _COPY = {
         "context": "設定の確認手順と制約を調べます。",
         "visual_alt": "Azure Portal で Storage アカウントの最小 TLS バージョンを構成する画面",
         "visual_caption": "Storage アカウントの Configuration 画面で最小 TLS バージョンを選択します。",
-        "opportunity": "新しいネットワーク機能の適用可能性",
-        "opportunity_summary": "サンプル環境の運用要件を整理し、新機能の適用可能性を比較します。",
-        "low": "現在のスコープ外のサービス変更",
-        "low_summary": "サンプル範囲では直接適用できる根拠が確認できませんでした。",
+        "opportunity": "Azure Virtual Network routing capability",
+        "opportunity_summary": "Azure Virtual Network はルーティング機能を追加し、ネットワークトラフィックの経路を管理します。",
+        "low": "Azure service configuration update",
+        "low_summary": "Azure サービスは接続設定を変更し、クライアントの接続方法を調整します。",
         "skip": "合成データ例: 分析結果のない項目も一覧に残します。",
     },
 }
@@ -219,11 +216,7 @@ def build_demo_items(language: str, *, resource_count: int | None = None) -> lis
         importance="high",
         impact_level="high",
         job_relevance="medium",
-        one_line_summary=(
-            text["summary"]
-            if resource_count is None
-            else text["summary_count"].format(count=resource_count)
-        ),
+        one_line_summary=text["summary"],
         relevance_reason=text["analysis"],
         relevance_evidence=(
             text["evidence"]
@@ -308,7 +301,11 @@ def build_demo_items(language: str, *, resource_count: int | None = None) -> lis
                 "affected_resources": [],
                 "resource_queries": [],
                 "action_items": [],
-                "impact_details": None,
+                "impact_details": (
+                    ImpactSummary(operational_impact=text["opportunity_summary"])
+                    if kind == "opportunity"
+                    else None
+                ),
             },
         )
         items.append({"update": next_update, "result": next_result})

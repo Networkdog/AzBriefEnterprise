@@ -1,5 +1,8 @@
 """Tests for the Foundry Hosted Agent entry point."""
 
+import runpy
+from unittest.mock import Mock
+
 import pytest
 
 from src import hosted_agent
@@ -14,6 +17,18 @@ from src.agent.hosted_contract import (
 from src.agent.scope import AnalysisScope
 from src.config import Settings
 from src.hosted_agent import execute_request, get_hosted_settings
+
+
+def test_hosted_server_keeps_application_owned_observability(monkeypatch: pytest.MonkeyPatch):
+    application_setup = Mock()
+    sdk_setup = Mock()
+    monkeypatch.setattr("src.logging_config.setup_logging", application_setup)
+    monkeypatch.setattr("azure.ai.agentserver.core._tracing._configure_tracing", sdk_setup)
+
+    runpy.run_path(hosted_agent.__file__)
+
+    application_setup.assert_called_once_with(file_enabled=False)
+    sdk_setup.assert_not_called()
 
 
 def _update() -> HostedUpdate:

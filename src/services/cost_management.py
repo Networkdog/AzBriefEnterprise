@@ -6,7 +6,6 @@ from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
 
-from azure.core.exceptions import HttpResponseError
 from azure.mgmt.costmanagement import CostManagementClient
 from azure.mgmt.costmanagement.models import (
     QueryAggregation,
@@ -19,6 +18,7 @@ from azure.mgmt.costmanagement.models import (
 )
 from structlog import get_logger
 
+from src.agent.resilience import retry_with_backoff
 from src.config import get_settings
 
 logger = get_logger()
@@ -102,28 +102,19 @@ class CostManagementService:
             HttpResponseError: If all retries are exhausted
         """
         client = self._get_client()
-        last_error = None
 
-        for attempt in range(MAX_RETRIES):
-            try:
-                return await asyncio.to_thread(
-                    client.query.usage, scope=scope, parameters=query_definition
-                )
-            except HttpResponseError as e:
-                if e.status_code == 429:
-                    last_error = e
-                    delay = RETRY_BASE_DELAY * (2**attempt)
-                    logger.warning(
-                        "Cost Management rate limited (429), retrying",
-                        attempt=attempt + 1,
-                        max_retries=MAX_RETRIES,
-                        delay_seconds=delay,
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    raise
+        async def _query():
+            return await asyncio.to_thread(
+                client.query.usage, scope=scope, parameters=query_definition, retry_total=0
+            )
 
-        raise last_error  # type: ignore[misc]
+        return await retry_with_backoff(
+            _query,
+            max_retries=MAX_RETRIES,
+            retryable_errors=(429,),
+            base_delay=RETRY_BASE_DELAY,
+            max_delay=60.0,
+        )
 
     @staticmethod
     def _parse_cost_result(

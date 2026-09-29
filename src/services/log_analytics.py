@@ -1,6 +1,7 @@
 """Azure Log Analytics Service using Azure SDK."""
 
 import asyncio
+import re
 from datetime import timedelta
 from typing import Any, Optional
 
@@ -10,6 +11,8 @@ from structlog import get_logger
 from src.config import get_settings
 
 logger = get_logger()
+
+FAILURE_RUN_ID_PATTERN = r"^(?:[a-fA-F0-9]{32})?$"
 
 
 class LogAnalyticsService:
@@ -46,6 +49,7 @@ class LogAnalyticsService:
             Query results
         """
         if not self.workspace_id:
+            logger.warning("log_analytics_workspace_not_configured")
             return {
                 "success": False,
                 "error": "Log Analytics workspace ID not configured. Set LOG_ANALYTICS_WORKSPACE_ID in environment.",
@@ -79,7 +83,7 @@ class LogAnalyticsService:
             if response.status == LogsQueryStatus.SUCCESS:
                 data = []
                 for table in response.tables:
-                    columns = [col.name for col in table.columns]
+                    columns = table.columns
                     for row in table.rows:
                         data.append(dict(zip(columns, row)))
 
@@ -106,6 +110,68 @@ class LogAnalyticsService:
         except Exception as e:
             logger.error("log_analytics_query_error", error=str(e), query=query[:200])
             return {"success": False, "error": str(e), "data": []}
+
+    async def get_failure_events(
+        self, hours: int = 24, limit: int = 50, run_id: str = ""
+    ) -> dict[str, Any]:
+        """Read bounded AzBrief failure events, optionally including a run's Hosted traces.
+
+        Args:
+            hours: Lookback period, from one hour to thirty days.
+            limit: Maximum displayed events, from one to one hundred.
+            run_id: Optional exact orchestrator run ID.
+
+        Returns:
+            Query envelope with up to limit + 1 rows for truncation detection.
+        """
+        if (
+            type(hours) is not int
+            or not 1 <= hours <= 720
+            or type(limit) is not int
+            or not 1 <= limit <= 100
+            or not isinstance(run_id, str)
+            or re.fullmatch(FAILURE_RUN_ID_PATTERN, run_id) is None
+        ):
+            logger.warning("admin_failure_query_invalid")
+            return {"success": False, "error": "Invalid failure-history filters.", "data": []}
+
+        query = (
+            "let recent_failures = AzBriefFailures_CL\n"
+            f"| where TimeGenerated > ago({hours}h)\n"
+            "| where Source == 'AzBrief';\n"
+        )
+        if run_id:
+            run_id = run_id.lower()
+            query += (
+                "let run_traces = recent_failures\n"
+                f"| where RunId == '{run_id}'\n"
+                "| where isnotempty(TraceId)\n"
+                "| distinct TraceId;\n"
+                "recent_failures\n"
+                f"| where RunId == '{run_id}' or TraceId in (run_traces)\n"
+            )
+        else:
+            query += "recent_failures\n"
+        query += (
+            "| project TimeGenerated, Level, Runtime, Event, Status, "
+            "RunId, UpdateId, TraceId, TaskId, Phase, Operation, AgentRole, "
+            "ErrorType, ErrorMessage = substring(ErrorMessage, 0, 4000), "
+            "FailedCount, ArchiveFailedCount, PendingCount, DeferredCount\n"
+            "| order by TimeGenerated desc, Event asc, RunId asc, TraceId asc\n"
+            f"| take {limit + 1}"
+        )
+        return await self.query_logs(query, timedelta(hours=hours))
+
+    async def close(self) -> None:
+        """Release the SDK transport and this service's credential."""
+        try:
+            if self._client is not None:
+                await asyncio.to_thread(self._client.close)
+                self._client = None
+        finally:
+            if self._credential is not None:
+                await asyncio.to_thread(self._credential.close)
+                self._credential = None
 
     async def get_recent_errors(self, hours: int = 24, top: int = 50) -> dict[str, Any]:
         """Get recent errors from logs.

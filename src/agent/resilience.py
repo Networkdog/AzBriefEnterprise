@@ -15,9 +15,12 @@ Implements standard resilience patterns for agentic AI systems:
 """
 
 import asyncio
+import math
 import random
 import time
 from dataclasses import dataclass, field
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from enum import Enum
 from typing import Any, Callable, Optional
 
@@ -183,15 +186,14 @@ class CircuitBreaker:
 
 def _is_retryable_status(error: Exception, retryable_codes: tuple[int, ...]) -> bool:
     """Check if an error has a retryable HTTP status code."""
+    status = getattr(error, "status_code", None)
+    if status is not None:
+        return status in retryable_codes
     # Check common Azure SDK / OpenAI error patterns
     error_str = str(error)
     for code in retryable_codes:
         if str(code) in error_str:
             return True
-    # Check for status_code attribute (Azure SDK pattern)
-    status = getattr(error, "status_code", None)
-    if status and status in retryable_codes:
-        return True
     return False
 
 
@@ -202,6 +204,8 @@ def _is_stale_connection_error(error: Exception) -> bool:
     Detecting them allows targeted recovery (disable pooling + reconnect)
     instead of a generic retry.
     """
+    if getattr(error, "status_code", None) is not None:
+        return False
     error_str = str(error).lower()
     return any(
         marker in error_str for marker in ("econnreset", "epipe", "connection reset", "broken pipe")
@@ -209,18 +213,34 @@ def _is_stale_connection_error(error: Exception) -> bool:
 
 
 def _extract_retry_after(error: Exception) -> Optional[float]:
-    """Extract retry-after value from error headers if available."""
-    # Try to get from Azure SDK / OpenAI error response
+    """Return the longest valid server-directed delay in seconds."""
     response = getattr(error, "response", None)
-    if response is not None:
-        headers = getattr(response, "headers", {})
-        retry_after = headers.get("Retry-After") or headers.get("retry-after")
-        if retry_after:
+    headers = getattr(response, "headers", None) or {}
+    delays = []
+    for name, value in headers.items():
+        name = name.lower()
+        milliseconds = name in {"retry-after-ms", "x-ms-retry-after-ms"}
+        cost_header = name == "x-ms-ratelimit-microsoft.consumption-retry-after" or (
+            name.startswith("x-ms-ratelimit-microsoft.costmanagement-")
+            and name.endswith("-retry-after")
+        )
+        if name != "retry-after" and not milliseconds and not cost_header:
+            continue
+        try:
+            delay = float(value) / (1000 if milliseconds else 1)
+        except (ValueError, TypeError, OverflowError):
+            if name != "retry-after":
+                continue
             try:
-                return float(retry_after)
-            except (ValueError, TypeError):
-                pass
-    return None
+                retry_at = parsedate_to_datetime(value)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = retry_at.timestamp() - time.time()
+            except (ValueError, TypeError, OverflowError):
+                continue
+        if math.isfinite(delay) and delay > 0:
+            delays.append(delay)
+    return max(delays) if delays else None
 
 
 class ModelFallbackError(Exception):

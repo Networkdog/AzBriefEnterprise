@@ -1,4 +1,4 @@
-"""OpenTelemetry tracing for AzBrief — optional, graceful-degrading.
+"""OpenTelemetry traces and redacted error export for AzBrief.
 
 Adds distributed tracing of the analysis transaction and every tool call so the
 non-deterministic agent loop can be inspected in Azure Monitor / Application
@@ -11,16 +11,24 @@ Design constraints:
   disabled, so a stripped-down environment still runs the analysis.
 - **Never breaks the run.** All setup and span operations are wrapped so a
   misconfigured exporter can never fail an analysis.
-- **structlog stays the source of truth** for structured event logs; OTel adds
-  the span/trace view on top (top-level transaction + tool spans).
+- **structlog stays the source of truth** for structured event logs; a dedicated
+  logger exports only redacted application warnings/errors, alongside spans.
 """
 
 from __future__ import annotations
 
+import atexit
 import contextlib
-from typing import Any, Iterator, Optional
+import logging
+import os
+from typing import TYPE_CHECKING, Any, Iterator, Optional
 
 import structlog
+
+from src.error_logging import ERROR_LOGGER_NAME, exception_fields
+
+if TYPE_CHECKING:
+    from opentelemetry.trace import Tracer
 
 logger = structlog.get_logger(__name__)
 
@@ -47,8 +55,8 @@ _enabled = False
 def setup_telemetry(settings: Any) -> bool:
     """Configure the Azure Monitor OpenTelemetry exporter once, if requested.
 
-    Idempotent: safe to call at the start of every analysis. Returns whether
-    tracing is active. No-op (returns False) when telemetry is disabled, the
+    Called by centralized logging in every runtime, and idempotent when the
+    analyzer calls again. Returns False when telemetry is disabled, the
     connection string is missing, or the optional packages are not installed.
 
     Args:
@@ -63,12 +71,15 @@ def setup_telemetry(settings: Any) -> bool:
         return _enabled
     _configured = True
 
-    if not getattr(settings, "otel_enabled", False):
+    if (
+        not getattr(settings, "otel_enabled", False)
+        or os.environ.get("OTEL_SDK_DISABLED", "").lower() == "true"
+    ):
         return False
 
     conn = getattr(settings, "applicationinsights_connection_string", None)
     if not _OTEL_API_AVAILABLE or not conn:
-        logger.debug(
+        logger.warning(
             "otel_not_configured",
             api_available=_OTEL_API_AVAILABLE,
             has_connection_string=bool(conn),
@@ -85,15 +96,18 @@ def setup_telemetry(settings: Any) -> bool:
         # then retries forever on 'Unauthorized' and floods stdout. Passing the
         # managed identity covers both configurations: it is used when local
         # auth is off and ignored when the instrumentation key is accepted.
-        # Only export traces from AzBrief; disable auto-log capture so structlog
-        # remains the single logging pipeline (avoids duplicate log ingestion).
+        error_logger = logging.getLogger(ERROR_LOGGER_NAME)
+        error_logger.setLevel(logging.WARNING)
+        error_logger.propagate = False
         configure_azure_monitor(
             connection_string=conn,
             credential=get_azure_credential(),
-            logger_name=_TRACER_NAME,
+            logger_name=ERROR_LOGGER_NAME,
+            enable_trace_based_sampling_for_logs=False,
             disable_offline_storage=True,
         )
         _enabled = True
+        atexit.register(flush_telemetry)
         logger.info("otel_configured", exporter="azure_monitor")
     except Exception as exc:  # pragma: no cover - exporter/runtime dependent
         logger.warning("otel_configure_failed", error=str(exc))
@@ -102,12 +116,27 @@ def setup_telemetry(settings: Any) -> bool:
     return _enabled
 
 
+def flush_telemetry() -> None:
+    """Flush bounded telemetry batches at application/job shutdown."""
+    if not _enabled:
+        return
+    try:
+        from opentelemetry._logs import get_logger_provider
+
+        for provider in (get_logger_provider(), _otel_trace.get_tracer_provider()):
+            flush = getattr(provider, "force_flush", None)
+            if flush and flush(timeout_millis=5000) is False:
+                logger.warning("otel_flush_incomplete")
+    except Exception as exc:
+        logger.warning("otel_flush_failed", error_type=type(exc).__name__)
+
+
 def is_enabled() -> bool:
     """Return whether tracing is currently active."""
     return _enabled and _OTEL_API_AVAILABLE
 
 
-def get_tracer():
+def get_tracer() -> Optional["Tracer"]:
     """Return the AzBrief tracer, or None when tracing is inactive."""
     if not is_enabled():
         return None
@@ -137,7 +166,9 @@ def traced_span(name: str, **attributes: Any) -> Iterator[Optional[Any]]:
         yield None
         return
 
-    with tracer.start_as_current_span(name) as span:
+    with tracer.start_as_current_span(
+        name, record_exception=False, set_status_on_exception=False
+    ) as span:
         try:
             for key, value in attributes.items():
                 if value is not None:
@@ -148,9 +179,17 @@ def traced_span(name: str, **attributes: Any) -> Iterator[Optional[Any]]:
             yield span
         except Exception as exc:
             try:  # pragma: no cover - error path
-                span.record_exception(exc)
+                details = exception_fields(exc)
+                span.add_event(
+                    "exception",
+                    attributes={
+                        "exception.type": details["error_type"],
+                        "exception.message": details["error_message"],
+                        "exception.stacktrace": details["exception"],
+                    },
+                )
                 if Status is not None and StatusCode is not None:
-                    span.set_status(Status(StatusCode.ERROR, str(exc)))
+                    span.set_status(Status(StatusCode.ERROR, details["error_message"]))
             except Exception:
                 pass
             raise

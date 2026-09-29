@@ -12,22 +12,30 @@ Azure Update 한 건을 근거 기반 `AnalysisResult`로 바꾸는 핵심 계�
 |---|---|
 | [`analyzer.py`](analyzer.py) | Pydantic domain model과 Plan-Execute-Evaluate-Report LangGraph |
 | [`foundry_backend.py`](foundry_backend.py) | Prompt Agent Responses adapter와 specialist collaboration |
+| [foundry_instructions.py](foundry_instructions.py) | Foundry 전용 운영 지침과 여섯 역할 매핑; Copilot 스킬을 읽지 않음 |
 | [`hosted_contract.py`](hosted_contract.py) | 분석·맞춤화·출시 전 평가를 위한 strict v3 wire model과 기존 v2 비범위 요청 호환 |
 | [`scope.py`](scope.py) | Management Group/Subscription/Resource Group 분석 범위와 비동기 context 격리 |
 | [`hosted_client.py`](hosted_client.py) | Entra token으로 Hosted endpoint를 호출하는 control-plane proxy |
 | [`tools.py`](tools.py) | LangChain `BaseTool`, Pydantic input, KQL 실행·복구, tool registry |
 | [`context_store.py`](context_store.py) | budget 초과 tool result를 `[ref=Rn]`으로 검색 가능하게 보존 |
+| [documentation.py](documentation.py) | Learn more 본문·1단계 링크 자동 수집, 질문 기반 2단계 조회, 분석별 출처·예산·공백 관리 |
 | [`resilience.py`](resilience.py) | backoff, circuit breaker, deadline, output recovery, concurrency partition |
 | [`action_verification.py`](action_verification.py) | action item의 정적·LLM·policy 3계층 안전 gate |
 | [`geval.py`](geval.py) | 최종 보고서의 의미적 품질 평가 |
 | [`trajectory.py`](trajectory.py) | 도구 성공률·retry·revision을 보는 결정론적 process 평가 |
-| [`telemetry.py`](telemetry.py) | trace/span과 token/tool observability |
+| [`telemetry.py`](telemetry.py) | 모든 런타임의 Entra 기반 OTel 초기화, 마스킹한 예외·span과 종료 시 flush |
 | [`kql_knowledge.py`](kql_knowledge.py) | tenant-neutral seed를 읽고 runtime query/schema 지식은 ignored data 경로에 저장 |
 | [`history.py`](history.py) | retirement와 과거 분석 이력 보조 데이터 |
 | [`pattern_memory.py`](pattern_memory.py) | 반복 분석 pattern의 best-effort 로컬 저장 |
 | [`prompts/`](prompts/README.md) | phase, 언어, category별 prompt 조립 |
 
 ## 분석 흐름
+
+Foundry의 standing instruction은 역할별 기본 계약과 `foundry_instructions.py`의 운영 정책을
+`scripts/provision_foundry_agents.py`가 합쳐 게시합니다. `prompts/`의 요청별 계약은 Hosted에서
+전달합니다. `.github/skills`는 개발용 Copilot 절차만 담고, 운영 지침 조립의 입력이 아닙니다.
+KQL·작성·언어·평가 정책을 바꾸면 새 Prompt Agent 버전을 게시하고, Hosted 프롬프트나 코드를
+바꾸면 Hosted도 배포해야 합니다. 로컬 테스트 통과를 배포된 버전의 검증으로 간주하지 않습니다.
 
 ```mermaid
 flowchart LR
@@ -56,6 +64,15 @@ SDK/KQL 경계에서 이를 강제하고, 전체 범위를 적용할 수 없는 
 기본 분석의 memory에 섞지 않습니다. 호환 배포는 Hosted v3를 먼저 게시한 뒤 제어면을 갱신합니다.
 
 ## Tool 실행과 근거 완전성
+
+Learn more 대상 문서 최대 3개(깊이 0)와 각 문서의 본문 링크 최대 2개(깊이 1)를 자동 수집합니다.
+전체 본문은 ref로 보관하고 3,000자 미리보기와 별도로 내부 링크·출처·깊이를 전달합니다.
+미해결 질문이 있을 때만 `fetch_documentation_link(parent_url, url, question)`로 실제 발견한
+링크를 조회하며 깊이 2를 넘지 않습니다. 사전 수집과 후속 조회는 12회 시도·누적 조회 90초·
+근거 100만 자를 공유하고, 중복·순환·임의 URL을 차단합니다. 계획 단계의 ref 검색 발췌도
+평가·보고서·judge까지 보존하며, 실패·생략을 읽은 근거로 간주하지 않습니다.
+문서 도구는 Coordinator의 로컬 요청 bridge와 실행 단계에서만 사용하며 evidence specialist의
+FunctionTool 목록을 늘리지 않습니다. 취소·실패 시에도 분석별 context와 ref를 정리합니다.
 
 `get_all_tools()`가 runtime registry입니다. `partition_tool_calls()`는 읽기 전용이며 concurrency
 safe한 연속 호출만 병렬 batch로 묶고, mutation 도구 또는 판정 실패 도구는 직렬화합니다. 현재

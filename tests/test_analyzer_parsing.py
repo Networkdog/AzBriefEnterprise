@@ -52,27 +52,76 @@ def test_collect_source_visuals_keeps_one_unique_image_per_document():
             "title": "First guide",
             "url": "https://learn.microsoft.com/first",
             "visuals": [
-                {"url": "https://learn.microsoft.com/first.png", "alt": "First screenshot"},
-                {"url": "https://learn.microsoft.com/second.png", "alt": "Second screenshot"},
+                {"url": "https://learn.microsoft.com/first.png", "alt": "First IPv6 screenshot"},
+                {"url": "https://learn.microsoft.com/second.png", "alt": "Second IPv6 screenshot"},
             ],
         },
         {
             "title": "Second guide",
             "url": "https://learn.microsoft.com/second",
             "visuals": [
-                {"url": "https://learn.microsoft.com/first.png", "alt": "Duplicate"},
-                {"url": "https://learn.microsoft.com/third.png", "alt": "Third screenshot"},
+                {"url": "https://learn.microsoft.com/first.png", "alt": "Duplicate IPv6"},
+                {"url": "https://learn.microsoft.com/third.png", "alt": "Third IPv6 screenshot"},
             ],
         },
     ]
 
-    visuals = _collect_source_visuals(contents)
+    update = _make_update(
+        title="Generally available: Azure VPN Gateway IPv6 support",
+        azure_services=["VPN Gateway"],
+    )
+    visuals = _collect_source_visuals(contents, update=update)
 
     assert [visual["url"] for visual in visuals] == [
         "https://learn.microsoft.com/first.png",
         "https://learn.microsoft.com/third.png",
     ]
     assert visuals[1]["source_title"] == "Second guide"
+
+
+def test_source_visuals_require_feature_evidence_in_the_image_not_the_document():
+    update = _make_update(
+        title="Generally available: Azure VPN Gateway IPv6 support",
+        azure_services=["VPN Gateway"],
+    )
+    contents = [
+        {
+            "title": "IPv6 support for VPN Gateway",
+            "url": "https://learn.microsoft.com/azure/vpn-gateway/ipv6",
+            "visuals": [
+                {
+                    "url": "https://learn.microsoft.com/azure/vpn-gateway/media/ipv6.png",
+                    "alt": "Generic IPv4 VPN Gateway configuration",
+                },
+                {
+                    "url": "https://learn.microsoft.com/azure/vpn-gateway/media/dual-stack.png",
+                    "alt": "VPN Gateway dual-stack topology",
+                    "caption": "IPv6 connections for VPN Gateway",
+                },
+            ],
+        }
+    ]
+    visuals = _collect_source_visuals(contents, limit=1, update=update)
+    assert len(visuals) == 1
+    assert visuals[0]["url"].endswith("dual-stack.png")
+    assert _collect_source_visuals(contents) == []
+    assert _collect_source_visuals(contents, limit=0, update=update) == []
+    assert _collect_source_visuals(contents, limit=-1, update=update) == []
+
+
+def test_source_visuals_omit_service_only_or_partially_matching_images():
+    document = {
+        "visuals": [{"url": "https://learn.microsoft.com/image.png", "alt": "Azure VPN Gateway"}]
+    }
+    service_only = _make_update(title="Azure VPN Gateway is now GA", azure_services=["VPN Gateway"])
+    feature_update = _make_update(
+        title="Azure VPN Gateway IPv6 BGP support", azure_services=["VPN Gateway"]
+    )
+    assert _collect_source_visuals([document], update=service_only) == []
+    document["visuals"][0]["alt"] = "VPN Gateway IPv6 configuration"
+    assert _collect_source_visuals([document], update=feature_update) == []
+    document["visuals"][0]["alt"] = "VPN Gateway IPv60 BGP configuration"
+    assert _collect_source_visuals([document], update=feature_update) == []
 
 
 def _parse(raw_analysis: str, **update_kwargs) -> AnalysisResult:

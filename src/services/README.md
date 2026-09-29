@@ -17,6 +17,15 @@ action 우선순위 같은 business decision은 `src/agent`가 소유합니다.
 | [`microsoft_learn.py`](microsoft_learn.py) | Learn 검색, allow-listed page fetch, command block 추출 |
 | [`community_insights.py`](community_insights.py) | Azure Weekly의 topic-matched practitioner caveat cache |
 | [`checkpoint.py`](checkpoint.py) | inert/file/blob watermark store와 forward-only conditional write |
+
+`log_analytics.py`는 query 전용입니다. 실행 중 오류와 failure 상태의 write 경로는 service/tool이
+아니라 `src/logging_config.py`의 중앙 logging handler가 담당합니다. 이 handler는 redacted
+실패 이벤트만 Direct DCR을 통해 같은 workspace의 `AzBriefFailures_CL`에 적재하며, exporter
+오류가 원래 실행 결과를 바꾸거나 재귀 log 전송을 만들지 않게 합니다.
+`get_failure_events()`는 Admin의 기간·Run ID 필터에 고정 table/projection을 적용합니다.
+정확한 Run ID에 연결된 Trace ID만 추가 조회하며 최신순 limit+1로 추가 기록 여부를 판별합니다.
+SDK `LogsTable.columns`는 문자열 목록이고, 부분 query 결과는 성공으로 취급하지 않습니다.
+화면용 마스킹·필드 허용 목록은 [`admin/errors.py`](../admin/errors.py)가 담당합니다.
 | [`archive.py`](archive.py) | inert/file/blob canonical analysis store, create-only write, metadata cursor listing |
 | [`runtime_inventory.py`](runtime_inventory.py) | Admin readiness용 ARM resource와 Foundry Agent 최신 version safe projection |
 | [`__init__.py`](__init__.py) | enabled subscription discovery와 process cache |
@@ -51,6 +60,15 @@ finally:
 공통 `success/data/error` 계약이라고 추측하지 말고 해당 method와 Agent tool adapter를 함께
 확인합니다.
 
+Learn의 `fetch_documentation_page()`는 `success/data/error`와 함께 잘리지 않은 본문,
+요청·최종 URL, 절·본문 링크·코드·이미지를 반환합니다. HTTPS·허용 호스트를 리디렉션마다
+요청 전에 검사하고, 단축 URL은 리디렉션에만 사용합니다. 비 HTML·과대 응답은 실패로
+반환하고 링크 추출 제한을 명시합니다. 기술적 경고를 UI 요소로 제거하지 않습니다.
+Learn의 제목과 본문이 여러 `div.content`로 나뉘어도 전체 영역을 중복 없이 읽으며,
+제목만 있는 응답은 문서 본문을 읽은 성공으로 처리하지 않습니다.
+기존 `fetch_page_content()`는 미리보기 호환 API이며 재귀 조사에는 전체 본문 API를 씁니다.
+링크 우선순위·깊이·공유 예산·근거 ref 관리는 서비스가 아니라 Agent 계층의 책임입니다.
+
 `AzureRestClient.call_api()`는 `value` array와 `nextLink`가 있는 list endpoint용이고,
 `get_resource()`는 provider metadata처럼 JSON object 하나를 반환하는 endpoint용입니다. 경로에
 `{subscriptionId}`가 있을 때만 subscription을 요구하며, Microsoft.Billing 같은 tenant-scope
@@ -73,7 +91,7 @@ billing account가 없다는 뜻으로 바꾸지 않습니다.
 - runtime inventory는 여러 ARM resource를 병렬 조회하되 각 결과를 독립된 `success/data/error`
   envelope로 반환하고, Foundry Agent는 이름/version/definition kind/status만 투영합니다. 최종
   green/red 판정은 Admin 계층이 exact kind와 `ACTIVE` 상태를 함께 확인합니다.
-- page fetch는 allow-list와 HTTP(S) scheme을 검사해 SSRF를 막습니다.
+- page fetch는 HTTPS·allow-list를 모든 리디렉션 전에 검사해 SSRF를 막습니다.
 - checkpoint blob은 HTTPS와 Entra token만 사용하고 ETag로 뒤로 쓰기/동시 writer를 방지합니다.
 - archive blob은 HTTPS/Entra와 `If-None-Match: *`를 사용하고, payload와 search metadata를 한 PUT에
   commit합니다. business document 생성과 reader policy는 `src/archive`가 소유합니다.

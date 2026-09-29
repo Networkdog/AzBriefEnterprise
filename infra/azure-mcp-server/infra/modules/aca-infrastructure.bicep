@@ -4,12 +4,12 @@ param location string = resourceGroup().location
 @description('Azure Container App name and resource prefix.')
 param name string
 
-@description('Application Insights connection string.')
-@secure()
-param appInsightsConnectionString string
+@description('Existing AzBrief Container Apps environment resource ID.')
+@minLength(1)
+param containerAppEnvironmentId string
 
-@description('Whether Azure MCP telemetry is enabled.')
-param azureMcpCollectTelemetry string
+@description('Existing environment workload profile. Empty for consumption-only environments.')
+param workloadProfileName string = ''
 
 @description('Microsoft Entra tenant ID.')
 param azureAdTenantId string
@@ -46,7 +46,6 @@ param maxReplicas int = 3
 
 param tags object = {}
 
-var environmentName = '${name}-env'
 var baseArgs = [
   '--transport'
   'http'
@@ -77,7 +76,11 @@ var baseEnvironment = [
   }
   {
     name: 'AZURE_MCP_COLLECT_TELEMETRY'
-    value: azureMcpCollectTelemetry
+    value: 'false'
+  }
+  {
+    name: 'AZURE_MCP_COLLECT_TELEMETRY_MICROSOFT'
+    value: 'false'
   }
   {
     name: 'AZURE_SUBSCRIPTION_ID'
@@ -113,13 +116,6 @@ var baseEnvironment = [
   }
 ]
 
-resource containerAppsEnvironment 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: environmentName
-  location: location
-  tags: tags
-  properties: {}
-}
-
 resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
   location: location
@@ -131,7 +127,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
     type: 'SystemAssigned'
   }
   properties: {
-    managedEnvironmentId: containerAppsEnvironment.id
+    managedEnvironmentId: containerAppEnvironmentId
+    workloadProfileName: empty(workloadProfileName) ? null : workloadProfileName
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: {
@@ -158,17 +155,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             cpu: json(cpuCores)
             memory: memorySize
           }
-          env: concat(
-            baseEnvironment,
-            !empty(appInsightsConnectionString)
-              ? [
-                  {
-                    name: 'APPLICATIONINSIGHTS_CONNECTION_STRING'
-                    value: appInsightsConnectionString
-                  }
-                ]
-              : []
-          )
+          env: baseEnvironment
           probes: [
             {
               type: 'Startup'
@@ -211,4 +198,4 @@ output containerAppResourceId string = containerApp.id
 output containerAppUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
 output containerAppName string = containerApp.name
 output containerAppPrincipalId string = containerApp.identity.principalId
-output containerAppEnvironmentId string = containerAppsEnvironment.id
+output containerAppEnvironmentId string = containerAppEnvironmentId

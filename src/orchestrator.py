@@ -22,10 +22,12 @@ from typing import Any, Literal, Optional
 from urllib.parse import urlparse
 
 from structlog import get_logger
+from structlog.contextvars import bind_contextvars, reset_contextvars
 
 from src.admin.configuration import get_admin_configuration
 from src.agent.scope import AnalysisScope
 from src.config import get_settings
+from src.error_logging import redact_text
 from src.i18n.labels import get_labels
 from src.services.checkpoint import get_checkpoint_store
 
@@ -33,12 +35,11 @@ logger = get_logger()
 
 MAX_TRACKED_RUNS = 50
 MAX_CONSECUTIVE_FAILURES = 3
-MAX_MANUAL_TARGETS = 100
 
 
 @dataclass(frozen=True)
 class RunSelection:
-    """Bounded target selector for an orchestrated run."""
+    """Validated target selector for an orchestrated run."""
 
     mode: Literal["checkpoint", "date_range", "recent", "update_id", "update_url"] = "checkpoint"
     start_date: Optional[datetime] = None
@@ -54,8 +55,8 @@ class RunSelection:
             if _ensure_utc(self.start_date) > _ensure_utc(self.end_date):
                 raise ValueError("start_date must not be later than end_date")
         elif self.mode == "recent":
-            if self.recent_count is None or not 1 <= self.recent_count <= MAX_MANUAL_TARGETS:
-                raise ValueError(f"recent_count must be between 1 and {MAX_MANUAL_TARGETS}")
+            if self.recent_count is None or self.recent_count < 1:
+                raise ValueError("recent_count must be at least 1")
         elif self.mode == "update_id":
             if not self.update_id.isdigit():
                 raise ValueError("update_id must contain digits only")
@@ -154,10 +155,6 @@ async def _select_targets(record: "RunRecord", rss_parser: Any) -> list:
 
     if not updates:
         raise ValueError(f"No Azure Updates matched selector '{selection.mode}'")
-    if len(updates) > MAX_MANUAL_TARGETS:
-        raise ValueError(
-            f"Selector matched {len(updates)} updates; narrow it to {MAX_MANUAL_TARGETS} or fewer"
-        )
     return _chronological(updates)
 
 
@@ -253,7 +250,7 @@ class RunRecord:
             "commit_checkpoint": self.commit_checkpoint,
             "checkpoint_committed": self.checkpoint_committed,
             "elapsed_seconds": round(elapsed.total_seconds(), 1),
-            "error": self.error,
+            "error": redact_text(self.error),
         }
 
 
@@ -469,6 +466,7 @@ async def execute_run(
     settings = get_settings()
     record.status = "running"
     started = time.time()
+    context_tokens = bind_contextvars(run_id=record.run_id)
     try:
         targets = await _select_targets(record, rss_parser)
         record.total = len(targets)
@@ -487,20 +485,27 @@ async def execute_run(
         deadline = RunDeadline(budget_s=settings.run_time_budget_s)
         semaphore = asyncio.Semaphore(settings.max_concurrent_analyses)
         results_lock = asyncio.Lock()
+        analysis_finished = asyncio.Condition(results_lock)
         digest_items: list[dict] = []
         archive_errors: list[str] = []
+        active_analyses = 0
         consecutive_failures = 0
+        halted_after_failures = 0
         slowest_s = 0.0
 
         async def _analyze_one(index: int, update) -> None:
-            nonlocal consecutive_failures, slowest_s
+            nonlocal active_analyses, consecutive_failures, halted_after_failures, slowest_s
             async with semaphore:
-                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                    return
-                if not deadline.has_budget_for(slowest_s):
-                    async with results_lock:
+                async with analysis_finished:
+                    while consecutive_failures >= MAX_CONSECUTIVE_FAILURES and active_analyses:
+                        await analysis_finished.wait()
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                        halted_after_failures = consecutive_failures
+                        return
+                    if not deadline.has_budget_for(slowest_s):
                         record.deferred += 1
-                    return
+                        return
+                    active_analyses += 1
 
                 update_started = time.time()
                 try:
@@ -519,12 +524,16 @@ async def execute_run(
                         # A permanently broken update must not pin the watermark.
                         cursor.finish(index)
                     return
-
-                async with results_lock:
-                    record.analyzed += 1
-                    consecutive_failures = 0
-                    if result.should_notify:
-                        record.relevant += 1
+                else:
+                    async with results_lock:
+                        record.analyzed += 1
+                        consecutive_failures = 0
+                        if result.should_notify:
+                            record.relevant += 1
+                finally:
+                    async with analysis_finished:
+                        active_analyses -= 1
+                        analysis_finished.notify_all()
 
                 receipt = None
                 if archive_service is not None:
@@ -574,6 +583,18 @@ async def execute_run(
             record.deferred = len(targets)
         else:
             await asyncio.gather(*[_analyze_one(i, update) for i, update in enumerate(targets)])
+            if halted_after_failures:
+                logger.warning(
+                    "orchestrator_analysis_halted",
+                    run_id=record.run_id,
+                    reason="consecutive_analysis_failures",
+                    consecutive_failures=halted_after_failures,
+                    failure_threshold=MAX_CONSECUTIVE_FAILURES,
+                    analyzed=record.analyzed,
+                    failed=record.failed,
+                    pending=cursor.pending,
+                    deferred=record.deferred,
+                )
             if archive_errors:
                 record.watermark = cursor.watermark
                 record.pending = cursor.pending
@@ -601,6 +622,10 @@ async def execute_run(
                     f"Analysis incomplete: {record.analyzed} analyzed, {record.failed} failed, "
                     f"{record.pending} pending, {record.deferred} deferred"
                 )
+            if halted_after_failures:
+                problems.append(
+                    "Analysis stopped after consecutive failures; pending targets were not run"
+                )
             if record.send_email and not record.email_sent:
                 problems.append("One or more weekly digests were not delivered")
             if problems:
@@ -610,6 +635,7 @@ async def execute_run(
         logger.info(
             "orchestrator_run_complete",
             run_id=record.run_id,
+            error=record.error,
             elapsed_s=round(time.time() - started, 1),
             **{
                 k: v
@@ -632,6 +658,8 @@ async def execute_run(
         record.error = str(exc)[:300]
         record.finished_at = datetime.now(timezone.utc)
         logger.error("orchestrator_run_failed", run_id=record.run_id, error=str(exc))
+    finally:
+        reset_contextvars(**context_tokens)
 
     return record
 
@@ -686,6 +714,7 @@ async def _send_digest(
             week_range=week_range,
             update_count=len(items),
             delivered=delivered,
+            status="completed" if delivered else "failed",
         )
     return all(deliveries)
 
@@ -768,6 +797,9 @@ async def _send_digest_for_period(
                                 if isinstance(source_result, BaseException)
                                 else "missing_result"
                             ),
+                            exc_info=(
+                                source_result if isinstance(source_result, BaseException) else False
+                            ),
                         )
                         items_by_index[index] = {
                             **item,
@@ -789,6 +821,12 @@ async def _send_digest_for_period(
             )
             for (index, item, source_result), result in zip(with_results, customized):
                 if isinstance(result, BaseException):
+                    logger.warning(
+                        "subscriber_customization_failed",
+                        run_id=run_id,
+                        update_id=getattr(item["update"], "id", ""),
+                        exc_info=result,
+                    )
                     items_by_index[index] = {
                         **item,
                         "result": source_result,
@@ -819,6 +857,14 @@ async def _send_digest_for_period(
             return_exceptions=True,
         )
         delivered = sum(1 for outcome in outcomes if outcome is True)
+        for outcome in outcomes:
+            if isinstance(outcome, BaseException):
+                logger.warning(
+                    "orchestrator_recipient_delivery_failed",
+                    run_id=run_id,
+                    week_range=date_range,
+                    exc_info=outcome,
+                )
         if delivered < len(subscribers):
             logger.warning(
                 "orchestrator_digest_partial",

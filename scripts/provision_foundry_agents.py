@@ -8,10 +8,9 @@ and cannot be created by ARM.
 Base instructions are derived from
 :data:`src.agent.foundry_backend.RUNTIME_AGENT_INSTRUCTIONS` and
 :data:`src.agent.foundry_backend.SPECIALIST_PROMPTS`. Role-scoped operational rules
-are compiled from the bounded ``Foundry Runtime Guidance`` section in each
-``.github/skills/*/SKILL.md``. The detailed developer workflow is never sent to
-the model, while ``--check`` detects any change to the runtime section as Agent
-instruction drift.
+come from :mod:`src.agent.foundry_instructions`, never from GitHub Copilot skills.
+The developer customizations under ``.github`` are not runtime inputs.
+``--check`` detects changes to the compiled Foundry instructions as Agent drift.
 
 The script derives app-owned FunctionTool definitions from the live LangChain
 Pydantic schemas, publishes strict specialist JSON response formats, and preserves
@@ -50,6 +49,7 @@ from src.agent.foundry_backend import (  # noqa: E402
     build_specialist_text_options,
     select_specialist_tools,
 )
+from src.agent.foundry_instructions import runtime_guidance_instructions  # noqa: E402
 from src.config import (  # noqa: E402
     SPECIALIST_AGENT_ROLES,
     get_azure_credential,
@@ -59,34 +59,6 @@ from src.config import (  # noqa: E402
 # The runtime prompt ends with the update context; an agent's standing
 # instructions are everything before that.
 _CONTEXT_MARKER = "\n\nAzure Update under analysis:"
-_RUNTIME_GUIDANCE_HEADING = "## Foundry Runtime Guidance"
-_RUNTIME_GUIDANCE_END = "<!-- End Foundry Runtime Guidance -->"
-_SKILL_ROOT = Path(__file__).resolve().parent.parent / ".github" / "skills"
-_RUNTIME_SKILLS_BY_PURPOSE: dict[str, tuple[str, ...]] = {
-    "coordinator": ("foundry-agent-architecture",),
-    "resource_graph": (
-        "kql-resource-graph",
-        "azure-service-integration",
-    ),
-    "azure_mcp": (
-        "foundry-agent-architecture",
-        "azure-service-integration",
-    ),
-    "azure_api": (
-        "azure-service-integration",
-        "foundry-agent-architecture",
-    ),
-    "report_writer": (
-        "report-quality",
-        "language-naturalness",
-        "email-template",
-    ),
-    "quality_reviewer": (
-        "report-evaluation",
-        "report-quality",
-        "language-naturalness",
-    ),
-}
 _RETIRED_APP_FUNCTION_NAMES = frozenset(
     {
         "search_update_related_docs",
@@ -155,42 +127,29 @@ def specialist_instructions(role: str) -> str:
     return RUNTIME_AGENT_INSTRUCTIONS[role]
 
 
-@lru_cache(maxsize=None)
-def _load_runtime_skill_guidance(skill_name: str) -> str:
-    """Load the bounded runtime section from one repository Skill."""
-    path = _SKILL_ROOT / skill_name / "SKILL.md"
-    text = path.read_text(encoding="utf-8")
-    if text.count(_RUNTIME_GUIDANCE_HEADING) != 1 or text.count(_RUNTIME_GUIDANCE_END) != 1:
-        raise RuntimeError(f"{path} must contain one bounded {_RUNTIME_GUIDANCE_HEADING!r} section")
-    section = text.split(_RUNTIME_GUIDANCE_HEADING, 1)[1]
-    section = section.split(_RUNTIME_GUIDANCE_END, 1)[0]
-    guidance = section.strip()
-    if not guidance:
-        raise RuntimeError(f"{path} has an empty Foundry runtime guidance section")
-    return guidance
-
-
-def runtime_skill_names(purpose: str) -> tuple[str, ...]:
-    """Return repository Skills assigned to one Foundry Agent purpose."""
-    return _RUNTIME_SKILLS_BY_PURPOSE.get(purpose, ())
-
-
-def runtime_skill_instructions(purpose: str) -> str:
-    """Compile role-scoped Skill guidance for one Foundry Agent definition."""
-    blocks = [
-        f"### Skill: {name}\n{_load_runtime_skill_guidance(name)}"
-        for name in runtime_skill_names(purpose)
-    ]
-    if not blocks:
-        return ""
-    return "## AzBrief Runtime Skills\n\n" + "\n\n".join(blocks)
-
-
 def agent_instructions(purpose: str) -> str:
     """Return standing instructions for one specialist Prompt Agent."""
     base = specialist_instructions(purpose)
-    skill_guidance = runtime_skill_instructions(purpose)
-    return f"{base}\n\n{skill_guidance}" if skill_guidance else base
+    guidance = runtime_guidance_instructions(purpose)
+    instructions = f"{base}\n\n{guidance}" if guidance else base
+    if purpose == "coordinator" and get_settings().foundry_coordinator_learn_transport == "hosted":
+        instructions += (
+            "\n\n## Documentation transport for this Agent version\n"
+            "Microsoft Learn remains the first source. Use the supplied runtime local-tool "
+            "catalog for documentation: search_update_related_docs, search_azure_docs, "
+            "get_service_documentation, fetch_documentation_link and query_tool_result. "
+            "This version has no managed Microsoft Learn MCP attachment; where the general "
+            "guidance mentions microsoft_docs_search or microsoft_docs_fetch, use the "
+            "available runtime documentation tools instead. During planning, request needed "
+            'evidence as {"local_tool_calls":[{"name":"search_azure_docs","args":{"query":'
+            '"public Azure feature question","include_content":true}}]}; the application '
+            "executes it and supplies the result before you complete the plan. Use only "
+            "public service/feature terms in searches, never tenant identifiers or secrets. "
+            "Do not claim a lookup ran without a tool result. Retain source URLs, scope, "
+            "traversal limits and explicit evidence gaps; do not invent facts or fall back "
+            "to another specialist. Web Search, if available, remains supplementary only."
+        )
+    return instructions
 
 
 def resolve_specialist_roster(roles: list[str] | None) -> list[tuple[str, str]]:
@@ -252,17 +211,19 @@ def _managed_server_tools(purpose: str) -> tuple[Any, ...]:
 
     settings = get_settings()
     if purpose == "coordinator":
-        tools: list[Any] = [
-            MCPTool(
-                server_label="microsoft_learn",
-                server_url="https://learn.microsoft.com/api/mcp",
-                require_approval="never",
-                server_description=(
-                    "Primary source for official Microsoft Learn documentation. "
-                    "Use this before Web Search."
-                ),
+        tools: list[Any] = []
+        if settings.foundry_coordinator_learn_transport == "managed_mcp":
+            tools.append(
+                MCPTool(
+                    server_label="microsoft_learn",
+                    server_url="https://learn.microsoft.com/api/mcp",
+                    require_approval="never",
+                    server_description=(
+                        "Primary source for official Microsoft Learn documentation. "
+                        "Use this before Web Search."
+                    ),
+                )
             )
-        ]
         if settings.foundry_coordinator_web_search_enabled:
             tools.append(WebSearchTool(search_context_size="medium"))
         return tuple(tools)

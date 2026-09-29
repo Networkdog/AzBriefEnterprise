@@ -6,6 +6,13 @@ param location string = resourceGroup().location
 @description('Name for the Azure MCP Server Container App.')
 param acaName string = 'ca-azbrief-mcp'
 
+@description('Existing AzBrief Container Apps environment resource ID.')
+@minLength(1)
+param containerAppEnvironmentId string
+
+@description('Existing environment workload profile. Empty for consumption-only environments.')
+param workloadProfileName string = ''
+
 @description('Display name for the Azure MCP Entra application.')
 param entraAppDisplayName string = 'AzBrief Azure MCP Server API'
 
@@ -18,9 +25,9 @@ param foundryProjectResourceId string
 @description('Optional Service Management Reference GUID for the Entra application.')
 param serviceManagementReference string = ''
 
-@description('Existing Application Insights connection string. Empty creates a dedicated component.')
-@secure()
-param appInsightsConnectionString string = ''
+@description('Existing AzBrief Application Insights component in this resource group. MCP console logs use its shared workspace through the Container Apps environment.')
+@minLength(1)
+param applicationInsightsName string
 
 @description('Pinned official Azure MCP Server image. Upgrade only after validating direct tool schemas and a live read-only inventory call.')
 param azureMcpImage string = 'mcr.microsoft.com/azure-sdk/azure-mcp:3.0.0-beta.38'
@@ -30,16 +37,10 @@ param tags object = {
   environment: 'production'
 }
 
-var appInsightsName = 'appi-${acaName}'
 var entraAppUniqueName = '${replace(toLower(entraAppDisplayName), ' ', '-')}-${uniqueString(resourceGroup().id)}'
 
-module appInsights 'modules/application-insights.bicep' = {
-  name: 'azure-mcp-application-insights'
-  params: {
-    appInsightsConnectionString: appInsightsConnectionString
-    name: appInsightsName
-    location: location
-  }
+resource appInsights 'Microsoft.Insights/components@2020-02-02' existing = {
+  name: applicationInsightsName
 }
 
 module entraApp 'modules/entra-app.bicep' = {
@@ -56,8 +57,8 @@ module acaInfrastructure 'modules/aca-infrastructure.bicep' = {
   params: {
     name: acaName
     location: location
-    appInsightsConnectionString: appInsights.outputs.connectionString
-    azureMcpCollectTelemetry: string(!empty(appInsights.outputs.connectionString))
+    containerAppEnvironmentId: containerAppEnvironmentId
+    workloadProfileName: workloadProfileName
     azureAdTenantId: tenant().tenantId
     azureAdClientId: entraApp.outputs.entraAppClientId
     targetSubscriptionId: targetSubscriptionId
@@ -95,7 +96,8 @@ output AZURE_MCP_ENTRA_APP_IDENTIFIER_URI string = entraApp.outputs.entraAppIden
 output AZURE_MCP_ENTRA_APP_ROLE_ID string = entraApp.outputs.entraAppRoleId
 output AZURE_MCP_FOUNDRY_PROJECT_PRINCIPAL_ID string = foundryRoleAssignment.outputs.foundryProjectPrincipalId
 output AZURE_MCP_READER_ROLE_ASSIGNMENT_ID string = subscriptionReader.outputs.roleAssignmentId
-output APPLICATION_INSIGHTS_NAME string = appInsightsName
+output AZURE_CONTAINER_APP_ENVIRONMENT_ID string = acaInfrastructure.outputs.containerAppEnvironmentId
+output APPLICATION_INSIGHTS_NAME string = appInsights.name
 
 @secure()
-output APPLICATION_INSIGHTS_CONNECTION_STRING string = appInsights.outputs.connectionString
+output APPLICATION_INSIGHTS_CONNECTION_STRING string = appInsights.properties.ConnectionString

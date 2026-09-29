@@ -26,8 +26,270 @@ from src.email.templates import (
     format_digest_intro_html,
     format_digest_update_card_html,
     format_email_section_html,
+    format_environment_resources_html,
+    format_environment_resources_text,
+    format_report_annotations_html,
+    format_report_annotations_text,
     get_labels,
+    markdown_to_html,
 )
+from src.report_presentation import report_presentation
+
+
+def test_real_numbered_lists_retain_explicit_starts_across_blank_lines():
+    source = "1. Read the configuration.\n\n2. Verify the result.\n\n3) Record the decision."
+    narrative = report_presentation({"relevance_reason": source})["relevance_reason"]
+    soup = BeautifulSoup(markdown_to_html(narrative), "html.parser")
+    assert [node["start"] for node in soup.find_all("ol")] == ["1", "2", "3"]
+
+
+@pytest.mark.parametrize("kind", ["single", "digest"])
+@pytest.mark.parametrize("populated", [False, True])
+def test_email_and_archive_presentation_share_narrative_and_legacy_impact_rules(kind, populated):
+    item = build_demo_items("ko")[0]
+    result = item["result"]
+    result.relevance_reason = "1. First explanatory paragraph.\n\n1. Second explanatory paragraph."
+    result.impact_details = None
+    result.impact_summary = (
+        '{"cost_impact":"", "security_impact":"'
+        + ("Source security benefit" if populated else "")
+        + '", "performance_impact":"", "operational_impact":""}'
+    )
+    before = result.model_dump_json()
+    display = report_presentation(result.model_dump())
+    with patch("src.agent.history.get_retirement_countdown", return_value=[]):
+        service = EmailService()
+        content = (
+            service.build_email_content(item["update"], result)
+            if kind == "single"
+            else service.build_digest_content([item])
+        )
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    assert "1. First explanatory" not in content["plain_content"]
+    assert "1. Second explanatory" not in content["plain_content"]
+    assert display["relevance_reason"] in content["plain_content"]
+    assert soup.find("p", string="First explanatory paragraph.")
+    assert soup.find("p", string="Second explanatory paragraph.")
+    for output in content["html_content"], content["plain_content"]:
+        assert "cost_impact" not in output and "security_impact" not in output
+        assert ("Source security benefit" in output) == populated
+    assert len(soup.select(".azb-impact")) == int(populated)
+    assert result.model_dump_json() == before
+
+
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+@pytest.mark.parametrize("resource_count", [0, 2, 21])
+@pytest.mark.parametrize("category", ["retirement", "new_service"])
+def test_environment_section_combines_evidence_without_losing_resource_contracts(
+    language, resource_count, category
+):
+    result = build_demo_items(language, resource_count=resource_count)[0]["result"]
+    evidence = "Scoped environment evidence with an unresolved prerequisite."
+    arguments = {
+        "language": language,
+        "update_category": category,
+        "resource_queries": result.resource_queries,
+        "archive_url": "https://azbrief.example/archive/sample-1",
+    }
+    html = format_environment_resources_html(evidence, result.affected_resources, **arguments)
+    soup = BeautifulSoup(html, "html.parser")
+    assert len(soup.select(".azb-section")) == 1
+    assert soup.select_one(".azb-heading").get_text() == get_labels(language)["relevance_evidence"]
+    assert evidence in soup.get_text()
+    assert len(soup.select(".azb-resource-row")) == (
+        resource_count if category == "retirement" and resource_count <= 20 else 0
+    )
+    assert bool(soup.select(".azb-resource-summary")) == (
+        category == "retirement" and resource_count > 20
+    )
+    text = format_environment_resources_text(evidence, result.affected_resources, **arguments)
+    assert evidence in text
+    resource_text = format_affected_resources_text(result.affected_resources, **arguments)
+    assert resource_text in text
+    assert len(result.affected_resources) == resource_count
+
+
+@pytest.mark.parametrize("kind", ["single", "digest"])
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+def test_email_combines_environment_and_resources_in_one_section(kind, language):
+    item = build_demo_items(language)[0]
+    result = item["result"]
+    with patch("src.agent.history.get_retirement_countdown", return_value=[]):
+        service = EmailService()
+        content = (
+            service.build_email_content(item["update"], result, language)
+            if kind == "single"
+            else service.build_digest_content([item], language=language)
+        )
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    labels = get_labels(language)
+    section = soup.select_one(".azb-resources").find_parent(class_="azb-section")
+    assert section.select_one(".azb-heading").get_text() == labels["relevance_evidence"]
+    assert result.relevance_evidence in section.get_text()
+    assert len(section.select(".azb-resource-row")) == len(result.affected_resources)
+    assert labels["affected_resources"] not in [
+        heading.get_text() for heading in soup.select(".azb-heading")
+    ]
+    assert content["plain_content"].count(result.relevance_evidence) == 1
+    assert all(
+        resource["name"] in content["plain_content"] for resource in result.affected_resources
+    )
+
+
+def test_report_notes_follow_related_paragraphs_and_preserve_unmatched_documents():
+    from src.email.templates import markdown_to_html
+
+    body = format_email_section_html(
+        "Overview",
+        markdown_to_html(
+            "TLS 1.2 protects the storage connection.\n\n"
+            "Private endpoints restrict network access.\n\n"
+            "> **TLS**: A connection security protocol."
+        ),
+    ) + format_email_section_html(
+        "Actions", '<p class="azb-text">Configure BGP routing on the gateway.</p>'
+    )
+    docs = [
+        {
+            "title": "TLS 1.2",
+            "url": "https://learn.microsoft.com/azure/storage/tls",
+            "description": "Verified TLS facts.",
+        },
+        {
+            "title": "BGP routing",
+            "url": "https://learn.microsoft.com/azure/vpn-gateway/bgp",
+            "related_content": "Configure BGP routing",
+        },
+        {
+            "title": "Unmatched manual",
+            "url": "https://learn.microsoft.com/other",
+            "description": "Retained source.",
+        },
+    ]
+    soup = BeautifulSoup(format_report_annotations_html(body, docs, "en"), "html.parser")
+    paragraph = soup.find("p", string="TLS 1.2 protects the storage connection.")
+    concept = paragraph.find_next_sibling()
+    assert "azb-concept" in concept["class"]
+    assert "Verified TLS facts." in concept.find_next_sibling().get_text()
+    action = soup.find("p", string="Configure BGP routing on the gateway.")
+    assert "BGP routing" in action.find_next_sibling().get_text()
+    assert "Retained source." in soup.select_one(".azb-section-copy").get_text()
+    assert len(soup.select(".azb-reference")) == len(docs)
+    assert [heading.get_text() for heading in soup.select(".azb-heading")] == [
+        "Overview",
+        "Actions",
+    ]
+
+
+def test_report_notes_preserve_order_safety_and_every_document():
+    body = format_email_section_html("Overview", '<p class="azb-text">TLS 1.2 configuration.</p>')
+    docs = [
+        {
+            "title": f"TLS 1.2 source {index}",
+            "url": "https://learn.microsoft.com/azure/storage/tls",
+            "description": f"Fact {index}",
+        }
+        for index in range(7)
+    ]
+    docs.append(
+        {
+            "title": "<script>bad</script>",
+            "url": "javascript:alert(1)",
+            "description": '<img src="https://attacker.example/track">',
+        }
+    )
+    soup = BeautifulSoup(format_report_annotations_html(body, docs), "html.parser")
+    assert len(soup.select(".azb-reference")) == 8
+    assert [note.get_text().split("Fact ")[-1] for note in soup.select(".azb-reference")[:7]] == [
+        str(index) for index in range(7)
+    ]
+    assert soup.find(["script", "img"]) is None
+    assert soup.select_one('a[href^="javascript:"]') is None
+
+
+@pytest.mark.parametrize("kind", ["single", "digest"])
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+def test_email_places_references_and_glossary_next_to_related_prose(kind, language):
+    item = build_demo_items(language)[0]
+    result = item["result"]
+    result.relevance_reason = (
+        "TLS 1.2 protects storage connections.\n\n"
+        "Private endpoints restrict network access.\n\n"
+        "> **TLS**: A transport security protocol."
+    )
+    result.reference_docs = [
+        {
+            "title": "TLS 1.2",
+            "url": "https://learn.microsoft.com/azure/storage/tls",
+            "description": "Verified source details.",
+        }
+    ]
+    original = result.model_dump()
+    with patch("src.agent.history.get_retirement_countdown", return_value=[]):
+        service = EmailService()
+        content = (
+            service.build_email_content(item["update"], result, language)
+            if kind == "single"
+            else service.build_digest_content([item], language=language)
+        )
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    paragraph = soup.find("p", string="TLS 1.2 protects storage connections.")
+    assert paragraph.find_next_sibling().get("class") == ["azb-concept"]
+    assert (
+        "Verified source details." in paragraph.find_next_sibling().find_next_sibling().get_text()
+    )
+    assert get_labels(language)["reference_docs"] not in [
+        heading.get_text() for heading in soup.select(".azb-heading")
+    ]
+    assert result.model_dump() == original
+    plain = content["plain_content"]
+    assert (
+        plain.index("TLS 1.2 protects")
+        < plain.index("> **TLS**:")
+        < plain.index("Verified source details.")
+    )
+    assert plain.index("Verified source details.") < plain.index("Private endpoints restrict")
+    assert get_labels(language)["reference_docs"] not in plain
+
+
+def test_plain_annotations_preserve_multiline_paragraphs_and_code():
+    code = "```text\nTLS 1.2 command example\n\n> **TLS**: literal code, not a note\n```"
+    paragraph = "TLS 1.2 protects the connection\nand is required by the application."
+    body = f"{code}\n\n{paragraph}\n\nAnother paragraph.\n\n> **TLS**: A protocol."
+    docs = [{"title": "TLS 1.2", "url": "https://learn.microsoft.com/azure/storage/tls"}]
+    text = format_report_annotations_text(body, docs, overview_text=paragraph)
+    assert code in text
+    assert paragraph + "\n\n> **TLS**: A protocol.\n\n> TLS 1.2" in text
+    assert text.index("> https://learn.microsoft.com") < text.index("Another paragraph.")
+
+
+@pytest.mark.parametrize("kind", ["single", "digest"])
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+def test_original_english_title_and_localized_announcement_summary_are_separate(kind, language):
+    item = build_demo_items(language, resource_count=327)[0]
+    title = "Public Preview: Azure NetApp Files support in OpenShift Virtualization"
+    item["update"].title = title
+    result = item["result"]
+    result.update_title = "This translated model title must not replace the source title"
+    summary = result.one_line_summary
+    result.one_line_summary = summary.replace(" ", "\n", 1)
+    with patch("src.agent.history.get_retirement_countdown", return_value=[]):
+        service = EmailService()
+        content = (
+            service.build_email_content(item["update"], result, language)
+            if kind == "single"
+            else service.build_digest_content([item], language=language)
+        )
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    detail = soup.select_one(".azb-digest-detail") if kind == "digest" else soup
+    assert detail.select_one(".azb-hero-title").get_text() == title
+    assert detail.select_one(".azb-summary").get_text() == summary
+    if kind == "digest":
+        assert soup.select_one(".azb-digest-title a").get_text() == title
+        assert soup.select_one(".azb-digest-summary").get_text() == summary
+    assert title in content["plain_content"]
+    assert summary in content["plain_content"]
+    assert "327" not in detail.select_one(".azb-summary").get_text()
 
 
 @pytest.fixture
@@ -128,6 +390,27 @@ def test_digest_has_working_contents_and_separates_skipped_counts(report_markup,
     assert get_labels(language)["digest_analyzed"].format(count=3) in soup.get_text()
 
 
+@pytest.mark.parametrize(
+    "language, expected_title",
+    [
+        ("ko", "Azure Update 브리핑"),
+        ("en", "Azure Update Briefing"),
+        ("ja", "Azure Update ブリーフィング"),
+    ],
+)
+@pytest.mark.parametrize("date_range", ["2026-09-15", "2026-09-07 ~ 2026-09-13"])
+def test_digest_title_does_not_assume_a_delivery_schedule(language, expected_title, date_range):
+    with patch("src.agent.history.get_retirement_countdown", return_value=[]):
+        content = EmailService().build_digest_content(
+            build_demo_items(language), date_range, language
+        )
+    soup = BeautifulSoup(content["html_content"], "html.parser")
+    assert soup.title.get_text() == expected_title
+    assert soup.select_one(".azb-digest-lead h1").get_text() == expected_title
+    assert expected_title in content["plain_content"]
+    assert date_range in content["subject"]
+
+
 @pytest.mark.parametrize("language", ["ko", "en", "ja"])
 def test_digest_chapter_openers_are_numbered_and_link_back_to_contents(report_markup, language):
     soup = BeautifulSoup(report_markup("digest", language), "html.parser")
@@ -143,6 +426,9 @@ def test_digest_chapter_openers_are_numbered_and_link_back_to_contents(report_ma
         )
         assert "font-size: 32px" in chapter.select_one(".azb-chapter-number")["style"]
         assert FONT_STACK_DISPLAY in chapter.select_one(".azb-chapter-number")["style"]
+        assert f'border-top: 2px solid {EMAIL_COLORS["ink"]}' in chapter["style"]
+    for detail in soup.select(".azb-digest-detail"):
+        assert "border-top" not in detail.find("table", recursive=False)["style"]
     for band in soup.select(".azb-chapter-band"):
         assert f'background-color: {EMAIL_COLORS["paper"]}' in band["style"]
     single = BeautifulSoup(report_markup("single", language), "html.parser")
@@ -180,33 +466,28 @@ def test_concept_boxes_are_shaded_without_coloring_action_surfaces(report_markup
         assert action.select_one(".azb-action-title")
 
 
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
 @pytest.mark.parametrize("counts", [(2, 1, 1), (0, 3, 1), (4, 0, 0), (0, 0, 0), (123, 9, 1)])
-def test_digest_distribution_represents_analyzed_counts_only(counts):
+def test_digest_distribution_represents_analyzed_counts_only(counts, language):
     high, medium, low = counts
     analyzed = sum(counts)
-    markup = format_digest_intro_html(analyzed + 5, high, medium, low, 5, "en")
+    markup = format_digest_intro_html(analyzed + 5, high, medium, low, 5, language)
     soup = BeautifulSoup(markup, "html.parser")
-    chart = soup.select_one(".azb-digest-distribution")
+    summary = soup.select_one(".azb-digest-counts")
     assert [p.get_text() for p in soup.select(".azb-digest-counts .azb-count-value")] == [
         str(count) for count in counts
     ]
-    assert chart.get("aria-hidden") is None
-    assert chart.get("role") != "presentation"
-    assert get_labels("en")["digest_analyzed"].format(count=analyzed) in chart.caption.get_text()
-    assert len(chart.select('th[scope="row"]')) == 3
-    assert len(chart.select(".azb-count-track")) == 3
-    for track in chart.select(".azb-count-track"):
-        assert track.parent["aria-hidden"] == "true"
-        assert sum(
-            float(cell["width"].rstrip("%")) for cell in track.select("td")
-        ) == pytest.approx(100)
-    for level, count in zip(("high", "medium", "low"), counts):
-        segment = chart.select_one(f".azb-distribution-{level}")
-        if count:
-            assert float(segment["width"].rstrip("%")) == pytest.approx(count / analyzed * 100)
-            assert segment["bgcolor"] == _LEVEL_COLORS[level]["color"]
-        else:
-            assert segment is None
+    labels = get_labels(language)
+    assert summary["role"] == "group"
+    assert summary["aria-label"] == labels["col_importance"]
+    assert labels["digest_analyzed"].format(count=analyzed) in soup.get_text()
+    assert labels["digest_skipped"].format(count=5) in soup.get_text()
+    items = summary.select(".azb-count-item")
+    assert len(items) == 3
+    for item, level in zip(items, ("high", "medium", "low")):
+        assert "white-space: nowrap" in item["style"]
+        assert item.select_one(".azb-count-label").get_text() == labels["importance_" + level]
+    assert not soup.select(".azb-count-track, .azb-count-row, .azb-digest-distribution, table")
 
 
 @pytest.mark.parametrize("kind", ["single", "digest"])
@@ -243,25 +524,49 @@ def test_semantic_status_uses_shaded_cells_including_inline_layout(report_markup
         assert cell["bgcolor"] == _LEVEL_COLORS[level]["bg"]
         assert f'background-color: {_LEVEL_COLORS[level]["bg"]}' in cell["style"]
         assert cell["bgcolor"] != EMAIL_COLORS["paper"]
-        assert "border" not in cell["style"]
-        metric = badge.find_parent("table", class_="azb-metric")
-        assert metric is not None
-        assert metric["width"] == "33%"
-        assert metric["align"] == "left"
-        assert "table-layout: auto" in metric["style"]
+        assert re.search(r"(?:^|;)\s*border(?:-[\w-]+)?\s*:", cell["style"]) is None
+        if cell.find_parent("tr", class_="azb-digest-row"):
+            assert "azb-digest-layout-row" in cell.parent["class"]
+            assert cell["width"] == "33%"
+            assert "padding:8px" in cell["style"]
+        else:
+            metric = badge.find_parent("table", class_="azb-metric")
+            assert metric is not None
+            assert metric.get("width") is None
+            assert metric["align"] == "left"
+            assert "table-layout: auto" in metric["style"]
+            assert "padding: 4px 8px" in cell["style"]
+            assert "height:" not in cell["style"]
+            label = cell.select_one(".azb-assessment-label")
+            assert label.get_text(strip=True)
+            assert "margin-right: 4px" in label["style"]
 
 
-def test_digest_fallback_gives_titles_full_width_and_labels_each_metric(report_markup):
-    soup = BeautifulSoup(report_markup("digest", "en"), "html.parser")
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+def test_digest_fallback_gives_titles_full_width_and_labels_each_metric(report_markup, language):
+    soup = BeautifulSoup(report_markup("digest", language), "html.parser")
     headers = soup.select(".azb-digest-heading > th")
-    assert [header["width"] for header in headers] == ["52%", "16%", "16%", "16%"]
+    assert [header["width"] for header in headers] == ["70%", "10%", "10%", "10%"]
+    assert "text-align:left;" in headers[0]["style"]
+    for header in headers[1:]:
+        assert header["align"] == "center"
+        assert "text-align:center;" in header["style"]
     for style in soup.find_all("style"):
         style.decompose()
     assert "display:none" in soup.select_one(".azb-digest-heading")["style"]
     for row in soup.select(".azb-digest-row"):
-        assert row.select_one(".azb-digest-entry")["colspan"] == "4"
-        assert row.select_one(".azb-digest-copy")["width"] == "100%"
-        assert row.select_one(".azb-digest-metrics")["width"] == "100%"
+        entry = row.select_one(".azb-digest-entry")
+        assert entry["colspan"] == "4"
+        assert "padding:0;" in entry["style"]
+        copy = row.select_one(".azb-digest-copy")
+        assert copy["width"] == "100%"
+        assert "padding:16px 0;" in copy["style"]
+        metrics = row.select(".azb-digest-metrics")
+        assert len(metrics) == 3
+        assert all(cell.parent is copy.parent for cell in metrics)
+        assert all("width:33.333333%" in cell["style"] for cell in metrics)
+        assert all(cell["align"] == "center" for cell in metrics)
+        assert all("text-align:center;" in cell["style"] for cell in metrics)
         for label in row.select(".azb-metric-label"):
             assert "display:block" in label["style"]
             assert "mso-hide" not in label["style"]
@@ -302,17 +607,32 @@ def test_report_typography_uses_larger_sizes_without_scaling_layout_reset(report
 
 
 @pytest.mark.parametrize("kind", ["single", "digest"])
-def test_brief_summary_and_assessment_stack_without_media_queries(report_markup, kind):
-    soup = BeautifulSoup(report_markup(kind, "en"), "html.parser")
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+def test_brief_summary_and_assessment_stack_without_media_queries(report_markup, kind, language):
+    markup = report_markup(kind, language)
+    soup = BeautifulSoup(markup, "html.parser")
+    labels = get_labels(language)
+    assert ".azb-brief-copy { width: 66%" not in markup
+    assert ".azb-brief-assessment { width: 34%" not in markup
     for style in soup.find_all("style"):
         style.decompose()
-    for brief in soup.select(".azb-brief"):
+    for brief, item in zip(soup.select(".azb-brief"), build_demo_items(language)):
         summary = brief.select_one(".azb-brief-copy")
         assessment = brief.select_one(".azb-brief-assessment")
         assert summary["width"] == assessment["width"] == "100%"
-        assert summary.select_one(".azb-takeaway")
+        assert summary.select_one(".azb-summary").get_text() == item["result"].one_line_summary
+        assert len(summary.select(".azb-takeaway p")) == 1
+        assert labels["importance_section"] not in brief.get_text()
         assert summary.select_one(".azb-source-links")
-        assert len(assessment.select(".azb-metric")) == 3
+        metrics = assessment.select(".azb-metric")
+        assert len(metrics) == 3
+        assert [metric.select_one(".azb-assessment-label").get_text() for metric in metrics] == [
+            labels[key] for key in ("col_importance", "col_impact", "col_job_relevance")
+        ]
+        for metric in metrics:
+            assert metric.get("width") is None
+            assert "height:" not in metric.td["style"]
+            assert metric.select_one("[class^='azb-badge-']").get_text(strip=True)
         assert summary.find_next("table", class_="azb-brief-assessment") == assessment
 
 
@@ -345,16 +665,18 @@ def test_section_heading_preserves_complete_text_including_inline_fallback(label
 
 
 @pytest.mark.parametrize("kind", ["single", "digest"])
-def test_resource_heading_keeps_its_count_separate_from_title_text(report_markup, kind):
+def test_resource_count_stays_compact_inside_the_environment_section(report_markup, kind):
     soup = BeautifulSoup(report_markup(kind, "ko"), "html.parser")
-    counts = soup.select(".azb-heading-count")
+    counts = soup.select(".azb-resource-caption")
     assert counts
     for count in counts:
-        assert count.parent["class"] == ["azb-heading"]
-        assert count.parent.contents[0] == "연관 리소스"
-        assert count.get_text().startswith(" · ")
-        assert "font-size:11px" in count["style"]
-        assert "white-space:nowrap" in count["style"]
+        assert (
+            count.find_parent(class_="azb-section").select_one(".azb-heading").get_text()
+            == "환경 연관성"
+        )
+        assert count.get_text().startswith("연관 리소스:")
+        assert "font-size: 11px" in count["style"]
+        assert count.find_next_sibling("table") is not None
 
 
 @pytest.mark.parametrize("count", [20, 21, 327])
@@ -709,19 +1031,21 @@ def test_digest_uses_a_sans_masthead_and_directly_labeled_statistic_rows(report_
     assert FONT_STACK_DISPLAY in soup.select_one(".azb-wordmark")["style"]
     assert soup.select_one(".azb-masthead-brand")["width"] == "100%"
     assert soup.select_one(".azb-masthead-edition")["width"] == "100%"
-    for row, level in zip(soup.select(".azb-count-row"), ("high", "medium", "low")):
-        label = row.find("th", scope="row")
+    items = soup.select(".azb-count-item")
+    assert len(items) == 3
+    for item, level in zip(items, ("high", "medium", "low")):
+        label = item.select_one(".azb-count-label")
         assert f'color: {_LEVEL_COLORS[level]["color"]}' in label["style"]
         assert get_labels("en")["importance_" + level] == label.get_text()
-        assert "font-size: 28px" in row.select_one(".azb-count-value")["style"]
-        assert "font-weight: 700" in row.select_one(".azb-count-value")["style"]
+        assert "font-size: 14px" in item.select_one(".azb-count-value")["style"]
+        assert "font-weight: 700" in item.select_one(".azb-count-value")["style"]
 
 
 def test_large_digest_counts_remain_complete_in_narrow_cells():
     soup = BeautifulSoup(format_digest_intro_html(220, 120, 90, 10, 0), "html.parser")
     values = soup.select(".azb-count-value")
     assert [value.get_text() for value in values] == ["120", "90", "10"]
-    assert all("font-size: 24px" in value["style"] for value in values)
+    assert all("font-size: 14px" in value["style"] for value in values)
 
 
 def test_digest_does_not_truncate_a_long_title():
@@ -735,19 +1059,30 @@ def test_digest_does_not_truncate_a_long_title():
     assert all(cell.select_one(".azb-metric-label") for cell in metrics)
 
 
-def test_resource_mobile_labels_retain_full_identity_and_reason(report_markup):
-    markup = report_markup("single", "ko")
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+def test_resource_mobile_labels_retain_full_identity_and_reason(report_markup, language):
+    markup = report_markup("single", language)
     soup = BeautifulSoup(markup, "html.parser")
     assert ".azb-resources, .azb-resources > tbody" in markup
     assert ".azb-digest-table, .azb-digest-table > tbody" in markup
     assert ".azb-qd, .azb-qd > tbody, .azb-qd tr" in markup
     resources = soup.select(".azb-resource-row")
     assert len(resources) == 2
+    labels = get_labels(language)
+    expected_labels = [
+        labels[key] for key in ("col_resource", "col_type", "resource_group", "subscription")
+    ]
+    assert [cell.get_text() for cell in soup.select(".azb-resource-columns th")] == expected_labels
     for row in resources:
-        assert len(row.find_all("td", recursive=False)) == 4
-        assert len(row.select(".azb-resource-field-label")) == 4
-        assert "rg-platform-production" in row.get_text()
-        assert "Production sample" in row.get_text()
+        cells = row.find_all("td", recursive=False)
+        assert len(cells) == 4
+        assert [
+            label.get_text() for label in row.select(".azb-resource-field-label")
+        ] == expected_labels
+        assert cells[1].get_text().endswith("storageAccounts")
+        assert cells[1].find("a") is None
+        assert cells[2].find("a").get_text() == "rg-platform-production"
+        assert cells[3].find("a").get_text() == "Production sample"
     assert len(soup.select(".azb-resource-reason")) == 1
     assert len(resources[0].find_all("a")) == 3
 
@@ -766,25 +1101,38 @@ def test_procedure_command_verification_and_reference_survive_redesign(report_ma
 
 
 @pytest.mark.parametrize("language", ["ko", "en", "ja"])
-def test_countdown_uses_localized_status_and_a_two_column_list(language):
+def test_countdown_uses_zero_padded_days_and_a_two_column_list(language):
     records = [
         {
             "days_remaining": days,
             "title": "A complete retirement title " * 4,
             "affected_resource_count": 2,
+            "retirement_date": retirement_date,
             "migration_status": status,
         }
-        for days, status in ((-3, "not_started"), (30, "in_progress"), (90, "completed"))
+        for days, retirement_date, status in (
+            (-3, "2026-09-17", "not_started"),
+            (30, "2026-10-20", "in_progress"),
+            (90, "2026-12-19", "completed"),
+            (None, "", "not_started"),
+        )
     ]
     with patch("src.agent.history.get_retirement_countdown", return_value=records):
         markup = EmailService()._build_retirement_countdown_html(language)
     soup = BeautifulSoup(markup, "html.parser")
     rows = soup.select(".azb-countdown tr")
-    assert len(rows) == 3
+    assert len(rows) == 4
     assert all(len(row.find_all("td", recursive=False)) == 2 for row in rows)
-    assert "D+3" in soup.get_text() and "D-30" in soup.get_text()
+    assert [cell.get_text(strip=True) for cell in soup.select(".azb-countdown-day")] == [
+        "D+003",
+        "D-030",
+        "D-090",
+        "D-???",
+    ]
+    assert "TBD" not in soup.get_text()
+    assert get_labels(language)["retirement_date_unconfirmed"] in soup.get_text()
     for status in ("not_started", "in_progress", "completed"):
-        assert get_labels(language)["migration_" + status] in soup.get_text()
+        assert get_labels(language)["migration_" + status] not in soup.get_text()
     assert records[0]["title"].strip() in soup.get_text()
     assert not any(icon in markup for icon in ("⏰", "⬜", "🟨", "✅"))
 
@@ -794,7 +1142,7 @@ def test_empty_digest_has_an_explicit_empty_state_and_zero_counts():
         markup = EmailService().build_digest_content([], language="en")["html_content"]
     soup = BeautifulSoup(markup, "html.parser")
     assert get_labels("en")["digest_no_updates"] in soup.get_text()
-    assert [p.get_text() for p in soup.select(".azb-digest-counts td > p:first-child")] == [
+    assert [p.get_text() for p in soup.select(".azb-digest-counts .azb-count-value")] == [
         "0",
         "0",
         "0",

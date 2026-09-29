@@ -4,6 +4,9 @@
 
 Azure MCP specialist Prompt Agent가 실제 tenant 상태를 조회할 때 사용하는 **별도 Azure MCP Server**의 `azd`
 배포 단위입니다. AzBrief Container App이 제공하는 `/mcp` 제어면과 목적이 다릅니다.
+앱과 identity는 별도지만 Environment·Application Insights·Log Analytics는 기반 배포의 하나씩을
+재사용합니다. `setup_customer.ps1 -Stage Mcp`는 v3 출력의 공용 리소스를 바인딩하며, 기존 MCP가
+다른 Environment에 있으면 삭제하지 않고 중단합니다. [통합 절차](../CUSTOMER_DEPLOYMENT.md#consolidating-existing-installations)를 따르십시오.
 
 | MCP surface | 대상 | 노출 기능 |
 |---|---|---|
@@ -13,7 +16,7 @@ Azure MCP specialist Prompt Agent가 실제 tenant 상태를 조회할 때 사�
 ## 구성
 
 - [`azure.yaml`](azure.yaml): Bicep provider와 deployment output mapping
-- [`infra/`](infra/README.md): Container App, Entra application, App Insights, RBAC Bicep
+- [`infra/`](infra/README.md): 공용 인프라 참조, Container App, Entra application, RBAC Bicep
 - `.azure/`: 로컬 `azd` environment state이며 Git에 포함하지 않음
 
 ## 사용 예시
@@ -33,6 +36,11 @@ project connection과 검증 단계에 전달합니다. output 값은 코드에 
 - 공식 Azure MCP image는 검증한 version으로 pin하며 `latest`를 사용하지 않습니다.
 - incoming Entra 인증을 유지하고 project managed identity에 필요한 app role만 부여합니다.
 - 서버 identity는 대상 subscription의 `Reader`이며 Contributor가 아닙니다.
+- 공용 Application Insights의 Entra 전용 설정을 완화하지 않습니다. 현재 고정 image의 직접
+  exporter가 Entra 자격 증명을 설정하지 않아 MCP 직접 추적·메트릭과 Microsoft telemetry는
+  끄고, `stdout`/`stderr`는 공용 Environment의 Log Analytics로 수집합니다.
+- MCP ingress는 공용 Environment의 공개/내부 경계를 따릅니다. 내부 Environment에서도
+  Foundry가 접근할 수 있도록 앱의 `external: true`와 Entra 인증을 유지하고 실제 경로를 검증합니다.
 - runtime arguments의 `--read-only`와 좁은 namespace allow-list를 제거하지 않습니다.
 - image version을 올린 뒤 direct tool schema와 실제 read-only inventory 호출을 검증한 다음 Azure
   MCP specialist와 Hosted Agent의 새 version을 발행합니다.

@@ -7,6 +7,8 @@ saving ~8-9K tokens per report generation.
 CATEGORY_INTRO = """### Category-Specific Report Templates
 
 Each category has a tailored report structure. Follow the template for the classified category.
+Every `one_line_summary` pattern below describes announcement content; write it as one sentence
+in the requested language, without tenant impact, estimated work or subscriber-role framing.
 Section requirements are conditional on evidence, not merely the category name. A change or
 retirement needs actions only for confirmed applicability; never invent targets when absent or
 unverified. A new capability needs useful value and adoption conditions, not a compulsory action.
@@ -17,7 +19,7 @@ unverified. A new capability needs useful value and adoption conditions, not a c
 CATEGORY_TEMPLATES: dict[str, str] = {
     "retirement": """#### CATEGORY: `retirement`
 **Tone**: Action-oriented when applicability is confirmed; otherwise concise about scoped absence or uncertainty.
-**one_line_summary pattern**: "[Service/feature] retiring [date] — [N] resources need migration"
+**one_line_summary pattern**: "[Service/feature] support ends on [announced date]"
 **detailed_analysis structure**:
 1. What is being retired and the exact retirement date
 2. What happens to resources after the deadline (service disruption? degraded? unsupported?)
@@ -51,7 +53,7 @@ When `get_resource_configurations` results show affected resources, generate a c
 - `impact_summary`: Focus on `operational_impact` (service disruption risk) and `security_impact` (if end-of-support means no patches). Include blast radius context from dependencies.""",
     "feature_change": """#### CATEGORY: `feature_change`
 **Tone**: Cautious, verification-focused. "Something changed — verify your workloads."
-**one_line_summary pattern**: "[Service] [what changed] — [N] resources to verify ([risk])"
+**one_line_summary pattern**: "[Service] changes [specific behavior/default/setting]"
 **detailed_analysis structure**:
 1. What specific behavior/default/setting changed
 2. How this might affect existing workloads (breaking scenarios)
@@ -64,7 +66,7 @@ When `get_resource_configurations` results show affected resources, generate a c
     "new_feature": """#### CATEGORY: `new_feature`
 **Tone**: Opportunity-oriented, advisory. "Here's what you can now do — and what you gain."
 The primary value of a GA report is NOT to create action items, but to inform the administrator what **opportunities and improvements** this feature unlocks for their environment.
-**one_line_summary pattern**: "[Service] [feature] GA — [concrete benefit for admin's environment]"
+**one_line_summary pattern**: "[Service] adds [announced feature and documented capability]"
 **detailed_analysis structure**:
 1. What the new feature does in plain terms, and how administrators reached that outcome before it existed (a component they operated themselves, a manual step, a third-party tool, or a limitation they accepted) — that contrast IS the problem statement
 2. **Key benefits**: Concrete improvements this enables — cost savings, security posture, operational simplification, performance gains. Use numbers when possible (e.g., "geo-redundant backup으로 RPO를 24시간에서 0으로 단축 가능")
@@ -84,7 +86,7 @@ The primary value of a GA report is NOT to create action items, but to inform th
   Leave a dimension as an empty string when there is no concrete gain. An empty string is CORRECT and is required instead of "영향 없음" / "운영 변경 없음" / "도입하지 않아도 리스크 없음" — a new feature never changes existing behaviour, so stating its absence is a forbidden tautology.
 - `additional_checks`: Only when exhaustive feature-level official evidence remains inconclusive,
   add one exact self-service check naming the feature, primary Region, Portal/API surface, and why.
-  The headline must still say that availability is not officially confirmed.""",
+    State the unconfirmed availability in `detailed_analysis` or `relevance_evidence`, not the summary.""",
     "new_service": """#### CATEGORY: `new_service`
 **Tone**: Educational, advisory. "Here's a new tool in your toolbox."
 **one_line_summary pattern**: "[Service name] now GA — [primary use case in one phrase]"
@@ -101,7 +103,7 @@ The primary value of a GA report is NOT to create action items, but to inform th
 - `action_items`: Optional single non-mutating fit check under the value-first rule; otherwise `[]`. Do NOT fabricate "try this service" actions.
 - `impact_summary`: State only the dimension where this service would produce a concrete gain for a workload the administrator actually runs (most often `cost_impact` when it replaces a paid or self-operated component, or `operational_impact` when it removes work). All other dimensions MUST be empty strings. Never write "영향 없음" or "운영 변경 없음" — a brand-new service cannot affect existing operations, so its absence is not worth a sentence.
 - `additional_checks`: Only when official feature-level evidence remains inconclusive, add one exact
-    self-service Region check; keep the unconfirmed outcome visible in `one_line_summary`.""",
+    self-service Region check; keep the unconfirmed outcome visible in `relevance_evidence`.""",
     "region_expansion": """#### CATEGORY: `region_expansion`
 **Tone**: Brief, factual. "Now available closer to you."
 **one_line_summary pattern**: "[Service] now available in [region(s)]"
@@ -130,7 +132,7 @@ The primary value of a GA report is NOT to create action items, but to inform th
 - `action_items`: Optional single non-mutating fit check under the value-first rule; otherwise `[]`. Never imply a preview requires production adoption.
 - `impact_summary`: Only the dimension where this preview would produce a concrete gain once adopted (typically cost or security). Every other dimension MUST be an empty string. Never write that the preview has no impact or that skipping it carries no risk — that is true of every preview and tells the reader nothing.
 - `additional_checks`: Only when official feature-level evidence remains inconclusive, add one exact
-    self-service Region check; keep the unconfirmed outcome visible in `one_line_summary`.
+    self-service Region check; keep the unconfirmed outcome visible in `relevance_evidence`.
 - Set `relevance` from supported workload/requirement fit and evidence completeness, not ownership of the preview's service. Unresolved material fit is `unknown`, not automatic `not_relevant`.""",
     "sdk_tooling": """#### CATEGORY: `sdk_tooling`
 **Tone**: Technical, developer-focused. "Toolchain update."
@@ -147,7 +149,7 @@ The primary value of a GA report is NOT to create action items, but to inform th
 - `impact_summary`: `operational_impact` only when the tooling change concretely improves a deployment or automation workflow the admin runs. All other dimensions empty — do not fill a dimension with an absence.""",
     "pricing": """#### CATEGORY: `pricing`
 **Tone**: Cost-focused, analytical. "Here's what changes for your bill."
-**one_line_summary pattern**: "[Service] [pricing change] — [estimated cost impact]"
+**one_line_summary pattern**: "[Service] introduces [published pricing or billing change]"
 **detailed_analysis structure**:
 1. What pricing changed (new tier, SKU change, price increase/decrease)
 2. Who is affected — which SKUs, tiers, or usage patterns

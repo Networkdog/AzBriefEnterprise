@@ -15,6 +15,7 @@ Archive와 Feedback UI가 활성화되면 공통 header에서 각 화면으로
 | [`configuration.py`](configuration.py) | Subscriber/admin/매일 UTC 일정과 실행 lease를 ETag 보호 저장소에서 관리 |
 | [`page.py`](page.py) | 외부 dependency 없는 HTML/CSS/JavaScript shell 렌더링 |
 | [`readiness.py`](readiness.py) | ARM/Foundry evidence를 섹션별 녹색/빨간 운영 체크로 판정 |
+| [`errors.py`](errors.py) | 저장된 오류 이벤트의 일시·내용·상관 ID를 마스킹된 허용 필드로만 투영 |
 | [`router.py`](router.py) | status, subscriber, schedule, update, run 조회와 제한된 mutation route |
 
 ## 요청 흐름
@@ -77,9 +78,24 @@ allow-list와 입력 검증은 그 뒤에도 그대로 적용됩니다.
   `disabled` 처리하여 이전 min/max/URL 검증이 현재 제출을 막지 않게 합니다.
 - 가로 스크롤이 필요한 관리 table은 작업 열을 첫 열에 고정하여 mobile에서도 명령을 먼저 노출합니다.
 - run 기록은 메모리 관측 정보입니다. 처리 완료의 내구성 source of truth는 checkpoint입니다.
-- Admin 수동 선택은 예약 checkpoint와 격리되며 한 요청에서 최대 100개 업데이트만 허용합니다.
+- Admin 수동 선택은 예약 checkpoint와 격리되며 고정된 대상 개수 상한은 없습니다. 최근 N개는
+  1 이상의 정수이며 실제 RSS에 있는 항목만 선택합니다. 기간 선택은 날짜로 제한한 공개 API를
+  사용하며 선택적 로컬 이력 archive가 있으면 이를 우선합니다. 실행 시간 예산과 동시 실행 제한은
+  그대로 유지합니다. 미완료 수동 대상은 자동 재개되지 않습니다.
 - 실행 이력의 진단은 safe `RunRecord` projection만 사용해 Archive 실패, 전달, checkpoint, bounded
   error를 표시합니다. 원시 tenant evidence나 secret은 표시하지 않습니다.
+- 별도 **Error history**는 `/api/admin/errors`로 공용 `AzBriefFailures_CL`을 조회하므로 서버
+  재시작 뒤에도 예약 실행·Hosted 오류를 볼 수 있습니다. Run details의 **View error history**는
+  최근 30일에서 정확한 Run ID와 연결된 비어 있지 않은 Trace ID만 선택합니다. Update ID만으로
+  다른 실행을 합치지 않습니다. 발생 시각은 Local/UTC와 초 단위를 표시합니다.
+- 조회는 영역 진입 또는 명시적 새로고침 때 수행하고 주기적으로 cloud 조회를 반복하지 않습니다.
+  UI는 최신 50건, API는 1~100건과 1~720시간을 허용하며 추가 기록 여부를 알립니다. 초기 조회
+  실패와 성공한 빈 목록을 구별하고, 같은 필터의 갱신 실패는 이전 결과와 실패 안내를 함께
+  유지합니다. 늦은 응답이 새 필터 결과를 덮어쓰지 못합니다.
+- 원시 Message/ExtendedProperties/stack은 API에 포함하지 않고 오류 내용과 ID를 다시 마스킹한
+  뒤 `textContent`로 렌더링합니다. API도 Admin allow-list와 `Cache-Control: no-store`를 따릅니다.
+  미설정·권한·네트워크·부분 조회는 오류로 표시합니다. 수집 지연과 복구된 재시도 기록을 안내합니다.
+  `LOG_ANALYTICS_WORKSPACE_ID`는 공용 workspace customer GUID이며 기존 RG Reader를 사용합니다.
 - Console-managed 구독자는 ETag 보호 `PUT`으로 수정할 수 있지만 배포 구독자는 수정·삭제할 수
   없습니다. 이메일 변경은 모든 배포/관리 구독자와 중복되지 않아야 합니다.
 - 배포 cron은 보호된 기본 일정이고 Admin 일정은 추가 항목입니다. 같은 일정 occurrence는

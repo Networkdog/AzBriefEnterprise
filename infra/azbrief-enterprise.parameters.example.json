@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
-  "metadata": {
-    "description": "Example parameters for infra/azbrief-enterprise-deploy.json. Copy, fill in, and deploy with: az deployment group create -g <rg> --template-file infra/azbrief-enterprise-deploy.json --parameters @infra/azbrief-enterprise.parameters.example.json"
-  },
   "parameters": {
     "baseName": {
-      "value": "azbrief"
+      "value": "azbrief",
+      "metadata": {
+        "description": "Example parameters for infra/azbrief-enterprise-deploy.json. Copy, fill in, and deploy with: az deployment group create -g <rg> --template-file infra/azbrief-enterprise-deploy.json --parameters @infra/azbrief-enterprise.parameters.example.json"
+      }
     },
     "location": {
       "value": "koreacentral"
@@ -60,6 +60,15 @@
       "value": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
     },
     "containerRegistryServer": {
+      "value": ""
+    },
+    "containerRegistryAuthMode": {
+      "value": "ManagedIdentity"
+    },
+    "containerRegistryUsername": {
+      "value": ""
+    },
+    "containerRegistryPassword": {
       "value": ""
     },
     "containerRegistryRoleAssignmentMode": {

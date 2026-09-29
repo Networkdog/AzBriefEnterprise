@@ -27,6 +27,248 @@ from src.agent.scope import AnalysisScope
 from src.config import Subscriber
 
 
+class TestAnnouncementSummary:
+    @pytest.mark.asyncio
+    async def test_summary_uses_only_the_original_announcement(self, sample_update):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer._llm_circuit_breaker = CircuitBreaker()
+        analyzer.settings = SimpleNamespace(custom_system_prompt="TENANT_CONTEXT_SENTINEL")
+        source_text = "The launcher automatically sets JVM parameters for Azure containers and VMs."
+        sample_update.title = "Public Preview: Azure Command Launcher for Java"
+        sample_update.detail_description = source_text
+        expected = "Azure Command Launcher for Java가 Azure 컨테이너와 VM에 맞게 JVM 옵션을 자동 설정합니다."
+        analyzer.llm_report_writer = SimpleNamespace(
+            ainvoke=AsyncMock(
+                return_value=AIMessage(
+                    content=json.dumps(
+                        {
+                            "one_line_summary": expected,
+                            "source_excerpt": source_text,
+                        }
+                    )
+                )
+            )
+        )
+        analyzer.llm_report_writer.without_tools = MagicMock(
+            return_value=analyzer.llm_report_writer
+        )
+
+        summary = await analyzer._summarize_announcement(
+            sample_update, "ko", trace_id="summary-test"
+        )
+
+        assert summary == expected
+        call = analyzer.llm_report_writer.ainvoke.await_args
+        assert call.kwargs == {}
+        analyzer.llm_report_writer.without_tools.assert_called_once_with()
+        assert json.loads(call.args[0][1].content) == {
+            "title": sample_update.title,
+            "description": source_text,
+        }
+        assert "TENANT_CONTEXT_SENTINEL" not in " ".join(
+            message.content for message in call.args[0]
+        )
+        assert "Korean" in call.args[0][0].content
+        assert call.args[0][0].content.index('"source_excerpt"') < call.args[0][0].content.index(
+            '"one_line_summary"'
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "summary, excerpt",
+        [
+            ("This is an English report summary.", "Source capability."),
+            ("원문에 없는 기능을 설명합니다.", "Invented source capability."),
+            ("", "Source capability."),
+        ],
+    )
+    async def test_invalid_summaries_are_not_accepted(self, sample_update, summary, excerpt):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer._llm_circuit_breaker = CircuitBreaker()
+        sample_update.description = "Source capability."
+        sample_update.detail_description = None
+        analyzer.llm_report_writer = SimpleNamespace(
+            ainvoke=AsyncMock(
+                return_value=AIMessage(
+                    content=json.dumps(
+                        {
+                            "one_line_summary": summary,
+                            "source_excerpt": excerpt,
+                        }
+                    )
+                )
+            )
+        )
+        analyzer.llm_report_writer.without_tools = MagicMock(
+            return_value=analyzer.llm_report_writer
+        )
+        with pytest.raises(ValueError):
+            await analyzer._summarize_announcement(sample_update, "ko", background=True)
+        assert analyzer.llm_report_writer.ainvoke.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_summary_keeps_incoming_trace_and_rejects_truncated_response(self, sample_update):
+        from src.agent.foundry_backend import (
+            current_foundry_invocation_context,
+            foundry_invocation_context,
+        )
+
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer._llm_circuit_breaker = CircuitBreaker()
+        source = "Source capability."
+        sample_update.description = source
+        sample_update.detail_description = None
+
+        async def respond(messages):
+            assert current_foundry_invocation_context() == (
+                "incoming-trace",
+                "report_writer:announcement_summary",
+            )
+            return AIMessage(
+                content=json.dumps(
+                    {"one_line_summary": "공지의 기능을 설명합니다.", "source_excerpt": source}
+                ),
+                response_metadata={"finish_reason": "length"},
+            )
+
+        analyzer.llm_report_writer = SimpleNamespace(ainvoke=respond)
+        analyzer.llm_report_writer.without_tools = lambda: analyzer.llm_report_writer
+        with foundry_invocation_context("incoming-trace", "customize"):
+            with pytest.raises(ValueError, match="incomplete"):
+                await analyzer._summarize_announcement(sample_update, "ko", background=True)
+            assert current_foundry_invocation_context() == ("incoming-trace", "customize")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("background, expected_calls", [(False, 2), (True, 1)])
+    async def test_summary_honors_foreground_retry_and_background_fail_fast(
+        self, sample_update, monkeypatch, background, expected_calls
+    ):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer._llm_circuit_breaker = CircuitBreaker()
+        sample_update.description = "Source capability."
+        sample_update.detail_description = None
+        analyzer.llm_report_writer = SimpleNamespace(
+            ainvoke=AsyncMock(
+                side_effect=[
+                    RuntimeError("Error code: 429 - rate_limit_exceeded"),
+                    AIMessage(
+                        content=json.dumps(
+                            {
+                                "one_line_summary": "공지의 기능을 설명합니다.",
+                                "source_excerpt": "Source capability.",
+                            }
+                        )
+                    ),
+                ]
+            )
+        )
+        analyzer.llm_report_writer.without_tools = MagicMock(
+            return_value=analyzer.llm_report_writer
+        )
+        sleep = AsyncMock()
+        monkeypatch.setattr("src.agent.resilience.asyncio.sleep", sleep)
+        if background:
+            with pytest.raises(RuntimeError, match="429"):
+                await analyzer._summarize_announcement(sample_update, "ko", background=True)
+            sleep.assert_not_awaited()
+        else:
+            assert (
+                await analyzer._summarize_announcement(sample_update, "ko")
+                == "공지의 기능을 설명합니다."
+            )
+            sleep.assert_awaited_once()
+        assert analyzer.llm_report_writer.ainvoke.await_count == expected_calls
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("recovers", [True, False])
+    async def test_invalid_source_excerpt_gets_at_most_one_foreground_correction(
+        self, sample_update, recovers
+    ):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer._llm_circuit_breaker = CircuitBreaker()
+        sample_update.description = "Exact source capability."
+        sample_update.detail_description = None
+        invalid = AIMessage(
+            content=json.dumps(
+                {
+                    "one_line_summary": "공지의 기능을 설명합니다.",
+                    "source_excerpt": "Paraphrased capability.",
+                }
+            )
+        )
+        valid = AIMessage(
+            content=json.dumps(
+                {
+                    "one_line_summary": "공지의 기능을 설명합니다.",
+                    "source_excerpt": sample_update.description,
+                }
+            )
+        )
+        analyzer.llm_report_writer = SimpleNamespace(
+            ainvoke=AsyncMock(
+                side_effect=[
+                    invalid,
+                    valid if recovers else invalid,
+                ]
+            )
+        )
+        analyzer.llm_report_writer.without_tools = lambda: analyzer.llm_report_writer
+        if recovers:
+            assert (
+                await analyzer._summarize_announcement(sample_update, "ko")
+                == "공지의 기능을 설명합니다."
+            )
+        else:
+            with pytest.raises(ValueError, match="excerpt"):
+                await analyzer._summarize_announcement(sample_update, "ko")
+        assert analyzer.llm_report_writer.ainvoke.await_count == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("decision", ["send", "skip"])
+    async def test_customization_cannot_overwrite_the_source_summary(self, sample_update, decision):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.settings = SimpleNamespace(report_language="ko", action_verification_enabled=False)
+        analyzer._llm_circuit_breaker = CircuitBreaker()
+        original = AnalysisResult(
+            update_id=sample_update.id,
+            update_title=sample_update.title,
+            relevance=RelevanceStatus.RELEVANT,
+            relevance_reason="Original analysis",
+            one_line_summary="Legacy tenant-impact summary",
+            affected_resources=[],
+            impact_summary="",
+            recommendations=[],
+            reference_docs=[],
+            should_notify=True,
+        )
+        expected = "Azure Storage changes its announced connection capability."
+        analyzer._summarize_announcement = AsyncMock(return_value=expected)
+        analyzer.llm_report_writer = SimpleNamespace(
+            ainvoke=AsyncMock(
+                return_value=AIMessage(
+                    content=json.dumps(
+                        {
+                            "subscriber_relevance": decision,
+                            "one_line_summary": "SENTINEL tenant actions",
+                            "detailed_analysis": "Translated analysis",
+                        }
+                    )
+                )
+            )
+        )
+        subscriber = Subscriber(
+            email="summary@example.com", name="Test", role="Architect", language="en"
+        )
+
+        result = await analyzer.customize_for_subscriber(original, subscriber, sample_update)
+
+        assert result.one_line_summary == expected
+        assert original.one_line_summary == "Legacy tenant-impact summary"
+        analyzer._summarize_announcement.assert_awaited_once_with(
+            sample_update, "en", background=True
+        )
+
+
 class TestEscapeBraces:
     """Test brace escaping for str.format()."""
 
@@ -75,18 +317,23 @@ class TestPrimaryRegionExtraction:
         content = "Korea Central에서 사용 가능하며 East US에서는 아직 지원되지 않습니다."
         assert _missing_region_mentions(content, ["koreacentral", "eastus"]) == []
 
-    def test_report_region_check_requires_first_region_in_headline(self):
+    @pytest.mark.parametrize("field", ["detailed_analysis", "relevance_evidence"])
+    def test_report_region_check_accepts_body_coverage_without_a_region_headline(self, field):
         content = json.dumps(
             {
-                "one_line_summary": "기능이 GA되었습니다",
-                "detailed_analysis": "Korea Central에서 지금 사용할 수 있습니다.",
+                "one_line_summary": "이 기능의 정식 지원이 시작되었습니다.",
+                field: "Korea Central에서 지금 사용할 수 있습니다.",
             }
         )
 
-        headline_missing, missing_regions = _region_report_gaps(content, ["koreacentral"])
+        incomplete, missing_regions = _region_report_gaps(content, ["koreacentral"])
 
-        assert headline_missing is True
+        assert incomplete is False
         assert missing_regions == []
+
+    def test_report_region_check_does_not_use_the_summary_as_environment_evidence(self):
+        content = json.dumps({"one_line_summary": "Korea Central에서 사용 가능합니다."})
+        assert _region_report_gaps(content, ["koreacentral"]) == (True, ["koreacentral"])
 
 
 class TestParsePlanJson:
@@ -907,7 +1154,31 @@ class TestRegionAvailabilityPromptContract:
         assert '"primary_region_availability": true' in evaluation
         assert "A provider-wide availability ratio is not a substitute" in evaluation
         assert "NOT for a new feature layered on an existing type" in tools
-        assert "Put the first primary Region and its outcome" in report
+        assert "never as a prefix to `one_line_summary`" in report
+        assert "`detailed_analysis` or `relevance_evidence`" in report
+
+    def test_summary_prompt_contract_is_localized_and_announcement_only(self):
+        from src.agent.prompts import SUBSCRIBER_CUSTOMIZATION_PROMPT
+        from src.agent.prompts.report.base import REPORT_AFTER
+        from src.agent.prompts.report.categories import CATEGORY_INTRO, CATEGORY_TEMPLATES
+
+        assert "Announcement One-liner" in REPORT_AFTER
+        assert "One complete sentence in the requested report language" in REPORT_AFTER
+        assert "tenant resource names/counts, impact scope, estimated work" in REPORT_AFTER
+        assert "original English Azure Update title stays unchanged" in REPORT_AFTER
+        assert "source_update" in SUBSCRIBER_CUSTOMIZATION_PROMPT
+        assert (
+            "Preserve the supplied `one_line_summary` verbatim" in SUBSCRIBER_CUSTOMIZATION_PROMPT
+        )
+        assert "Do NOT expand into a full sentence" not in SUBSCRIBER_CUSTOMIZATION_PROMPT
+        assert "without tenant impact" in CATEGORY_INTRO
+        for category in CATEGORY_TEMPLATES.values():
+            pattern = next(
+                line for line in category.splitlines() if "one_line_summary pattern" in line
+            )
+            assert "[N] resources" not in pattern
+            assert "admin's environment" not in pattern
+            assert "estimated cost impact" not in pattern
 
 
 class TestLanguageIsolation:
@@ -1279,6 +1550,147 @@ class TestContextualToolArguments:
 
 
 class TestReportOutputRecovery:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("retry_after", [None, "75"])
+    async def test_planning_waits_and_retries_without_consuming_tool_turns(
+        self, monkeypatch, retry_after: str | None
+    ):
+        from unittest.mock import Mock
+
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.settings = SimpleNamespace(custom_system_prompt="")
+        analyzer.tools = []
+        analyzer._llm_circuit_breaker = CircuitBreaker(failure_threshold=3, reset_timeout=120)
+        error = RuntimeError("429 Too Many Requests")
+        error.response = SimpleNamespace(
+            headers={"Retry-After": retry_after} if retry_after else {}
+        )
+        plan = AnalysisPlan(plan_id="p1", update_summary="update", analysis_goal="report", tasks=[])
+        coordinator = SimpleNamespace(
+            ainvoke=AsyncMock(
+                side_effect=[error, error, error, AIMessage(content=plan.model_dump_json())]
+            )
+        )
+        analyzer.llm_coordinator = SimpleNamespace(bind_tools=Mock(return_value=coordinator))
+        sleep = AsyncMock()
+        monkeypatch.setattr("src.agent.resilience.asyncio.sleep", sleep)
+        monkeypatch.setattr("src.agent.resilience.random.uniform", lambda *_: 0)
+        state = {"update_context": "update context", "trace_id": "planning-retry"}
+
+        result = await analyzer._planning_node(state)
+
+        assert result["analysis_plan"]["plan_id"] == "p1"
+        assert coordinator.ainvoke.await_count == 4
+        assert [invocation.args[0] for invocation in sleep.await_args_list] == (
+            [75.0, 75.0, 75.0] if retry_after else [10.0, 20.0, 40.0]
+        )
+        assert analyzer._llm_circuit_breaker._consecutive_failures == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [429, 403])
+    async def test_planning_retry_exhaustion_remains_a_failure(self, monkeypatch, status: int):
+        from unittest.mock import Mock
+
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.settings = SimpleNamespace(custom_system_prompt="")
+        analyzer.tools = []
+        analyzer._llm_circuit_breaker = CircuitBreaker(failure_threshold=3, reset_timeout=120)
+        error = RuntimeError(f"HTTP {status}")
+        coordinator = SimpleNamespace(ainvoke=AsyncMock(side_effect=error))
+        analyzer.llm_coordinator = SimpleNamespace(bind_tools=Mock(return_value=coordinator))
+        sleep = AsyncMock()
+        monkeypatch.setattr("src.agent.resilience.asyncio.sleep", sleep)
+
+        with pytest.raises(RuntimeError) as raised:
+            await analyzer._planning_node({"update_context": "update context"})
+
+        assert raised.value is error
+        assert coordinator.ainvoke.await_count == (4 if status == 429 else 1)
+        assert sleep.await_count == (3 if status == 429 else 0)
+        assert analyzer._llm_circuit_breaker._consecutive_failures == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failure", ["exhausted", "nontransient", "circuit_open"])
+    async def test_failed_report_is_never_returned_as_a_successful_placeholder(
+        self, monkeypatch, failure
+    ):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        analyzer.settings = SimpleNamespace(report_language="ko", custom_system_prompt="")
+        analyzer._llm_circuit_breaker = CircuitBreaker(failure_threshold=3, reset_timeout=120)
+        analyzer.llm_report_writer = SimpleNamespace(
+            ainvoke=AsyncMock(
+                side_effect=RuntimeError(
+                    "429 Too Many Requests" if failure == "exhausted" else "403 Forbidden"
+                )
+            )
+        )
+        if failure == "circuit_open":
+            for _ in range(3):
+                analyzer._llm_circuit_breaker.record_failure()
+        sleep = AsyncMock()
+        monkeypatch.setattr("src.agent.resilience.asyncio.sleep", sleep)
+        state = {
+            "update_context": "update context",
+            "resource_summary": "resource summary",
+            "task_results": {},
+            "analysis_plan": AnalysisPlan(
+                plan_id="p1", update_summary="update", analysis_goal="report", tasks=[]
+            ).model_dump(),
+            "update": {"title": "Update", "update_type": "Feature Change"},
+            "trace_id": "trace-failed-report",
+        }
+
+        with pytest.raises(RuntimeError):
+            await analyzer._report_node(state)
+
+        expected_calls = {"exhausted": 4, "nontransient": 1, "circuit_open": 0}[failure]
+        assert analyzer.llm_report_writer.ainvoke.await_count == expected_calls
+        assert sleep.await_count == (3 if failure == "exhausted" else 0)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("recovers", [True, False])
+    async def test_rate_limited_evaluation_retries_before_terminal_failure(
+        self, monkeypatch, recovers
+    ):
+        analyzer = object.__new__(AzureUpdateAnalyzer)
+        success = AIMessage(
+            content=json.dumps(
+                {
+                    "verdict": "sufficient",
+                    "coverage": {},
+                    "missing_aspects": [],
+                    "suggestions": [],
+                    "reason": "Evidence checked",
+                }
+            )
+        )
+        error = RuntimeError("429 Too Many Requests")
+        analyzer.llm_quality_reviewer = SimpleNamespace(
+            ainvoke=AsyncMock(side_effect=[error, success] if recovers else error)
+        )
+        analyzer._llm_circuit_breaker = CircuitBreaker(failure_threshold=3, reset_timeout=120)
+        sleep = AsyncMock()
+        monkeypatch.setattr("src.agent.resilience.asyncio.sleep", sleep)
+        monkeypatch.setattr("src.agent.resilience.random.uniform", lambda *_: 0)
+        state = {
+            "update_context": "update context",
+            "task_results": {},
+            "analysis_plan": AnalysisPlan(
+                plan_id="p1", update_summary="update", analysis_goal="evaluate", tasks=[]
+            ).model_dump(),
+            "trace_id": "trace-retry-evaluation",
+        }
+
+        result = await analyzer._evaluation_node(state)
+
+        assert analyzer.llm_quality_reviewer.ainvoke.await_count == (2 if recovers else 4)
+        assert result["evaluation"]["verdict"] == ("sufficient" if recovers else "model_error")
+        if recovers:
+            sleep.assert_awaited_once_with(10.0)
+        else:
+            assert result["last_transition"] == TransitionType.MODEL_ERROR.value
+            assert sleep.await_count == 3
+
     @pytest.mark.asyncio
     async def test_rate_limited_report_waits_and_retries(self, monkeypatch):
         from src.agent import analyzer as analyzer_module

@@ -1,54 +1,13 @@
 ---
 name: kql-resource-graph
-description: 'Write and debug KQL queries for Azure Resource Graph. Use when: KQL query, Resource Graph query, query_resources, ResourceGraphQueryBuilder, get_query_for_update_service, resource type filtering, tenant-scoped query, KQL constraints, query auto-fix.'
+description: 'GitHub Copilot developer workflow for maintaining AzBrief Resource Graph query code and tests. Model-facing query policy belongs to the application Foundry instructions. Use when: KQL query, Resource Graph query, query_resources, ResourceGraphQueryBuilder, get_query_for_update_service, resource type filtering, tenant-scoped query, KQL constraints, query auto-fix.'
 ---
 
 # KQL Resource Graph Queries
 
-## Foundry Runtime Guidance
-
-- As the Resource Graph specialist, own KQL authoring, schema probing, result
-  interpretation, and KQL repair. Do not hand this work to another specialist.
-- Start with the update's applicability question, not a predefined service template.
-  Select nested projections, typed predicates, distributions, array expansion or ID-based
-  relationships according to the evidence needed. Builders are optional examples, not limits.
-- Resource Graph supports project expressions, join/union and mv-expand within documented
-  limits. No let, render, datatable, externaldata, toscalar or custom join strategies.
-  Use at most three join/union operations combined and three mv-expand operators; observe
-  cross-table/right-table reuse restrictions. mv-expand supports arrays and documented bag
-  expansion, defaults to 128 elements and allows at most 2000; set its limit explicitly.
-- Compare types with =~ or in~, retain scalar id/subscriptionId and order enumerations stably.
-  Cast by meaning and distinguish null/missing from false/zero. Project expressions are valid,
-  but the live service rejects kind=tostring(kind); project kind directly or use resourceKind.
-  Keep all downstream alias references consistent. There is no five-extend restriction.
-- Avoid broad raw properties/tags/sku dumps, but allow bounded 1-5 resource/parent-bag samples
-  for discovery. Inspect nested objects and arrays across variants; cached schemas and samples
-  are hints, not exhaustive evidence. Do not guess a dependent query before its probe returns.
-- Keep similarly named AKS properties semantically distinct: Azure Files/Disk CSI state comes
-  from `storageProfile.fileCSIDriver` / `diskCSIDriver`; the Key Vault secrets provider under
-  `addonProfiles.azureKeyvaultSecretsProvider` is not a storage CSI signal.
-- Query tenant-wide accessible subscriptions by default and cite exact IDs. When the runtime supplies
-  a Management Group/Subscription/Resource Group scope, treat it as a hard boundary and never query
-  or report outside it. App-injected Resource Group or intersected Management Group/subscription
-  predicates prohibit join/union: use separate scoped queries and correlate exact IDs instead.
-  Try the relevant ARG table/path before deferring; unsupported/masked ARM fields remain gaps.
-- Pass purpose and expected_columns to query_azure_resources. On syntax failure, off-topic rows,
-  an empty filtered result or missing required values, use observed errors/schema to rewrite
-  and re-execute without changing scope, identities, thresholds or the original question.
-  Zero rows can be correct; never relax an eligibility/security condition merely to find rows.
-- Inspect executed_query, query_status and evidence_gaps, not just HTTP success. The inner loop
-  has at most eight attempts and two result rewrites, stops repeated queries, and returns gaps
-  when no supported correction exists. Never substitute a builder/count for a failed question.
-  Use the next native tool round or evaluation/revision pass for a different, evidence-led query.
-- Complete enumerations must not contain take/limit; retain scalar IDs for SDK paging. The service
-  collects at most ten 1000-row pages. For result_truncated=true, narrow or partition KQL. A local
-  [ref=Rn] search can recover a stored preview, not uncollected Azure pages or capped storage.
-- For large affected sets, execute a focused all-matching query with scalar id and property
-  evidence, then preserve its resource_query_ref and applicability reason. The writer can select
-  the result without repeating every identity. Inventory, diagnostic samples and count-only rows
-  are not affected sets; incomplete results remain lower bounds, never exact population counts.
-
-<!-- End Foundry Runtime Guidance -->
+This is a GitHub Copilot developer skill, not an AzBrief Agent runtime instruction.
+Foundry operational guidance is maintained in
+[foundry_instructions.py](../../../src/agent/foundry_instructions.py), independently of this file.
 
 ## When to Use
 

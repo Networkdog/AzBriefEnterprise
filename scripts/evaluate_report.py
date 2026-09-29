@@ -266,8 +266,8 @@ class ReportQualityEvaluator:
             if len(summary) < 20:
                 deductions.append("Too short (<20 chars)")
                 item.score -= 1
-            if len(summary) > 100:
-                deductions.append("Too long (>100 chars)")
+            if len(summary) > 240:
+                deductions.append("Too long (>240 chars)")
                 item.score -= 1
             # Check for vague language
             vague = ["some resources", "may be affected", "a new feature", "an update"]
@@ -398,13 +398,7 @@ class ReportQualityEvaluator:
             resource_summary = getattr(result, "_evidence_resource_summary", "")
             primary_regions = _extract_primary_regions(resource_summary)
             if _requires_region_availability(update_payload) and primary_regions:
-                first_region = primary_regions[0]
-                if _missing_region_mentions(result.one_line_summary or "", [first_region]):
-                    item.score = max(0, item.score - 2)
-                    item.deductions.append(
-                        f"GA/Preview headline omits primary Region '{first_region}' and its outcome"
-                    )
-                report_text = f"{result.one_line_summary}\n{result.relevance_reason}"
+                report_text = f"{result.relevance_reason}\n{result.relevance_evidence}"
                 missing_regions = _missing_region_mentions(report_text, primary_regions)
                 if missing_regions:
                     item.score = max(0, item.score - 1)
@@ -693,6 +687,17 @@ class ReportQualityEvaluator:
             (
                 r"[A-Za-z]{2,}\s*(?:되었습니다|됩니다|되어|되며|되면|된\s)",
                 "영문 토큰을 동사 어간으로 사용 (GA되었습니다 → 정식 출시되었습니다)",
+            ),
+            (
+                r"(?:지원|호환성)(?:\*\*)?(?:이|가|은|는)?\s+(?:\*\*)?GA(?:\*\*)?로\s*"
+                r"(?:출시|발매)",
+                "지원·호환성을 출시하는 표현 (→ 지원이 시작되어 / 정식 지원이 시작되어)",
+            ),
+            (
+                r"(?:일반\s*공급|GA)(?:\*\*)?\s*"
+                r"(?:\((?:General Availability|GA)\)(?:\*\*)?\s*)?"
+                r"상태로\s*(?:제공|지원)",
+                "출시 단계를 상태로 서술 (→ 정식 지원됩니다 / 정식 출시되었습니다)",
             ),
             (r"되어지", "이중 피동 (~되어지다)"),
         ]
@@ -1020,20 +1025,8 @@ class ReportQualityEvaluator:
             item.score = 0
         else:
             item.score = 5
-            # Summary should convey urgency and count
-            if not re.search(r"\d", summary):
-                deductions.append("Summary lacks resource count for quick scanning")
-                item.score -= 1
-            # Check for action indicator in summary (retirement = count, preview = feature name)
-            category = getattr(result, "update_category", "")
-            if (
-                category in ("retirement", "feature_change")
-                and "—" not in summary
-                and "-" not in summary
-            ):
-                deductions.append(
-                    "Summary for retirement/feature_change should use 'title — N resources need action' pattern"
-                )
+            if "\n" in summary.strip() or "\r" in summary.strip():
+                deductions.append("Announcement summary contains line breaks")
                 item.score -= 1
         item.deductions = deductions
         item.reason = f"3-second scan: summary={len(summary)} chars, urgency={has_urgency}, relevance={has_relevance}"

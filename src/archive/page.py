@@ -235,14 +235,26 @@ _PAGE = r"""<!doctype html>
     .detail-meta { margin-top:16px; color:var(--muted); }
     .detail-section { padding:30px 0; border-bottom:1px solid var(--line); }
     .detail-section:last-child { border-bottom:0; }
-    .detail-section h2 { margin-bottom:16px; color:var(--ink); font-size:25px;
+    .detail-section h2 { margin-bottom:16px; color:#a92336; font-size:25px;
       line-height:1.2; }
     .prose { max-width:820px; color:var(--ink-soft); font-size:16px; line-height:1.75; }
     .markdown p { margin-bottom:16px; }
     .markdown ul,.markdown ol { margin-bottom:16px; }
     .markdown h3,.markdown h4,.markdown h5,.markdown h6 { color:var(--ink); }
-    .markdown blockquote { max-width:820px; padding:16px 18px; border-left:4px solid var(--primary);
-      background:var(--primary-soft); color:var(--ink-soft); }
+    .markdown blockquote,.reference-note { max-width:820px; margin:18px 0; padding:12px 18px;
+      border-left:2px solid var(--line-strong); background:var(--surface-subtle); color:var(--ink-soft); }
+    .reference-note { border-left-color:#365b8c; font-size:14px; line-height:1.8; overflow-wrap:anywhere; }
+    .reference-note p { margin:0 0 6px; }
+    .reference-note p:last-child { margin-bottom:0; }
+    .reference-note a { color:#365b8c; font-weight:600; }
+    .resource-caption { color:var(--muted); font-size:12px; margin:16px 0 8px; }
+    .detail-impact { margin-top:18px; }
+    .detail-impact .facts { display:block; border:0; }
+    .detail-impact .fact { display:grid; grid-template-columns:96px minmax(0,1fr); gap:16px;
+      padding:12px 0; border:0; border-bottom:1px solid var(--line); }
+    .detail-impact .fact + .fact { padding-left:0; border-left:0; }
+    .detail-impact .fact dd { margin:0; font-size:14px; font-weight:400; line-height:1.8; }
+    .markdown .resource-list { padding-left:0; }
     .markdown pre,code,.inline-code { background:#eef2f3; color:#24343b; }
     .facts { grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:0;
       border-top:1px solid var(--line-strong); border-bottom:1px solid var(--line); }
@@ -255,12 +267,8 @@ _PAGE = r"""<!doctype html>
       border-radius:0; background:transparent; }
     .stack li > strong { display:block; margin-bottom:5px; color:var(--ink); font-size:17px;
       line-height:1.45; }
-    #detail-body > .detail-section:first-child { margin-top:28px; padding:24px 28px;
-      border:0; border-left:4px solid var(--primary); background:var(--primary-soft); }
-    #detail-body > .detail-section:first-child h2 { margin-bottom:8px; color:var(--primary);
-      font-size:11px; }
-    #detail-body > .detail-section:first-child .prose { max-width:none; color:var(--ink);
-      font-size:25px; font-weight:700; line-height:1.45; }
+    .detail-lead { margin:28px 0 0; color:var(--ink); font-size:18px; font-weight:400;
+      line-height:1.65; overflow-wrap:anywhere; }
     a { color:var(--link); }
     @media (max-width:960px) {
       .filter-main { grid-template-columns:repeat(2,minmax(0,1fr)); }
@@ -308,9 +316,7 @@ _PAGE = r"""<!doctype html>
       .detail-facts .fact + .fact { border-top:0; border-left:1px solid var(--line); }
       .detail-impact .facts { grid-template-columns:1fr; }
       .stack li { padding:16px 0; }
-      #detail-body > .detail-section:first-child { margin-top:20px; padding:20px 18px; }
-      #detail-body > .detail-section:first-child h2 { font-size:11px; }
-      #detail-body > .detail-section:first-child .prose { font-size:21px; }
+      .detail-lead { margin-top:20px; font-size:16px; }
     }
   </style>
 </head>
@@ -492,14 +498,179 @@ _PAGE = r"""<!doctype html>
     renderFilterChips(); load(true);
   }
   function appendInlineMarkdown(parent,raw){const value=String(raw||'');const pattern=/(\*\*([^*]+)\*\*|`([^`\n]+)`|\[([^\]]+)\]\(([^)\s]+)\))/g;let cursor=0;let match;while((match=pattern.exec(value))!==null){if(match.index>cursor)parent.append(document.createTextNode(value.slice(cursor,match.index)));if(match[2]!==undefined)parent.append(el('strong','',match[2]));else if(match[3]!==undefined)parent.append(el('code','inline-code',match[3]));else parent.append(safeLink(match[5],match[4]));cursor=pattern.lastIndex;}if(cursor<value.length)parent.append(document.createTextNode(value.slice(cursor)));}
-  function renderMarkdown(raw){const root=el('div','prose markdown');const lines=String(raw||'').replace(/\r\n?/g,'\n').split('\n');let paragraph=[];let list=null;let listTag='';let quote=[];let fenced=false;let codeLines=[];function flushParagraph(){if(!paragraph.length)return;const node=el('p','');appendInlineMarkdown(node,paragraph.join(' '));root.append(node);paragraph=[];}function flushList(){if(list)root.append(list);list=null;listTag='';}function flushQuote(){if(!quote.length)return;const node=el('blockquote','');appendInlineMarkdown(node,quote.join('\n'));root.append(node);quote=[];}function flushAll(){flushParagraph();flushList();flushQuote();}lines.forEach(line=>{if(fenced){if(/^\s*```/.test(line)){const pre=el('pre','');pre.append(el('code','',codeLines.join('\n')));root.append(pre);fenced=false;codeLines=[];}else codeLines.push(line);return;}if(/^\s*```/.test(line)){flushAll();fenced=true;return;}if(!line.trim()){flushAll();return;}const heading=line.match(/^(#{1,4})\s+(.+)$/);if(heading){flushAll();const node=el('h'+String(Math.min(6,heading[1].length+2)),'');appendInlineMarkdown(node,heading[2]);root.append(node);return;}if(/^\s*(---+|___+|\*\*\*+)\s*$/.test(line)){flushAll();root.append(el('hr',''));return;}const quoted=line.match(/^\s*>\s?(.*)$/);if(quoted){flushParagraph();flushList();quote.push(quoted[1]);return;}const unordered=line.match(/^\s*[-+*]\s+(.+)$/);const ordered=line.match(/^\s*\d+[.)]\s+(.+)$/);if(unordered||ordered){flushParagraph();flushQuote();const tag=ordered?'ol':'ul';if(list&&listTag!==tag)flushList();if(!list){list=el(tag,'');listTag=tag;}const item=el('li','');appendInlineMarkdown(item,(ordered||unordered)[1]);list.append(item);return;}flushList();flushQuote();paragraph.push(line.trim());});if(fenced){const pre=el('pre','');pre.append(el('code','',codeLines.join('\n')));root.append(pre);}flushAll();return root;}
-  function section(title,value){if(value===undefined||value===null||value===''||(Array.isArray(value)&&!value.length))return;const block=el('section','detail-section');block.append(el('h2','',title));if(Array.isArray(value)){const list=el('ul','stack');value.forEach(item=>{const li=el('li','');if(typeof item==='string')appendInlineMarkdown(li,item);else li.textContent=JSON.stringify(item,null,2);list.append(li);});block.append(list);}else{block.append(renderMarkdown(value));}byId('detail-body').append(block);}
+  function renderMarkdown(raw){const root=el('div','prose markdown');const lines=String(raw||'').replace(/\r\n?/g,'\n').split('\n');let paragraph=[];let list=null;let listTag='';let quote=[];let fenced=false;let codeLines=[];function flushParagraph(){if(!paragraph.length)return;const node=el('p','');appendInlineMarkdown(node,paragraph.join(' '));root.append(node);paragraph=[];}function flushList(){if(list)root.append(list);list=null;listTag='';}function flushQuote(){if(!quote.length)return;const node=el('blockquote','');appendInlineMarkdown(node,quote.join('\n'));root.append(node);quote=[];}function flushAll(){flushParagraph();flushList();flushQuote();}lines.forEach(line=>{if(fenced){if(/^\s*```/.test(line)){const pre=el('pre','');pre.append(el('code','',codeLines.join('\n')));root.append(pre);fenced=false;codeLines=[];}else codeLines.push(line);return;}if(/^\s*```/.test(line)){flushAll();fenced=true;return;}if(!line.trim()){flushAll();return;}const heading=line.match(/^(#{1,4})\s+(.+)$/);if(heading){flushAll();const node=el('h'+String(Math.min(6,heading[1].length+2)),'');appendInlineMarkdown(node,heading[2]);root.append(node);return;}if(/^\s*(---+|___+|\*\*\*+)\s*$/.test(line)){flushAll();root.append(el('hr',''));return;}const quoted=line.match(/^\s*>\s?(.*)$/);if(quoted){flushParagraph();flushList();quote.push(quoted[1]);return;}const unordered=line.match(/^\s*[-+*]\s+(.+)$/);const ordered=line.match(/^\s*(\d+)[.)]\s+(.+)$/);if(unordered||ordered){flushParagraph();flushQuote();const tag=ordered?'ol':'ul';if(list&&listTag!==tag)flushList();if(!list){list=el(tag,'');listTag=tag;if(ordered)list.start=Number(ordered[1]);}const item=el('li','');appendInlineMarkdown(item,ordered?ordered[2]:unordered[1]);list.append(item);return;}flushList();flushQuote();paragraph.push(line.trim());});if(fenced){const pre=el('pre','');pre.append(el('code','',codeLines.join('\n')));root.append(pre);}flushAll();return root;}
+  function appendSection(title,content,className = '') {
+    if (!content.textContent.trim()) return null;
+    const block = el('section','detail-section' + (className ? ' ' + className : ''));
+    block.append(el('h2','',title),content);
+    byId('detail-body').append(block);
+    return block;
+  }
+  function section(title,value,className = '') {
+    const content = Array.isArray(value) ? el('ul','stack') : renderMarkdown(value);
+    if (Array.isArray(value)) value.forEach(item => {
+      if (typeof item !== 'string') return;
+      const entry = el('li','');
+      appendInlineMarkdown(entry,item);
+      if (entry.textContent.trim()) content.append(entry);
+    });
+    return appendSection(title,content,className);
+  }
   function renderFacts(result){const block=el('section','detail-section detail-facts');block.append(el('h2','',label('quick_decision')));const facts=el('dl','facts');[['col_importance',levelText(result.importance)],['col_impact',levelText(result.impact_level)],['relevance',relevanceText(result.relevance)]].forEach(([key,value])=>{const fact=el('div','fact');fact.append(el('dt','',label(key)),el('dd','',value));facts.append(fact);});block.append(facts);byId('detail-body').append(block);}
-  function renderImpact(result){const title=label(result.update_category&&['new_feature','new_service','region_expansion','preview','sdk_tooling'].includes(result.update_category)?'opportunity_analysis':'impact_analysis');if(!result.impact_details){section(title,result.impact_summary);return;}const block=el('section','detail-section detail-impact');block.append(el('h2','',title));const facts=el('dl','facts');[['cost_impact','cost'],['security_impact','security'],['performance_impact','performance'],['operational_impact','operational']].forEach(([field,key])=>{if(!result.impact_details[field])return;const fact=el('div','fact');fact.append(el('dt','',label(key)),el('dd','',result.impact_details[field]));facts.append(fact);});block.append(facts);byId('detail-body').append(block);}
-  function renderResources(resources){if(!resources||!resources.length)return;const block=el('section','detail-section');block.append(el('h2','',label('affected_resources')));const list=el('ul','stack');resources.forEach(resource=>{const li=el('li','');li.append(el('strong','',resource.name||label('unknown_scope')));const scope=[resource.type,resource.resourceGroup,resource.subscription||resource.subscriptionId].filter(Boolean).join(' · ');if(scope)li.append(el('div','meta',scope));if(resource.reason)li.append(el('div','prose',resource.reason));list.append(li);});block.append(list);byId('detail-body').append(block);}
-  function renderActions(actions){if(!actions||!actions.length)return;const names={urgency:'urgency',target_resources:'target',procedure:'procedure',deadline:'deadline',risk_if_not_done:'risk_if_not_done',precaution:'precaution',rollback:'rollback',verification_status:'verification'};const block=el('section','detail-section');block.append(el('h2','',label('action_items')));const list=el('ol','stack');actions.forEach(action=>{const li=el('li','');li.append(el('strong','',action.task||''));Object.keys(names).forEach(key=>{let value=action[key];if(value&&(!Array.isArray(value)||value.length)){if(key==='verification_status')value=label('verify_'+value);if(key==='urgency')value=levelText(value);li.append(el('div','meta',label(names[key])+': '+(Array.isArray(value)?value.join(', '):value)));}});if(action.cli_command)li.append(el('code','',action.cli_command));list.append(li);});block.append(list);byId('detail-body').append(block);}
-  function renderReferences(docs){if(!docs||!docs.length)return;const block=el('section','detail-section');block.append(el('h2','',label('reference_docs')));const list=el('ul','stack');docs.forEach(doc=>{const li=el('li','');li.append(safeLink(doc.url||'',doc.title||doc.url||'-'));list.append(li);});block.append(list);byId('detail-body').append(block);}
-  function renderDetail(documentData){const update=documentData.update,result=documentData.result;byId('detail-title').textContent=update.title;byId('detail-meta').replaceChildren();appendMeta(byId('detail-meta'),'archive_analyzed_at',localTime(documentData.analyzed_at));appendMeta(byId('detail-meta'),'published_date',localTime(update.published_date));appendMeta(byId('detail-meta'),'archive_source',sourceText(documentData.source));byId('detail-meta').append(safeLink(update.link,label('archive_original_update')));byId('detail-body').replaceChildren();section(label('importance_section'),result.one_line_summary);renderFacts(result);section(label('analysis_summary'),result.relevance_reason);section(label('relevance_evidence'),result.relevance_evidence);renderImpact(result);renderResources(result.affected_resources);renderActions(result.action_items);renderReferences(result.reference_docs);section(label('additional_checks'),result.additional_checks);}
+  function renderImpact(result) {
+    const details = result.impact_details || {};
+    const facts = el('dl','facts');
+    [['cost_impact','cost'],['security_impact','security'],['performance_impact','performance'],['operational_impact','operational']].forEach(([field,key]) => {
+      const value = details[field];
+      if (!value || !value.trim()) return;
+      const fact = el('div','fact');
+      fact.append(el('dt','',label(key)),el('dd','',value));
+      facts.append(fact);
+    });
+    const content = el('div','detail-impact');
+    if (facts.childElementCount) content.append(facts);
+    else if (result.impact_summary) content.append(renderMarkdown(result.impact_summary));
+    return content;
+  }
+  function renderEnvironment(result) {
+    const content = renderMarkdown(result.relevance_evidence);
+    const resources = result.affected_resources || [];
+    if (resources.length) {
+      content.append(el('p','resource-caption',label('affected_resources') + ' (' + resources.length + ')'));
+      const list = el('ul','stack resource-list');
+      resources.forEach(resource => {
+        const entry = el('li','resource-entry');
+        entry.append(el('strong','',resource.name || label('unknown_scope')));
+        const scope = [resource.type,resource.resourceGroup,resource.subscription || resource.subscriptionId]
+          .filter(Boolean).join(' · ');
+        if (scope) entry.append(el('div','meta',scope));
+        if (resource.reason) entry.append(renderMarkdown(resource.reason));
+        list.append(entry);
+      });
+      content.append(list);
+    }
+    return appendSection(label('relevance_evidence'),content,'detail-environment');
+  }
+  function renderActions(actions) {
+    if (!actions || !actions.length) return;
+    const names = {urgency:'urgency',why:'why',target_resources:'target',procedure:'procedure',
+      estimated_time:'estimated',deadline:'deadline',risk_if_not_done:'risk_if_not_done',
+      precaution:'precaution',rollback:'rollback',verification_status:'verification'};
+    const list = el('ol','stack action-list');
+    actions.forEach(action => {
+      const entry = el('li','action-entry'); entry.append(el('strong','',action.task || ''));
+      Object.keys(names).forEach(key => {
+        let value = action[key];
+        if (!value || (Array.isArray(value) && !value.length)) return;
+        if (key === 'verification_status') value = label('verify_' + value);
+        if (key === 'urgency') value = levelText(value);
+        if (['why','procedure','risk_if_not_done','precaution','rollback'].includes(key)) {
+          entry.append(el('div','meta',label(names[key])),renderMarkdown(value));
+        } else entry.append(el('div','meta',label(names[key]) + ': ' +
+          (Array.isArray(value) ? value.join(', ') : value)));
+      });
+      if (action.cli_command) entry.append(el('code','',action.cli_command));
+      for (const finding of action.verification_notes || []) {
+        if (finding.trim()) entry.append(el('p','prose',finding));
+      }
+      if (action.reference_url) entry.append(safeLink(action.reference_url,label('action_reference')));
+      if (entry.textContent.trim()) list.append(entry);
+    });
+    appendSection(label('action_items'),list,'detail-actions');
+  }
+  function placeReportNotes(result,overview) {
+    const root = byId('detail-body');
+    const candidates = Array.from(root.querySelectorAll('.detail-section p,.detail-section li,.detail-impact dd'))
+      .filter(node => !node.closest('blockquote,.reference-note,pre,code') &&
+        !node.classList.contains('resource-caption') && !node.classList.contains('resource-entry') &&
+        node.textContent.trim());
+    const tails = new Map();
+    function insert(anchor,note) {
+      if (tails.has(anchor)) tails.get(anchor).after(note);
+      else if (['LI','DD'].includes(anchor.tagName)) anchor.append(note);
+      else anchor.after(note);
+      tails.set(anchor,note);
+    }
+    const termMatch = (text,term) => {
+      const source = text.toLowerCase(), needle = term.toLowerCase();
+      let index = source.indexOf(needle);
+      while (index >= 0) {
+        if (!/[a-z0-9]/.test(source[index-1] || '') &&
+            !/[a-z0-9]/.test(source[index+needle.length] || '')) return true;
+        index = source.indexOf(needle,index+1);
+      }
+      return false;
+    };
+    const paragraphs = candidates.map(node => ({node,text:node.textContent.trim(),
+      urls:Array.from(node.querySelectorAll('a[href]'),link => link.href.split('#')[0])}));
+    for (const concept of root.querySelectorAll('blockquote')) {
+      const term = concept.querySelector('strong')?.textContent.trim();
+      if (!term || !concept.textContent.trim().startsWith(term)) continue;
+      const aliases = [term,term.split(/[（(]/)[0].trim()].filter(value => value.length >= 2);
+      const target = paragraphs.find(paragraph => aliases.some(alias => termMatch(paragraph.text,alias)));
+      if (target) insert(target.node,concept);
+    }
+    const ignored = new Set(result.annotation_common_words || []);
+    const words = text => new Set((text.toLowerCase().match(/[\p{L}\p{N}]+(?:[.-][\p{L}\p{N}]+)*/gu) || [])
+      .filter(word => word.length > 1 && !ignored.has(word)));
+    for (const doc of result.reference_docs || []) {
+      const note = el('aside','reference-note'); note.setAttribute('role','note');
+      const title = el('p',''); title.append(safeLink(doc.url || '',doc.title || label('reference_docs')));
+      note.append(title);
+      if (doc.description) note.append(el('p','',doc.description));
+      if (doc.related_content && doc.related_content !== doc.description) {
+        note.append(el('p','',label('doc_context') + ': ' + doc.related_content));
+      }
+      let best = null, bestScore = 0;
+      for (const paragraph of paragraphs) {
+        let score = doc.url && paragraph.urls.includes(doc.url.split('#')[0]) ? 100 : 0;
+        const tokens = words(paragraph.text);
+        for (const [key,weight] of [['related_content',2],['title',1]]) {
+          const phrase = (doc[key] || '').trim(), terms = words(phrase);
+          const shared = Array.from(terms).filter(term => tokens.has(term)).length;
+          if (shared >= 2 && shared / terms.size >= 0.4) score = Math.max(score,weight*(shared+shared/terms.size));
+          if (phrase.length >= 8 && paragraph.text.toLowerCase().includes(phrase.toLowerCase())) score = Math.max(score,weight*20);
+          if (/^[A-Z][A-Z0-9.-]{1,9}$/.test(phrase) && termMatch(paragraph.text,phrase)) score = Math.max(score,10);
+        }
+        if (score > bestScore) { bestScore = score; best = paragraph.node; }
+      }
+      if (best) insert(best,note);
+      else if (overview) overview.querySelector('.markdown').append(note);
+      else {
+        const content = el('div','prose markdown'); content.append(note);
+        overview = appendSection(label('analysis_summary'),content,'detail-overview');
+        root.querySelector('.detail-facts').after(overview);
+      }
+    }
+  }
+  function renderDetail(documentData) {
+    if (!documentData.presentation) throw new Error('Report presentation is unavailable.');
+    const update = documentData.update, result = {...documentData.result,...documentData.presentation};
+    byId('detail-title').textContent = update.title;
+    byId('detail-meta').replaceChildren();
+    appendMeta(byId('detail-meta'),'archive_analyzed_at',localTime(documentData.analyzed_at));
+    appendMeta(byId('detail-meta'),'published_date',localTime(update.published_date));
+    appendMeta(byId('detail-meta'),'archive_source',sourceText(documentData.source));
+    byId('detail-meta').append(safeLink(update.link,label('archive_original_update')));
+    byId('detail-body').replaceChildren();
+    const summary = String(result.one_line_summary || '').trim().replace(/\s+/g,' ');
+    if (summary) byId('detail-body').append(el('p','detail-lead',summary));
+    renderFacts(result);
+    const analysis = renderMarkdown(result.relevance_reason);
+    analysis.querySelectorAll('h3,h4,h5,h6').forEach(heading => heading.remove());
+    const impact = renderImpact(result);
+    if (result.impact_in_overview && impact.textContent.trim()) analysis.append(impact);
+    const overview = appendSection(label('analysis_summary'),analysis,'detail-overview');
+    renderEnvironment(result);
+    if (!result.impact_in_overview) appendSection(label('impact_analysis'),impact,'detail-impact-section');
+    renderActions(result.action_items);
+    section(label('additional_checks'),result.additional_checks);
+    placeReportNotes(result,overview);
+    for (const block of byId('detail-body').querySelectorAll('.detail-section')) {
+      const content = Array.from(block.children).filter(node => node.tagName !== 'H2');
+      if (!content.some(node => node.textContent.trim())) block.remove();
+    }
+  }
   function buildOutline() {
     byId('detail-outline').replaceChildren();
     byId('detail-body').querySelectorAll('.detail-section').forEach((section, index) => {
@@ -525,7 +696,7 @@ _PAGE = r"""<!doctype html>
     byId('detail-meta').replaceChildren(); byId('detail-body').replaceChildren(); byId('detail-outline').replaceChildren();
     const feedback = byId('detail-feedback'); if (feedback) feedback.hidden = true;
     try {
-      const data = await api('/api/archive/analyses/' + encodeURIComponent(id), controller.signal);
+      const data = await api('/api/archive/analyses/' + encodeURIComponent(id) + '?view=report', controller.signal);
       if (request !== state.detailRequest) return;
       renderDetail(data); buildOutline();
       if (feedback) { const params = new URLSearchParams({lang:document.documentElement.lang, report:'archive:' + id});

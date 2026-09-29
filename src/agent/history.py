@@ -10,6 +10,7 @@ File-based storage (no database dependency). Thread-safe writes.
 
 import json
 import os
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -32,10 +33,73 @@ _RETIREMENT_LOCK = threading.Lock()
 MAX_HISTORY_DAYS = 90
 MAX_HISTORY_RECORDS = 500
 
+_ISO_DATE_RE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
+_NUMERIC_DATE_RE = re.compile(r"(?<!\d)(\d{4})[./](\d{1,2})[./](\d{1,2})(?!\d)")
+_LOCALIZED_DATE_RE = re.compile(
+    r"(?<!\d)(\d{4})\s*(?:년|年)\s*(\d{1,2})\s*(?:월|月)\s*(\d{1,2})\s*(?:일|日)"
+)
+_ENGLISH_DATE_RE = re.compile(
+    r"\b("
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|"
+    r"Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|"
+    r"Nov(?:ember)?|Dec(?:ember)?"
+    r")\s+(\d{1,2}),\s+(\d{4})\b",
+    re.IGNORECASE,
+)
+_ISO_MONTH_RE = re.compile(r"(?<!\d)(\d{4})-(\d{2})(?!-\d|\d)")
+_MONTH_NUMBERS = {
+    "jan": 1,
+    "feb": 2,
+    "mar": 3,
+    "apr": 4,
+    "may": 5,
+    "jun": 6,
+    "jul": 7,
+    "aug": 8,
+    "sep": 9,
+    "oct": 10,
+    "nov": 11,
+    "dec": 12,
+}
+
 
 def _ensure_data_dir() -> None:
     """Ensure the data directory exists."""
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _build_utc_date(year: str, month: str | int, day: str | int) -> datetime | None:
+    """Build a validated UTC date from numeric components."""
+    try:
+        return datetime(int(year), int(month), int(day), tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_retirement_date(value: Any) -> datetime | None:
+    """Extract a retirement date from a deadline that may include context text."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+
+    for pattern in (_ISO_DATE_RE, _NUMERIC_DATE_RE, _LOCALIZED_DATE_RE):
+        match = pattern.search(value)
+        if match:
+            parsed = _build_utc_date(*match.groups())
+            if parsed is not None:
+                return parsed
+
+    english_match = _ENGLISH_DATE_RE.search(value)
+    if english_match:
+        month_name, day, year = english_match.groups()
+        parsed = _build_utc_date(year, _MONTH_NUMBERS[month_name[:3].lower()], day)
+        if parsed is not None:
+            return parsed
+
+    month_match = _ISO_MONTH_RE.search(value)
+    if month_match:
+        return _build_utc_date(month_match.group(1), month_match.group(2), 1)
+
+    return None
 
 
 # =========================================================================
@@ -410,17 +474,30 @@ def update_retirement_tracker(result: Any) -> None:
     # Check if this retirement is already tracked
     existing = next((e for e in entries if e.get("update_id") == update_id), None)
 
-    # Try to extract retirement date from action items
+    # Try to extract retirement date from action items.
     retirement_date = ""
+    first_deadline = ""
     for action in getattr(result, "action_items", []):
         deadline = (
             getattr(action, "deadline", "")
             if hasattr(action, "deadline")
             else action.get("deadline", "")
         )
-        if deadline:
-            retirement_date = deadline
+        if not isinstance(deadline, str) or not deadline.strip():
+            continue
+        deadline = deadline.strip()
+        if not first_deadline:
+            first_deadline = deadline
+        parsed_deadline = _parse_retirement_date(deadline)
+        if parsed_deadline is not None:
+            retirement_date = parsed_deadline.date().isoformat()
             break
+
+    if not retirement_date:
+        title_date = _parse_retirement_date(update_title)
+        retirement_date = (
+            title_date.date().isoformat() if title_date is not None else first_deadline
+        )
 
     affected_count = len(getattr(result, "affected_resources", []))
     services = _extract_services(result)
@@ -441,7 +518,6 @@ def update_retirement_tracker(result: Any) -> None:
                 "services": services,
                 "retirement_date": retirement_date,
                 "affected_resource_count": affected_count,
-                "migration_status": "not_started",
                 "first_seen": datetime.now(timezone.utc).isoformat(),
                 "last_checked": datetime.now(timezone.utc).isoformat(),
                 "notes": "",
@@ -453,19 +529,9 @@ def update_retirement_tracker(result: Any) -> None:
     active_entries = []
     for entry in entries:
         rd = entry.get("retirement_date", "")
-        if rd:
-            try:
-                # Parse various date formats
-                for fmt in ("%Y-%m-%d", "%B %d, %Y", "%Y-%m"):
-                    try:
-                        dt = datetime.strptime(rd, fmt).replace(tzinfo=timezone.utc)
-                        if dt < now - timedelta(days=30):
-                            continue  # Skip expired entries
-                        break
-                    except ValueError:
-                        continue
-            except Exception:
-                pass
+        retirement_dt = _parse_retirement_date(rd)
+        if retirement_dt is not None and retirement_dt < now - timedelta(days=30):
+            continue
         active_entries.append(entry)
 
     save_retirement_tracker(active_entries)
@@ -476,7 +542,7 @@ def get_retirement_countdown() -> list[dict]:
 
     Returns:
         List of dicts with title, retirement_date, days_remaining,
-        affected_resource_count, migration_status, sorted by urgency
+        and affected_resource_count, sorted by urgency
     """
     entries = load_retirement_tracker()
     if not entries:
@@ -487,25 +553,22 @@ def get_retirement_countdown() -> list[dict]:
 
     for entry in entries:
         rd = entry.get("retirement_date", "")
-        days_remaining = None
-        if rd:
-            for fmt in ("%Y-%m-%d", "%B %d, %Y", "%Y-%m"):
-                try:
-                    dt = datetime.strptime(rd, fmt).replace(tzinfo=timezone.utc)
-                    days_remaining = (dt - now).days
-                    break
-                except ValueError:
-                    continue
+        retirement_dt = _parse_retirement_date(rd)
+        if retirement_dt is None:
+            retirement_dt = _parse_retirement_date(entry.get("title", ""))
+        days_remaining = (
+            (retirement_dt.date() - now.date()).days if retirement_dt is not None else None
+        )
+        display_date = retirement_dt.date().isoformat() if retirement_dt is not None else rd
 
         countdowns.append(
             {
                 "update_id": entry.get("update_id", ""),
                 "title": entry.get("title", ""),
                 "services": entry.get("services", []),
-                "retirement_date": rd,
+                "retirement_date": display_date,
                 "days_remaining": days_remaining,
                 "affected_resource_count": entry.get("affected_resource_count", 0),
-                "migration_status": entry.get("migration_status", "not_started"),
             }
         )
 

@@ -23,6 +23,7 @@ from src.agent.resilience import (
     RunDeadline,
     Transition,
     TransitionType,
+    _extract_retry_after,
     _is_stale_connection_error,
     calculate_backoff,
     parse_json_resilient,
@@ -241,6 +242,56 @@ class TestTruncateToolResult:
 
 
 class TestRetryWithBackoff:
+    @pytest.mark.parametrize(
+        ("headers", "expected"),
+        [
+            ({"Retry-After": "90"}, 90.0),
+            ({"RETRY-AFTER-MS": "1500"}, 1.5),
+            ({"x-ms-retry-after-ms": "2500"}, 2.5),
+            ({"x-ms-ratelimit-microsoft.consumption-retry-after": "75"}, 75.0),
+            (
+                {
+                    "Retry-After": "10",
+                    "x-ms-ratelimit-microsoft.costmanagement-qpu-retry-after": "65",
+                    "x-ms-ratelimit-microsoft.costmanagement-entity-retry-after": "25",
+                },
+                65.0,
+            ),
+            ({"Retry-After": "Fri, 18 Sep 2026 00:01:30 GMT"}, 90.0),
+            ({"Retry-After": "Thu, 17 Sep 2026 23:59:00 GMT"}, None),
+            ({"Retry-After": "invalid", "retry-after-ms": "3000"}, 3.0),
+            ({"Retry-After": "invalid"}, None),
+            ({"Retry-After": "nan"}, None),
+            ({"Retry-After": "inf"}, None),
+            ({"Retry-After": "-2"}, None),
+            ({}, None),
+        ],
+    )
+    def test_server_retry_headers(self, monkeypatch, headers: dict[str, str], expected):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        now = datetime(2026, 9, 18, tzinfo=timezone.utc).timestamp()
+        monkeypatch.setattr("src.agent.resilience.time.time", lambda: now)
+        error = RuntimeError("429 Too Many Requests")
+        error.response = SimpleNamespace(headers=headers)
+        assert _extract_retry_after(error) == expected
+
+    @pytest.mark.asyncio
+    async def test_authoritative_status_prevents_retrying_auth_error(self, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        error = RuntimeError("403: request 429 could not be authorized")
+        error.status_code = 403
+        operation = AsyncMock(side_effect=error)
+        sleep = AsyncMock()
+        monkeypatch.setattr("src.agent.resilience.asyncio.sleep", sleep)
+        with pytest.raises(RuntimeError) as raised:
+            await retry_with_backoff(operation)
+        assert raised.value is error
+        operation.assert_awaited_once()
+        sleep.assert_not_awaited()
+
     @pytest.mark.asyncio
     async def test_success_on_first_try(self):
         async def ok():

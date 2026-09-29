@@ -103,6 +103,9 @@ async def test_invoke_uses_entra_and_responses_contract(monkeypatch):
     credential = Credential()
 
     class Response:
+        status_code = 200
+        headers = httpx.Headers()
+
         def raise_for_status(self):
             return None
 
@@ -154,8 +157,15 @@ async def test_invoke_uses_entra_and_responses_contract(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_analysis_retries_transient_http_status(monkeypatch):
+@pytest.mark.parametrize(
+    ("status_code", "retry_after", "expected_delay"),
+    [(503, None, 1.0), (429, None, 10.0), (429, "75", 75.0), (503, "90", 90.0)],
+)
+async def test_analysis_retries_transient_http_status(
+    monkeypatch, status_code: int, retry_after: str | None, expected_delay: float
+):
     attempts = []
+    delays = []
 
     class Credential:
         def get_token(self, _scope):
@@ -167,6 +177,7 @@ async def test_analysis_retries_transient_http_status(monkeypatch):
     class Response:
         def __init__(self, status_code):
             self.status_code = status_code
+            self.headers = httpx.Headers()
             self.request = httpx.Request("POST", _ENDPOINT)
 
         def raise_for_status(self):
@@ -174,7 +185,11 @@ async def test_analysis_retries_transient_http_status(monkeypatch):
                 raise httpx.HTTPStatusError(
                     "transient",
                     request=self.request,
-                    response=httpx.Response(self.status_code, request=self.request),
+                    response=httpx.Response(
+                        self.status_code,
+                        request=self.request,
+                        headers={"Retry-After": retry_after} if retry_after else {},
+                    ),
                 )
 
         def json(self):
@@ -198,14 +213,15 @@ async def test_analysis_retries_transient_http_status(monkeypatch):
 
         async def post(self, *_args, **_kwargs):
             attempts.append(True)
-            return Response(503 if len(attempts) == 1 else 200)
+            return Response(status_code if len(attempts) == 1 else 200)
 
     async def no_sleep(_delay):
-        return None
+        delays.append(_delay)
 
     monkeypatch.setattr(hosted_client, "get_azure_credential", lambda: Credential())
     monkeypatch.setattr(hosted_client.httpx, "AsyncClient", Client)
     monkeypatch.setattr(hosted_client.asyncio, "sleep", no_sleep)
+    monkeypatch.setattr("src.agent.resilience.random.uniform", lambda *_: 0)
     request = HostedAnalysisRequest(
         update=HostedUpdate.model_validate(_update().to_dict()),
         trace_id="trace-1",
@@ -215,6 +231,7 @@ async def test_analysis_retries_transient_http_status(monkeypatch):
 
     assert response.status == "completed"
     assert len(attempts) == 2
+    assert delays == [expected_delay]
 
 
 @pytest.mark.asyncio
@@ -372,3 +389,60 @@ async def test_proxy_customizes_inside_hosted_agent(monkeypatch):
     )
 
     assert customized.one_line_summary == "Customized"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("http_status", "operation_failed"), [(200, False), (200, True), (403, False)]
+)
+async def test_hosted_http_diagnostics_preserve_session_without_private_payload(
+    monkeypatch: pytest.MonkeyPatch, http_status: int, operation_failed: bool
+):
+    logger = Mock()
+    credential = Mock()
+    credential.get_token.return_value.token = "private-entra-token"
+    request = HostedAnalysisRequest(
+        update=HostedUpdate.model_validate(_update().to_dict()), trace_id="diagnostic-trace"
+    )
+    wire = HostedAgentResponse(
+        operation="analyze_update",
+        status="failed" if operation_failed else "completed",
+        result=None if operation_failed else _result_payload("private-report-content"),
+        error="Hosted analysis failed (RuntimeError)" if operation_failed else "",
+        trace_id=request.trace_id,
+    )
+
+    def respond(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            http_status,
+            headers={
+                "x-agent-session-id": "diagnostic-session",
+                "apim-request-id": "azure-request",
+            },
+            json={"output_text": wire.model_dump_json()},
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(respond))
+    monkeypatch.setattr(hosted_client, "get_azure_credential", lambda: credential)
+    monkeypatch.setattr(hosted_client.httpx, "AsyncClient", lambda **kwargs: client)
+    monkeypatch.setattr(hosted_client, "logger", logger)
+
+    if operation_failed or http_status >= 400:
+        with pytest.raises(hosted_client.HostedAgentError):
+            await hosted_client.invoke_hosted_agent(_settings(), request)
+    else:
+        await hosted_client.invoke_hosted_agent(_settings(), request)
+
+    logger.info.assert_called_once()
+    event = logger.info.call_args
+    assert event.args == ("hosted_agent_http_response",)
+    assert event.kwargs["agent_session_id"] == "diagnostic-session"
+    assert event.kwargs["request_id"] == "azure-request"
+    assert event.kwargs["trace_id"] == request.trace_id
+    assert event.kwargs["update_id"] == "update-1"
+    assert event.kwargs["status_code"] == http_status
+    assert event.kwargs["attempt"] == 1
+    assert event.kwargs["elapsed_s"] >= 0
+    assert "private-report-content" not in str(event)
+    assert "private-entra-token" not in str(event)
+    credential.close.assert_called_once()

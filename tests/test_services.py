@@ -575,6 +575,69 @@ class TestCostManagementService:
     """Test CostManagementService."""
 
     @pytest.mark.asyncio
+    async def test_rate_limit_waits_for_server_before_retrying_identical_query(self, monkeypatch):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from azure.core.exceptions import HttpResponseError
+        from azure.mgmt.costmanagement.models import QueryDataset, QueryDefinition
+
+        from src.services.cost_management import CostManagementService
+
+        service = CostManagementService(subscription_id=SUBSCRIPTION_A)
+        service._client = MagicMock()
+        throttled = HttpResponseError(message="Too many requests")
+        throttled.status_code = 429
+        throttled.response = SimpleNamespace(
+            headers={"x-ms-ratelimit-microsoft.consumption-retry-after": "75"}
+        )
+        expected_result = object()
+        service._client.query.usage.side_effect = [throttled, expected_result]
+        query = QueryDefinition(type="ActualCost", timeframe="MonthToDate", dataset=QueryDataset())
+        scope = f"/subscriptions/{SUBSCRIPTION_A}"
+        sleep = AsyncMock()
+        monkeypatch.setattr("src.agent.resilience.asyncio.sleep", sleep)
+
+        result = await service._query_with_retry(scope, query)
+
+        assert result is expected_result
+        sleep.assert_awaited_once_with(75.0)
+        assert service._client.query.usage.call_count == 2
+        for invocation in service._client.query.usage.call_args_list:
+            assert invocation.kwargs == {"scope": scope, "parameters": query, "retry_total": 0}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status_code", [429, 403])
+    async def test_retry_exhaustion_never_sleeps_without_a_next_attempt(
+        self, monkeypatch, status_code
+    ):
+        from unittest.mock import AsyncMock
+
+        from azure.core.exceptions import HttpResponseError
+        from azure.mgmt.costmanagement.models import QueryDataset, QueryDefinition
+
+        from src.services.cost_management import CostManagementService
+
+        service = CostManagementService(subscription_id=SUBSCRIPTION_A)
+        service._client = MagicMock()
+        error = HttpResponseError(message="Synthetic query failure")
+        error.status_code = status_code
+        service._client.query.usage.side_effect = error
+        query = QueryDefinition(type="ActualCost", timeframe="MonthToDate", dataset=QueryDataset())
+        sleep = AsyncMock()
+        monkeypatch.setattr("src.agent.resilience.asyncio.sleep", sleep)
+        monkeypatch.setattr("src.agent.resilience.random.uniform", lambda *_: 0)
+
+        with pytest.raises(HttpResponseError) as raised:
+            await service._query_with_retry(f"/subscriptions/{SUBSCRIPTION_A}", query)
+
+        assert raised.value is error
+        assert service._client.query.usage.call_count == (4 if status_code == 429 else 1)
+        assert [invocation.args[0] for invocation in sleep.await_args_list] == (
+            [10.0, 20.0, 40.0] if status_code == 429 else []
+        )
+
+    @pytest.mark.asyncio
     async def test_get_cost_by_resource_type_no_subscription(self):
         """Returns error when no subscription."""
         with patch("src.services.cost_management.get_settings") as mock:
@@ -829,6 +892,8 @@ class TestMicrosoftLearnService:
     @pytest.mark.asyncio
     async def test_fetch_page_content_extracts_only_descriptive_trusted_visuals(self):
         """Learn pages expose bounded email visuals without external or decorative images."""
+        import httpx
+
         from src.services.microsoft_learn import MicrosoftLearnService
 
         response = MagicMock(
@@ -847,15 +912,20 @@ class TestMicrosoftLearnService:
                 </main>
             """,
         )
-        client = AsyncMock()
-        client.is_closed = False
-        client.get.return_value = response
-        service = MicrosoftLearnService()
-        service._client = client
-
-        result = await service.fetch_page_content(
-            "https://learn.microsoft.com/azure/storage/example"
-        )
+        async with httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    headers={"Content-Type": "text/html; charset=utf-8"},
+                    text=response.text,
+                )
+            )
+        ) as client:
+            service = MicrosoftLearnService()
+            service._client = client
+            result = await service.fetch_page_content(
+                "https://learn.microsoft.com/azure/storage/example"
+            )
 
         assert result is not None
         assert result["visuals"] == [

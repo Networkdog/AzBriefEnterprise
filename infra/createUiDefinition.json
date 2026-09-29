@@ -32,13 +32,48 @@
         "name": "registryServer",
         "type": "Microsoft.Common.TextBox",
         "label": "Existing container registry login server",
-        "toolTip": "Use the customer's ACR login server, for example company.azurecr.io. Managed identity pull access is granted after foundation deployment.",
+        "toolTip": "Use the customer or publisher ACR login server, for example company.azurecr.io. For another tenant, select a customer-specific pull token below. The customer network must reach the registry and image data endpoints.",
         "constraints": {
           "required": true,
           "regex": "^[a-z0-9-]+(?:\\.[a-z0-9-]+)*\\.azurecr\\.io$",
           "validationMessage": "Enter an Azure Container Registry login server, without https:// or a path."
         },
         "visible": true
+      },
+      {
+        "name": "registryAuthMode",
+        "type": "Microsoft.Common.DropDown",
+        "label": "Registry authentication",
+        "defaultValue": "Managed identity (same tenant)",
+        "constraints": {
+          "required": true,
+          "allowedValues": [
+            { "label": "Managed identity (same tenant)", "value": "ManagedIdentity" },
+            { "label": "Customer-specific pull token (including another tenant)", "value": "Credentials" }
+          ]
+        },
+        "visible": true
+      },
+      {
+        "name": "registryUsername",
+        "type": "Microsoft.Common.TextBox",
+        "label": "Registry pull-token name",
+        "toolTip": "Use a customer-specific token restricted to the AzBrief repository, or a pull-only service principal client ID. Do not use the ACR administrator account.",
+        "constraints": {
+          "required": true,
+          "regex": "^\\S+$",
+          "validationMessage": "Enter the token name or service principal client ID, without whitespace."
+        },
+        "visible": "[equals(basics('registryAuthMode'), 'Credentials')]"
+      },
+      {
+        "name": "registryPassword",
+        "type": "Microsoft.Common.PasswordBox",
+        "label": { "password": "Registry pull-token password", "confirmPassword": "Confirm registry password" },
+        "toolTip": "Enter the password directly here. It is stored in the customer Key Vault and referenced by both App and Job. Never paste it into chat, source control or command history.",
+        "constraints": { "required": true },
+        "options": { "hideConfirmation": true },
+        "visible": "[equals(basics('registryAuthMode'), 'Credentials')]"
       },
       {
         "name": "registryMode",
@@ -52,7 +87,7 @@
             { "label": "RBAC Registry Permissions (legacy)", "value": "LegacyRegistryPermissions" }
           ]
         },
-        "visible": true
+        "visible": "[equals(basics('registryAuthMode'), 'ManagedIdentity')]"
       }
     ],
     "steps": [
@@ -296,6 +331,9 @@
       "simpleModelSkuName": "[steps('foundry').simpleSku]",
       "simpleModelCapacity": "[int(steps('foundry').simpleCapacity)]",
       "containerRegistryServer": "[basics('registryServer')]",
+      "containerRegistryAuthMode": "[basics('registryAuthMode')]",
+      "containerRegistryUsername": "[if(equals(basics('registryAuthMode'), 'Credentials'), basics('registryUsername'), '')]",
+      "containerRegistryPassword": "[if(equals(basics('registryAuthMode'), 'Credentials'), basics('registryPassword'), '')]",
       "containerRegistryRoleAssignmentMode": "[basics('registryMode')]",
       "emailRecipientAddress": "[steps('delivery').recipient]",
       "emailDataLocation": "[steps('delivery').dataLocation]",

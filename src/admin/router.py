@@ -12,9 +12,9 @@ import secrets
 from datetime import date, datetime, time, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 from structlog import get_logger
 
 from src.admin.auth import AdminPrincipal, extract_principal, require_admin
@@ -24,19 +24,15 @@ from src.admin.configuration import (
     AdminConfigurationProtectedEntryError,
     get_admin_configuration,
 )
+from src.admin.errors import AdminErrorEvent, AdminErrorHistory
 from src.admin.page import render_admin_page
 from src.admin.readiness import collect_admin_readiness
 from src.agent.scope import AnalysisScope
 from src.archive.models import ArchiveSource
 from src.config import Subscriber, get_settings
-from src.orchestrator import (
-    MAX_MANUAL_TARGETS,
-    RunSelection,
-    get_run_store,
-    parse_iso_utc,
-    start_run,
-)
+from src.orchestrator import RunSelection, get_run_store, parse_iso_utc, start_run
 from src.services.admin_config import AdminConfigConflictError, AdminConfigNotConfiguredError
+from src.services.log_analytics import FAILURE_RUN_ID_PATTERN, LogAnalyticsService
 from src.web_fonts import WEB_FONT_CSP_SOURCE
 
 logger = get_logger()
@@ -60,7 +56,7 @@ class StartRunRequest(BaseModel):
     )
     start_date: Optional[date] = None
     end_date: Optional[date] = None
-    recent_count: Optional[int] = Field(default=None, ge=1, le=MAX_MANUAL_TARGETS)
+    recent_count: Optional[int] = Field(default=None, ge=1)
     update_id: str = Field(default="", max_length=32)
     update_url: str = Field(default="", max_length=2048)
     send_email: bool = Field(
@@ -519,6 +515,53 @@ async def admin_updates(
             for u in ordered
         ]
     }
+
+
+@router.get("/api/admin/errors", response_model=AdminErrorHistory)
+async def admin_errors(
+    response: Response,
+    _: AdminPrincipal = Depends(require_admin),
+    hours: int = Query(default=24, ge=1, le=720),
+    limit: int = Query(default=50, ge=1, le=100),
+    run_id: str = Query(default="", pattern=FAILURE_RUN_ID_PATTERN),
+) -> AdminErrorHistory:
+    """Read durable failure history independently of the process-local run registry."""
+    response.headers["Cache-Control"] = "no-store"
+    if not get_settings().log_analytics_workspace_id:
+        raise HTTPException(
+            status_code=503,
+            detail="Error history requires LOG_ANALYTICS_WORKSPACE_ID for the shared workspace.",
+            headers={"Cache-Control": "no-store"},
+        )
+    service = LogAnalyticsService()
+    try:
+        result = await service.get_failure_events(hours=hours, limit=limit, run_id=run_id)
+    finally:
+        await service.close()
+    if not result["success"]:
+        logger.warning("admin_failure_history_query_failed")
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Could not read error history. Check workspace access, the AzBriefFailures_CL "
+                "table and network connectivity, then retry."
+            ),
+            headers={"Cache-Control": "no-store"},
+        )
+    try:
+        events = [AdminErrorEvent.model_validate(item) for item in result["data"][:limit]]
+    except ValidationError as exc:
+        logger.error("admin_failure_history_invalid", error=type(exc).__name__)
+        raise HTTPException(
+            status_code=502,
+            detail="Error history returned invalid records. Check the failure-table schema.",
+            headers={"Cache-Control": "no-store"},
+        ) from exc
+    return AdminErrorHistory(
+        events=events,
+        period_hours=hours,
+        has_more=len(result["data"]) > limit,
+    )
 
 
 @router.get("/api/admin/runs")

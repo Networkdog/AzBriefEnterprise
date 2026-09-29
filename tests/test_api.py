@@ -101,6 +101,37 @@ class TestRootEndpoint:
         assert "version" in data
 
 
+@pytest.mark.asyncio
+async def test_unhandled_http_error_is_logged_without_query_or_headers():
+    from types import SimpleNamespace
+
+    from starlette.requests import Request
+    from structlog.testing import capture_logs
+
+    from src.main import security_headers
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/synthetic/private-input",
+            "query_string": b"token=private-query",
+            "headers": [(b"authorization", b"Bearer private-header")],
+            "route": SimpleNamespace(path="/synthetic/{item}"),
+        }
+    )
+    error = RuntimeError("synthetic unhandled failure")
+    with capture_logs() as events:
+        with pytest.raises(RuntimeError) as raised:
+            await security_headers(request, AsyncMock(side_effect=error))
+    assert raised.value is error
+    failure = next(event for event in events if event["event"] == "http_request_failed")
+    assert failure["method"] == "GET"
+    assert failure["route"] == "/synthetic/{item}"
+    assert "private-query" not in str(failure)
+    assert "private-header" not in str(failure)
+
+
 class TestAnalyzeEndpoint:
     """Test /api/analyze endpoint."""
 

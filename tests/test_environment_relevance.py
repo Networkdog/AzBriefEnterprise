@@ -234,6 +234,12 @@ async def test_no_resources_does_not_skip_subscriber_role_assessment(
     analyzer = AzureUpdateAnalyzer.__new__(AzureUpdateAnalyzer)
     analyzer.settings = SimpleNamespace(report_language="ko", action_verification_enabled=False)
     analyzer._llm_circuit_breaker = CircuitBreaker()
+    summary = (
+        "Azure Storage의 SFTP 업로드를 중단된 지점부터 재개할 수 있습니다."
+        if language == "ko"
+        else "Azure Storage SFTP uploads can resume from the interrupted position."
+    )
+    analyzer._summarize_announcement = AsyncMock(return_value=summary)
     analyzer.llm_report_writer = SimpleNamespace(
         ainvoke=AsyncMock(
             return_value=AIMessage(
@@ -251,6 +257,10 @@ async def test_no_resources_does_not_skip_subscriber_role_assessment(
     tailored = await analyzer.customize_for_subscriber(result, subscriber, sample_update)
 
     analyzer.llm_report_writer.ainvoke.assert_awaited_once()
+    analyzer._summarize_announcement.assert_awaited_once_with(
+        sample_update, language, background=True
+    )
+    assert tailored.one_line_summary == summary
     messages = analyzer.llm_report_writer.ainvoke.call_args.args[0]
     assert json.dumps(evidence, ensure_ascii=False) in messages[1].content
     assert tailored.job_relevance == "high"

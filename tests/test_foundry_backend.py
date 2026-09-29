@@ -122,8 +122,13 @@ class TestSpecialistFunctionTools:
         evidence_item = claim["properties"]["evidence"]["items"]
         assert evidence_item["pattern"] == "^(/subscriptions/|resource:|tool:)"
 
-    def test_non_evidence_specialist_has_no_fixed_response_schema(self):
+    def test_writer_has_no_fixed_response_schema(self):
         assert foundry_backend.build_specialist_text_options("report_writer") is None
+
+    def test_reviewer_requires_json_without_conflating_its_three_output_contracts(self):
+        options = foundry_backend.build_specialist_text_options("quality_reviewer")
+        assert options.as_dict() == {"format": {"type": "json_object"}}
+        assert foundry_backend.FoundryAgentChatModel.supports_logprobs is False
 
 
 class TestFoundryAgentChatModel:
@@ -410,6 +415,68 @@ class TestFoundryAgentCleanup:
 
 
 class TestFoundryFunctionLoop:
+    @pytest.mark.asyncio
+    async def test_repeated_calls_keep_tools_on_the_owning_loop_and_preserve_context(
+        self, monkeypatch
+    ):
+        import asyncio
+        from types import SimpleNamespace
+
+        from src.agent.scope import AnalysisScope, analysis_scope_context, current_analysis_scope
+
+        caller_loop = asyncio.get_running_loop()
+        observed_loops = []
+        observed_contexts = []
+        observed_scopes = []
+        scope = AnalysisScope(subscriptions=["11111111-1111-1111-1111-111111111111"])
+
+        class LoopBoundTool:
+            async def ainvoke(self, arguments):
+                observed_loops.append(asyncio.get_running_loop())
+                observed_contexts.append(foundry_backend.current_foundry_invocation_context())
+                observed_scopes.append(current_analysis_scope())
+                return "verified result"
+
+        function_response = SimpleNamespace(
+            output=[
+                SimpleNamespace(
+                    type="function_call",
+                    name="query_azure_resources",
+                    arguments='{"query":"Resources | project id"}',
+                    call_id="call-1",
+                )
+            ]
+        )
+        final_response = SimpleNamespace(status="completed", output_text="done", output=[])
+        openai = _FakeOpenAIClient([function_response, final_response] * 2)
+        project = _FakeProjectClient(openai)
+        credential = _FakeCredential()
+        monkeypatch.setattr("azure.ai.projects.AIProjectClient", lambda **kwargs: project)
+        monkeypatch.setattr("src.config.get_azure_credential", lambda: credential)
+        tool = LoopBoundTool()
+
+        with analysis_scope_context(scope):
+            for trace_id in ("first-trace", "second-trace"):
+                result = await foundry_backend._invoke_foundry_agent(
+                    "https://example/api/projects/p",
+                    "azbrief-resource-graph",
+                    "prompt",
+                    5,
+                    {"query_azure_resources": tool},
+                    trace_id,
+                    "specialist:resource_graph",
+                )
+                assert result.text == "done"
+
+        assert observed_loops == [caller_loop, caller_loop]
+        assert not caller_loop.is_closed()
+        assert observed_scopes == [scope, scope]
+        assert observed_contexts == [
+            ("first-trace", "specialist:resource_graph"),
+            ("second-trace", "specialist:resource_graph"),
+        ]
+        assert openai.conversations.deleted == ["conv-1", "conv-1"]
+
     def test_executes_function_calls_and_submits_outputs(self, monkeypatch):
         monkeypatch.setattr(foundry_backend, "MAX_AGENT_TOOL_ROUNDS", 1)
         function_response = type(
@@ -719,3 +786,264 @@ class TestFoundryFunctionLoop:
             await foundry_backend._invoke_foundry_agent(
                 "https://example/api/projects/p", "azbrief-coordinator", "prompt", 1
             )
+
+
+class TestPublicMcpRetry:
+    @staticmethod
+    def _error(
+        server_url="https://learn.microsoft.com:443/api/mcp",
+        upstream_status=504,
+        outer_status=400,
+        code="tool_user_error",
+        message=None,
+        wrapped=True,
+        headers=None,
+    ):
+        import httpx
+        from openai import BadRequestError
+
+        if message is None:
+            message = (
+                "[Failed Dependency] while enumerating tools, the dependency call to the MCP server: "
+                f"{server_url} failed with status code {upstream_status}, and error "
+                "message: Response status code does not indicate success."
+            )
+        detail = {"code": code, "message": message}
+        return BadRequestError(
+            message,
+            response=httpx.Response(
+                outer_status,
+                request=httpx.Request("POST", "https://example/responses"),
+                headers=headers,
+            ),
+            body={"error": detail} if wrapped else detail,
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("wrapped", [True, False])
+    async def test_public_mcp_discovery_retries_three_times(self, monkeypatch, wrapped):
+        import asyncio
+
+        error = self._error(wrapped=wrapped)
+        calls = []
+        delays = []
+        expected = foundry_backend.FoundryAgentInvocation(text="recovered")
+
+        def invoke(*args):
+            calls.append(args)
+            if len(calls) <= 3:
+                raise error
+            return expected
+
+        async def sleep(delay):
+            delays.append(delay)
+
+        monkeypatch.setattr(foundry_backend, "_run_foundry_agent_sync", invoke)
+        monkeypatch.setattr(asyncio, "sleep", sleep)
+        monkeypatch.setattr("src.agent.resilience.random.uniform", lambda *_args: 0)
+
+        with capture_logs() as logs:
+            result = await foundry_backend._invoke_foundry_agent(
+                "https://example/api/projects/p",
+                "azbrief-coordinator",
+                "unchanged prompt",
+                600,
+                trace_id="public-mcp-trace",
+                task_id="coordinator:plan",
+                disable_tools=True,
+            )
+
+        assert result is expected
+        assert len(calls) == 4
+        assert all(call == calls[0] for call in calls)
+        assert delays == [10.0, 20.0, 40.0]
+        retries = [entry for entry in logs if entry["event"] == "foundry_public_mcp_retry"]
+        assert [entry["attempt"] for entry in retries] == [1, 2, 3]
+        assert all(entry["trace_id"] == "public-mcp-trace" for entry in retries)
+        assert all(entry["task_id"] == "coordinator:plan" for entry in retries)
+        assert all("error" not in entry for entry in retries)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("upstream_message", ["Gateway Timeout", "connection reset by peer"])
+    async def test_exhaustion_preserves_error_without_sleeping_or_retrying_again(
+        self, monkeypatch, upstream_message
+    ):
+        import asyncio
+        from unittest.mock import AsyncMock, Mock
+
+        from src.agent.resilience import retry_with_backoff
+
+        error = self._error(
+            message=(
+                "[Failed Dependency] while enumerating tools, the dependency call to the MCP server: "
+                "https://learn.microsoft.com/api/mcp failed with status code 504, and error "
+                f"message: {upstream_message}"
+            )
+        )
+        invoke = Mock(side_effect=error)
+        sleep = AsyncMock()
+        monkeypatch.setattr(foundry_backend, "_run_foundry_agent_sync", invoke)
+        monkeypatch.setattr(asyncio, "sleep", sleep)
+
+        async def invoke_agent():
+            return await foundry_backend._invoke_foundry_agent(
+                "https://example/api/projects/p", "azbrief-coordinator", "prompt", 600
+            )
+
+        with pytest.raises(type(error)) as raised:
+            await retry_with_backoff(invoke_agent, max_retries=3)
+
+        assert raised.value is error
+        assert invoke.call_count == 4
+        assert sleep.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_server_retry_hint_overrides_backoff(self, monkeypatch):
+        import asyncio
+        from unittest.mock import AsyncMock, Mock
+
+        error = self._error(headers={"Retry-After": "12", "x-ms-retry-after-ms": "30000"})
+        expected = foundry_backend.FoundryAgentInvocation(text="done")
+        invoke = Mock(side_effect=[error, expected])
+        sleep = AsyncMock()
+        monkeypatch.setattr(foundry_backend, "_run_foundry_agent_sync", invoke)
+        monkeypatch.setattr(asyncio, "sleep", sleep)
+
+        result = await foundry_backend._invoke_foundry_agent(
+            "https://example/api/projects/p", "azbrief-coordinator", "prompt", 600
+        )
+
+        assert result is expected
+        sleep.assert_awaited_once_with(30.0)
+
+    @pytest.mark.parametrize("status", [408, 429, 500, 502, 503, 504, 529])
+    def test_recognizes_transient_public_mcp_statuses(self, status):
+        error = self._error(
+            server_url="https://LEARN.microsoft.com/api/mcp/", upstream_status=status
+        )
+        assert foundry_backend._public_mcp_failure_status(error) == status
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "options",
+        [
+            {"server_url": "https://tenant-mcp.azurecontainerapps.io/"},
+            {"server_url": "https://learn.microsoft.com.attacker.invalid/api/mcp"},
+            {"server_url": "https://user@learn.microsoft.com/api/mcp"},
+            {"server_url": "https://learn.microsoft.com:8443/api/mcp"},
+            {"server_url": "https://learn.microsoft.com:invalid/api/mcp"},
+            {"server_url": "https://learn.microsoft.com/api/mcp?token=private"},
+            {"server_url": "https://learn.microsoft.com/other"},
+            {"server_url": "http://learn.microsoft.com/api/mcp"},
+            {"upstream_status": 400},
+            {"upstream_status": 401},
+            {"upstream_status": 403},
+            {"upstream_status": 404},
+            {"outer_status": 401},
+            {"outer_status": 403},
+            {"code": "invalid_request_error"},
+            {"message": "Invalid tool arguments; see https://learn.microsoft.com/api/mcp (504)"},
+        ],
+    )
+    async def test_unrelated_or_permanent_errors_are_not_retried(self, monkeypatch, options):
+        import asyncio
+        from unittest.mock import AsyncMock, Mock
+
+        error = self._error(**options)
+        invoke = Mock(side_effect=error)
+        sleep = AsyncMock()
+        monkeypatch.setattr(foundry_backend, "_run_foundry_agent_sync", invoke)
+        monkeypatch.setattr(asyncio, "sleep", sleep)
+
+        with pytest.raises(type(error)) as raised:
+            await foundry_backend._invoke_foundry_agent(
+                "https://example/api/projects/p", "azbrief-coordinator", "prompt", 600
+            )
+
+        assert raised.value is error
+        invoke.assert_called_once()
+        sleep.assert_not_awaited()
+
+    @pytest.mark.parametrize(
+        "body",
+        [None, "tool_user_error", {"error": None}, {"code": "tool_user_error", "message": []}],
+    )
+    def test_malformed_error_bodies_fail_closed(self, body):
+        error = self._error()
+        error.body = body
+        assert foundry_backend._public_mcp_failure_status(error) is None
+
+    @pytest.mark.asyncio
+    async def test_local_tool_invocation_is_not_replayed(self, monkeypatch):
+        import asyncio
+        from unittest.mock import AsyncMock, Mock
+
+        error = self._error()
+        invoke = Mock(side_effect=error)
+        sleep = AsyncMock()
+        monkeypatch.setattr(foundry_backend, "_run_foundry_agent_sync", invoke)
+        monkeypatch.setattr(asyncio, "sleep", sleep)
+
+        with pytest.raises(type(error)):
+            await foundry_backend._invoke_foundry_agent(
+                "https://example/api/projects/p",
+                "azbrief-coordinator",
+                "prompt",
+                600,
+                local_tools={"search_azure_docs": object()},
+            )
+
+        invoke.assert_called_once()
+        sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_cancellation_during_backoff_stops_retries(self, monkeypatch):
+        import asyncio
+        from unittest.mock import AsyncMock, Mock
+
+        invoke = Mock(side_effect=self._error())
+        sleep = AsyncMock(side_effect=asyncio.CancelledError)
+        monkeypatch.setattr(foundry_backend, "_run_foundry_agent_sync", invoke)
+        monkeypatch.setattr(asyncio, "sleep", sleep)
+
+        with pytest.raises(asyncio.CancelledError):
+            await foundry_backend._invoke_foundry_agent(
+                "https://example/api/projects/p", "azbrief-coordinator", "prompt", 600
+            )
+
+        invoke.assert_called_once()
+        sleep.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_one_timeout_budget_covers_calls_and_backoff(self, monkeypatch):
+        import asyncio
+        from unittest.mock import Mock
+
+        sleeping = asyncio.Event()
+        budgets = []
+        invoke = Mock(side_effect=self._error())
+
+        async def sleep(_delay):
+            sleeping.set()
+            await asyncio.Event().wait()
+
+        async def expire_at_backoff(operation, timeout):
+            budgets.append(timeout)
+            task = asyncio.create_task(operation)
+            await sleeping.wait()
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            raise asyncio.TimeoutError
+
+        monkeypatch.setattr(foundry_backend, "_run_foundry_agent_sync", invoke)
+        monkeypatch.setattr(asyncio, "sleep", sleep)
+        monkeypatch.setattr(asyncio, "wait_for", expire_at_backoff)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await foundry_backend._invoke_foundry_agent(
+                "https://example/api/projects/p", "azbrief-coordinator", "prompt", 60
+            )
+
+        assert budgets == [60]
+        invoke.assert_called_once()

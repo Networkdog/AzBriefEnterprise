@@ -62,7 +62,16 @@ When the update IS relevant to resources in the inventory, plan **deep configura
 ### Pre-Check: Pre-fetched Reference Documents
 If the update context above includes a **"Official Reference Documents"** section, these documents
 have already been fetched from the update's Learn More links. When pre-fetched documents are available:
-- **Reduce or skip `search_update_related_docs` / `search_azure_docs` tasks** — the primary reference is already provided
+- Root documents (depth 0) and selected article links (depth 1) are fetched by the Hosted runtime.
+  Each fetched body has a source URL, parent, depth and full-text ref. Search `query_tool_result`
+  when the missing fact could be beyond the preview; a URL, title or unfetched candidate is NOT evidence.
+- If a concrete decision question remains after reading a depth-1 document, request its observed
+  body link with `fetch_documentation_link(parent_url=..., url=..., question=...)`. This performs
+  a bounded depth-2 fetch, not a new search. Never invent a child URL, reset depth, or exceed two hops.
+- Budget-limited first-hop candidates may use the same tool for a named question. Do not retry
+  failed/blocked/exhausted fetches. Preserve those gaps and uncertainty in the report.
+- **Reduce or skip `search_update_related_docs` / `search_azure_docs` tasks** only when fetched
+  bodies actually establish the required public facts, not just because prefetch ran.
 - Exception: for GA/Preview, do not skip the targeted Region search unless the pre-fetched text itself
   explicitly confirms each primary Region or states that the feature is available in all Azure regions
 - **Still include at least 1 KQL task** for resource identification
@@ -116,6 +125,8 @@ Design specific analysis tasks based on the update context.
    - `search_azure_docs` -- Azure documentation keyword search
    - `get_service_documentation` -- Service-specific documentation
    - `search_resource_graph_docs` -- Resource Graph KQL documentation
+   - `fetch_documentation_link` -- Read an observed link for an unresolved decision question;
+     args are exactly `parent_url`, `url`, `question`. Depth/time/page limits are runtime-enforced.
 10. **azure_rest** (Azure Management REST API):
    - `call_azure_rest_api` -- Call any Azure ARM API for SKU/availability/capability checks
 11. **context** (already-collected results):
@@ -289,7 +300,7 @@ Evaluate the completeness and quality of the collected analysis results.
 | Configuration Gap Analysis | Conditional | Only if the update is about a retirement, breaking change, or feature_change that requires config migration. NOT needed for new_feature, preview, region_expansion, new_service, sdk_tooling. |
 | Cost Impact | Conditional | Required for material pricing, billing/meter, paid-feature, usage-cost, or savings implications in any category. Collect scoped recent ActualCost with currency, period, and filter, or preserve an explicit gap after an attempted query. Broad subscription totals alone do not establish the affected service's costs. |
 | Security Impact | Conditional | Only if the update is about a security enforcement or vulnerability. |
-| Documentation Evidence | Required | At least 1 Microsoft Learn doc URL obtained from tool results. **If search was attempted but returned no results, this is met.** |
+| Documentation Evidence | Required | Fetched official bodies or retrieved full-text excerpts establish the recommendation's public prerequisites, limits and procedures. URLs, link labels and snippets alone do not prove their contents. When a material question could be answered from a stored ref or an observed depth-1/2 candidate, set documentation_evidence=false and request that specific read. Failed, blocked or exhausted sources remain explicit gaps; do not repeatedly retry them or claim full coverage. Optional unread links alone do not require revision. |
 | Primary Region Availability | Conditional | **Required for GA, Public Preview, new-service, and region-expansion updates.** The result must identify the primary Regions from Resource Graph and establish one outcome per Region: available now, available with a stated prerequisite, not available, or not confirmed after feature-level official-source checks. Search titles alone do not meet this. ARM provider/resource-type data meets it only when the announced object is that exact resource type or SKU; it does not prove rollout of a feature layered on an existing service. |
 | Actionability | Required | Changes/retirements: enough evidence to decide current applicability and required action, or explain a scoped absence/material gap. New capabilities: documented gains, adoption conditions, and known or explicitly conditional workload fit; no compulsory trial or resource ownership. |
 | Evidence Completeness | Required | **UNMET** whenever a task result ends in `[TRUNCATED PREVIEW — showing N of M chars] [ref=Rn]` AND the update's key question (which resources are affected, which values are non-compliant, whether any resource has property X) could be answered by the rows you were not shown. A preview is a sample, not an enumeration — counting or concluding absence from it is a factual error. Met when nothing was truncated, or when the unshown rows cannot change the answer. |
@@ -299,10 +310,16 @@ Evaluate the completeness and quality of the collected analysis results.
 - Do NOT return "partial" just because additional optional information could theoretically be collected.
 - Additional queries for minor details, including costs for updates without financial implications, are NOT worth an extra iteration.
 
-**Exceptions: Query Intent, Evidence Completeness, Primary Region Availability, and material Cost Impact**
+**Exceptions: Documentation Evidence, Query Intent, Evidence Completeness, Primary Region Availability, and material Cost Impact**
 The sufficiency bias does NOT override these criteria. Before setting
 `evidence_complete: true`, re-read each task result and check whether it ends in
 `[TRUNCATED PREVIEW — ... ] [ref=Rn]`.
+- The Official Reference Documents section is subject to the same rule: retrieve the full-text
+  ref before treating an unseen prerequisite, limit, command or regional condition as absent.
+  If a required question remains and an observed linked document could answer it, set
+  `documentation_evidence: false` and request `fetch_documentation_link` with the parent URL,
+  actual child URL and concrete unanswered question. Depth-2 documents are terminal; preserve
+  unresolved depth/budget/failed-fetch gaps instead of inventing answers or restarting traversal.
 - Set `query_intent: false` and return partial when a required configuration/relationship question
   remains unanswered and a different schema probe, predicate, projection or array/ID query could
   answer it. Successful execution does not satisfy a failed information requirement. Preserve
@@ -388,6 +405,11 @@ Based on the evaluation's `missing_aspects` and `suggestions`:
   scoped join, keep that boundary and use separate scoped queries, never remove its filters.
 10. A correct zero, unsupported property, denied permission or exhausted exploration remains
   explicit evidence. Do not change thresholds just to produce rows or repeat a stalled query.
+11. For a documentation gap, consult the appended Official Reference Documents evidence.
+  Search its actual full-text ref first. If that cannot answer a concrete decision question,
+  add a `learn_search` task using `fetch_documentation_link` with the observed `parent_url`,
+  `url` and `question`. Only existing body-link edges are allowed; depth never exceeds 2.
+  Failed or exhausted fetches stay gaps, and no specialist claim ID is a document ref.
 
 ### Output Format
 Respond with ONLY a JSON array of NEW tasks (no markdown fences):

@@ -166,6 +166,18 @@ input[type=datetime-local], input[type=time], select { background: var(--surface
 .run-error { margin-top: 8px; padding: 9px 11px; border-left: 3px solid var(--bad);
   background: var(--danger-soft); color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
 .run-error[hidden] { display: none; }
+.panel-errors { --section-accent: var(--danger); }
+.error-list { list-style: none; margin: 12px 0 0; padding: 0; }
+.error-event { padding: 14px 0; border-bottom: 1px solid var(--line); min-width: 0; }
+.error-event:first-child { border-top: 1px solid var(--line); }
+.error-event-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px; }
+.error-event time { font-variant-numeric: tabular-nums; font-size: 13px; }
+.error-event h3 { margin: 8px 0; font-size: 14px; overflow-wrap: anywhere; }
+.error-message { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.error-event summary { cursor: pointer; color: var(--link); margin: 10px 0; }
+.error-event summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+#errors-status { display: block; margin: 12px 0; }
+#errors-form .time-basis { margin-top: 12px; }
 .source { color: var(--muted); font-size: 12px; }
 .msg { margin-left: 4px; font-size: 13px; color: var(--muted); }
 .s-completed { color: var(--ok); } .s-running, .s-queued { color: var(--warn); }
@@ -374,6 +386,7 @@ __WEB_ICONS__
     <a href="#subscriber" data-section="subscriber"><span class="nav-index">04</span>Subscribers</a>
     <a href="#administrator" data-section="administrator"><span class="nav-index">05</span>Access</a>
     <a href="#updates" data-section="updates"><span class="nav-index">06</span>Azure updates</a>
+    <a href="#errors" data-section="errors"><span class="nav-index">07</span>Error history</a>
   </nav>
   <div class="workspace-content">
   <section class="panel panel-status" aria-labelledby="status-title">
@@ -498,7 +511,7 @@ __WEB_ICONS__
             <label><span class="field-heading"><span>End date</span><span class="field-requirement required">Required</span></span><input type="date" id="end-date" placeholder="Required • end date" title="Required • end date"></label>
           </div>
           <label class="run-field" data-run-mode="recent" hidden><span class="field-heading"><span>Recent count</span><span class="field-requirement required">Required</span></span>
-            <input type="number" id="recent-count" min="1" max="100" value="10" placeholder="Required • 1–100">
+            <input type="number" id="recent-count" min="1" value="10" placeholder="Required • 1 or more">
           </label>
           <label class="run-field" data-run-mode="update_id" hidden><span class="field-heading"><span>Update ID</span><span class="field-requirement required">Required</span></span>
             <input type="text" id="update-id" inputmode="numeric" maxlength="32" placeholder="Required • numeric update ID">
@@ -523,11 +536,47 @@ __WEB_ICONS__
       <div id="run-detail" class="run-detail" hidden>
         <div class="run-detail-head">
           <h3 id="run-detail-title">Run details</h3>
-          <button id="run-detail-close" class="secondary" type="button">Close</button>
+          <div class="button-group">
+            <button id="run-detail-logs" class="secondary" type="button">View error history</button>
+            <button id="run-detail-close" class="secondary" type="button">Close</button>
+          </div>
         </div>
         <dl id="run-detail-facts" class="run-facts"></dl>
         <div id="run-detail-error" class="run-error" role="alert" hidden></div>
       </div>
+    </div>
+  </section>
+  <section class="panel panel-errors" aria-labelledby="errors-title">
+    <div class="panel-header"><h2 id="errors-title">Error history</h2></div>
+    <div class="panel-body">
+      <p class="source">Recorded failures from the shared Log Analytics workspace, including scheduled
+        and Hosted Agent runs. Logs may take several minutes to arrive. Retried or recovered errors
+        do not necessarily mean that the run failed.</p>
+      <form id="errors-form" class="action-surface">
+        <div class="controls">
+          <label>Period<select id="errors-hours">
+            <option value="24">Last 24 hours</option>
+            <option value="168">Last 7 days</option>
+            <option value="720">Last 30 days</option>
+          </select></label>
+          <label>Run ID (optional)<input id="errors-run-id" type="text" maxlength="32"
+            pattern="[a-fA-F0-9]{32}" placeholder="All runs" spellcheck="false"
+            title="32-character hexadecimal run ID"></label>
+        </div>
+        <fieldset class="time-basis"><legend>Display times</legend>
+          <div class="segmented">
+            <label><input type="radio" name="errors-basis" value="local" checked><span>Local</span></label>
+            <label><input type="radio" name="errors-basis" value="utc"><span>UTC</span></label>
+          </div>
+        </fieldset>
+        <div class="action-row">
+          <button id="errors-clear" class="secondary" type="button">Clear run filter</button>
+          <button id="errors-refresh" type="submit">Load error history</button>
+        </div>
+      </form>
+      <span id="errors-status" class="source" role="status">Open this section to load recorded errors.</span>
+      <div id="errors-load-error" class="run-error" role="alert" hidden></div>
+      <ol id="errors-list" class="error-list" aria-label="Recorded errors" aria-busy="false"></ol>
     </div>
   </section>
   </div>
@@ -539,6 +588,11 @@ const $ = (id) => document.getElementById(id);
 const text = (v) => (v === null || v === undefined || v === '') ? '—' : String(v);
 let timeBasis = 'local';
 let activeRunDetail = null;
+let errorHistory = null;
+let errorHistoryQuery = '';
+let errorHistoryRequested = false;
+let errorHistoryLoading = false;
+let errorHistoryRequest = 0;
 
 async function api(path, options) {
   const res = await fetch(path, Object.assign({credentials: 'same-origin'}, options || {}));
@@ -588,6 +642,7 @@ function activateSection(key, focusHeading = false) {
   });
   if (target.classList.contains('collapsed')) target.querySelector('.panel-toggle').click();
   if (focusHeading) { const heading = target.querySelector('h2'); heading.tabIndex = -1; heading.focus(); }
+  if (key === 'errors' && !errorHistoryRequested) loadErrorHistory();
 }
 
 function filterTable(id) {
@@ -844,6 +899,7 @@ function setTimeBasis(value, reload) {
   updateSinceConversion(); updateScheduleConversion();
   if (reload === false) return;
   if (activeRunDetail && !$('run-detail').hidden) renderRunDetail(activeRunDetail);
+  if (errorHistory) renderErrorHistory();
   Promise.allSettled([loadRuns(), loadSchedules(), loadUpdates()]);
 }
 
@@ -946,6 +1002,7 @@ function addRunFact(parent, label, value) {
 function renderRunDetail(run) {
   const detail = $('run-detail'); const facts = $('run-detail-facts');
   activeRunDetail = run;
+  $('run-detail-logs').disabled = false;
   $('run-detail-title').textContent = 'Run details · ' + run.run_id.slice(0, 8);
   facts.replaceChildren();
   [
@@ -971,12 +1028,96 @@ async function showRunDetail(runId, button) {
     $('run-detail-close').onclick = () => { $('run-detail').hidden = true; button.focus(); };
   }
   catch (e) {
+    activeRunDetail = null; $('run-detail-logs').disabled = true;
     $('run-detail').hidden = false; $('run-detail-error').hidden = false;
     $('run-detail-error').textContent = 'Could not load run details: ' + e.message;
   } finally { button.disabled = false; }
 }
 
 $('run-detail-close').addEventListener('click', () => { $('run-detail').hidden = true; });
+
+function renderErrorHistory() {
+  const list = $('errors-list'); list.replaceChildren();
+  if (!errorHistory) return;
+  errorHistory.events.forEach(event => {
+    const item = document.createElement('li'); item.className = 'error-event';
+    const header = document.createElement('div'); header.className = 'error-event-head';
+    const time = document.createElement('time'); time.dateTime = event.occurred_at;
+    time.textContent = displayedDateTime(event.occurred_at);
+    const level = document.createElement('span'); level.className = 'source';
+    level.textContent = [event.level, event.runtime, event.status].filter(Boolean).join(' · ');
+    header.append(time, level);
+    const title = document.createElement('h3');
+    title.textContent = [event.error_type, event.event].filter(Boolean).join(' · ');
+    const message = document.createElement('p'); message.className = 'error-message';
+    message.textContent = event.message || 'No error message was recorded for this event.';
+    item.append(header, title, message);
+    const counts = [['Failed', event.failed], ['Archive failed', event.archive_failed],
+      ['Pending', event.pending], ['Deferred', event.deferred]].filter(([, value]) => value > 0);
+    if (counts.length) {
+      const summary = document.createElement('p'); summary.className = 'source';
+      summary.textContent = counts.map(([label, value]) => label + ': ' + value).join(' · ');
+      item.appendChild(summary);
+    }
+    const details = document.createElement('details');
+    const summary = document.createElement('summary'); summary.textContent = 'Run and trace context';
+    const facts = document.createElement('dl'); facts.className = 'run-facts';
+    [['Run ID', event.run_id], ['Trace ID', event.trace_id], ['Update ID', event.update_id],
+      ['Task ID', event.task_id], ['Phase', event.phase], ['Operation', event.operation],
+      ['Agent role', event.agent_role]].filter(([, value]) => value)
+      .forEach(([label, value]) => addRunFact(facts, label, value));
+    if (facts.children.length) { details.append(summary, facts); item.appendChild(details); }
+    list.appendChild(item);
+  });
+}
+
+async function loadErrorHistory() {
+  if (!$('errors-form').reportValidity()) return false;
+  const query = new URLSearchParams({hours: $('errors-hours').value, limit: '50'});
+  const runId = $('errors-run-id').value.trim().toLowerCase();
+  if (runId) query.set('run_id', runId);
+  const key = query.toString(); const request = ++errorHistoryRequest;
+  errorHistoryRequested = true; errorHistoryLoading = true;
+  if (key !== errorHistoryQuery) {
+    errorHistory = null; $('errors-list').replaceChildren(); errorHistoryQuery = key;
+  }
+  $('errors-refresh').disabled = true; $('errors-list').setAttribute('aria-busy', 'true');
+  $('errors-load-error').hidden = true; $('errors-status').textContent = 'Loading recorded errors…';
+  try {
+    const data = await api('/api/admin/errors?' + key);
+    if (request !== errorHistoryRequest) return false;
+    errorHistory = data; renderErrorHistory();
+    $('errors-status').textContent = data.events.length
+      ? (data.has_more ? 'Newest ' : '') + data.events.length + ' recorded events · Last '
+        + data.period_hours + ' hours' + (data.has_more ? ' · More events exist; narrow the filters.' : '')
+      : 'No recorded errors match these filters. Recent events may still be arriving.';
+    setPanelCaption('errors', data.events.length + ' recorded events');
+    return true;
+  } catch (error) {
+    if (request !== errorHistoryRequest) return false;
+    $('errors-load-error').hidden = false;
+    $('errors-load-error').textContent = 'Could not load error history: ' + error.message;
+    $('errors-status').textContent = errorHistory
+      ? 'Refresh failed. Previously loaded events are retained.' : 'Error history is unavailable.';
+    setPanelCaption('errors', 'Unavailable');
+    return false;
+  } finally {
+    if (request === errorHistoryRequest) {
+      errorHistoryLoading = false; $('errors-refresh').disabled = false;
+      $('errors-list').setAttribute('aria-busy', 'false');
+    }
+  }
+}
+
+$('errors-form').addEventListener('submit', event => { event.preventDefault(); loadErrorHistory(); });
+$('errors-clear').addEventListener('click', () => { $('errors-run-id').value = ''; loadErrorHistory(); });
+$('run-detail-logs').addEventListener('click', () => {
+  if (!activeRunDetail) return;
+  $('errors-run-id').value = activeRunDetail.run_id;
+  $('errors-hours').value = '720';
+  errorHistoryRequested = true; location.hash = 'errors'; activateSection('errors', true);
+  loadErrorHistory();
+});
 
 async function loadStatus() {
   const button = $('status-refresh'); button.disabled = true;
@@ -1250,8 +1391,9 @@ async function refreshAll() {
   const jobs = [[loadStatus, 'status', null, 0], [loadRuns, 'run', 'runs', 10],
     [loadSchedules, 'schedule', 'schedules', 5], [loadSubs, 'subscriber', 'subs', 6],
     [loadAdmins, 'administrator', 'admins', 3], [loadUpdates, 'updates', 'updates', 4]];
+  if (errorHistoryRequested && !errorHistoryLoading) jobs.push([loadErrorHistory, 'errors', null, 0]);
   const results = await Promise.all(jobs.map(async ([load, key, table, columns]) => {
-    try { await load(); return true; }
+    try { return (await load()) !== false; }
     catch (error) {
       const message = 'Could not load data. Refresh to retry.';
       const caption = document.querySelector('[data-panel-key="' + key + '"] .panel-caption');
@@ -1275,7 +1417,7 @@ async function refreshAll() {
   }));
   window.addEventListener('hashchange', () => activateSection(location.hash.slice(1), true));
   const initial = location.hash.slice(1);
-  activateSection(['status', 'run', 'schedule', 'subscriber', 'administrator', 'updates'].includes(initial) ? initial : 'status');
+  activateSection(['status', 'run', 'schedule', 'subscriber', 'administrator', 'updates', 'errors'].includes(initial) ? initial : 'status');
   $('refresh-all').addEventListener('click', refreshAll);
   await refreshAll();
   setInterval(refresh, 10000);

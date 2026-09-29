@@ -1,10 +1,12 @@
 """Tests for the orchestrated digest pipeline (enterprise profile)."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from structlog.contextvars import bound_contextvars, get_contextvars
 
 from src.agent.scope import AnalysisScope
 from src.archive.models import ArchiveReceipt
@@ -218,6 +220,40 @@ def _clear_settings_cache():
 
 
 class TestExecuteRun:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("fails", [False, True])
+    async def test_run_context_is_bound_to_child_operations_and_restored(
+        self, monkeypatch: pytest.MonkeyPatch, fails: bool
+    ) -> None:
+        observed = []
+
+        class Parser:
+            async def get_updates(self):
+                observed.append(get_contextvars()["run_id"])
+                if fails:
+                    raise RuntimeError("synthetic selection failure")
+                return []
+
+        monkeypatch.setenv("AZURE_TENANT_ID", "00000000-0000-0000-0000-000000000000")
+        record = RunRecord(run_id="context-run", since=datetime(2026, 1, 1, tzinfo=UTC))
+        with bound_contextvars(run_id="outer-run"):
+            await execute_run(record, _FakeAnalyzer(), None, Parser())
+            assert get_contextvars()["run_id"] == "outer-run"
+
+        assert observed == ["context-run"]
+        assert record.status == ("failed" if fails else "completed")
+
+    def test_run_api_redacts_error_details(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr("src.error_logging._secret_values", ())
+        record = RunRecord(
+            run_id="redaction-run",
+            error="Failure for user@example.com; api_key=private-key",
+        )
+        serialized = record.to_dict()
+        assert "user@example.com" not in serialized["error"]
+        assert "private-key" not in serialized["error"]
+        assert "Failure for" in serialized["error"]
+
     def test_update_url_selector_accepts_localized_azure_update_paths(self):
         selection = RunSelection(
             mode="update_url",
@@ -226,37 +262,55 @@ class TestExecuteRun:
 
         assert selection.mode == "update_url"
 
+    @pytest.mark.parametrize("recent_count", [None, 0, -1])
+    def test_recent_selector_requires_positive_count(self, recent_count: int | None):
+        with pytest.raises(ValueError, match="recent_count must be at least 1"):
+            RunSelection(mode="recent", recent_count=recent_count)
+
+    @pytest.mark.parametrize(("available", "requested"), [(5, 2), (300, 101), (300, 250), (5, 250)])
     @pytest.mark.asyncio
-    async def test_recent_selector_analyses_only_the_newest_requested_updates(self):
-        parser = _SelectingParser(_targets(5))
+    async def test_recent_selector_analyses_only_the_newest_requested_updates(
+        self, available: int, requested: int
+    ):
+        parser = _SelectingParser(_targets(available))
         analyzer = _FakeAnalyzer()
         record = RunRecord(
             run_id="recent",
-            selection=RunSelection(mode="recent", recent_count=2),
+            selection=RunSelection(mode="recent", recent_count=requested),
             commit_checkpoint=False,
         )
 
         await execute_run(record, analyzer, _FakeEmailService(), parser)
 
-        assert analyzer.seen == ["u3", "u4"]
+        assert analyzer.seen == [
+            f"u{index}" for index in range(max(0, available - requested), available)
+        ]
         assert parser.calls == [("recent",)]
-        assert record.total == 2
+        assert record.status == "completed"
+        assert record.total == record.analyzed == min(available, requested)
+        assert record.checkpoint_committed is False
 
+    @pytest.mark.parametrize("target_count", [2, 101, 250])
     @pytest.mark.asyncio
-    async def test_date_range_selector_uses_the_history_aware_parser_path(self):
-        parser = _SelectingParser(_targets(2))
+    async def test_date_range_selector_uses_the_history_aware_parser_path(self, target_count: int):
+        targets = _targets(target_count)
+        parser = _SelectingParser(list(reversed(targets)))
+        analyzer = _FakeAnalyzer()
         start = datetime(2026, 8, 1, tzinfo=UTC)
-        end = datetime(2026, 8, 2, tzinfo=UTC)
+        end = datetime(2026, 8, 15, tzinfo=UTC)
         record = RunRecord(
             run_id="range",
             selection=RunSelection(mode="date_range", start_date=start, end_date=end),
             commit_checkpoint=False,
         )
 
-        await execute_run(record, _FakeAnalyzer(), _FakeEmailService(), parser)
+        await execute_run(record, analyzer, _FakeEmailService(), parser)
 
         assert parser.calls == [("date_range", start, end)]
-        assert record.total == 2
+        assert analyzer.seen == [target.id for target in targets]
+        assert record.status == "completed"
+        assert record.total == record.analyzed == target_count
+        assert record.checkpoint_committed is False
 
     @pytest.mark.asyncio
     async def test_update_id_and_url_selectors_use_direct_lookup_methods(self):
@@ -699,8 +753,75 @@ class TestExecuteRun:
         assert email.calls == [{"items": 3, "recipient": None}]
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("late_success", "budget_expires"), [(True, False), (False, False), (True, True)]
+    )
+    async def test_failure_guard_waits_for_inflight_analyses(
+        self, monkeypatch: pytest.MonkeyPatch, late_success: bool, budget_expires: bool
+    ):
+        monkeypatch.setenv("MAX_CONCURRENT_ANALYSES", "3")
+        release_success = asyncio.Event()
+        third_failure = asyncio.Event()
+        no_budget = asyncio.Event()
+        if budget_expires:
+            monkeypatch.setattr(
+                "src.agent.resilience.RunDeadline",
+                lambda budget_s: SimpleNamespace(
+                    has_budget_for=lambda estimate_s: not no_budget.is_set()
+                ),
+            )
+
+        class DelayedSuccessAnalyzer(_FakeAnalyzer):
+            async def analyze_update(self, update, scope=None):
+                if update.id == "u0":
+                    await release_success.wait()
+                if update.id == "u3":
+                    third_failure.set()
+                return await super().analyze_update(update, scope)
+
+        targets = _targets(100)
+        fail_ids = {"u1", "u2", "u3"} if late_success else {"u0", "u1", "u2", "u3"}
+        analyzer = DelayedSuccessAnalyzer(fail_ids=fail_ids)
+        email = _FakeEmailService()
+        archive = _FakeArchiveService()
+        record = RunRecord(
+            run_id="late-success-manual",
+            source="admin_run",
+            selection=RunSelection(mode="recent", recent_count=100),
+            commit_checkpoint=False,
+            send_email=False,
+        )
+        execution = asyncio.create_task(
+            execute_run(record, analyzer, email, _FakeParser(targets), archive)
+        )
+        try:
+            await asyncio.wait_for(third_failure.wait(), timeout=2)
+            await asyncio.sleep(0)
+        finally:
+            if budget_expires:
+                no_budget.set()
+            release_success.set()
+        await asyncio.wait_for(execution, timeout=2)
+
+        continued = late_success and not budget_expires
+        analyzed = 97 if continued else int(late_success)
+        assert record.total == 100
+        assert len(analyzer.seen) == (100 if continued else 4)
+        assert record.analyzed == record.archived == analyzed
+        assert record.failed == (3 if late_success else 4)
+        assert record.pending == (0 if continued else 96)
+        assert record.deferred == (96 if budget_expires else 0)
+        assert record.status == "partial"
+        assert record.watermark == targets[-1 if continued else 3].published_date
+        assert record.checkpoint_committed is False
+        assert ("Analysis stopped" in record.error) is not late_success
+        assert email.calls == []
+
+    @pytest.mark.asyncio
     async def test_consecutive_failures_mark_unfinished_manual_run_partial(self, monkeypatch):
         monkeypatch.setenv("MAX_CONCURRENT_ANALYSES", "1")
+        logger = Mock()
+        monkeypatch.setattr("src.orchestrator.logger", logger)
         targets = _targets(100)
         analyzer = _FakeAnalyzer(fail_ids={target.id for target in targets[4:]})
         email = _FakeEmailService()
@@ -719,9 +840,21 @@ class TestExecuteRun:
         assert record.status == "partial"
         assert "3 failed" in record.error
         assert "93 pending" in record.error
+        assert "pending targets were not run" in record.error
         assert record.email_sent is True
         assert record.checkpoint_committed is False
         assert email.calls == [{"items": 4, "recipient": None}]
+        logger.warning.assert_any_call(
+            "orchestrator_analysis_halted",
+            run_id=record.run_id,
+            reason="consecutive_analysis_failures",
+            consecutive_failures=3,
+            failure_threshold=3,
+            analyzed=4,
+            failed=3,
+            pending=93,
+            deferred=0,
+        )
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("raise_error", [False, True])

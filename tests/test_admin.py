@@ -173,6 +173,18 @@ class TestRequireAdmin:
 
 
 class TestAdminPage:
+    def test_error_history_is_a_safe_lazy_loaded_section_with_run_drilldown(self):
+        html = render_admin_page(nonce="n", profile="enterprise", user="a")
+        assert 'href="#errors" data-section="errors"' in html
+        assert 'id="run-detail-logs"' in html
+        assert 'id="errors-load-error"' in html
+        assert 'id="errors-list"' in html
+        assert "message.textContent = event.message" in html
+        assert "displayedDateTime(event.occurred_at)" in html
+        assert "request !== errorHistoryRequest" in html
+        assert "if (key === 'errors' && !errorHistoryRequested)" in html
+        assert "innerHTML" not in html
+
     def test_offline_preview_uses_validated_synthetic_archive_and_no_live_runs(self):
         from scripts.preview_web import create_app
         from src.archive.models import ArchiveDocumentV1, ArchivePage
@@ -189,12 +201,48 @@ class TestAdminPage:
             detail = client.get("/api/archive/analyses/" + listing.items[0].archive_id).json()
             assert ArchiveDocumentV1.model_validate(detail).report_language == "en"
             assert "job_relevance" not in str(detail)
+            errors = client.get("/api/admin/errors")
+            assert errors.status_code == 200
+            assert len(errors.json()["events"]) == 3
+            selected = client.get("/api/admin/errors", params={"run_id": f"{3:032x}"}).json()
+            assert len(selected["events"]) == 2
+            assert {event["runtime"] for event in selected["events"]} == {"scheduler", "hosted"}
+            assert client.get("/api/admin/errors?run_id=invalid").status_code == 422
             assert (
                 client.post(
                     "/api/admin/runs", json={"mode": "recent", "recent_count": 1}
                 ).status_code
                 == 409
             )
+
+    def test_offline_error_history_matches_bounds_and_never_queries_azure(self, monkeypatch):
+        from scripts.preview_web import create_app
+
+        def fail_live_query(*_args, **_kwargs):
+            raise AssertionError("Synthetic preview must never query Azure")
+
+        monkeypatch.setattr(
+            "src.services.log_analytics.LogAnalyticsService._get_client", fail_live_query
+        )
+        with TestClient(create_app()) as client:
+            response = client.get("/api/admin/errors", params={"limit": 1})
+            page = response.json()
+            assert response.headers["cache-control"] == "no-store"
+            assert set(page) == {"events", "period_hours", "has_more"}
+            assert len(page["events"]) == 1 and page["has_more"]
+            assert page["period_hours"] == 24
+            assert page["events"][0]["occurred_at"] == "2026-09-10T08:45:00Z"
+
+            recent = client.get("/api/admin/errors", params={"hours": 1}).json()
+            assert len(recent["events"]) == 2
+            assert recent["has_more"] is False
+            assert client.get("/api/admin/errors", params={"run_id": "f" * 32}).json() == {
+                "events": [],
+                "period_hours": 24,
+                "has_more": False,
+            }
+            for query in ("hours=0", "hours=721", "limit=0", "limit=101", "run_id=invalid"):
+                assert client.get("/api/admin/errors?" + query).status_code == 422
 
     def test_shared_control_surface_design_uses_accessible_light_tokens(self):
         assert "--canvas: #f4f6f7" in CONTROL_SURFACE_BASE_CSS
@@ -276,26 +324,37 @@ class TestAdminPage:
         assert '<html lang="en">' in html
         assert '<p class="page-kicker">Control plane</p><h1>Admin console</h1>' in html
 
+    def test_recent_count_has_no_upper_bound(self):
+        from bs4 import BeautifulSoup
+
+        html = render_admin_page(nonce="n", profile="enterprise", user="admin")
+        recent_count = BeautifulSoup(html, "html.parser").select_one("#recent-count")
+
+        assert recent_count is not None
+        assert recent_count["type"] == "number"
+        assert recent_count["min"] == "1"
+        assert "max" not in recent_count.attrs
+
     def test_page_exposes_subscriber_and_administrator_management(self):
         html = render_admin_page(nonce="n", profile="enterprise", user="admin")
 
         assert "main { width: 100%; max-width: 1180px; margin: 0 auto;" in html
-        assert html.count('class="panel ') == 6
-        assert html.count('class="panel-header"') == 6
+        assert html.count('class="panel ') == 7
+        assert html.count('class="panel-header"') == 7
         assert "function initializeCollapsiblePanels()" in html
         assert "document.querySelectorAll('section.panel')" in html
         assert "button.setAttribute('aria-expanded', 'true')" in html
         assert "button.setAttribute('aria-controls', body.id)" in html
         assert "body.hidden = collapsed; caption.hidden = !collapsed;" in html
         assert "initializeCollapsiblePanels(); updateRunFields();" in html
-        assert html.count("setPanelCaption(") == 7
+        assert html.count("setPanelCaption(") == 9
         assert "'status', data.ready" in html
         assert "setPanelCaption('run'" in html
         assert "setPanelCaption('subscriber'" in html
         assert "setPanelCaption('administrator'" in html
         assert "'schedule'," in html
         assert "setPanelCaption('updates'" in html
-        assert html.count('action-surface"') == 4
+        assert html.count('action-surface"') == 5
         assert html.count('action-table"') == 5
         assert ".action-table th:first-child, .action-table td:first-child" in html
         assert "<thead><tr><th>Details</th><th>Run ID</th>" in html
@@ -372,7 +431,7 @@ class TestAdminPage:
 
         assert 'href="/feedback"' in page
         assert 'aria-label="Console sections"' in page
-        assert page.count('data-section="') == 6
+        assert page.count('data-section="') == 7
         assert "window.addEventListener('hashchange'" in page
         assert "function filterTable(id)" in page
         assert "tr.dataset.status = r.status" in page
@@ -536,7 +595,8 @@ class TestAdminRoutes:
         # Without the app lifespan the orchestrator has no services registered.
         assert response.status_code in (202, 503)
 
-    def test_admin_run_sets_archive_source(self, client, monkeypatch):
+    @pytest.mark.parametrize("recent_count", [7, 101, 1000])
+    def test_admin_run_sets_archive_source(self, client, monkeypatch, recent_count: int):
         import importlib
 
         from src.orchestrator import RunRecord
@@ -578,13 +638,13 @@ class TestAdminRoutes:
 
         response = client.post(
             "/api/admin/runs",
-            json={"mode": "recent", "recent_count": 7, "dry_run": True},
+            json={"mode": "recent", "recent_count": recent_count, "dry_run": True},
         )
 
         assert response.status_code == 202
         assert captured["source"] == "admin_run"
         assert captured["selection"].mode == "recent"
-        assert captured["selection"].recent_count == 7
+        assert captured["selection"].recent_count == recent_count
         assert captured["commit_checkpoint"] is False
         assert captured["send_email"] is False
 
@@ -603,7 +663,10 @@ class TestAdminRoutes:
         "payload",
         [
             {"mode": "date_range", "start_date": "2026-09-02", "end_date": "2026-09-01"},
-            {"mode": "recent", "recent_count": 101},
+            {"mode": "recent", "recent_count": None},
+            {"mode": "recent", "recent_count": 0},
+            {"mode": "recent", "recent_count": -1},
+            {"mode": "recent", "recent_count": 1.5},
             {"mode": "update_id", "update_id": "not-a-number"},
             {"mode": "update_url", "update_url": "https://attacker.example/updates/1"},
             {"mode": "recent", "recent_count": 3, "update_id": "123"},

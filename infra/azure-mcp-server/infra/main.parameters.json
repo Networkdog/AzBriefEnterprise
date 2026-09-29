@@ -8,6 +8,15 @@
     "acaName": {
       "value": "${AZURE_MCP_CONTAINER_APP_NAME}"
     },
+    "containerAppEnvironmentId": {
+      "value": "${AZURE_CONTAINER_APP_ENVIRONMENT_ID}"
+    },
+    "workloadProfileName": {
+      "value": "${AZURE_CONTAINER_APP_WORKLOAD_PROFILE_NAME}"
+    },
+    "applicationInsightsName": {
+      "value": "${APPLICATION_INSIGHTS_NAME}"
+    },
     "entraAppDisplayName": {
       "value": "AzBrief Azure MCP Server API"
     },

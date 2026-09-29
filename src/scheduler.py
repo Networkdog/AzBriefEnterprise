@@ -22,6 +22,7 @@ from typing import Optional
 
 from structlog import get_logger
 
+from src.agent.telemetry import flush_telemetry
 from src.logging_config import setup_logging
 
 logger = get_logger()
@@ -114,13 +115,21 @@ async def dispatch_scheduled_digest(
 
 def main() -> None:
     """Console entry point for the Container Apps Job."""
+    os.environ.setdefault("AZBRIEF_RUNTIME", "scheduler-job")
     setup_logging(file_enabled=False)
     dry_run = os.environ.get("DRY_RUN", "false").strip().lower() == "true"
     dispatch_enabled = (
         os.environ.get("SCHEDULE_DISPATCH_ENABLED", "false").strip().lower() == "true"
     )
     run = dispatch_scheduled_digest if dispatch_enabled else run_scheduled_digest
-    sys.exit(asyncio.run(run(dry_run=dry_run)))
+    try:
+        exit_code = asyncio.run(run(dry_run=dry_run))
+    except Exception:
+        logger.exception("scheduler_failed")
+        exit_code = 1
+    finally:
+        flush_telemetry()
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

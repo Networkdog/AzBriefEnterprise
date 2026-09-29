@@ -3,7 +3,7 @@
 [프로젝트 README](../../README.md) > [`src`](../README.md) > `rss`
 
 Microsoft Azure Update feed와 상세 API를 `AzureUpdate` domain model로 정규화합니다. live rolling
-feed, local history archive, SafeLinks/tracking 제거가 이 경계에 모여 있습니다.
+feed, 날짜로 제한한 history API, 선택적 local archive, SafeLinks/tracking 제거가 이 경계에 모여 있습니다.
 
 ## 파일과 공개 API
 
@@ -12,7 +12,7 @@ feed, local history archive, SafeLinks/tracking 제거가 이 경계에 모여 �
 | API | 용도 |
 |---|---|
 | `AzureUpdateParser.get_updates()` | live RSS를 읽고 각 항목의 상세 설명/link를 보강 |
-| `get_updates_by_date_range()` | live feed와 local history를 ID로 deduplicate해 기간 필터 |
+| `get_updates_by_date_range()` | live feed와 범위 API 또는 local history를 ID로 deduplicate해 기간 필터 |
 | `parse_feed()` | 이미 받은 RSS XML을 순수 parsing; 단위 테스트에 적합 |
 | `get_update_by_url()` / `fetch_update_by_id()` | 단건 update 조회 |
 | `clean_url()` | 중첩 SafeLinks unwrap과 tracking query parameter 제거 |
@@ -39,7 +39,9 @@ live feed 목록은 CLI를 통해 확인합니다.
 ## 데이터 의미
 
 - live RSS는 최신 약 200건의 rolling window이므로 오래된 월이 사라지는 것은 정상입니다.
-- history archive는 `data/azure_updates_history.jsonl`이며 date-range 경로에서만 병합합니다.
+- date-range 경로는 `data/azure_updates_history.jsonl`이 있으면 사용하고, 없으면 공개 API를
+	`created` 범위로 제한해 100건씩 페이지 조회합니다.
+- local history archive는 반복 가능하거나 오프라인인 개발 실행을 위한 선택적 fallback입니다.
 - canonical ID로 live/history 중복을 제거하고 날짜는 timezone-aware UTC로 정규화합니다.
 - 상세 API 실패는 RSS 항목 자체를 버리지 않고 짧은 description으로 degrade합니다.
 

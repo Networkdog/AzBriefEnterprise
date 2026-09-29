@@ -1,0 +1,615 @@
+"""Prepare or deploy the KT private infrastructure without changing an existing VNet."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import tempfile
+import time
+from dataclasses import dataclass
+from ipaddress import IPv4Address, IPv4Network, ip_network
+from pathlib import Path
+from typing import Any
+from uuid import UUID
+
+import structlog
+
+logger = structlog.get_logger(__name__)
+ROOT = Path(__file__).resolve().parents[1]
+TEMPLATE = ROOT / "infra" / "kt" / "azuredeploy.json"
+MANAGEMENT = "https://management.azure.com"
+PROFILE = "kt-private-foundation"
+NETWORK_API = "2024-05-01"
+FOUNDRY_API = "2025-06-01"
+HOST_API = "2025-04-01-preview"
+PRIVATE_RANGES = tuple(
+    IPv4Network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
+)
+ACA_RESERVED = tuple(
+    IPv4Network(cidr)
+    for cidr in (
+        "169.254.0.0/16",
+        "172.30.0.0/16",
+        "172.31.0.0/16",
+        "192.0.2.0/24",
+        "100.100.0.0/17",
+        "100.100.128.0/19",
+        "100.100.160.0/19",
+        "100.100.192.0/19",
+    )
+)
+SUBNETS = (
+    ("PESubnet", "peSubnetAddressPrefix", "createPESubnet", 28),
+    ("FoundrySubnet", "foundrySubnetAddressPrefix", "createFoundrySubnet", 27),
+    ("ContainerAppsSubnet", "containerAppsSubnetAddressPrefix", "createContainerAppsSubnet", 27),
+)
+INTERNAL_PARAMETERS = {row[2] for row in SUBNETS} | {"deployCapabilityHost"}
+
+
+@dataclass(frozen=True)
+class SubnetPlan:
+    """A read-only decision to reuse a subnet or create a missing child resource."""
+
+    name: str
+    network: IPv4Network
+    create_parameter: str
+    create: bool
+
+
+def _ipv4(cidr: str) -> IPv4Network:
+    network = ip_network(cidr, strict=True)
+    if not isinstance(network, IPv4Network):
+        raise ValueError(f"This profile requires an IPv4 prefix: {cidr}")
+    return network
+
+
+def _subnet_prefix(subnet: dict[str, Any]) -> str:
+    props = subnet["properties"]
+    prefixes = props.get("addressPrefixes") or [props.get("addressPrefix")]
+    prefix = prefixes[0] if isinstance(prefixes, list) and len(prefixes) == 1 else None
+    if not isinstance(prefix, str) or not prefix:
+        raise ValueError(f"Exactly one IPv4 prefix is required for subnet {subnet['name']}")
+    return prefix
+
+
+def plan_subnets(parameters: dict[str, Any], vnet: dict[str, Any]) -> list[SubnetPlan]:
+    """Validate size, scope, delegation and overlap before proposing any subnet writes."""
+    if parameters["location"].casefold() != vnet["location"].casefold():
+        raise ValueError("Foundry and the existing VNet must have the same Azure region")
+    spaces = tuple(_ipv4(cidr) for cidr in vnet["properties"]["addressSpace"]["addressPrefixes"])
+    existing = {subnet["name"].casefold(): subnet for subnet in vnet["properties"]["subnets"]}
+    occupied = [(name, _ipv4(_subnet_prefix(subnet))) for name, subnet in existing.items()]
+    plans: list[SubnetPlan] = []
+    for name, prefix_parameter, create_parameter, minimum in SUBNETS:
+        subnet = existing.get(name.casefold())
+        supplied = parameters.get(prefix_parameter, "")
+        prefix = _subnet_prefix(subnet) if subnet is not None else supplied
+        if not prefix:
+            raise ValueError(f"Supply {prefix_parameter} to create missing {name}")
+        network = _ipv4(prefix)
+        if subnet is not None and supplied and _ipv4(supplied) != network:
+            raise ValueError(
+                f"{name} already exists with a different prefix; it will not be resized"
+            )
+        if network.prefixlen > minimum:
+            raise ValueError(f"{name} must be /{minimum} or larger")
+        if not any(network.subnet_of(private) for private in PRIVATE_RANGES):
+            raise ValueError(f"{name} must use RFC1918 private IPv4 space")
+        if not any(network.subnet_of(space) for space in spaces):
+            raise ValueError(f"{name} is outside the existing VNet address space")
+        if name == "ContainerAppsSubnet" and any(network.overlaps(r) for r in ACA_RESERVED):
+            raise ValueError("ContainerAppsSubnet overlaps a Container Apps reserved range")
+        if any(
+            network.overlaps(other)
+            for other_name, other in occupied
+            if other_name != name.casefold()
+        ):
+            raise ValueError(f"{name} overlaps an existing or proposed subnet")
+        if subnet is not None:
+            delegations = [
+                item["properties"]["serviceName"]
+                for item in subnet["properties"].get("delegations", [])
+            ]
+            expected = [] if name == "PESubnet" else ["Microsoft.App/environments"]
+            if sorted(delegations) != expected:
+                raise ValueError(
+                    f"{name} has incompatible delegation; existing settings are not changed"
+                )
+        else:
+            occupied.append((name.casefold(), network))
+        plans.append(SubnetPlan(name, network, create_parameter, subnet is None))
+    return plans
+
+
+def load_parameters(path: Path) -> dict[str, Any]:
+    """Load only the explicit ARM parameter file; never read .env or azd developer state."""
+    template = json.loads(TEMPLATE.read_text(encoding="utf-8"))
+    supplied = json.loads(path.read_text(encoding="utf-8-sig"))["parameters"]
+    schema = template["parameters"]
+    unknown = set(supplied) - set(schema)
+    if unknown or INTERNAL_PARAMETERS.intersection(supplied):
+        raise ValueError(
+            f"Unknown or reserved deployment parameters: {sorted(unknown | (INTERNAL_PARAMETERS & set(supplied)))}"
+        )
+    values: dict[str, Any] = {}
+    for name, definition in schema.items():
+        if name in supplied:
+            entry = supplied[name]
+            if set(entry) != {"value"}:
+                raise ValueError(f"{name} requires a literal non-secret value")
+            value = entry["value"]
+        elif "defaultValue" in definition:
+            value = definition["defaultValue"]
+        else:
+            raise ValueError(f"Missing required parameter: {name}")
+        if isinstance(value, str) and ("<" in value or ">" in value):
+            raise ValueError(f"Replace the example placeholder for {name}")
+        if definition["type"] == "string" and not isinstance(value, str):
+            raise ValueError(f"{name} must be a string")
+        if "defaultValue" not in definition and not value:
+            raise ValueError(f"Required parameter cannot be empty: {name}")
+        if "allowedValues" in definition and value not in definition["allowedValues"]:
+            raise ValueError(f"Unsupported value for {name}")
+        values[name] = value
+    if values["agentStorageAccountName"] == values["stateStorageAccountName"]:
+        raise ValueError(
+            "Agent backing storage and the canonical archive must be separate accounts"
+        )
+    if not isinstance(values["existingPrivateDnsZoneIds"], dict):
+        raise ValueError("existingPrivateDnsZoneIds must be an object")
+    if not isinstance(values["tags"], dict) or values["tags"].get("deploymentProfile") != PROFILE:
+        raise ValueError(f"Preserve the deploymentProfile={PROFILE} ownership tag")
+    return values
+
+
+class AzureCli:
+    """A bounded ARM-only adapter; CLI errors always stop the deployment."""
+
+    def __init__(self, subscription: str, tenant: str, resource_group: str):
+        self.subscription = subscription
+        self.tenant = tenant
+        self.group = resource_group
+        self.group_id = f"/subscriptions/{subscription}/resourceGroups/{resource_group}"
+
+    def json(self, *args: str) -> Any:
+        executable = shutil.which("az")
+        if executable is None:
+            raise RuntimeError("Azure CLI is required; install it before running this script")
+        result = subprocess.run(
+            [executable, *args, "--only-show-errors", "--output", "json"],
+            check=False,
+            capture_output=True,
+            encoding="utf-8",
+            stdin=subprocess.DEVNULL,
+            timeout=7200 if args[:3] == ("deployment", "group", "create") else 180,
+        )
+        if result.returncode:
+            raise RuntimeError(f"Azure CLI {args[0]} failed: {result.stderr.strip()}")
+        return json.loads(result.stdout)
+
+    def get(self, resource_id: str, api_version: str) -> dict[str, Any]:
+        if not resource_id.startswith("/subscriptions/") or any(c in resource_id for c in "?#"):
+            raise ValueError("Expected an ARM resource ID, not a URL")
+        response = self.json(
+            "rest",
+            "--method",
+            "get",
+            "--url",
+            f"{MANAGEMENT}{resource_id}?api-version={api_version}",
+        )
+        if not isinstance(response, dict):
+            raise ValueError("ARM GET did not return a JSON object")
+        return response
+
+    def collection(self, resource_id: str, api_version: str) -> list[dict[str, Any]]:
+        page = self.get(resource_id, api_version)
+        rows = list(page["value"])
+        for _ in range(20):
+            next_link = page.get("nextLink")
+            if not next_link:
+                return rows
+            if not next_link.startswith(f"{MANAGEMENT}/subscriptions/"):
+                raise ValueError("Unexpected ARM continuation URL")
+            page = self.json("rest", "--method", "get", "--url", next_link)
+            rows.extend(page["value"])
+        raise RuntimeError("ARM inventory exceeded its page limit; no deployment was attempted")
+
+    def assert_context(self) -> None:
+        account = self.json("account", "show")
+        if (
+            account["id"].casefold() != self.subscription.casefold()
+            or account["tenantId"].casefold() != self.tenant.casefold()
+        ):
+            raise ValueError(
+                "Default Azure CLI subscription/tenant differs from the explicit KT target"
+            )
+        if self.json("cloud", "show")["name"] != "AzureCloud":
+            raise ValueError("This KT template currently supports Azure public cloud only")
+        self.json("group", "show", "--name", self.group, "--subscription", self.subscription)
+
+    def deploy(self, values: dict[str, Any], mode: str, name: str) -> dict[str, Any]:
+        if mode not in {"validate", "what-if", "create"}:
+            raise ValueError(f"Unsupported ARM deployment operation: {mode}")
+        with tempfile.TemporaryDirectory(prefix="azbrief-kt-") as temporary:
+            path = Path(temporary) / "parameters.json"
+            payload = {"parameters": {key: {"value": value} for key, value in values.items()}}
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            extra = ["--no-pretty-print"] if mode == "what-if" else []
+            response = self.json(
+                "deployment",
+                "group",
+                mode,
+                "--name",
+                name,
+                "--resource-group",
+                self.group,
+                "--subscription",
+                self.subscription,
+                "--mode",
+                "Incremental",
+                "--template-file",
+                str(TEMPLATE),
+                "--parameters",
+                f"@{path}",
+                *extra,
+            )
+            if not isinstance(response, dict):
+                raise ValueError("ARM deployment did not return a JSON object")
+            return response
+
+
+def _same_id(left: str, right: str) -> bool:
+    return left.rstrip("/").casefold() == right.rstrip("/").casefold()
+
+
+def endpoint_specs(values: dict[str, Any], group_id: str) -> list[dict[str, Any]]:
+    """Match the six private endpoints and conservative nine-IP budget in the template."""
+    return [
+        {
+            "name": f"pe-{values[key]}",
+            "target": f"{group_id}/providers/{resource_type}/{values[key]}",
+            "group": group,
+            "ips": ips,
+        }
+        for key, resource_type, group, ips in (
+            ("foundryAccountName", "Microsoft.CognitiveServices/accounts", "account", 3),
+            ("agentStorageAccountName", "Microsoft.Storage/storageAccounts", "blob", 1),
+            ("stateStorageAccountName", "Microsoft.Storage/storageAccounts", "blob", 1),
+            ("cosmosAccountName", "Microsoft.DocumentDB/databaseAccounts", "Sql", 2),
+            ("searchServiceName", "Microsoft.Search/searchServices", "searchService", 1),
+            (
+                "containerAppsEnvironmentName",
+                "Microsoft.App/managedEnvironments",
+                "managedEnvironments",
+                1,
+            ),
+        )
+    ]
+
+
+def validate_existing_host(cli: AzureCli, account_id: str, values: dict[str, Any]) -> None:
+    """Reject changes to immutable host bindings instead of implicitly replacing customer data."""
+    projects = cli.collection(f"{account_id}/projects", FOUNDRY_API)
+    if not any(
+        project["name"].split("/")[-1].casefold() == values["projectName"].casefold()
+        for project in projects
+    ):
+        return
+    project_id = f"{account_id}/projects/{values['projectName']}"
+    hosts = cli.collection(f"{project_id}/capabilityHosts", HOST_API)
+    if not hosts:
+        return
+    if len(hosts) != 1 or hosts[0]["name"].split("/")[-1].casefold() != "agents":
+        raise ValueError("An incompatible project Capability Host already exists")
+    expected = {
+        "storageConnections": ["agent-storage"],
+        "threadStorageConnections": ["agent-cosmos"],
+        "vectorStoreConnections": ["agent-search"],
+    }
+    if any(hosts[0]["properties"].get(key) != value for key, value in expected.items()):
+        raise ValueError(
+            "Capability Host bindings are immutable; a migration needs separate approval"
+        )
+    connections = {
+        item["name"].split("/")[-1]: item["properties"]
+        for item in cli.collection(f"{project_id}/connections", FOUNDRY_API)
+    }
+    targets = endpoint_specs(values, cli.group_id)
+    for name, target in (
+        ("agent-storage", targets[1]["target"]),
+        ("agent-cosmos", targets[3]["target"]),
+        ("agent-search", targets[4]["target"]),
+    ):
+        connection = connections.get(name, {})
+        if connection.get("authType") != "AAD" or not _same_id(
+            connection.get("metadata", {}).get("ResourceId", ""), target
+        ):
+            raise ValueError(f"Refusing to redirect an existing Capability Host connection: {name}")
+
+
+def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
+    """Inventory live resources and derive create flags without modifying existing subnets."""
+    cli.assert_context()
+    vnet_id = (
+        f"/subscriptions/{cli.subscription}/resourceGroups/{values['virtualNetworkResourceGroupName']}"
+        f"/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
+    )
+    vnet = cli.get(vnet_id, NETWORK_API)
+    plans = plan_subnets(values, vnet)
+    resources = cli.json(
+        "resource", "list", "--resource-group", cli.group, "--subscription", cli.subscription
+    )
+    by_id = {resource["id"].casefold(): resource for resource in resources}
+    specs = endpoint_specs(values, cli.group_id)
+    if len({spec["name"].casefold() for spec in specs}) != len(specs):
+        raise ValueError("Resource names must give each private endpoint a distinct name")
+    planned_ids = [spec["target"] for spec in specs] + [
+        f"{cli.group_id}/providers/Microsoft.App/containerApps/{values['containerAppName']}",
+        f"{cli.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-{values['containerAppName']}",
+    ]
+    for resource_id in planned_ids:
+        existing = by_id.get(resource_id.casefold())
+        if (
+            existing is not None
+            and (existing.get("tags") or {}).get("deploymentProfile") != PROFILE
+        ):
+            raise ValueError(
+                f"Refusing to modify a resource not owned by the KT profile: {resource_id}"
+            )
+    app_id = planned_ids[-2]
+    if app_id.casefold() in by_id:
+        app = cli.get(app_id, "2025-01-01")["properties"]
+        containers = app.get("template", {}).get("containers", [])
+        if len(containers) != 1 or containers[0].get("image") != values["bootstrapImage"]:
+            raise ValueError(
+                "Container App is already promoted; foundation cannot downgrade it to bootstrap"
+            )
+    if specs[0]["target"].casefold() in by_id:
+        validate_existing_host(cli, specs[0]["target"], values)
+    existing_subnets = {
+        subnet["name"].casefold(): subnet for subnet in vnet["properties"]["subnets"]
+    }
+    for plan, spec, api in (
+        (plans[1], specs[0], FOUNDRY_API),
+        (plans[2], specs[5], "2025-01-01"),
+    ):
+        subnet = existing_subnets.get(plan.name.casefold())
+        owner = None
+        if spec["target"].casefold() in by_id:
+            owner = cli.get(spec["target"], api)["properties"]
+            expected = f"{vnet_id}/subnets/{plan.name}"
+            if plan.name == "FoundrySubnet":
+                bindings = owner.get("networkInjections", [])
+                matches = any(
+                    binding.get("scenario") == "agent"
+                    and _same_id(binding.get("subnetArmId", ""), expected)
+                    for binding in bindings
+                )
+            else:
+                matches = _same_id(
+                    owner.get("vnetConfiguration", {}).get("infrastructureSubnetId", ""), expected
+                )
+            if not matches:
+                raise ValueError(
+                    f"Existing {spec['name']} is not injected into the requested subnet"
+                )
+        if subnet is not None and owner is None:
+            props = subnet["properties"]
+            if any(
+                props.get(key)
+                for key in (
+                    "ipConfigurations",
+                    "privateEndpoints",
+                    "serviceAssociationLinks",
+                    "resourceNavigationLinks",
+                )
+            ):
+                raise ValueError(
+                    f"{plan.name} is occupied; never share another service's delegated subnet"
+                )
+
+    required_ips = 0
+    for spec in specs:
+        endpoint_id = f"{cli.group_id}/providers/Microsoft.Network/privateEndpoints/{spec['name']}"
+        if endpoint_id.casefold() not in by_id:
+            required_ips += spec["ips"]
+            continue
+        props = cli.get(endpoint_id, NETWORK_API)["properties"]
+        connections = props.get("privateLinkServiceConnections", [])
+        if (
+            not _same_id(props["subnet"]["id"], f"{vnet_id}/subnets/PESubnet")
+            or len(connections) != 1
+            or not _same_id(connections[0]["properties"]["privateLinkServiceId"], spec["target"])
+            or connections[0]["properties"]["groupIds"] != [spec["group"]]
+            or connections[0]["properties"]["privateLinkServiceConnectionState"]["status"]
+            != "Approved"
+        ):
+            raise ValueError(
+                f"Existing private endpoint has incompatible binding or approval: {spec['name']}"
+            )
+    pe = plans[0]
+    if not pe.create and required_ips:
+        available = 0
+        # 기존 IP 구성 수만 세면 Cosmos/Foundry의 여러 NIC IP를 놓칠 수 있다.
+        for address in range(
+            int(pe.network.network_address) + 4,
+            min(int(pe.network.broadcast_address), int(pe.network.network_address) + 260),
+        ):
+            result = cli.json(
+                "network",
+                "vnet",
+                "check-ip-address",
+                "--subscription",
+                cli.subscription,
+                "--resource-group",
+                values["virtualNetworkResourceGroupName"],
+                "--name",
+                values["virtualNetworkName"],
+                "--ip-address",
+                str(IPv4Address(address)),
+            )
+            if not isinstance(result.get("available"), bool):
+                raise ValueError("Azure did not return a definitive IP availability result")
+            available += int(result["available"])
+            if available >= required_ips:
+                break
+        if available < required_ips:
+            raise ValueError(
+                f"Could not verify {required_ips} free PESubnet IPs within the bounded check"
+            )
+
+    zones = [
+        "privatelink.cognitiveservices.azure.com",
+        "privatelink.openai.azure.com",
+        "privatelink.services.ai.azure.com",
+        "privatelink.blob.core.windows.net",
+        "privatelink.documents.azure.com",
+        "privatelink.search.windows.net",
+        f"privatelink.{values['location']}.azurecontainerapps.io",
+    ]
+    reuse = dict(values["existingPrivateDnsZoneIds"])
+    if set(reuse) - set(zones):
+        raise ValueError("Unexpected private DNS zone name")
+    for zone in zones:
+        local_id = f"{cli.group_id}/providers/Microsoft.Network/privateDnsZones/{zone}"
+        if zone not in reuse and local_id.casefold() in by_id:
+            reuse[zone] = local_id
+        if zone not in reuse:
+            continue
+        zone_id = reuse[zone]
+        if not isinstance(zone_id, str) or not zone_id.casefold().endswith(
+            f"/microsoft.network/privatednszones/{zone}"
+        ):
+            raise ValueError(f"Invalid private DNS zone resource ID for {zone}")
+        links = cli.collection(f"{zone_id}/virtualNetworkLinks", "2024-06-01")
+        if not any(
+            _same_id(link["properties"]["virtualNetwork"]["id"], vnet_id)
+            and link["properties"].get("registrationEnabled") is False
+            for link in links
+        ):
+            raise ValueError(f"Existing DNS zone needs a non-registration link to the VNet: {zone}")
+    prepared = dict(values, existingPrivateDnsZoneIds=reuse)
+    for plan in plans:
+        prepared[plan.create_parameter] = plan.create
+        logger.info(
+            "kt_subnet_plan",
+            subnet=plan.name,
+            cidr=str(plan.network),
+            action="create" if plan.create else "reuse_unchanged",
+        )
+    logger.info("kt_private_endpoint_plan", new_ip_budget=required_ips, reused_dns_zones=len(reuse))
+    return prepared
+
+
+def wait_for_host(cli: AzureCli, scope: str, expected_name: str | None = None) -> None:
+    """Wait for the injected account host or requested project host without creating duplicates."""
+    for attempt in range(31):
+        hosts = cli.collection(f"{scope}/capabilityHosts", HOST_API)
+        matching = [
+            h
+            for h in hosts
+            if expected_name is None
+            or h["name"].split("/")[-1].casefold() == expected_name.casefold()
+        ]
+        if len(matching) == 1:
+            state = matching[0]["properties"].get("provisioningState")
+            if state == "Succeeded":
+                return
+            if state in {"Failed", "Canceled"}:
+                raise RuntimeError(f"Capability Host provisioning failed at {scope}: {state}")
+        elif len(matching) > 1:
+            raise RuntimeError(f"Unexpected multiple Capability Hosts at {scope}")
+        if attempt < 30:
+            time.sleep(10)
+    raise RuntimeError(
+        f"Capability Host did not become ready at {scope}; inspect the deployment, do not recreate or purge the account"
+    )
+
+
+def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
+    """Read back public-network controls and all approved endpoint/DNS bindings."""
+    prepared = prepare(cli, values)
+    if any(prepared[row[2]] for row in SUBNETS):
+        raise RuntimeError("A required subnet is absent after deployment")
+    versions = (FOUNDRY_API, "2023-05-01", "2023-05-01", "2024-11-15", "2023-11-01", "2025-01-01")
+    for spec, api in zip(endpoint_specs(values, cli.group_id), versions):
+        props = cli.get(spec["target"], api)["properties"]
+        if str(props.get("publicNetworkAccess", "")).casefold() != "disabled":
+            raise RuntimeError(f"Public network access is not disabled: {spec['target']}")
+    resources = cli.json(
+        "resource", "list", "--resource-group", cli.group, "--subscription", cli.subscription
+    )
+    ids = {resource["id"].casefold() for resource in resources}
+    for spec in endpoint_specs(values, cli.group_id):
+        endpoint_id = f"{cli.group_id}/providers/Microsoft.Network/privateEndpoints/{spec['name']}"
+        if endpoint_id.casefold() not in ids:
+            raise RuntimeError(f"Required private endpoint is absent: {spec['name']}")
+
+
+def run(cli: AzureCli, values: dict[str, Any], mode: str) -> None:
+    """Require fresh preflight for every operation, including the second deployment stage."""
+    if mode not in {"preflight", "validate", "what-if", "deploy"}:
+        raise ValueError(f"Unsupported KT operation: {mode}")
+    prepared = prepare(cli, values)
+    if mode == "preflight":
+        logger.info("kt_preflight_complete", azure_mutations=False, application_ready=False)
+        return
+    if mode in {"validate", "what-if"}:
+        result = cli.deploy(prepared, mode, "kt-private-validation")
+        logger.info("kt_validation_result", mode=mode, result=result)
+        return
+    prepared["deployCapabilityHost"] = False
+    result = cli.deploy(prepared, "create", "kt-private-foundation")
+    if result["properties"]["provisioningState"] != "Succeeded":
+        raise RuntimeError("KT foundation deployment did not succeed")
+    account_id = endpoint_specs(values, cli.group_id)[0]["target"]
+    wait_for_host(cli, account_id)
+    prepared = prepare(cli, values)
+    prepared["deployCapabilityHost"] = True
+    result = cli.deploy(prepared, "create", "kt-private-capability-host")
+    if result["properties"]["provisioningState"] != "Succeeded":
+        raise RuntimeError("KT Capability Host deployment did not succeed")
+    wait_for_host(cli, f"{account_id}/projects/{values['projectName']}", "agents")
+    verify_foundation(cli, values)
+    logger.info(
+        "kt_foundation_deployed",
+        application_ready=False,
+        outputs=result["properties"]["outputs"]["ktFoundation"]["value"],
+        next_step="Verify private DNS/connectivity and complete the KT application handoff in infra/kt/README.md",
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--subscription", type=UUID, required=True)
+    parser.add_argument("--tenant", type=UUID, required=True)
+    parser.add_argument("--resource-group", required=True)
+    parser.add_argument("--parameters", type=Path, required=True)
+    parser.add_argument(
+        "--mode", choices=("preflight", "validate", "what-if", "deploy"), default="preflight"
+    )
+    args = parser.parse_args()
+    try:
+        values = load_parameters(args.parameters)
+        run(
+            AzureCli(str(args.subscription), str(args.tenant), args.resource_group),
+            values,
+            args.mode,
+        )
+    except (
+        ValueError,
+        KeyError,
+        TypeError,
+        OSError,
+        RuntimeError,
+        subprocess.SubprocessError,
+    ) as exc:
+        logger.error("kt_deployment_failed", error_type=type(exc).__name__, error=str(exc))
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

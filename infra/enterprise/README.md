@@ -15,12 +15,12 @@
 | State | Entra-only Storage account의 checkpoint container, private immutable archive container, Key Vault secret reference |
 | Evaluation | 별도 Entra-only Storage account, Foundry project AAD connection, project identity 전용 Blob Data Owner |
 | Delivery | Communication Services와 Email Services managed domain |
-| Observability | Log Analytics와 Application Insights |
+| Observability | 공용 Log Analytics, Entra 전용 Application Insights, `AzBriefFailures_CL`과 Direct DCR |
 | Identity | App/Job용 user-assigned identity, Foundry project system identity와 resource별 최소 범위 role assignment |
 | Network | `vnetInjection`, `perimeter`, `public` 중 하나의 경계; evaluation storage도 같은 profile 적용 |
 
 App과 Job에는 `ADMIN_READINESS_*` expected inventory가 동일하게 주입됩니다. 이 값은 Foundry
-계정/Project/model, specialist Agent 이름, 두 Container Apps Environment/App, Scheduler Job과
+계정/Project/model, specialist Agent 이름, 공용 Container Apps Environment 하나와 App 두 개, Scheduler Job과
 기반 Azure resource 목록만 담습니다. Agent definition이나 secret은 담지 않으며 `/admin`의 live
 readiness checklist가 실제 ARM/Foundry 상태와 비교할 때 사용합니다.
 List/map 형태의 값은 `base64(string(...))`으로 전달합니다. `az containerapp update`가 JSON quote를
@@ -31,6 +31,11 @@ Prompt Agent version과 Hosted Agent version은 data-plane 객체이므로 이 B
 루트 [`azure.yaml`](../../azure.yaml)이 각각 별도 lifecycle을 담당합니다. Bicep output은
 coordinator, Resource Graph, Azure MCP, Azure API, report writer, quality reviewer의 고유 이름과
 대상 tenant/subscription/project를 담은 비밀 값 없는 `customerSetup` 계약을 제공합니다.
+v3는 Environment ID, workload profile, Application Insights 이름과 선택적인 failure-log DCR
+binding도 포함합니다. 후속 MCP 배포는 이를 재사용하며 별도 Environment나 관측 리소스를 만들지
+않습니다. App/Job UAMI는 DCR에 자동으로 쓸 수 있고, Hosted Agent 전용 identity에는 게시 후
+`Monitoring Metrics Publisher`를 같은 DCR 범위로 별도 부여합니다. MCP 콘솔 로그는 같은
+Workspace로 수집하지만 현재 image의 직접 Application Insights 추적·메트릭은 끕니다.
 [setup_customer.ps1](../../scripts/setup_customer.ps1)이 이 값을 읽어 고객별 azd 환경을 구성하며,
 `configureHostedAgentCommand`는 이 도구의 `Configure` 단계를 가리킵니다. Hosted 이름은
 `FOUNDRY_HOSTED_AGENT_NAME`으로 manifest에 전달하고 여섯 전문가 이름은 각각 개별 설정으로
@@ -54,6 +59,9 @@ coordinator, Resource Graph, Azure MCP, Azure API, report writer, quality review
 - Compute: `containerImage`, `minReplicas`, `maxReplicas`, 보호된 기본 일정인
   `scheduleCronExpression`, 일정 확인 주기인 `scheduleDispatcherCronExpression`,
   `jobReplicaTimeoutSeconds`, 초기값 1인 `maxConcurrentAnalyses`, 기본 false인 `enableScheduledRuns`
+- Registry: `containerRegistryServer`, 기본 `ManagedIdentity`인 `containerRegistryAuthMode`.
+  외부 테넌트 ACR은 `Credentials`와 `containerRegistryUsername`, secure
+  `containerRegistryPassword`를 사용하며 고객사 Key Vault의 같은 비밀 참조를 App/Job에 연결
 - Foundry: `foundryLocation`, model 이름/SKU/capacity, `foundryHostedAgentName`
 - Network: `networkIsolationMode`, 기존 VNet 또는 세 subnet prefix, `internalIngressOnly`
 - Admin: Entra client ID/secret과 `adminAllowedPrincipals`가 모두 있어야 활성화
@@ -68,6 +76,9 @@ coordinator, Resource Graph, Azure MCP, Azure API, report writer, quality review
   바인딩하며, 기존 VNet을 사용하는 경우에도 해당 리전과 subnet 위임을 사전에 확인합니다.
 - App과 Job은 같은 image와 user-assigned identity를 쓰지만 entry point가 다릅니다. image rollout은
   둘을 함께 갱신합니다.
+- 외부 ACR의 비밀번호는 고객사 Key Vault에만 저장하고 `customerSetup`이나 앱 환경 변수로
+  전달하지 않습니다. 출력에는 인증 모드와 일반 Key Vault 주소만 추가합니다. 고객사 ID의
+  테넌트를 바꾸거나 외부 ACR에 직접 역할을 부여하지 않으며, 네트워크와 실제 pull은 별도 검증합니다.
 - 준비용 hello-world는 80 포트·`/`, AzBrief는 8000 포트·`/health`를 사용합니다. Bootstrap 이미지는
   `enableScheduledRuns=true`여도 정기 실행을 켜지 않습니다. 새 설치는 인수 전까지 Job이 수동입니다.
 - Scheduler Job의 cron은 분석 일정 자체가 아니라 내구성 Admin 구성의 만기 슬롯을 확인하는

@@ -6,12 +6,14 @@ instructions into each other.
 """
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from pydantic import ValidationError
 
 from src.agent.analyzer import AnalysisResult, AzureUpdateAnalyzer, RelevanceStatus
 from src.agent.resilience import TOOL_RESULT_BUDGET_CHARS
+from src.rss.parser import AzureUpdate
 
 
 def _analyzer(**attrs) -> AzureUpdateAnalyzer:
@@ -89,8 +91,89 @@ class TestBuildEvidenceContext:
 
 
 class TestCriticPass:
-    """The critic routes results without inspecting them, so plain sentinels
-    stand in for AnalysisResult."""
+    """The critic rewrites analysis while preserving its source-only summary."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("repaired_score", [4.2, 2.4])
+    async def test_schema_repair_preserves_feedback_evidence_and_rescore_rule(
+        self,
+        sample_update: AzureUpdate,
+        sample_analysis_result: AnalysisResult,
+        repaired_score: float,
+    ):
+        analyzer = _analyzer()
+        original = sample_analysis_result.model_copy(deep=True)
+        analyzer._attach_result_evidence(
+            original, "original summary", {"task-1": "original evidence"}, "original update"
+        )
+        revised = original.model_copy(deep=True)
+        revised.one_line_summary = "Rewrite must not replace the announcement"
+        invalid_payload = original.model_dump()
+        invalid_payload["additional_checks"] = [{"task": "malformed rewrite field"}]
+        with pytest.raises(ValidationError) as invalid:
+            AnalysisResult.model_validate(invalid_payload)
+        analyzer._parse_analysis_result = Mock(side_effect=[invalid.value, revised])
+        analyzer._report_node = AsyncMock(
+            side_effect=[
+                {"analysis_result": {"raw_analysis": "invalid rewrite"}},
+                {"analysis_result": {"raw_analysis": "repaired rewrite"}},
+            ]
+        )
+        judge = SimpleNamespace(
+            evaluate=AsyncMock(
+                side_effect=[
+                    _geval_report(3.0, passed=False),
+                    _geval_report(repaired_score, passed=False),
+                ]
+            ),
+            build_feedback_prompt=lambda report: "preserve the grounding correction",
+        )
+        state = {
+            "trace_id": "critic-schema",
+            "task_results": {"task-1": "original evidence"},
+            "report_feedback": "earlier feedback",
+        }
+
+        with patch("src.agent.geval.GEvalJudge", return_value=judge):
+            out = await analyzer._critic_pass(original, sample_update, state)
+
+        assert analyzer._report_node.await_count == 2
+        repair_state = analyzer._report_node.await_args_list[1].args[0]
+        assert "preserve the grounding correction" in repair_state["report_feedback"]
+        assert "additional_checks" in repair_state["report_feedback"]
+        assert repair_state["task_results"] == state["task_results"]
+        assert state["report_feedback"] == "earlier feedback"
+        assert judge.evaluate.await_count == 2
+        assert judge.evaluate.await_args_list[0].kwargs == judge.evaluate.await_args_list[1].kwargs
+        assert revised.one_line_summary == original.one_line_summary
+        assert revised._evidence_task_results == original._evidence_task_results
+        assert out is (revised if repaired_score > 3.0 else original)
+
+    @pytest.mark.asyncio
+    async def test_exhausted_rewrite_schema_repair_is_not_accepted(
+        self, sample_update: AzureUpdate, sample_analysis_result: AnalysisResult
+    ):
+        analyzer = _analyzer()
+        invalid_payload = sample_analysis_result.model_dump()
+        invalid_payload["additional_checks"] = [{"task": "still invalid"}]
+        with pytest.raises(ValidationError) as invalid:
+            AnalysisResult.model_validate(invalid_payload)
+        analyzer._parse_analysis_result = Mock(side_effect=invalid.value)
+        analyzer._report_node = AsyncMock(return_value={"analysis_result": {}})
+        judge = SimpleNamespace(
+            evaluate=AsyncMock(return_value=_geval_report(3.0, passed=False)),
+            build_feedback_prompt=lambda report: "preserve the grounding correction",
+        )
+
+        with patch("src.agent.geval.GEvalJudge", return_value=judge):
+            with pytest.raises(ValidationError):
+                await analyzer._critic_pass(
+                    sample_analysis_result, sample_update, {"trace_id": "critic-exhausted"}
+                )
+
+        assert analyzer._report_node.await_count == 2
+        assert analyzer._parse_analysis_result.call_count == 2
+        assert judge.evaluate.await_count == 1
 
     @pytest.mark.asyncio
     async def test_passing_report_is_not_rewritten(self, sample_update):
@@ -110,8 +193,8 @@ class TestCriticPass:
     @pytest.mark.asyncio
     async def test_failing_report_is_rewritten_when_score_improves(self, sample_update):
         analyzer = _analyzer()
-        original = SimpleNamespace(name="original")
-        revised = SimpleNamespace(name="revised")
+        original = SimpleNamespace(name="original", one_line_summary="Validated announcement")
+        revised = SimpleNamespace(name="revised", one_line_summary="Tenant-impact rewrite")
         judge = SimpleNamespace(
             evaluate=AsyncMock(
                 side_effect=[
@@ -128,6 +211,10 @@ class TestCriticPass:
             out = await analyzer._critic_pass(original, sample_update, {"trace_id": "t"})
 
         assert out is revised
+        assert out.one_line_summary == "Validated announcement"
+        assert (
+            judge.evaluate.await_args_list[1].args[0].one_line_summary == "Validated announcement"
+        )
         assert analyzer._last_geval.weighted_score == 4.2
         # The rewrite instructions travel through state, never global settings.
         forwarded_state = analyzer._report_node.await_args.args[0]
@@ -136,7 +223,7 @@ class TestCriticPass:
     @pytest.mark.asyncio
     async def test_rewrite_discarded_when_score_drops(self, sample_update):
         analyzer = _analyzer()
-        original = SimpleNamespace(name="original")
+        original = SimpleNamespace(name="original", one_line_summary="Validated announcement")
         judge = SimpleNamespace(
             evaluate=AsyncMock(
                 side_effect=[
@@ -157,7 +244,7 @@ class TestCriticPass:
     @pytest.mark.asyncio
     async def test_critical_flaw_forces_rewrite_even_when_passing(self, sample_update):
         analyzer = _analyzer()
-        original = SimpleNamespace(name="original")
+        original = SimpleNamespace(name="original", one_line_summary="Validated announcement")
         revised = SimpleNamespace(name="revised")
         judge = SimpleNamespace(
             evaluate=AsyncMock(

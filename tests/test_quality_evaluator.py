@@ -156,6 +156,19 @@ def evaluator():
 class TestQualityScoring:
     """Test quality scoring across dimensions."""
 
+    def test_summary_can_preserve_source_details_beyond_a_translated_title(
+        self, evaluator, high_quality_result, sample_update
+    ):
+        high_quality_result.one_line_summary = (
+            "Azure Command Launcher for Java가 public preview로 제공되며 "
+            "Azure 컨테이너와 VM에서 실행하는 Java 애플리케이션의 JVM 옵션을 자동 설정해 "
+            "메모리와 CPU 사용을 최적화합니다."
+        )
+        assert 100 < len(high_quality_result.one_line_summary) <= 240
+        quality = evaluator.evaluate(high_quality_result, sample_update, language="ko")
+        summary = next(item for item in quality.items if item.name == "one_line_summary")
+        assert summary.score == summary.max_score
+
     def test_high_quality_report_scores_high(self, evaluator, high_quality_result, sample_update):
         qr = evaluator.evaluate(high_quality_result, sample_update, language="ko")
         assert (
@@ -233,13 +246,12 @@ class TestQualityScoring:
             update_type="General Availability",
             status="Launched",
         )
-        region_text = "koreacentral: 지금 사용 가능 — " if include_region else ""
         result = AnalysisResult(
             update_id=update.id,
             update_title=update.title,
             update_category="new_feature",
             relevance=RelevanceStatus.OPPORTUNITY,
-            one_line_summary=region_text + "Example feature가 GA되었습니다",
+            one_line_summary="Example 기능의 정식 지원이 시작되었습니다.",
             relevance_evidence="환경에서 Example 리소스 3개를 확인했습니다.",
             relevance_reason=(
                 "Korea Central에서 기능을 사용할 수 있습니다."
@@ -262,7 +274,36 @@ class TestQualityScoring:
         if include_region:
             assert not any("Region" in deduction for deduction in category_item.deductions)
         else:
-            assert any("primary Region" in deduction for deduction in category_item.deductions)
+            assert any("Region verdicts" in deduction for deduction in category_item.deductions)
+
+    @pytest.mark.parametrize(
+        "summary",
+        [
+            "Azure Storage가 이전 TLS 버전의 연결 지원을 종료합니다.",
+            "Azure Storage retires support for older TLS connections.",
+            "Azure Storage は旧 TLS バージョンの接続サポートを終了します。",
+        ],
+    )
+    def test_announcement_summary_needs_no_resource_count_or_action_pattern(
+        self, evaluator, sample_update, summary
+    ):
+        result = AnalysisResult(
+            update_id="test",
+            update_title="Test",
+            update_category="retirement",
+            relevance=RelevanceStatus.RELEVANT,
+            relevance_reason="Analysis",
+            one_line_summary=summary,
+            affected_resources=[],
+            impact_summary="",
+            recommendations=[],
+            reference_docs=[],
+            should_notify=True,
+        )
+        items = evaluator._evaluate_scannability(result, sample_update, "")
+        scan = next(item for item in items if item.name == "three_second_scan")
+        assert scan.score == scan.max_score
+        assert scan.deductions == []
 
     def test_fabricated_deadline_penalized(self, evaluator, sample_update):
         result = AnalysisResult(
@@ -542,6 +583,83 @@ class TestQualityScoring:
                 bad,
                 trans_item.deductions,
             )
+
+    @pytest.mark.parametrize(
+        "text, penalized",
+        [
+            (
+                "Azure **VPN Gateway**의 IPv6 지원이 GA로 출시되어 새로운 연결 방식이 가능해졌습니다.",
+                True,
+            ),
+            ("IPv6 **지원**이 **GA**로 출시되었습니다.", True),
+            ("새로운 프로토콜 호환성이 GA로 출시되었습니다.", True),
+            (
+                "Azure **VPN Gateway**의 IPv6 지원이 시작되어 새로운 연결 방식이 가능해졌습니다.",
+                False,
+            ),
+            ("IPv6의 정식 지원이 시작되어 프로덕션에서 사용할 수 있습니다.", False),
+            ("IPv6 지원이 public preview로 제공됩니다.", False),
+            ("이 기능은 GA로 제공됩니다.", False),
+            ("GA로 출시된 SDK가 IPv6를 지원합니다.", False),
+        ],
+    )
+    def test_korean_support_release_wording(self, evaluator, text, penalized):
+        items = evaluator._evaluate_korean_quality(text)
+        translation = next(item for item in items if item.name == "translation_avoidance")
+        assert any("지원·호환성을 출시" in item for item in translation.deductions) == penalized
+
+    def test_korean_support_wording_reaches_report_and_customization(self):
+        from src.agent.prompts import get_language_guide, get_translation_notes
+
+        for prompt in (get_language_guide("ko"), get_translation_notes("ko")):
+            assert "지원이 시작되어" in prompt
+            assert "정식 지원이 시작되어" in prompt
+            assert "public preview" in prompt
+        assert '출시 단계는 "~로" 부사구로 내립니다' not in get_language_guide("ko")
+
+    @pytest.mark.parametrize(
+        "text, penalized",
+        [
+            (
+                "Azure File Sync이 **Israel Central** 지역에서 "
+                "일반 공급(General Availability) 상태로 제공됩니다.",
+                True,
+            ),
+            ("Azure File Sync가 일반 공급 상태로 제공됩니다.", True),
+            ("Azure File Sync가 **일반 공급(GA)** 상태로 제공됩니다.", True),
+            ("Azure File Sync가 **GA** 상태로 제공됩니다.", True),
+            ("Azure File Sync가 GA(General Availability) 상태로 지원됩니다.", True),
+            ("Azure File Sync가 **Israel Central** 지역에서 정식 지원됩니다.", False),
+            ("새 SDK가 정식 출시되었습니다.", False),
+            ("이 기능은 GA로 제공됩니다.", False),
+            ("IPv6 지원이 public preview로 제공됩니다.", False),
+            ("일반 공급(General Availability) 일정은 아직 확정되지 않았습니다.", False),
+        ],
+    )
+    def test_korean_release_status_wording(self, evaluator, text, penalized):
+        translation = next(
+            item
+            for item in evaluator._evaluate_korean_quality(text)
+            if item.name == "translation_avoidance"
+        )
+        assert (
+            any("출시 단계를 상태로 서술" in item for item in translation.deductions) == penalized
+        )
+
+    def test_korean_release_wording_reaches_summary_report_and_customization(self):
+        from src.agent.prompts import get_language_guide, get_translation_notes
+        from src.agent.prompts.report.base import ANNOUNCEMENT_SUMMARY_PROMPT
+
+        for prompt in (
+            get_language_guide("ko"),
+            get_translation_notes("ko"),
+            ANNOUNCEMENT_SUMMARY_PROMPT.format(language="Korean"),
+        ):
+            assert "정식 지원됩니다" in prompt
+            assert "정식 출시되었습니다" in prompt
+            assert "일반 공급(General Availability) 상태로 제공됩니다" in prompt
+            assert "public preview" in prompt
+            assert "SLA" in prompt
 
     def test_korean_english_noun_use_not_penalized(self, evaluator, sample_update):
         """Only the verb-stem use is banned; English terms as nouns stay fine."""

@@ -136,8 +136,22 @@ param foundryHostedAgentName string = '${baseName}-analysis-hosted'
 @description('Container image for the orchestrator/Admin Page. The default is a placeholder — deploy the real AzBrief image afterwards (see the deployContainerImageCommand output).')
 param containerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
-@description('Optional private registry login server (e.g. myacr.azurecr.io) pulled with the managed identity. Leave empty for public images.')
+@description('Optional private registry login server (e.g. myacr.azurecr.io). Use Credentials for an ACR in another tenant; leave empty only for public images with ManagedIdentity mode.')
 param containerRegistryServer string = ''
+
+@description('ManagedIdentity uses the customer identity for same-tenant ACR access. Credentials supports external-tenant ACR pull tokens stored in the customer Key Vault.')
+@allowed([
+  'ManagedIdentity'
+  'Credentials'
+])
+param containerRegistryAuthMode string = 'ManagedIdentity'
+
+@description('Required in Credentials mode: a customer-specific, repository-scoped ACR pull-token name (or a pull-only service principal client ID). Never use the ACR administrator account.')
+param containerRegistryUsername string = ''
+
+@secure()
+@description('Required in Credentials mode: the registry token password. Stored in the customer Key Vault and referenced by BOTH App and Job. Never place this value in source control or command history.')
+param containerRegistryPassword string = ''
 
 @description('Role assignment permissions mode of the existing ACR. ABAC-enabled registries require Container Registry Repository Reader; legacy registries require AcrPull.')
 @allowed([
@@ -329,13 +343,15 @@ var shortSuffix = substring(suffix, 0, 8)
 var managedIdentityName = 'id-${baseName}'
 var logAnalyticsName = 'log-${baseName}-${shortSuffix}'
 var appInsightsName = 'appi-${baseName}-${shortSuffix}'
+var failureLogTableName = 'AzBriefFailures_CL'
+var failureLogStreamName = 'Custom-${failureLogTableName}'
+var failureLogDcrName = take('dcr-${baseName}-failures-${shortSuffix}', 64)
 var keyVaultName = take('kv-${baseName}-${shortSuffix}', 24)
 var foundryAccountName = 'aif-${baseName}-${shortSuffix}'
 var foundryProjectName = '${baseName}-agents'
 var containerEnvName = 'cae-${baseName}-${shortSuffix}'
 var containerAppName = 'ca-${baseName}'
 var azureMcpContainerAppName = 'ca-${baseName}-mcp'
-var azureMcpContainerEnvName = '${azureMcpContainerAppName}-env'
 var communicationServiceName = 'acs-${baseName}-${shortSuffix}'
 var emailServiceName = 'acs-email-${baseName}-${shortSuffix}'
 var schedulerJobName = 'caj-${baseName}'
@@ -350,6 +366,36 @@ var checkpointBlobUrl = 'https://${storageAccountName}.blob.${environment().suff
 var adminConfigBlobUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${stateContainerName}/admin-config.json'
 var archiveContainerName = 'azbrief-archive'
 var archiveBlobContainerUrl = 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${archiveContainerName}'
+var failureLogColumns = [
+  { name: 'TimeGenerated', type: 'datetime' }
+  { name: 'Level', type: 'string' }
+  { name: 'Logger', type: 'string' }
+  { name: 'Message', type: 'string' }
+  { name: 'Source', type: 'string' }
+  { name: 'Event', type: 'string' }
+  { name: 'Status', type: 'string' }
+  { name: 'FailureKind', type: 'string' }
+  { name: 'Runtime', type: 'string' }
+  { name: 'TraceId', type: 'string' }
+  { name: 'RunId', type: 'string' }
+  { name: 'UpdateId', type: 'string' }
+  { name: 'TaskId', type: 'string' }
+  { name: 'Operation', type: 'string' }
+  { name: 'Phase', type: 'string' }
+  { name: 'AgentRole', type: 'string' }
+  { name: 'AgentName', type: 'string' }
+  { name: 'ResponseId', type: 'string' }
+  { name: 'StatusCode', type: 'int' }
+  { name: 'ServiceErrorCode', type: 'string' }
+  { name: 'RequestId', type: 'string' }
+  { name: 'ErrorType', type: 'string' }
+  { name: 'ErrorMessage', type: 'string' }
+  { name: 'FailedCount', type: 'int' }
+  { name: 'ArchiveFailedCount', type: 'int' }
+  { name: 'PendingCount', type: 'int' }
+  { name: 'DeferredCount', type: 'int' }
+  { name: 'ExtendedProperties', type: 'string' }
+]
 
 // Built-in role definition IDs.
 var roleIds = {
@@ -362,6 +408,7 @@ var roleIds = {
 }
 
 var hasRegistry = !empty(containerRegistryServer)
+var useRegistryCredentials = containerRegistryAuthMode == 'Credentials'
 var containerRegistryPullRoleName = containerRegistryRoleAssignmentMode == 'AbacRepositoryPermissions'
   ? 'Container Registry Repository Reader'
   : 'AcrPull'
@@ -467,6 +514,13 @@ var adminReadinessSupportResources = [
     api_version: '2020-02-02'
   }
   {
+    id: 'failure_log_dcr'
+    label: 'Failure Log Data Collection Rule'
+    name: failureLogDcrName
+    resource_type: 'Microsoft.Insights/dataCollectionRules'
+    api_version: '2024-03-11'
+  }
+  {
     id: 'communication_services'
     label: 'Communication Services'
     name: communicationServiceName
@@ -536,18 +590,22 @@ var runtimeEnv = [
   { name: 'ADMIN_READINESS_FOUNDRY_PROJECT', value: foundryProjectName }
   { name: 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', value: modelDeploymentName }
   { name: 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', value: simpleModelDeploymentName }
-  { name: 'ADMIN_READINESS_CONTAINER_ENVIRONMENTS', value: base64(string([containerEnvName, azureMcpContainerEnvName])) }
+  { name: 'ADMIN_READINESS_CONTAINER_ENVIRONMENTS', value: base64(string([containerEnvName])) }
   { name: 'ADMIN_READINESS_CONTAINER_APPS', value: base64(string([containerAppName, azureMcpContainerAppName])) }
   { name: 'ADMIN_READINESS_CONTAINER_JOBS', value: base64(string([schedulerJobName])) }
   { name: 'ADMIN_READINESS_PROMPT_AGENTS', value: base64(string(adminReadinessPromptAgents)) }
   { name: 'ADMIN_READINESS_SUPPORT_RESOURCES', value: base64(string(adminReadinessSupportResources)) }
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: appInsights.properties.ConnectionString }
   { name: 'OTEL_ENABLED', value: 'true' }
+  { name: 'LOG_ANALYTICS_WORKSPACE_ID', value: logAnalytics.properties.customerId }
+  { name: 'AZURE_MONITOR_INGESTION_ENDPOINT', value: failureLogDcr.properties.endpoints.logsIngestion }
+  { name: 'AZURE_MONITOR_DCR_RULE_ID', value: failureLogDcr.properties.immutableId }
+  { name: 'AZURE_MONITOR_DCR_STREAM_NAME', value: failureLogStreamName }
   { name: 'LOG_LEVEL', value: 'INFO' }
   { name: 'LOG_FILE_ENABLED', value: 'false' }
 ]
 
-var keyVaultSecretRefs = [
+var keyVaultSecretRefs = concat([
   {
     name: 'acs-connection-string'
     keyVaultUrl: secretAcsConnectionString.properties.secretUri
@@ -558,7 +616,24 @@ var keyVaultSecretRefs = [
     keyVaultUrl: secretOrchestratorApiKey.properties.secretUri
     identity: managedIdentity.id
   }
-]
+], useRegistryCredentials ? [
+  {
+    name: 'container-registry-password'
+    keyVaultUrl: secretContainerRegistryPassword!.properties.secretUri
+    identity: managedIdentity.id
+  }
+] : [])
+
+var containerRegistries = hasRegistry || useRegistryCredentials ? [
+  union({
+    server: containerRegistryServer
+  }, useRegistryCredentials ? {
+    username: containerRegistryUsername
+    passwordSecretRef: 'container-registry-password'
+  } : {
+    identity: managedIdentity.id
+  })
+] : null
 
 // ============================================================================
 // Identity
@@ -847,6 +922,56 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
+resource failureLogTable 'Microsoft.OperationalInsights/workspaces/tables@2023-09-01' = {
+  parent: logAnalytics
+  name: failureLogTableName
+  properties: {
+    plan: 'Analytics'
+    retentionInDays: logRetentionDays
+    schema: {
+      name: failureLogTableName
+      columns: failureLogColumns
+    }
+  }
+}
+
+resource failureLogDcr 'Microsoft.Insights/dataCollectionRules@2024-03-11' = {
+  name: failureLogDcrName
+  location: location
+  tags: tags
+  kind: 'Direct'
+  properties: {
+    streamDeclarations: {
+      '${failureLogStreamName}': {
+        columns: failureLogColumns
+      }
+    }
+    destinations: {
+      logAnalytics: [
+        {
+          name: 'failureWorkspace'
+          workspaceResourceId: logAnalytics.id
+        }
+      ]
+    }
+    dataFlows: [
+      {
+        streams: [
+          failureLogStreamName
+        ]
+        destinations: [
+          'failureWorkspace'
+        ]
+        transformKql: 'source'
+        outputStream: failureLogStreamName
+      }
+    ]
+  }
+  dependsOn: [
+    failureLogTable
+  ]
+}
+
 resource appInsights 'Microsoft.Insights/components@2020-02-02' = {
   name: appInsightsName
   location: location
@@ -914,6 +1039,15 @@ resource secretAdminClientSecret 'Microsoft.KeyVault/vaults/secrets@2023-07-01' 
   properties: {
     value: adminEntraClientSecret
     contentType: 'Entra ID app registration client secret (Admin Page)'
+  }
+}
+
+resource secretContainerRegistryPassword 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = if (useRegistryCredentials) {
+  parent: keyVault
+  name: 'container-registry-password'
+  properties: {
+    value: containerRegistryPassword
+    contentType: 'Customer-specific private registry pull credential'
   }
 }
 
@@ -1019,6 +1153,28 @@ resource foundryProject 'Microsoft.CognitiveServices/accounts/projects@2025-06-0
   dependsOn: [
     simpleModelDeployment
     foundryPrivateDnsZoneGroup
+  ]
+}
+
+resource foundryMonitoringConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = {
+  parent: foundryProject
+  name: 'azbrief-app-insights'
+  properties: {
+    category: 'AppInsights'
+    // 서비스에서 검증한 인증 방식이며 현재 Bicep 타입에는 아직 포함되지 않습니다.
+    #disable-next-line BCP036
+    authType: 'ProjectManagedIdentity'
+    target: appInsights.id
+    isSharedToAll: true
+    metadata: {
+      ApiType: 'Azure'
+      ResourceId: appInsights.id
+      ApplicationInsightsConnectionString: appInsights.properties.ConnectionString
+      location: appInsights.location
+    }
+  }
+  dependsOn: [
+    foundryProjectMonitoringPublisherAssignment
   ]
 }
 
@@ -1245,14 +1401,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
           }
         ]
       }
-      registries: hasRegistry
-        ? [
-            {
-              server: containerRegistryServer
-              identity: managedIdentity.id
-            }
-          ]
-        : null
+      registries: containerRegistries
       secrets: concat(
         keyVaultSecretRefs,
         adminAuthConfigured
@@ -1391,14 +1540,7 @@ resource schedulerJob 'Microsoft.App/jobs@2024-03-01' = {
         parallelism: 1
         replicaCompletionCount: 1
       }
-      registries: hasRegistry
-        ? [
-            {
-              server: containerRegistryServer
-              identity: managedIdentity.id
-            }
-          ]
-        : null
+      registries: containerRegistries
       secrets: keyVaultSecretRefs
     }
     template: {
@@ -1515,6 +1657,32 @@ resource resourceGroupReaderAssignment 'Microsoft.Authorization/roleAssignments@
 resource monitoringMetricsPublisherAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   scope: appInsights
   name: guid(appInsights.id, managedIdentity.id, roleIds.monitoringMetricsPublisher)
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      roleIds.monitoringMetricsPublisher
+    )
+    principalId: managedIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource foundryProjectMonitoringPublisherAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: appInsights
+  name: guid(appInsights.id, foundryProject.id, roleIds.monitoringMetricsPublisher)
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      roleIds.monitoringMetricsPublisher
+    )
+    principalId: foundryProject.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource failureLogPublisherAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: failureLogDcr
+  name: guid(failureLogDcr.id, managedIdentity.id, roleIds.monitoringMetricsPublisher)
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
@@ -1748,10 +1916,15 @@ output runNowCommand string = 'az containerapp job start --name ${schedulerJobNa
 @description('Replace the placeholder with the deployed Hosted Agent dedicated principal ID, not the Container Apps or Foundry project principal.')
 output grantReaderCommand string = 'az role assignment create --assignee-object-id <hosted-agent-principal-id> --assignee-principal-type ServicePrincipal --role Reader --scope /subscriptions/${subscription().subscriptionId} --subscription ${subscription().subscriptionId}'
 
-@description('Command that lets the identity pull from your registry using the role required by its RBAC/ABAC mode. The template cannot assign a role on a registry it does not own.')
-output grantAcrPullCommand string = hasRegistry
-  ? 'az role assignment create --assignee ${managedIdentity.properties.principalId} --role "${containerRegistryPullRoleName}" --scope $(az acr show --name ${split(containerRegistryServer, '.')[0]} --query id -o tsv)'
-  : '(no containerRegistryServer supplied)'
+@description('Replace the placeholder with the deployed Hosted Agent dedicated principal ID so failures can reach the custom Log Analytics table.')
+output grantFailureLogPublisherCommand string = 'az role assignment create --assignee-object-id <hosted-agent-principal-id> --assignee-principal-type ServicePrincipal --role "Monitoring Metrics Publisher" --scope ${failureLogDcr.id} --subscription ${subscription().subscriptionId}'
+
+@description('Same-tenant ManagedIdentity mode only: grant the ACR role required by RBAC/ABAC. Credentials mode uses the registry owner-issued pull credential instead of cross-tenant role assignments.')
+output grantAcrPullCommand string = useRegistryCredentials
+  ? '(Credentials mode: no customer Managed Identity role assignment on the external registry; verify the owner-issued pull token and network access.)'
+  : hasRegistry
+    ? 'az role assignment create --assignee ${managedIdentity.properties.principalId} --role "${containerRegistryPullRoleName}" --scope $(az acr show --name ${split(containerRegistryServer, '.')[0]} --query id -o tsv)'
+    : '(no containerRegistryServer supplied)'
 
 @description('Customer setup entry point. Build an immutable image first; the guide covers the bootstrap port/probe transition and updating BOTH runtimes without replacing secrets.')
 output deployContainerImageCommand string = './scripts/setup_customer.ps1 -SubscriptionId "${subscription().subscriptionId}" -ResourceGroup "${resourceGroup().name}" -DeploymentName "${deployment().name}" -Environment "${baseName}-customer" -Stage Application -Image "<registry>/azbrief-enterprise@sha256:<digest>"'
@@ -1764,7 +1937,7 @@ output configureHostedAgentCommand string = './scripts/setup_customer.ps1 -Subsc
 
 @description('Versioned non-secret setup contract. Do not add credentials, API keys, connection strings, or subscriber data.')
 output customerSetup object = {
-  schemaVersion: 2
+  schemaVersion: 3
   tenantId: tenant().tenantId
   subscriptionId: subscription().subscriptionId
   resourceGroup: resourceGroup().name
@@ -1787,16 +1960,26 @@ output customerSetup object = {
     qualityReviewer: foundryQualityReviewerAgentName
   }
   containerAppName: containerAppName
+  containerAppEnvironmentId: containerEnv.id
+  containerAppWorkloadProfileName: vnetMode ? 'Consumption' : ''
+  applicationInsightsName: appInsights.name
+  azureMonitorIngestionEndpoint: failureLogDcr.properties.endpoints.logsIngestion
+  azureMonitorDcrRuleId: failureLogDcr.properties.immutableId
+  azureMonitorDcrResourceId: failureLogDcr.id
+  azureMonitorDcrStreamName: failureLogStreamName
+  azureMonitorFailureTableName: failureLogTableName
   schedulerJobName: schedulerJobName
   containerAppUrl: containerAppUrl
   azureMcpContainerAppName: azureMcpContainerAppName
   containerRegistryServer: containerRegistryServer
+  containerRegistryAuthMode: containerRegistryAuthMode
   controlPlanePrincipalId: managedIdentity.properties.principalId
   scheduleDispatcherCronExpression: scheduleDispatcherCronExpression
   networkIsolationMode: networkIsolationMode
   allowPublicAccessDuringSetup: allowPublicAccessDuringSetup
   keyVaultName: keyVault.name
+  keyVaultUri: keyVault.properties.vaultUri
 }
 
 @description('Post-deployment checklist.')
-output nextSteps string = 'Foundation deployed; AzBrief is NOT ready yet and automatic runs are disabled by default. Follow infra/CUSTOMER_DEPLOYMENT.md: run configureHostedAgentCommand on a VNet-connected deployment host, deploy the Azure MCP server and project connection, provision/check the six specialists, deploy ${foundryHostedAgentName}, grant its dedicated identity scoped Reader, then deploy one immutable image to App and Job. Validate a no-email analysis and archive write, explicitly test email, and only then enable scheduling. Keep Entra authentication/private endpoints enabled. Do not reapply the full template for image-only upgrades or omit existing secure parameters.'
+output nextSteps string = 'Foundation deployed; AzBrief is NOT ready yet and automatic runs are disabled by default. Follow infra/CUSTOMER_DEPLOYMENT.md: run configureHostedAgentCommand on a VNet-connected deployment host, deploy the Azure MCP server and project connection, provision/check the six specialists, deploy ${foundryHostedAgentName}, grant its dedicated identity scoped Reader and failure-DCR Monitoring Metrics Publisher, then deploy one immutable image to App and Job. Validate a no-email analysis, archive write, failure-table event and explicit test email before enabling scheduling. Keep Entra authentication/private endpoints enabled. Do not reapply the full template for image-only upgrades or omit existing secure parameters.'

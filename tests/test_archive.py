@@ -24,6 +24,7 @@ from src.archive.models import (
 )
 from src.archive.page import render_archive_page
 from src.config import get_settings
+from src.report_presentation import normalize_analysis_narrative, report_presentation
 from src.web_fonts import WEB_FONT_CSP_SOURCE, WEB_FONT_URL
 
 UTC = timezone.utc
@@ -34,6 +35,62 @@ _ARCHIVE_ENV = (
     "ARCHIVE_ALLOWED_PRINCIPALS",
     "ADMIN_ALLOWED_PRINCIPALS",
 )
+
+
+@pytest.mark.parametrize("category", ["retirement", "new_feature"])
+@pytest.mark.parametrize("details", [None, {}, {"cost_impact": ""}])
+def test_report_presentation_omits_empty_serialized_impact(category, details):
+    original = {
+        "update_category": category,
+        "impact_details": details,
+        "impact_summary": json.dumps(
+            {
+                "cost_impact": "",
+                "security_impact": "",
+                "performance_impact": "",
+                "operational_impact": "",
+            }
+        ),
+    }
+    before = json.dumps(original)
+    display = report_presentation(original)
+    assert display["impact_details"] == {}
+    assert display["impact_summary"] == ""
+    assert json.dumps(original) == before
+
+
+def test_report_presentation_recovers_json_dimensions_and_preserves_prose():
+    original = {
+        "impact_summary": '```json\n{"security_impact":"Verified protection", "cost_impact":"N/A"}\n```'
+    }
+    assert report_presentation(original)["impact_details"] == {
+        "security_impact": "Verified protection"
+    }
+    assert report_presentation(original)["impact_summary"] == ""
+    original["impact_details"] = {"cost_impact": "Current evidence"}
+    assert report_presentation(original)["impact_details"] == {"cost_impact": "Current evidence"}
+    assert (
+        report_presentation({"impact_summary": "**Legacy prose** remains."})["impact_summary"]
+        == "**Legacy prose** remains."
+    )
+
+
+def test_analysis_presentation_removes_numbered_paragraphs_not_real_lists_or_code():
+    source = "1. **Azure SQL** protects backups.\n\n1. Retention applies for seven days.\n\n1. Existing backups are protected."
+    display = normalize_analysis_narrative(source)
+    assert (
+        display
+        == "**Azure SQL** protects backups.\n\nRetention applies for seven days.\n\nExisting backups are protected."
+    )
+    for retained in (
+        "1. First step\n2. Second step",
+        "1. First step\n\n2. Second step\n\n3. Third step",
+        "1. First step\n   - Nested detail",
+        "```text\n1. Literal example\n\n1. Another literal\n```",
+        "> **Term**: 1. A definition.",
+        "TLS 1.2 protects traffic.",
+    ):
+        assert normalize_analysis_narrative(retained) == retained
 
 
 @pytest.fixture(autouse=True)
@@ -319,9 +376,10 @@ class TestArchivePage:
         assert "max-width:1120px; margin:0 auto" in page
         assert "main.detail-view .page-intro { display:none; }" in page
         assert "font-size:48px; font-weight:800" in page
-        assert "#detail-body > .detail-section:first-child" in page
+        assert ".detail-lead" in page
+        assert "#detail-body > .detail-section:first-child" not in page
         assert "detail-section detail-facts" in page
-        assert "detail-section detail-impact" in page
+        assert "detail-impact-section" in page
         assert "classList.add('detail-view')" in page
         assert "classList.remove('detail-view')" in page
         assert ".actions { display:grid; grid-template-columns:repeat(3,auto); }" in page
@@ -331,7 +389,9 @@ class TestArchivePage:
         assert "markdown blockquote" in page
         assert "inline-code" in page
         assert "renderImpact" in page
-        assert "renderResources" in page
+        assert "renderEnvironment" in page
+        assert "placeReportNotes" in page
+        assert "?view=report" in page
         assert "main { width:100%; max-width:1240px; margin:0 auto;" in page
         assert "job_relevance" not in page
         assert "직무연관성" not in page
@@ -445,6 +505,53 @@ class TestArchiveRoutes:
         operation = client.get("/openapi.json").json()["paths"]["/api/archive/analyses"]["get"]
         parameter_names = {parameter["name"] for parameter in operation["parameters"]}
         assert "job_relevance" not in parameter_names
+
+    def test_report_view_normalizes_display_without_rewriting_the_document(
+        self, client, monkeypatch
+    ):
+        document = _document()
+        raw_json = json.dumps(
+            {
+                "cost_impact": "",
+                "security_impact": "",
+                "performance_impact": "",
+                "operational_impact": "",
+            }
+        )
+        document = document.model_copy(
+            update={
+                "result": document.result.model_copy(
+                    update={
+                        "impact_details": None,
+                        "impact_summary": raw_json,
+                        "relevance_reason": "1. First narrative paragraph.\n\n1. Second narrative paragraph.",
+                    }
+                )
+            }
+        )
+        before = document.model_dump_json()
+
+        class Service:
+            async def get(self, archive_id):
+                return document
+
+        monkeypatch.setattr("src.archive.router.get_archive_service", lambda: Service())
+        _configure(monkeypatch, ARCHIVE_UI_ENABLED="true", ARCHIVE_REQUIRE_AUTH="false")
+        path = f"/api/archive/analyses/{document.archive_id}"
+        raw = client.get(path)
+        displayed = client.get(path, params={"view": "report"})
+        assert raw.status_code == displayed.status_code == 200
+        assert "presentation" not in raw.json()
+        assert displayed.json()["result"] == raw.json()["result"]
+        assert displayed.json()["result"]["impact_summary"] == raw_json
+        presentation = displayed.json()["presentation"]
+        assert presentation["impact_details"] == {} and presentation["impact_summary"] == ""
+        assert (
+            presentation["relevance_reason"]
+            == "First narrative paragraph.\n\nSecond narrative paragraph."
+        )
+        assert document.model_dump_json() == before
+        assert "job_relevance" not in json.dumps(displayed.json())
 
     def test_archive_detail_returns_404_for_unknown_id(self, client, monkeypatch):
         self._install_service(monkeypatch)

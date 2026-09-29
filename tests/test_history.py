@@ -43,6 +43,51 @@ class TestRetirementCountdownOrdering:
         assert history.get_retirement_countdown() == []
 
 
+def test_countdown_parses_annotated_dates_and_title_fallback(monkeypatch):
+    soon_date = datetime.now(timezone.utc) + timedelta(days=20)
+    later_date = datetime.now(timezone.utc) + timedelta(days=90)
+    entries = [
+        {
+            "update_id": "later",
+            "title": "Later retirement",
+            "retirement_date": later_date.strftime("%Y-%m-%d") + " (지원 종료일)",
+        },
+        {
+            "update_id": "from_title",
+            "title": f"Retirement by {soon_date.strftime('%B %d, %Y')}",
+            "retirement_date": "",
+        },
+    ]
+    monkeypatch.setattr(history, "load_retirement_tracker", lambda: entries)
+
+    countdowns = history.get_retirement_countdown()
+
+    assert [item["update_id"] for item in countdowns] == ["from_title", "later"]
+    assert countdowns[0]["days_remaining"] == 20
+    assert countdowns[0]["retirement_date"] == soon_date.date().isoformat()
+    assert countdowns[1]["days_remaining"] == 90
+    assert countdowns[1]["retirement_date"] == later_date.date().isoformat()
+    assert all("migration_status" not in item for item in countdowns)
+
+
+def test_tracker_normalizes_contextual_deadline_without_static_progress_status(monkeypatch):
+    saved_entries = []
+    result = SimpleNamespace(
+        update_id="retirement-1",
+        update_title="Retirement update",
+        update_category="retirement",
+        action_items=[SimpleNamespace(deadline="2027-01-31 (retirement date)")],
+        affected_resources=[],
+    )
+    monkeypatch.setattr(history, "load_retirement_tracker", lambda: [])
+    monkeypatch.setattr(history, "save_retirement_tracker", saved_entries.extend)
+
+    history.update_retirement_tracker(result)
+
+    assert saved_entries[0]["retirement_date"] == "2027-01-31"
+    assert "migration_status" not in saved_entries[0]
+
+
 def test_history_save_does_not_fail_analysis_when_directory_is_read_only(monkeypatch):
     def fail_mkdir():
         raise OSError(30, "Read-only file system")

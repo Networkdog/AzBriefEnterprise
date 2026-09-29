@@ -1,0 +1,17 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "location": { "value": "<existing-vnet-region>" },
+    "virtualNetworkResourceGroupName": { "value": "<existing-network-resource-group>" },
+    "virtualNetworkName": { "value": "<existing-vnet-name>" },
+    "foundryAccountName": { "value": "<unique-foundry-name>" },
+    "agentStorageAccountName": { "value": "<unique-agent-storage>" },
+    "stateStorageAccountName": { "value": "<unique-state-storage>" },
+    "cosmosAccountName": { "value": "<unique-cosmos-name>" },
+    "searchServiceName": { "value": "<unique-search-name>" },
+    "peSubnetAddressPrefix": { "value": "10.70.0.0/28" },
+    "foundrySubnetAddressPrefix": { "value": "10.70.0.32/27" },
+    "containerAppsSubnetAddressPrefix": { "value": "10.70.0.64/27" }
+  }
+}

@@ -247,22 +247,18 @@ class TestLoggingConfigTimezone:
     def test_azure_monitor_handler_uses_utc(self):
         """_AzureMonitorHandler.emit uses datetime.now(timezone.utc)."""
         import logging
-        from unittest.mock import patch as _patch
 
         from src.logging_config import _AzureMonitorHandler
 
-        handler = _AzureMonitorHandler(
-            endpoint="https://example.com",
-            dcr_rule_id="dcr-test",
-            flush_size=100,
-        )
+        handler = _AzureMonitorHandler(endpoint="https://example.com", dcr_rule_id="dcr-test")
+        handler.flush = MagicMock()
 
         record = logging.LogRecord(
             name="test",
-            level=logging.INFO,
+            level=logging.ERROR,
             pathname="test.py",
             lineno=1,
-            msg="test message",
+            msg='{"event":"test_failed"}',
             args=(),
             exc_info=None,
         )

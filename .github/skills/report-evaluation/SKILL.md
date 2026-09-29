@@ -1,33 +1,13 @@
 ---
 name: report-evaluation
-description: 'G-Eval and Microsoft Foundry cloud-evaluation methodology for scoring and autonomously improving AzBrief analysis reports. Use when: G-Eval, LLM-as-a-Judge, Foundry evaluation, cloud evaluation, report evaluation, quality scoring, rubric, dimension score, self-improvement loop, geval.py, GEvalJudge, logprob normalization, calibration, actionability, faithfulness, job relevance, architectural depth.'
+description: 'GitHub Copilot developer workflow for maintaining and testing AzBrief G-Eval and cloud-evaluation code. Model-facing policy belongs to the application Foundry instructions. Use when: G-Eval, LLM-as-a-Judge, Foundry evaluation, cloud evaluation, report evaluation, quality scoring, rubric, dimension score, self-improvement loop, geval.py, GEvalJudge, logprob normalization, calibration, actionability, faithfulness, job relevance, architectural depth.'
 ---
 
 # AzBrief Report Evaluation — G-Eval LLM-as-a-Judge
 
-## Foundry Runtime Guidance
-
-- As the quality reviewer, use the same evidence snapshot that grounded the report and remain
-  independent from the report writer.
-- Evaluate independently across actionability, faithfulness, job relevance, structure, and
-  architectural depth. Faithfulness outranks polish.
-- For architectural depth, reward an evidenced CSA decision brief: a decision hinge, conditional
-  recommendation, alternative/current-state boundary, concrete trade-off, hidden failure mode,
-  operational responsibility, and closure evidence. Do not reward generic WAF or compliance labels.
-- Treat any fabricated resource, date, command, or URL as critical. Reward concise evidence,
-  honest zero-impact findings, and explicit limits rather than verbosity.
-- Large resource summaries may replace individual names with verified unique counts, reasons and
-  runtime-generated Portal links. Check the independent query-count evidence, scope and completeness;
-  do not penalize omitted display rows or add overlapping group counts. Partial is not an exact total.
-- Judge changes by confirmed applicability/action and capabilities by documented value/adoption
-  conditions. Empty ARM inventory proves neither no relevance nor SDK/code non-use. Require no
-  invented migration, mandatory trial, adoption plan, or named resource for a workload-only case.
-- Return evidence-addressed corrections that name the unsupported claim or missing fact and
-  the smallest required change; never rewrite merely to raise a score. Request at most one
-  evidence-preserving rewrite and keep it only when the score improves.
-- Judge or parser failure is not a pass. Preserve the error and fail closed.
-
-<!-- End Foundry Runtime Guidance -->
+This is a GitHub Copilot developer skill, not an AzBrief Agent runtime instruction.
+Foundry operational guidance is maintained in
+[foundry_instructions.py](../../../src/agent/foundry_instructions.py), independently of this file.
 
 ## When to Use
 
@@ -259,6 +239,11 @@ evidence-preserving report-writer revision → rescore → keep only when improv
 can run more iterations for offline evaluation, but it must not be confused with delivery-time
 behavior.
 
+Both initial reports and critic revisions use `_parse_report_with_recovery`. A malformed rewrite
+gets one schema-only regeneration with the same evidence and retained critique feedback. Strict
+parsing still applies, a second invalid result propagates, and only a valid candidate is rescored.
+This does not add a quality-review iteration, change rubric/weights, or imply a quality-score gain.
+
 ```
 Generate report (real Azure data)
         │
@@ -296,6 +281,10 @@ production-excellent band within 2 revisions.
 `GEvalJudge._create_judge_llm()` invokes the persisted quality-reviewer Prompt Agent. Model
 sampling parameters are governed by that immutable Agent definition rather than application-side
 chat-completions settings.
+The definition uses JSON-object mode for evidence verdicts, G-Eval dimensions and action reviews.
+These keep different runtime schemas; do not force them into a single verdict schema or change
+rubrics to avoid parse failures. The roster check verifies the output mode. Foundry disables
+logprob normalization, so its reviewer is never asked for the legacy plain single-digit response.
 
 ## Extending the Judge
 
@@ -437,5 +426,3 @@ judge flags a *true* claim as unverified.
   cut. Judge and report therefore still see the same text. When the agent reaches past a
   preview it does so with a `query_tool_result` task, whose output lands in `task_results` and
   is visible to the judge on its own.
-
-

@@ -5,12 +5,32 @@ code is what Container Apps uses to mark an execution failed.
 """
 
 from datetime import datetime, timezone
+from unittest.mock import MagicMock
 
 import pytest
 
 import src.scheduler as scheduler
 
 UTC = timezone.utc
+
+
+def test_scheduler_logs_unhandled_error_and_flushes_before_exit(monkeypatch):
+    async def fail(dry_run=False):
+        raise RuntimeError("synthetic initialization failure")
+
+    logger = MagicMock()
+    flush = MagicMock()
+    monkeypatch.setenv("SCHEDULE_DISPATCH_ENABLED", "false")
+    monkeypatch.setattr(scheduler, "setup_logging", lambda **kwargs: None)
+    monkeypatch.setattr(scheduler, "run_scheduled_digest", fail)
+    monkeypatch.setattr(scheduler, "logger", logger)
+    monkeypatch.setattr(scheduler, "flush_telemetry", flush)
+
+    with pytest.raises(SystemExit) as exited:
+        scheduler.main()
+    assert exited.value.code == 1
+    logger.exception.assert_called_once_with("scheduler_failed")
+    flush.assert_called_once_with()
 
 
 class _FakeAnalyzer:

@@ -9,12 +9,13 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import ValidationError
 from structlog import get_logger
 
 from scripts.preview_email import build_demo_items
+from src.admin.errors import AdminErrorEvent, AdminErrorHistory
 from src.admin.page import render_admin_page
 from src.archive.models import (
     ArchiveAnalysisResultV1,
@@ -26,6 +27,8 @@ from src.archive.models import (
 from src.archive.page import render_archive_page
 from src.feedback.models import FeedbackRequest
 from src.feedback.page import render_feedback_page
+from src.report_presentation import report_presentation
+from src.services.log_analytics import FAILURE_RUN_ID_PATTERN
 from src.web_fonts import WEB_FONT_CSP_SOURCE
 
 logger = get_logger()
@@ -135,7 +138,7 @@ def create_app() -> FastAPI:
     for index, status in enumerate(("running", "completed", "failed", "completed")):
         runs.append(
             {
-                "run_id": f"preview{index}-{index + 1:032x}",
+                "run_id": f"{index + 1:032x}",
                 "status": status,
                 "source": "admin_run",
                 "selection": {"mode": "recent", "recent_count": 10},
@@ -159,6 +162,43 @@ def create_app() -> FastAPI:
                 "error": "Synthetic upstream timeout" if status == "failed" else None,
             }
         )
+
+    errors = [
+        AdminErrorEvent(
+            TimeGenerated=_NOW - timedelta(minutes=15),
+            Level="ERROR",
+            Runtime="scheduler",
+            Event="orchestrator_update_failed",
+            Status="failed",
+            ErrorType="ReadTimeout",
+            ErrorMessage="The synthetic analysis exceeded its time limit.",
+            RunId=runs[2]["run_id"],
+            TraceId="preview-trace-3",
+            UpdateId="preview-update-3",
+            FailedCount=1,
+        ),
+        AdminErrorEvent(
+            TimeGenerated=_NOW - timedelta(minutes=16),
+            Level="ERROR",
+            Runtime="hosted",
+            Event="hosted_analysis_failed",
+            Status="failed",
+            ErrorType="ReadTimeout",
+            ErrorMessage="The synthetic model response timed out.",
+            RunId=runs[2]["run_id"],
+            TraceId="preview-trace-3",
+            UpdateId="preview-update-3",
+            Operation="analyze_update",
+        ),
+        AdminErrorEvent(
+            TimeGenerated=_NOW - timedelta(hours=2),
+            Level="WARNING",
+            Runtime="container-app",
+            Event="health_credential_failed",
+            ErrorType="CredentialUnavailableError",
+            ErrorMessage="Synthetic credential check failed outside a digest run.",
+        ),
+    ]
 
     @app.get("/")
     async def root():
@@ -223,11 +263,36 @@ def create_app() -> FastAPI:
         }
 
     @app.get("/api/archive/analyses/{archive_id}")
-    async def archive_detail(archive_id: str):
+    async def archive_detail(archive_id: str, view: str = "document"):
         document = next((item for item in documents if item.archive_id == archive_id), None)
         if not document:
             raise HTTPException(404, "Synthetic record not found")
-        return document.model_dump(mode="json")
+        payload = document.model_dump(mode="json")
+        if view == "report":
+            payload["presentation"] = report_presentation(payload["result"])
+        return payload
+
+    @app.post("/api/preview/report-presentation")
+    async def presentation_fixture(result: ArchiveAnalysisResultV1):
+        return report_presentation(result.model_dump(mode="json"))
+
+    @app.get("/api/admin/errors", response_model=AdminErrorHistory)
+    async def error_history(
+        response: Response,
+        hours: int = Query(default=24, ge=1, le=720),
+        limit: int = Query(default=50, ge=1, le=100),
+        run_id: str = Query(default="", pattern=FAILURE_RUN_ID_PATTERN),
+    ) -> AdminErrorHistory:
+        response.headers["Cache-Control"] = "no-store"
+        cutoff = _NOW - timedelta(hours=hours)
+        matching = [
+            event
+            for event in errors
+            if event.occurred_at >= cutoff and (not run_id or event.run_id == run_id.lower())
+        ]
+        return AdminErrorHistory(
+            events=matching[:limit], period_hours=hours, has_more=len(matching) > limit
+        )
 
     @app.get("/api/admin/{area}")
     async def admin_data(area: str):

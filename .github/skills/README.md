@@ -5,6 +5,19 @@
 이 디렉터리는 GitHub Copilot이 AzBrief Enterprise의 반복 작업을 수행할 때 불러오는
 **저장소 고유 skill**을 주제별로 보관합니다. Foundry Agent Service의 toolbox Skill과는 다른
 개발 도구이며 애플리케이션 패키지에 배포되지 않습니다.
+이 문서들을 AzBrief Agent에 주입하거나 특정 구간을 읽어 운영 지침으로 컴파일하지 않습니다.
+
+## 실행 대상 구분
+
+| 대상 | 소유 위치 | 적용 경로 |
+|---|---|---|
+| GitHub Copilot | 이 디렉터리의 개발용 `SKILL.md` | 코드 편집·디버깅·테스트 절차 |
+| Foundry Prompt Agents | [foundry_instructions.py](../../src/agent/foundry_instructions.py)의 운영 정책과 역할 매핑 | Provisioning으로 immutable Agent version 생성 |
+| Hosted Agent의 요청별 작업 | [src/agent/prompts](../../src/agent/prompts/README.md) | 분석·보고서·구독자 재작성 프롬프트 |
+
+KQL·보고서·언어·평가 등 실제 모델의 행동 규칙은 운영 소스에서 변경합니다. 개발용 서비스 클래스
+예제·렌더러 수정 방법·corpus 점검·pytest 명령은 여기에 남깁니다. Copilot 스킬 편집 자체가 운영
+Agent 지침을 바꾸지 않으며, Foundry 지침을 바꾼 경우에만 별도 Agent 버전 게시가 필요합니다.
 
 ## Skill 색인
 

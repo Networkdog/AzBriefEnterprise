@@ -16,6 +16,7 @@ from src.config import (
     FoundryAgentSpec,
     Settings,
 )
+from src.logging_config import FAILURE_LOG_FIELD_TYPES
 
 _TENANT = "00000000-0000-0000-0000-000000000000"
 
@@ -263,6 +264,13 @@ class TestSpecialistDeploymentContract:
         assert "endpoint: ${AZURE_AI_PROJECT_ENDPOINT}" in manifest
         assert "name: ${FOUNDRY_HOSTED_AGENT_NAME}" in manifest
         assert ".services.ai.azure.com" not in manifest
+        for setting in (
+            "AZURE_MONITOR_INGESTION_ENDPOINT",
+            "AZURE_MONITOR_DCR_RULE_ID",
+            "AZURE_MONITOR_DCR_STREAM_NAME",
+        ):
+            assert f"name: {setting}\n        value: ${{{setting}}}" in manifest
+        assert "name: AZBRIEF_RUNTIME\n        value: hosted-agent" in manifest
 
     def test_compiled_template_outputs_specialist_names_and_config_command(self):
         template = json.loads(
@@ -279,7 +287,17 @@ class TestSpecialistDeploymentContract:
         assert "-Stage Configure" in command
         assert "azd env set AZURE_SUBSCRIPTION_ID=" not in command
         setup = outputs["customerSetup"]["value"]
-        assert setup["schemaVersion"] == 2
+        assert setup["schemaVersion"] == 3
+        assert setup["containerAppEnvironmentId"] == (
+            "[resourceId('Microsoft.App/managedEnvironments', variables('containerEnvName'))]"
+        )
+        assert setup["containerAppWorkloadProfileName"] == (
+            "[if(variables('vnetMode'), 'Consumption', '')]"
+        )
+        assert setup["applicationInsightsName"] == "[variables('appInsightsName')]"
+        assert setup["azureMonitorDcrStreamName"] == "[variables('failureLogStreamName')]"
+        assert setup["azureMonitorFailureTableName"] == "[variables('failureLogTableName')]"
+        assert "dataCollectionRules" in setup["azureMonitorDcrResourceId"]
         assert setup["simpleModelDeploymentName"] == "[parameters('simpleModelDeploymentName')]"
         assert setup["coreReasoningEffort"] == "[parameters('coreReasoningEffort')]"
         assert "-Stage Agents" in outputs["provisionAgentsCommand"]["value"]
@@ -295,8 +313,60 @@ class TestSpecialistDeploymentContract:
         assert "tenantId" in setup
         assert "hosted-agent-principal-id" in outputs["grantReaderCommand"]["value"]
         assert "managedIdentity" not in outputs["grantReaderCommand"]["value"]
+        assert "hosted-agent-principal-id" in outputs["grantFailureLogPublisherCommand"]["value"]
+        assert "Monitoring Metrics Publisher" in outputs["grantFailureLogPublisherCommand"]["value"]
         for forbidden in ("secret", "password", "connectionstring", "subscribers", "apikey"):
             assert forbidden not in json.dumps(setup).lower()
+
+    def test_compiled_template_wires_failure_events_to_a_custom_table(self):
+        template = json.loads(
+            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
+        )
+        table = next(
+            resource
+            for resource in template["resources"]
+            if resource["type"].lower() == "microsoft.operationalinsights/workspaces/tables"
+            and "failureLogTableName" in resource["name"]
+        )
+        dcr = next(
+            resource
+            for resource in template["resources"]
+            if resource["type"].lower() == "microsoft.insights/datacollectionrules"
+        )
+        columns = {
+            column["name"]: column["type"] for column in template["variables"]["failureLogColumns"]
+        }
+
+        assert table["properties"]["plan"] == "Analytics"
+        assert table["properties"]["schema"]["columns"] == "[variables('failureLogColumns')]"
+        assert dcr["kind"] == "Direct"
+        assert dcr["properties"]["dataFlows"][0]["transformKql"] == "source"
+        assert dcr["properties"]["dataFlows"][0]["outputStream"] == (
+            "[variables('failureLogStreamName')]"
+        )
+        assert columns == FAILURE_LOG_FIELD_TYPES
+
+        serialized = json.dumps(template)
+        for setting in (
+            "LOG_ANALYTICS_WORKSPACE_ID",
+            "AZURE_MONITOR_INGESTION_ENDPOINT",
+            "AZURE_MONITOR_DCR_RULE_ID",
+            "AZURE_MONITOR_DCR_STREAM_NAME",
+        ):
+            assert serialized.count(f'"name": "{setting}"') == 2
+        assert "failureLogPublisherAssignment" in Path("infra/enterprise/main.bicep").read_text(
+            encoding="utf-8"
+        )
+        for resource in template["resources"]:
+            if resource["type"].lower() in {"microsoft.app/containerapps", "microsoft.app/jobs"}:
+                container = resource["properties"]["template"]["containers"][0]
+                workspace = next(
+                    value
+                    for value in container["env"]
+                    if value["name"] == "LOG_ANALYTICS_WORKSPACE_ID"
+                )
+                assert "logAnalyticsName" in workspace["value"]
+                assert "customerId" in workspace["value"]
 
     def test_compiled_template_selects_the_acr_pull_role_for_its_permission_mode(self):
         template = json.loads(
@@ -395,7 +465,20 @@ class TestSpecialistDeploymentContract:
 
         assert all(serialized.count(f'"name": "{name}"') == 2 for name in names)
         variables = template["variables"]
-        assert "azureMcpContainerAppName" in variables["azureMcpContainerEnvName"]
+        assert "azureMcpContainerEnvName" not in variables
+        for resource in template["resources"]:
+            if resource["type"].lower() not in {
+                "microsoft.app/containerapps",
+                "microsoft.app/jobs",
+            }:
+                continue
+            environment = resource["properties"]["template"]["containers"][0]["env"]
+            entry = next(
+                item
+                for item in environment
+                if item["name"] == "ADMIN_READINESS_CONTAINER_ENVIRONMENTS"
+            )
+            assert entry["value"] == "[base64(string(createArray(variables('containerEnvName'))))]"
         assert set(variables["adminReadinessPromptAgents"]) == set(SPECIALIST_AGENT_ROLES)
         support_ids = {resource["id"] for resource in variables["adminReadinessSupportResources"]}
         assert support_ids == {
@@ -405,6 +488,7 @@ class TestSpecialistDeploymentContract:
             "evaluation_storage",
             "log_analytics",
             "application_insights",
+            "failure_log_dcr",
             "communication_services",
             "email_service",
         }
@@ -429,6 +513,34 @@ class TestSpecialistDeploymentContract:
         ]
         assert len(readiness_env_values) == 10
         assert all("base64(string(" in value for value in readiness_env_values)
+
+
+def test_project_monitoring_uses_the_shared_entra_destination():
+    template = json.loads(Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8"))
+    connections = [
+        resource
+        for resource in template["resources"]
+        if resource["type"].lower() == "microsoft.cognitiveservices/accounts/projects/connections"
+        and resource["properties"].get("category") == "AppInsights"
+    ]
+    assert len(connections) == 1
+    connection = connections[0]["properties"]
+    assert connection["authType"] == "ProjectManagedIdentity"
+    assert connection["target"] == connection["metadata"]["ResourceId"]
+    assert "Microsoft.Insights/components" in connection["target"]
+    assert "appInsightsName" in connection["target"]
+    assert ".ConnectionString" in connection["metadata"]["ApplicationInsightsConnectionString"]
+    assert "credentials" not in connection
+    publishers = [
+        resource
+        for resource in template["resources"]
+        if resource["type"].lower() == "microsoft.authorization/roleassignments"
+        and "Microsoft.Insights/components" in resource.get("scope", "")
+        and "foundryProjectName" in resource["properties"]["principalId"]
+        and "monitoringMetricsPublisher" in resource["properties"]["roleDefinitionId"]
+    ]
+    assert len(publishers) == 1
+    assert publishers[0]["properties"]["principalType"] == "ServicePrincipal"
 
 
 class TestAdminAllowList:

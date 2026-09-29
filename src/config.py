@@ -213,29 +213,29 @@ class Settings(BaseSettings):
     # Azure Monitor Log Ingestion (optional — send structured logs to Log Analytics)
     azure_monitor_ingestion_endpoint: Optional[str] = Field(
         default=None,
-        description="Azure Monitor Data Collection Endpoint (DCE) URL",
+        description="Azure Monitor DCR logs-ingestion endpoint or Data Collection Endpoint URL",
     )
     azure_monitor_dcr_rule_id: Optional[str] = Field(
         default=None,
         description="Data Collection Rule (DCR) immutable ID (dcr-...)",
     )
     azure_monitor_dcr_stream_name: str = Field(
-        default="Custom-AzBrief_CL",
-        description="DCR stream name for log ingestion",
+        default="Custom-AzBriefFailures_CL",
+        description="DCR stream name for failure-event ingestion",
     )
 
-    # OpenTelemetry distributed tracing (optional — requires azbrief[telemetry] extra)
+    # OpenTelemetry 추적 및 상세 오류 로그 (선택)
     otel_enabled: bool = Field(
         default=False,
         description=(
-            "Enable OpenTelemetry tracing of the analysis transaction and tool calls. "
-            "Requires the 'telemetry' extra (azure-monitor-opentelemetry) and "
-            "APPLICATIONINSIGHTS_CONNECTION_STRING. No-op when either is absent."
+            "Enable OpenTelemetry tracing and redacted application warning/error logs. "
+            "Requires azure-monitor-opentelemetry and APPLICATIONINSIGHTS_CONNECTION_STRING. "
+            "OTEL_SDK_DISABLED=true disables export for offline tests."
         ),
     )
     applicationinsights_connection_string: Optional[str] = Field(
         default=None,
-        description="Application Insights connection string for OpenTelemetry span export",
+        description="Workspace-based Application Insights connection string for traces and errors",
     )
 
     report_language: str = Field(
@@ -479,6 +479,14 @@ class Settings(BaseSettings):
     foundry_core_reasoning_effort: Literal["low", "medium", "high"] = Field(
         default="medium",
         description="Required reasoning effort for the core provisioning tier.",
+    )
+    foundry_coordinator_learn_transport: Literal["managed_mcp", "hosted"] = Field(
+        default="managed_mcp",
+        description=(
+            "Coordinator documentation transport selected at Prompt Agent provisioning. "
+            "hosted uses the existing allow-listed Microsoft Learn tools inside the Hosted "
+            "Agent instead of Foundry's managed MCP discovery proxy."
+        ),
     )
     foundry_coordinator_web_search_enabled: bool = Field(
         default=False,

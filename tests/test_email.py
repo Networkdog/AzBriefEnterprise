@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from bs4 import BeautifulSoup
 
 from src.config import Subscriber
 from src.email.service import EmailService
@@ -96,32 +97,76 @@ class TestEmailContentBuilding:
         assert "최소 TLS 버전을 설정하는 방법을 설명합니다." in content["plain_content"]
         assert "확인 내용: TLS 1.2 전환 절차 확인" in content["plain_content"]
 
+    @pytest.mark.parametrize("builder", ["single", "digest"])
+    @pytest.mark.parametrize("language", ["ko", "en", "ja"])
     def test_email_includes_trusted_visual_with_text_fallback(
-        self, sample_update, sample_analysis_result
+        self, sample_update, sample_analysis_result, builder, language
     ):
         sample_analysis_result.visual_assets = [
             {
                 "url": "https://learn.microsoft.com/azure/storage/media/portal-setting.png",
-                "alt": "Storage configuration pane",
-                "caption": "Azure Portal에서 최소 TLS 버전을 선택하는 화면",
-                "source_url": "https://learn.microsoft.com/azure/storage/configure-tls",
-                "source_title": "Configure minimum TLS version",
+                "alt": "SFTP resumable uploads configuration",
+                "caption": "SFTP resumable uploads 구성 화면",
+                "source_url": "https://learn.microsoft.com/azure/storage/sftp-resumable-uploads",
+                "source_title": "Configure SFTP resumable uploads",
             }
         ]
 
-        content = EmailService().build_email_content(
-            sample_update, sample_analysis_result, language="ko"
-        )
+        service = EmailService()
+        if builder == "single":
+            content = service.build_email_content(
+                sample_update, sample_analysis_result, language=language
+            )
+        else:
+            content = service.build_digest_content(
+                [{"update": sample_update, "result": sample_analysis_result, "skip_reason": ""}],
+                language=language,
+            )
 
-        assert "시각 자료" in content["html_content"]
+        assert get_labels(language)["visual_aids"] not in content["html_content"]
+        assert get_labels(language)["visual_aids"] not in content["plain_content"]
         assert (
             'src="https://learn.microsoft.com/azure/storage/media/portal-setting.png"'
             in content["html_content"]
         )
-        assert 'alt="Storage configuration pane"' in content["html_content"]
+        assert 'alt="SFTP resumable uploads configuration"' in content["html_content"]
         assert 'width="576"' in content["html_content"]
-        assert "Azure Portal에서 최소 TLS 버전을 선택하는 화면" in content["plain_content"]
-        assert "https://learn.microsoft.com/azure/storage/configure-tls" in content["plain_content"]
+        assert "SFTP resumable uploads 구성 화면" in content["plain_content"]
+        assert (
+            "https://learn.microsoft.com/azure/storage/sftp-resumable-uploads"
+            in content["plain_content"]
+        )
+
+    @pytest.mark.parametrize("builder", ["single", "digest"])
+    @pytest.mark.parametrize("language", ["ko", "en", "ja"])
+    @pytest.mark.parametrize("category", ["new_feature", "retirement"])
+    def test_impact_placement_preserves_category_and_content(
+        self, sample_update, sample_analysis_result, builder, language, category
+    ):
+        sample_analysis_result.update_category = category
+        sample_analysis_result.impact_details.security_impact = "Retain the authentication policy."
+        service = EmailService()
+        if builder == "single":
+            content = service.build_email_content(
+                sample_update, sample_analysis_result, language=language
+            )
+        else:
+            content = service.build_digest_content(
+                [{"update": sample_update, "result": sample_analysis_result, "skip_reason": ""}],
+                language=language,
+            )
+
+        soup = BeautifulSoup(content["html_content"], "html.parser")
+        impacts = soup.select(".azb-impact")
+        assert len(impacts) == 1
+        section = impacts[0].find_parent(class_="azb-section")
+        expected_label = "analysis_summary" if category == "new_feature" else "impact_analysis"
+        assert (
+            section.select_one(".azb-heading").get_text(strip=True)
+            == get_labels(language)[expected_label]
+        )
+        for field in ("cost_impact", "security_impact", "performance_impact", "operational_impact"):
+            assert getattr(sample_analysis_result.impact_details, field) in impacts[0].get_text()
 
     def test_visual_renderer_rejects_untrusted_or_unsupported_images(self):
         html = format_visual_assets_html(
@@ -148,11 +193,11 @@ class TestEmailContentBuilding:
             },
             {
                 "url": "https://learn.microsoft.com/azure/storage/media/one.png",
-                "alt": "First screenshot",
+                "alt": "First screenshot: SFTP resumable uploads",
             },
             {
                 "url": "https://learn.microsoft.com/azure/storage/media/two.png",
-                "alt": "Second screenshot",
+                "alt": "Second screenshot: SFTP resumable uploads",
             },
         ]
         items = [
@@ -1196,7 +1241,8 @@ class TestAffectedResourceTable:
         reason_row = html[html.index('class="azb-resource-reason"') :]
         assert 'colspan="4"' in reason_row
 
-    def test_resource_columns_follow_reason_in_required_order(self):
+    @pytest.mark.parametrize("language", ["ko", "en", "ja"])
+    def test_resource_columns_follow_reason_in_required_order(self, language):
         rows = [
             {
                 "name": "account-a",
@@ -1206,10 +1252,12 @@ class TestAffectedResourceTable:
                 "reason": "TLS 정책 영향",
             }
         ]
-        html = format_affected_resources_html(rows, language="ko", update_category="retirement")
-        L = get_labels("ko")
+        html = format_affected_resources_html(rows, language=language, update_category="retirement")
+        labels = get_labels(language)
         reason_index = html.index("TLS 정책 영향")
-        headers = [L["col_resource"], L["subscription"], L["resource_group"], L["col_type"]]
+        headers = [
+            labels[key] for key in ("col_resource", "col_type", "resource_group", "subscription")
+        ]
         header_positions = [html.index(header, reason_index) for header in headers]
         assert header_positions == sorted(header_positions)
         assert 'width="28%"' in html
@@ -1220,7 +1268,7 @@ class TestAffectedResourceTable:
         )
         assert resource_row is not None
         row_html = resource_row.group(1)
-        values = ["account-a", "Sub-A", "rg-a", "storageAccounts"]
+        values = ["account-a", "storageAccounts", "rg-a", "Sub-A"]
         value_positions = [row_html.index(value) for value in values]
         assert value_positions == sorted(value_positions)
 
@@ -1385,11 +1433,9 @@ def test_impact_label_column_has_outlook_safe_width():
         assert "word-break: keep-all" in attributes
 
 
-def test_additional_checks_precede_references():
-    """'추가 확인 필요' must come before '참고 문서' in the report layout."""
-    checks = HTML_EMAIL_TEMPLATE.index("{additional_checks_html}")
-    refs = HTML_EMAIL_TEMPLATE.index("{reference_docs_section_html}")
-    assert checks < refs
+def test_reference_notes_belong_to_the_report_body_not_a_footer_section():
+    assert "{report_body_html}" in HTML_EMAIL_TEMPLATE
+    assert "{reference_docs_section_html}" not in HTML_EMAIL_TEMPLATE
 
 
 def test_save_html_to_out_survives_an_unwritable_directory(tmp_path, monkeypatch):

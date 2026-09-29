@@ -1,24 +1,13 @@
 ---
 name: language-naturalness
-description: 'Audit and improve per-language naturalness of AzBrief report text (ko/en/ja). Use when: 자연스러운 문장, 번역체, 직역투, 주술 호응, 문체 단조로움, reads like machine translation, language quality, style guide, KOREAN_STYLE_GUIDE, ENGLISH_STYLE_GUIDE, JAPANESE_STYLE_GUIDE, translation_patterns, sentence ending variety, add a language rule, corpus scan for a phrasing defect.'
+description: 'GitHub Copilot developer workflow for maintaining language prompt code and auditing AzBrief report corpora (ko/en/ja). Model-facing style policy belongs to application prompts and Foundry instructions. Use when: 자연스러운 문장, 번역체, 직역투, 주술 호응, 문체 단조로움, reads like machine translation, language quality, style guide, KOREAN_STYLE_GUIDE, ENGLISH_STYLE_GUIDE, JAPANESE_STYLE_GUIDE, translation_patterns, sentence ending variety, add a language rule, corpus scan for a phrasing defect.'
 ---
 
 # Per-Language Naturalness Audit
 
-## Foundry Runtime Guidance
-
-- When writing, improve readability without changing or adding evidence. When reviewing,
-  point to the exact field and smallest required language correction.
-- Write as a native senior engineer in the requested language while preserving facts,
-  release stage, names, IDs, commands, dates, and uncertainty.
-- State what changed directly. Avoid announcement framing, subject-predicate category
-  mismatch, nominalization, passive defaults, causative translation, and repeated endings.
-- In Korean, keep 합쇼체, write `약어(풀네임)`, and replace generic "CSA 사전 검토" with
-  what to check, where, and why.
-- Apply the rules to every user-facing field. Definition-style concept boxes are the
-  exception to a blanket ban on noun-ending sentences.
-
-<!-- End Foundry Runtime Guidance -->
+This is a GitHub Copilot developer skill, not an AzBrief Agent runtime instruction.
+Foundry operational guidance is maintained in
+[foundry_instructions.py](../../../src/agent/foundry_instructions.py), independently of this file.
 
 Checks whether generated report text reads as if a native senior engineer wrote it —
 per language (`ko`, `en`, `ja`) — and turns a reader's complaint into a rule that actually
@@ -180,6 +169,19 @@ Rules of thumb:
   buried under an unrelated heading or written in vocabulary the model never emits, which makes it a no-op.
   Promote it to its own named bullet instead of adding a near-duplicate.
 
+The 2026-09-18 local sample (60 Korean reports) had one ordinary `GA로 제공` occurrence,
+not evidence for banning GA phrasing broadly. A fresh reader example, `지원이 GA로 출시되어`,
+exposed the existing instruction to force release stages into `~로`. Replace that instruction,
+align report and subscriber notes, and check the support/compatibility-release collocation only.
+Prefer `지원이 시작되어` or `정식 지원이 시작되어` when GA transition matters; retain Preview.
+
+The 2026-09-23 local sample (18 Korean reports) contained one `일반 공급 ... 상태로 제공`
+occurrence, in the analysis body; the existing check missed it. Cover that status-narration shape
+without banning GA as a noun or ordinary `GA로 제공`. Align the existing language guide and
+translation notes with the separate `ANNOUNCEMENT_SUMMARY_PROMPT`, which does not receive the full
+guide. Test direct support/launch rewrites, Preview preservation and the no-invented-SLA boundary.
+Corpus counts and prompt-assembly tests are not proof of new live model output or deployment.
+
 ### Step 3 — Fix in up to four places
 
 | # | Place | Always? |
@@ -240,9 +242,11 @@ Highest-yield checks when reading a generated report. Full rules live in the sty
 |-------|--------|-----|
 | 주술 호응 | 주어와 서술어의 범주가 다름 — "이 기능은 …업데이트입니다" | 주어·서술어만 뽑아 읽는다. 범주가 다르면 문장을 다시 세운다 |
 | **명사화 종결** | 서술어가 의존명사+입니다 — "…했다는 **점입니다**", "…보내는 **방식입니다**", "…되었다는 **의미이며**" | 명사 안에 갇힌 동사를 서술어로 — "출시했습니다", "보냅니다". 개념 박스의 정의문은 예외 |
-| 공지를 주어로 | "이번 GA는 …기능/변화/public preview입니다", "이번 공지는 …한다는 내용입니다" | 주어를 **실제로 추가·변경·종료되는 대상**으로, 출시 단계는 "~로" 부사구 |
+| 공지를 주어로 | "이번 GA는 …기능/변화/public preview입니다", "이번 공지는 …한다는 내용입니다" | 주어를 **실제로 추가·변경·종료되는 대상**으로, 출시 단계는 자연스러운 서술과 함께 의미 보존 |
+| 지원·호환성의 출시 | "IPv6 지원이 GA로 출시되어" | "IPv6 지원이 시작되어"; GA 전환이 중요하면 "정식 지원이 시작되어", Preview는 유지 |
+| 출시 상태의 직역 | "일반 공급(General Availability) 상태로 제공됩니다" | 대상에 따라 "정식 지원됩니다" / "정식 출시되었습니다"; 본문·독립 요약·맞춤화 전달 검사 |
 | 공지를 원인 부사구로 | "이번 GA로 … 사용할 수 있습니다" | 시점 부사로 시작 — "이제 … 사용할 수 있게 되었습니다" |
-| 출시 단계 의역·승격 | preview를 "정식으로 사용"으로 서술 | 원문 표기 그대로 (GA / public preview) |
+| 출시 단계 의역·승격 | preview를 "정식으로 사용"으로 서술 | 원문의 단계 의미 보존; GA는 자연스러운 한국어로 서술하고 public preview는 유지 |
 | 은퇴 직역 | "2026년 9월 1일에 은퇴합니다" | "2026년 9월 1일부터 제공이 종료됩니다" |
 | 사역형 | "~할 수 있게 합니다" (enables you to 직역) | 행위 주체 기준으로 분리하거나 조건-결과("~하면 ~할 수 있습니다")로 연결 |
 | 이중 피동 | "~되어집니다" | "~됩니다" |

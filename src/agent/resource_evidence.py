@@ -55,6 +55,10 @@ class ResourceQuerySelection(BaseModel):
     reason: str = Field(min_length=1, max_length=2000)
 
 
+class ResourceQuerySelectionError(ValueError):
+    """A report's resource selections require bounded, evidence-preserving repair."""
+
+
 def resource_identity(resource: dict[str, Any]) -> str:
     """Resolve an unambiguous identity without conflating same-name resources."""
     resource_id = str(resource.get("id") or "").strip().rstrip("/")
@@ -179,6 +183,9 @@ class ResourceEvidenceCatalog:
             "A broad inventory or diagnostic sample is not an affected set. Use affected_resources "
             "for individually verified subsets instead. Counts below are unique ARM identities; "
             "complete=false means confirmed rows only, never the total population.",
+            'Report resource_queries entries contain ONLY {"reference":"rq-...",'
+            '"reason":"shared applicability reason"}. Do not copy catalog metadata. '
+            "Use [] when no whole result set applies, including empty results.",
         ]
         for reference, (evidence, _) in self.entries.items():
             lines.append(
@@ -199,13 +206,20 @@ class ResourceEvidenceCatalog:
         self, selections: list[dict[str, Any]], resources: list[dict[str, Any]]
     ) -> tuple[list[dict[str, Any]], list[ResourceQueryEvidence]]:
         """Rehydrate selected identities and merge overlapping query results."""
+        if not isinstance(selections, list):
+            raise ResourceQuerySelectionError("Resource query selections must be an array")
         merged: dict[str, dict[str, Any]] = {}
         evidence_list: list[ResourceQueryEvidence] = []
         seen: set[str] = set()
         for raw_selection in selections:
-            selection = ResourceQuerySelection.model_validate(raw_selection)
+            try:
+                selection = ResourceQuerySelection.model_validate(raw_selection)
+            except ValueError as exc:
+                raise ResourceQuerySelectionError(
+                    "Resource query selections require only reference and non-empty reason"
+                ) from exc
             if selection.reference not in self.entries:
-                raise ValueError("Unknown resource query reference in report")
+                raise ResourceQuerySelectionError("Unknown resource query reference in report")
             if selection.reference in seen:
                 continue
             seen.add(selection.reference)
@@ -264,7 +278,9 @@ def resolve_resource_queries(
     """Resolve only references created during the current analysis."""
     catalog = _CATALOG.get()
     if selections and catalog is None:
-        raise ValueError("Resource query references require current analysis evidence")
+        raise ResourceQuerySelectionError(
+            "Resource query references require current analysis evidence"
+        )
     if catalog is not None:
         return catalog.resolve(selections, resources)
     return (

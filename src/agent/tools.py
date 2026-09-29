@@ -7,9 +7,10 @@ from typing import Any, Optional, Type
 
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from structlog import get_logger
 
+from src.agent.documentation import DocumentationTraversalError, current_documentation
 from src.agent.kql_knowledge import (
     get_known_queries,
     get_known_schema,
@@ -1519,6 +1520,64 @@ class SearchAzureDocsTool(BaseTool):
         except Exception as e:
             logger.error("Azure docs search failed", error=str(e))
             return f"Document search error: {str(e)}"
+
+
+class FetchDocumentationLinkInput(BaseModel):
+    """An observed documentation link and the decision question it must answer."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    parent_url: str = Field(
+        min_length=1,
+        max_length=2048,
+        description="URL of the already fetched parent document in the documentation evidence.",
+    )
+    url: str = Field(
+        min_length=1,
+        max_length=2048,
+        description="An actual body-link URL from that parent; never a guessed or search URL.",
+    )
+    question: str = Field(
+        min_length=8,
+        max_length=1000,
+        description="The concrete unresolved decision question requiring this document.",
+    )
+
+
+class FetchDocumentationLinkTool(BaseTool):
+    """Read a discovered documentation link within the active analysis's depth budget."""
+
+    name: str = "fetch_documentation_link"
+    description: str = (
+        "Fetch an observed body link from the Learn more investigation to close a concrete "
+        "decision-relevant evidence gap. Supply the fetched parent_url, its actual link url, "
+        "and the unresolved question. The runtime enforces depth <=2, shared page/time budgets, "
+        "deduplication, and safe redirects. Root documents and selected depth-1 links are "
+        "already fetched; use query_tool_result on their refs before fetching more. "
+        "Depth-2 documents are terminal. This tool cannot start a new root or invent a link."
+    )
+    args_schema: Type[BaseModel] = FetchDocumentationLinkInput
+    _service: Optional[MicrosoftLearnService] = None
+
+    def __init__(self, service: Optional[MicrosoftLearnService] = None, **kwargs):
+        super().__init__(**kwargs)
+        self._service = service or MicrosoftLearnService()
+
+    @property
+    def is_read_only(self) -> bool:
+        return True
+
+    def _run(self, parent_url: str, url: str, question: str) -> str:
+        raise NotImplementedError("Use async version")
+
+    async def _arun(self, parent_url: str, url: str, question: str) -> str:
+        investigation = current_documentation()
+        if investigation is None or self._service is None:
+            logger.warning("documentation_follow_up_without_analysis")
+            raise DocumentationTraversalError("Documentation follow-up requires an active analysis")
+        return await investigation.follow_link(
+            self._service, parent_url=parent_url, url=url, question=question
+        )
 
 
 class GetServiceDocumentationInput(BaseModel):
@@ -4289,6 +4348,7 @@ def get_all_tools() -> list[BaseTool]:
         GetActivityLogSummaryTool(service=log_service),
         # Microsoft Learn documentation tools
         SearchAzureDocsTool(service=learn_service),
+        FetchDocumentationLinkTool(service=learn_service),
         GetServiceDocumentationTool(service=learn_service),
         SearchUpdateRelatedDocsTool(service=learn_service),
         # Azure Management REST API (general-purpose)

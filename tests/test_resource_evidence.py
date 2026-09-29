@@ -8,6 +8,7 @@ import pytest
 
 from src.agent.resource_evidence import (
     MAX_PORTAL_QUERY_URL_LENGTH,
+    ResourceQuerySelectionError,
     register_resource_query,
     resolve_resource_queries,
     resource_evidence_context,
@@ -272,6 +273,127 @@ def test_invalid_reference_fails_closed_and_context_is_cleared():
         resolve_resource_queries(
             [{"reference": result["resource_query_ref"], "reason": "Reason"}], []
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformed", ["catalog", "extra", "unknown", "object", "null"])
+async def test_report_repairs_invalid_query_selections_once_and_preserves_all_rows(malformed):
+    from unittest.mock import AsyncMock
+
+    from src.agent.analyzer import AzureUpdateAnalyzer
+    from tests.test_analyzer_parsing import _make_state, _make_update
+
+    analyzer = object.__new__(AzureUpdateAnalyzer)
+    with resource_evidence_context() as catalog:
+        registered = register_resource_query(query_result())
+        reference = registered["resource_query_ref"]
+        selection = {"reference": reference, "reason": "Legacy TLS configuration"}
+        invalid = {
+            "catalog": [json.loads(catalog.prompt_context().splitlines()[-1])],
+            "extra": [{**selection, "count": 0}],
+            "unknown": [{**selection, "reference": "invented"}],
+            "object": selection,
+            "null": None,
+        }[malformed]
+        state = _make_state(json.dumps({"resource_queries": invalid}))
+        state["report_feedback"] = "Preserve the original review feedback."
+        original = json.dumps(state, sort_keys=True)
+        repaired = _make_state(json.dumps({"resource_queries": [selection]}))
+        analyzer._report_node = AsyncMock(return_value=repaired)
+
+        report, final_state = await analyzer._parse_report_with_recovery(state, _make_update())
+
+    assert len(report.affected_resources) == report.resource_queries[0].count == 327
+    assert report.affected_resources[-1]["name"] == "account326"
+    assert report.resource_queries[0].reference == reference
+    assert final_state is not state
+    assert json.dumps(state, sort_keys=True) == original
+    analyzer._report_node.assert_awaited_once()
+    feedback = analyzer._report_node.await_args.args[0]["report_feedback"]
+    assert "Preserve the original review feedback." in feedback
+    assert "ONLY reference and reason" in feedback
+
+
+@pytest.mark.asyncio
+async def test_report_repair_does_not_accept_stale_references_or_retry_forever():
+    from unittest.mock import AsyncMock
+
+    from src.agent.analyzer import AzureUpdateAnalyzer
+    from tests.test_analyzer_parsing import _make_state, _make_update
+
+    with resource_evidence_context():
+        stale = register_resource_query(query_result(1))["resource_query_ref"]
+    analyzer = object.__new__(AzureUpdateAnalyzer)
+    state = _make_state(
+        json.dumps({"resource_queries": [{"reference": stale, "reason": "Reason"}]})
+    )
+    analyzer._report_node = AsyncMock(return_value=state)
+    with resource_evidence_context():
+        register_resource_query(query_result(1))
+        with pytest.raises(ResourceQuerySelectionError, match="Unknown resource query"):
+            await analyzer._parse_report_with_recovery(state, _make_update())
+    analyzer._report_node.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_report_recovery_does_not_hide_unrelated_parser_errors():
+    from unittest.mock import AsyncMock, Mock
+
+    from src.agent.analyzer import AzureUpdateAnalyzer
+    from tests.test_analyzer_parsing import _make_state, _make_update
+
+    analyzer = object.__new__(AzureUpdateAnalyzer)
+    analyzer._parse_analysis_result = Mock(side_effect=ValueError("unrelated parse failure"))
+    analyzer._report_node = AsyncMock()
+    with pytest.raises(ValueError, match="unrelated parse failure"):
+        await analyzer._parse_report_with_recovery(_make_state("{}"), _make_update())
+    analyzer._report_node.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("repair_succeeds", [True, False])
+async def test_report_schema_recovery_handles_object_in_string_array(repair_succeeds):
+    from unittest.mock import AsyncMock
+
+    from pydantic import ValidationError
+
+    from src.agent.analyzer import AzureUpdateAnalyzer
+    from tests.test_analyzer_parsing import _make_state, _make_update
+
+    analyzer = object.__new__(AzureUpdateAnalyzer)
+    invalid = _make_state(
+        json.dumps({"additional_checks": [{"task": "Check Live Resize support"}]})
+    )
+    corrected = _make_state(json.dumps({"additional_checks": ["Check Live Resize support"]}))
+    analyzer._report_node = AsyncMock(return_value=corrected if repair_succeeds else invalid)
+
+    if repair_succeeds:
+        result, _ = await analyzer._parse_report_with_recovery(invalid, _make_update())
+        assert result.additional_checks == ["Check Live Resize support"]
+    else:
+        with pytest.raises(ValidationError):
+            await analyzer._parse_report_with_recovery(invalid, _make_update())
+    analyzer._report_node.assert_awaited_once()
+    feedback = analyzer._report_node.await_args.args[0]["report_feedback"]
+    assert '"field": ["additional_checks", 0]' in feedback
+    assert "string_type" in feedback
+    assert "Check Live Resize support" not in feedback
+
+
+@pytest.mark.asyncio
+async def test_valid_report_never_invokes_schema_recovery():
+    from unittest.mock import AsyncMock
+
+    from src.agent.analyzer import AzureUpdateAnalyzer
+    from tests.test_analyzer_parsing import _make_state, _make_update
+
+    analyzer = object.__new__(AzureUpdateAnalyzer)
+    analyzer._report_node = AsyncMock()
+    state = _make_state(json.dumps({"additional_checks": ["Check support"]}))
+    report, final_state = await analyzer._parse_report_with_recovery(state, _make_update())
+    assert report.additional_checks == ["Check support"]
+    assert final_state is state
+    analyzer._report_node.assert_not_awaited()
 
 
 @pytest.mark.asyncio

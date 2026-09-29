@@ -317,6 +317,105 @@ class TestHistoryArchiveMerge:
         )
         assert result == []
 
+    async def test_date_range_uses_api_when_local_history_is_missing(self, tmp_path, monkeypatch):
+        """A deployed runtime without a local archive still resolves historical ranges."""
+        api_update = AzureUpdate(
+            id="111",
+            title="Historical API result",
+            description="",
+            link="https://azure.microsoft.com/en-us/updates?id=111",
+            published_date=datetime(2026, 1, 15, tzinfo=timezone.utc),
+            categories=[],
+            azure_services=[],
+            update_type=None,
+            status=None,
+        )
+        api_calls = []
+
+        async def fake_get_updates():
+            return []
+
+        async def fake_fetch_api(start_date, end_date):
+            api_calls.append((start_date, end_date))
+            return [api_update]
+
+        parser = AzureUpdateParser()
+        monkeypatch.setattr(parser, "get_updates", fake_get_updates)
+        monkeypatch.setattr(
+            parser,
+            "_fetch_api_updates_by_date_range",
+            fake_fetch_api,
+            raising=False,
+        )
+        start = datetime(2026, 1, 1)
+        end = datetime(2026, 1, 31)
+
+        result = await parser.get_updates_by_date_range(
+            start,
+            end,
+            history_path=tmp_path / "missing.jsonl",
+        )
+
+        assert [update.id for update in result] == ["111"]
+        assert api_calls == [(start, end)]
+
+    async def test_range_api_filters_pages_and_normalizes_records(self, monkeypatch):
+        """The historical API request is bounded, paged, and normalized."""
+        requests = []
+
+        class FakeResponse:
+            def __init__(self, payload):
+                self.payload = payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self.payload
+
+        class FakeAsyncClient:
+            def __init__(self, **kwargs):
+                assert kwargs["timeout"] == 30.0
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc_value, traceback):
+                return None
+
+            async def get(self, url, params):
+                requests.append((url, params))
+                skip = int(params["$skip"])
+                count = 100 if skip == 0 else 1
+                rows = [
+                    {
+                        "id": str(skip + index),
+                        "title": f"Update {skip + index}",
+                        "description": "<p>Historical <strong>detail</strong></p>",
+                        "created": "2026-01-15T10:00:00.0000000Z",
+                    }
+                    for index in range(count)
+                ]
+                return FakeResponse({"@odata.count": 101, "value": rows})
+
+        monkeypatch.setattr("src.rss.parser.httpx.AsyncClient", FakeAsyncClient)
+        parser = AzureUpdateParser()
+
+        updates = await parser._fetch_api_updates_by_date_range(
+            datetime(2026, 1, 1),
+            datetime(2026, 1, 31),
+        )
+
+        assert len(updates) == 101
+        assert updates[0].description == "Historical detail"
+        assert [request[1]["$skip"] for request in requests] == ["0", "100"]
+        assert all(request[1]["$top"] == "100" for request in requests)
+        assert all(
+            request[1]["$filter"]
+            == "created ge 2026-01-01T00:00:00Z and created le 2026-01-31T23:59:59Z"
+            for request in requests
+        )
+
 
 class TestCleanUrl:
     """URL normalization: SafeLinks unwrapping + tracking-param stripping."""

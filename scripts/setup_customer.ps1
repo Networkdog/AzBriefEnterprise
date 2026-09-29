@@ -75,7 +75,7 @@ function Invoke-AzdJson {
 
 function Assert-SetupContract {
     param([hashtable]$Setup)
-    if ($Setup.schemaVersion -notin @(1, 2)) {
+    if ($Setup.schemaVersion -notin @(1, 2, 3)) {
         throw 'Unsupported customerSetup contract. Deploy the current foundation template first.'
     }
     foreach ($name in @(
@@ -89,7 +89,7 @@ function Assert-SetupContract {
             throw "Missing customerSetup field: $name"
         }
     }
-    if ($Setup.schemaVersion -eq 2) {
+    if ($Setup.schemaVersion -ge 2) {
         foreach ($name in @('simpleModelDeploymentName', 'coreReasoningEffort')) {
             if (-not $Setup.ContainsKey($name) -or [string]::IsNullOrWhiteSpace($Setup[$name])) {
                 throw "Missing customerSetup field: $name"
@@ -110,6 +110,62 @@ function Assert-SetupContract {
     }
     if ($Setup.subscriptionId -ne $SubscriptionId -or $Setup.resourceGroup -ne $ResourceGroup) {
         throw 'Deployment outputs do not match the explicitly requested subscription/resource group.'
+    }
+    $registryAuthMode = if ($Setup.ContainsKey('containerRegistryAuthMode')) { $Setup.containerRegistryAuthMode } else { 'ManagedIdentity' }
+    if ($registryAuthMode -cnotin @('ManagedIdentity', 'Credentials')) {
+        throw 'Invalid containerRegistryAuthMode in customerSetup.'
+    }
+    if ($registryAuthMode -eq 'Credentials') {
+        foreach ($name in @('containerRegistryServer', 'keyVaultName', 'keyVaultUri')) {
+            if ([string]::IsNullOrWhiteSpace([string]$Setup[$name])) {
+                throw "Missing customerSetup field: $name"
+            }
+        }
+        $vaultName = [regex]::Escape($Setup.keyVaultName)
+        if ($Setup.containerRegistryServer -notmatch '^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.azurecr\.(io|us|cn)$' -or
+            $Setup.keyVaultUri -notmatch "^https://$vaultName\.(vault\.azure\.net|vault\.usgovcloudapi\.net|vault\.azure\.cn)/?$") {
+            throw 'Registry credentials must reference the customer Key Vault and an ACR login server.'
+        }
+    }
+    if ($Setup.schemaVersion -ge 3) {
+        $environmentPrefix = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.App/managedEnvironments/"
+        if (-not $Setup.ContainsKey('containerAppEnvironmentId') -or
+            $Setup.containerAppEnvironmentId -notmatch "^$([regex]::Escape($environmentPrefix))[a-zA-Z0-9-]+$") {
+            throw 'Container Apps environment must belong to the deployment target.'
+        }
+        if (-not $Setup.ContainsKey('containerAppWorkloadProfileName') -or
+            $Setup.containerAppWorkloadProfileName -notin @('', 'Consumption')) {
+            throw 'Invalid shared Container Apps workload profile.'
+        }
+        if (-not $Setup.ContainsKey('applicationInsightsName') -or
+            $Setup.applicationInsightsName -notmatch '^[a-zA-Z0-9][a-zA-Z0-9._()-]{0,254}$') {
+            throw 'Missing or invalid shared Application Insights name.'
+        }
+    }
+    $failureTelemetryFields = @(
+        'azureMonitorIngestionEndpoint', 'azureMonitorDcrRuleId', 'azureMonitorDcrResourceId',
+        'azureMonitorDcrStreamName', 'azureMonitorFailureTableName'
+    )
+    $failureTelemetryCount = @(
+        $failureTelemetryFields | Where-Object {
+            $Setup.ContainsKey($_) -and -not [string]::IsNullOrWhiteSpace([string]$Setup[$_])
+        }
+    ).Count
+    if ($failureTelemetryCount -notin @(0, $failureTelemetryFields.Count)) {
+        throw 'The Azure Monitor failure-log binding must include endpoint, DCR, stream, and table.'
+    }
+    if ($failureTelemetryCount -eq $failureTelemetryFields.Count) {
+        $expectedDcrPrefix = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Insights/dataCollectionRules/"
+        if ($Setup.azureMonitorIngestionEndpoint -notmatch '^https://[a-z0-9.-]+\.ingest\.monitor\.azure\.(com|us|cn)/?$' -or
+            $Setup.azureMonitorDcrRuleId -notmatch '^dcr-[a-zA-Z0-9]+$' -or
+            $Setup.azureMonitorDcrResourceId -notmatch "^$([regex]::Escape($expectedDcrPrefix))[a-zA-Z0-9._()-]+$" -or
+            $Setup.azureMonitorFailureTableName -notmatch '^[a-zA-Z][a-zA-Z0-9_]{0,44}_CL$' -or
+            $Setup.azureMonitorDcrStreamName -cne "Custom-$($Setup.azureMonitorFailureTableName)") {
+            throw 'Invalid Azure Monitor failure-log binding.'
+        }
+    }
+    if ($Stage -eq 'Mcp' -and $Setup.schemaVersion -lt 3) {
+        throw 'Mcp requires customerSetup v3 with shared infrastructure. Follow the consolidation upgrade guide.'
     }
     $expectedProjectId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/" +
         "Microsoft.CognitiveServices/accounts/$($Setup.foundryAccountName)/projects/$($Setup.foundryProjectName)"
@@ -205,8 +261,146 @@ function Get-ControlPlane {
     return @{ App = $app; Job = $job }
 }
 
+function Assert-RegistryConfiguration {
+    param([hashtable]$Resources, [string]$ImageReference)
+    $registryServer = $ImageReference.Split('/')[0]
+    if ($registryServer -ne $setup['containerRegistryServer']) {
+        throw 'The image registry must match customerSetup on BOTH resources.'
+    }
+    $authMode = if ($setup.ContainsKey('containerRegistryAuthMode')) { $setup.containerRegistryAuthMode } else { 'ManagedIdentity' }
+    $registryUsername = ''
+    foreach ($resource in @($Resources.App, $Resources.Job)) {
+        $configuration = $resource.properties.configuration
+        $registries = @($configuration['registries'] | Where-Object { $_.server -eq $registryServer })
+        if ($registries.Count -ne 1) {
+            throw 'Expected exactly one matching registry on BOTH resources.'
+        }
+        $identity = $resource['identity']
+        if (-not $identity -or -not $identity['userAssignedIdentities']) {
+            throw 'Both resources must retain the customer control-plane identity.'
+        }
+        $controlPlaneIdentities = @($identity.userAssignedIdentities.GetEnumerator() | Where-Object {
+            $_.Value['principalId'] -eq $setup.controlPlanePrincipalId
+        } | ForEach-Object { $_.Key })
+        if ($controlPlaneIdentities.Count -ne 1) {
+            throw 'Both resources must retain the customer control-plane identity.'
+        }
+        $registry = $registries[0]
+        if ($authMode -eq 'Credentials') {
+            if ([string]::IsNullOrWhiteSpace([string]$registry['username']) -or
+                $registry['passwordSecretRef'] -cne 'container-registry-password' -or $registry['identity']) {
+                throw 'Credentials mode requires a username and passwordSecretRef without a registry identity on BOTH resources.'
+            }
+            $secrets = @($configuration['secrets'] | Where-Object { $_.name -ceq 'container-registry-password' })
+            if ($secrets.Count -ne 1 -or
+                $secrets[0]['keyVaultUrl'] -cne "$($setup.keyVaultUri.TrimEnd('/'))/secrets/container-registry-password" -or
+                $secrets[0]['identity'] -notin $controlPlaneIdentities -or $secrets[0]['value']) {
+                throw 'Registry passwords must use the declared customer Key Vault reference and control-plane identity on BOTH resources.'
+            }
+            if ($registryUsername -and $registryUsername -cne $registry.username) {
+                throw 'Registry usernames must match on BOTH resources.'
+            }
+            $registryUsername = $registry.username
+        }
+        elseif ($registry['identity'] -notin $controlPlaneIdentities -or
+            $registry['username'] -or $registry['passwordSecretRef']) {
+            throw 'ManagedIdentity registry authentication must use the customer control-plane identity on BOTH resources.'
+        }
+    }
+}
+
+function Get-HostedTelemetryBinding {
+    $resources = Get-ControlPlane
+    $destinations = foreach ($resource in @($resources.App, $resources.Job)) {
+        $entries = @($resource.properties.template.containers[0].env | Where-Object {
+            $_.name -eq 'APPLICATIONINSIGHTS_CONNECTION_STRING'
+        })
+        if ($entries.Count -ne 1 -or [string]::IsNullOrWhiteSpace($entries[0]['value'])) {
+            throw 'App and Job must expose the existing Application Insights destination before Hosted setup.'
+        }
+        [string]$entries[0]['value']
+    }
+    if ($destinations[0] -cne $destinations[1]) {
+        throw 'App and Job telemetry destinations differ. Reconcile them before Hosted setup.'
+    }
+    if ($setup.schemaVersion -ge 3) {
+        $insightsId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Insights/components/$($setup.applicationInsightsName)"
+        $insights = Invoke-AzJson @('resource', 'show', '--ids', $insightsId, '--api-version', '2020-02-02')
+        if ($insights.properties.ConnectionString -cne $destinations[0]) {
+            throw 'Control-plane telemetry does not target the shared Application Insights component.'
+        }
+    }
+    return $destinations[0]
+}
+
+function Assert-SharedMcpInfrastructure {
+    param([hashtable]$Resources, [switch]$RequireMcp)
+    if (-not $Resources) { $Resources = Get-ControlPlane }
+    if ($Resources.App.properties.managedEnvironmentId -ne $setup.containerAppEnvironmentId -or
+        $Resources.Job.properties.environmentId -ne $setup.containerAppEnvironmentId) {
+        throw 'App and Job must use the shared Container Apps environment from customerSetup.'
+    }
+    $environment = Invoke-AzJson @('containerapp', 'env', 'show', '--ids', $setup.containerAppEnvironmentId)
+    if ($environment.location -ne $setup.location -or $environment.properties.provisioningState -ne 'Succeeded') {
+        throw 'The shared Container Apps environment is not ready in the customer region.'
+    }
+    if ($setup.containerAppWorkloadProfileName -and
+        $setup.containerAppWorkloadProfileName -notin @($environment.properties.workloadProfiles | ForEach-Object { $_.name })) {
+        throw 'The shared Container Apps workload profile does not exist.'
+    }
+    $insightsId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Insights/components/$($setup.applicationInsightsName)"
+    $insights = Invoke-AzJson @('resource', 'show', '--ids', $insightsId, '--api-version', '2020-02-02')
+    if ($insights.properties.DisableLocalAuth -ne $true) {
+        throw 'Shared Application Insights must require Microsoft Entra authentication.'
+    }
+    $workspacePrefix = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.OperationalInsights/workspaces/"
+    if ($insights.properties.WorkspaceResourceId -notmatch "^$([regex]::Escape($workspacePrefix))[a-zA-Z0-9-]+$") {
+        throw 'Shared Application Insights must use the customer Log Analytics workspace.'
+    }
+    $workspace = Invoke-AzJson @('resource', 'show', '--ids', $insights.properties.WorkspaceResourceId, '--api-version', '2023-09-01')
+    if ($environment.properties.appLogsConfiguration.destination -ne 'log-analytics' -or
+        -not $workspace.properties.customerId -or
+        $environment.properties.appLogsConfiguration.logAnalyticsConfiguration.customerId -ne $workspace.properties.customerId) {
+        throw 'MCP console logs must use the same Log Analytics workspace as Application Insights.'
+    }
+    foreach ($resource in @($Resources.App, $Resources.Job)) {
+        $destinations = @($resource.properties.template.containers[0].env | Where-Object { $_.name -eq 'APPLICATIONINSIGHTS_CONNECTION_STRING' })
+        if ($destinations.Count -ne 1 -or -not $destinations[0]['value'] -or
+            $destinations[0]['value'] -cne $insights.properties.ConnectionString) {
+            throw 'Control-plane telemetry does not target the shared Application Insights component.'
+        }
+    }
+    $apps = Invoke-AzJson @('containerapp', 'list', '--resource-group', $ResourceGroup)
+    $mcpApps = @($apps | Where-Object { $_.name -eq $setup.azureMcpContainerAppName })
+    if ($RequireMcp -and $mcpApps.Count -ne 1) {
+        throw 'The MCP app is missing from the shared environment.'
+    }
+    foreach ($app in $mcpApps) {
+        if ($app.properties.managedEnvironmentId -ne $setup.containerAppEnvironmentId) {
+            throw 'The existing MCP app uses another environment. No resources were deleted. Follow the consolidation upgrade guide before recreating MCP.'
+        }
+        if ($RequireMcp) {
+            if (@($app.properties.template.containers).Count -ne 1) {
+                throw 'Expected exactly one MCP server container.'
+            }
+            $settings = @{}
+            foreach ($entry in $app.properties.template.containers[0].env) {
+                $settings[$entry.name] = $entry['value']
+            }
+            if ($settings.ContainsKey('APPLICATIONINSIGHTS_CONNECTION_STRING') -or
+                $settings['AZURE_MCP_COLLECT_TELEMETRY'] -cne 'false' -or
+                $settings['AZURE_MCP_COLLECT_TELEMETRY_MICROSOFT'] -cne 'false') {
+                throw 'MCP must use shared console logging without unauthenticated telemetry exporters.'
+            }
+        }
+    }
+}
+
 function Assert-CustomerReadiness {
     $resources = Get-ControlPlane
+    if ($setup.schemaVersion -ge 3) {
+        Assert-SharedMcpInfrastructure -Resources $resources -RequireMcp
+    }
     $app = $resources.App
     $job = $resources.Job
     $appImage = [string]$app.properties.template.containers[0].image
@@ -214,6 +408,7 @@ function Assert-CustomerReadiness {
         $appImage -ne $job.properties.template.containers[0].image) {
         throw 'App and Job must use the same immutable image digest.'
     }
+    Assert-RegistryConfiguration -Resources $resources -ImageReference $appImage
     if ($app.properties.configuration.ingress.targetPort -ne 8000 -or
         $app.properties.provisioningState -ne 'Succeeded' -or
         $app.properties.latestRevisionName -ne $app.properties.latestReadyRevisionName) {
@@ -324,8 +519,19 @@ try {
         FOUNDRY_HOSTED_AGENT_NAME = $setup.hostedAgentName
         FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED = 'true'
         AZURE_MCP_PROJECT_CONNECTION_NAME = "$($setup.azureMcpContainerAppName)-read-only"
+        APPLICATIONINSIGHTS_CONNECTION_STRING = Get-HostedTelemetryBinding
     }
-    if ($setup.schemaVersion -eq 2) {
+    if ($setup.ContainsKey('azureMonitorIngestionEndpoint')) {
+        $bindings.AZURE_MONITOR_INGESTION_ENDPOINT = $setup.azureMonitorIngestionEndpoint
+        $bindings.AZURE_MONITOR_DCR_RULE_ID = $setup.azureMonitorDcrRuleId
+        $bindings.AZURE_MONITOR_DCR_STREAM_NAME = $setup.azureMonitorDcrStreamName
+    }
+    else {
+        $bindings.AZURE_MONITOR_INGESTION_ENDPOINT = ''
+        $bindings.AZURE_MONITOR_DCR_RULE_ID = ''
+        $bindings.AZURE_MONITOR_DCR_STREAM_NAME = ''
+    }
+    if ($setup.schemaVersion -ge 2) {
         $bindings.FOUNDRY_MODEL_DEPLOYMENT = ''
         $bindings.FOUNDRY_CORE_MODEL_DEPLOYMENT = $setup.modelDeploymentName
         $bindings.FOUNDRY_SIMPLE_MODEL_DEPLOYMENT = $setup.simpleModelDeploymentName
@@ -370,16 +576,21 @@ try {
         }
         switch ($Stage) {
             'Mcp' {
+                Assert-SharedMcpInfrastructure
                 $null = Invoke-AzdJson @('ai', 'project', 'show')
                 $env:AZURE_LOCATION = $setup.location
                 Initialize-CustomerEnvironment @{
                     AZURE_TENANT_ID = $setup.tenantId; AZURE_SUBSCRIPTION_ID = $SubscriptionId
                     AZURE_RESOURCE_GROUP = $ResourceGroup; AZURE_LOCATION = $setup.location
                     AZURE_MCP_CONTAINER_APP_NAME = $setup.azureMcpContainerAppName
+                    AZURE_CONTAINER_APP_ENVIRONMENT_ID = $setup.containerAppEnvironmentId
+                    AZURE_CONTAINER_APP_WORKLOAD_PROFILE_NAME = $setup.containerAppWorkloadProfileName
+                    APPLICATION_INSIGHTS_NAME = $setup.applicationInsightsName
                     FOUNDRY_PROJECT_RESOURCE_ID = $setup.foundryProjectId
                     SERVICE_MANAGEMENT_REFERENCE = $ServiceManagementReference
                 } -Root $mcpRoot
                 Invoke-Checked 'azd' @('provision', '--cwd', $mcpRoot, '--environment', $Environment, '--no-prompt')
+                Assert-SharedMcpInfrastructure -RequireMcp
                 $mcp = Invoke-AzdJson @('env', 'get-values') -Root $mcpRoot
                 $env:AZURE_LOCATION = $setup.foundryLocation
                 if ($mcp.AZURE_MCP_SERVER_URL -notmatch '^https://[a-z0-9.-]+\.azurecontainerapps\.io/?$' -or
@@ -410,7 +621,7 @@ try {
                 if ($agent.name -ne $setup.hostedAgentName -or $agent.status -ne 'active') {
                     throw 'The intended Hosted Agent did not become active.'
                 }
-                Write-Host 'Grant the dedicated Hosted Agent principal Reader on the approved evidence scope, then run the acceptance checks in infra/CUSTOMER_DEPLOYMENT.md.'
+                Write-Host 'Grant the dedicated Hosted Agent principal Reader on the approved evidence scope and Monitoring Metrics Publisher on the failure-log DCR, then run the acceptance checks in infra/CUSTOMER_DEPLOYMENT.md.'
             }
             'Application' {
                 $resources = Get-ControlPlane
@@ -418,12 +629,7 @@ try {
                     throw 'Initial setup requires a Manual Job. Use the documented guarded upgrade path for an active scheduler.'
                 }
                 $appContainer = $resources.App.properties.template.containers[0]
-                $registry = $Image.Split('/')[0]
-                if ($registry -ne $setup.containerRegistryServer -or
-                    $registry -notin @($resources.App.properties.configuration.registries.server) -or
-                    $registry -notin @($resources.Job.properties.configuration.registries.server)) {
-                    throw 'The image registry must match the managed-identity registry configured on BOTH resources.'
-                }
+                Assert-RegistryConfiguration -Resources $resources -ImageReference $Image
                 if (@($appContainer.probes).Count -ne 2 -or
                     $appContainer.probes[0].type -ne 'Liveness' -or $appContainer.probes[1].type -ne 'Readiness') {
                     throw 'Unexpected probe contract; refusing to replace customer configuration.'
@@ -436,6 +642,7 @@ try {
                     $null = Invoke-AzJson @('containerapp', 'job', 'update', '--name', $setup.schedulerJobName, '--resource-group', $ResourceGroup, '--image', $Image)
                     Set-ApplicationImage $resources.App $Image 8000 $newProbes
                     $after = Get-ControlPlane
+                    Assert-RegistryConfiguration -Resources $after -ImageReference $Image
                     if ($after.App.properties.template.containers[0].image -ne $Image -or
                         $after.Job.properties.template.containers[0].image -ne $Image -or
                         $after.App.properties.configuration.ingress.targetPort -ne 8000) {

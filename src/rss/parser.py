@@ -18,6 +18,7 @@ logger = get_logger()
 
 AZURE_UPDATE_RSS_URL = "https://www.microsoft.com/releasecommunications/api/v2/azure/rss"
 AZURE_UPDATE_API_BASE = "https://www.microsoft.com/releasecommunications/api/v2/azure"
+AZURE_UPDATE_API_PAGE_SIZE = 100
 
 # Query parameters that are pure tracking noise — stripped from surfaced URLs so
 # reference docs read as clean, professional links rather than telemetry blobs.
@@ -80,10 +81,9 @@ def clean_url(url: str) -> str:
         return url
 
 
-# Local archive of the full Azure Update history, produced by
-# ``scripts/crawl_azure_updates.py``. The live RSS feed only returns a rolling
-# window of the most recent ~200 items, so historical months age out of it.
-# Merging this archive lets date-range queries reach back beyond that window.
+# Optional local archive of the full Azure Update history, produced by
+# ``scripts/crawl_azure_updates.py``. Date-range queries use it when available
+# and otherwise query the Release Communications API with a bounded filter.
 HISTORY_ARCHIVE_PATH = Path(__file__).resolve().parents[2] / "data" / "azure_updates_history.jsonl"
 
 
@@ -521,16 +521,16 @@ class AzureUpdateParser:
         """Fetch updates and filter by date range.
 
         The live RSS feed only exposes a rolling window of the most recent
-        ~200 items, so months that have aged out of that window return nothing
-        when queried directly. To cover historical ranges, this method merges
-        the live feed with the locally crawled history archive
-        (``data/azure_updates_history.jsonl``), de-duplicated by canonical id.
+        ~200 items. This method merges the live feed with a locally crawled
+        history archive when available, or with a date-filtered, paginated
+        Release Communications API response otherwise. Records are
+        de-duplicated by canonical id.
 
         Args:
             start_date: Start date (inclusive). Only date part is used.
             end_date: End date (inclusive). If None, includes all updates from start_date onward.
-            include_history: When True (default), merge the local history archive
-                so historical months beyond the RSS window are covered.
+            include_history: When True (default), merge historical records from
+                the local archive or the date-filtered API.
             history_path: Override path to the history archive JSONL. Defaults to
                 ``data/azure_updates_history.jsonl`` at the project root.
 
@@ -540,12 +540,19 @@ class AzureUpdateParser:
         updates = await self.get_updates()
         live_count = len(updates)
 
-        # Merge the local history archive to cover months that have aged out of
-        # the live RSS window. De-duplicate by canonical id so overlapping
-        # (recent) updates are not counted twice.
+        # Prefer the optional local archive for repeatable/offline runs. Deployed
+        # images do not carry development data, so query only the requested API
+        # range when the archive is absent. De-duplicate overlaps with live RSS.
         history_added = 0
+        range_api_added = 0
         if include_history:
             history_updates = self.load_history_updates(history_path)
+            using_range_api = not history_updates
+            if not history_updates:
+                history_updates = await self._fetch_api_updates_by_date_range(
+                    start_date,
+                    end_date,
+                )
             if history_updates:
                 seen = {self._canonical_id(u.id) for u in updates}
                 for hu in history_updates:
@@ -553,7 +560,10 @@ class AzureUpdateParser:
                     if key and key not in seen:
                         seen.add(key)
                         updates.append(hu)
-                        history_added += 1
+                        if using_range_api:
+                            range_api_added += 1
+                        else:
+                            history_added += 1
 
         # Normalize to date-only comparison (timezone-aware UTC)
         start = start_date.replace(
@@ -594,10 +604,94 @@ class AzureUpdateParser:
             end=end.isoformat() if end else "now",
             live=live_count,
             history_added=history_added,
+            range_api_added=range_api_added,
             total=len(updates),
             filtered=len(filtered),
         )
         return filtered
+
+    async def _fetch_api_updates_by_date_range(
+        self,
+        start_date: datetime,
+        end_date: Optional[datetime],
+    ) -> list[AzureUpdate]:
+        """Fetch a bounded historical range from the Release Communications API."""
+        start = start_date.replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+            tzinfo=timezone.utc,
+        )
+        end = (
+            end_date.replace(
+                hour=23,
+                minute=59,
+                second=59,
+                microsecond=0,
+                tzinfo=timezone.utc,
+            )
+            if end_date
+            else None
+        )
+        date_filter = f"created ge {start.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+        if end:
+            date_filter += f" and created le {end.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+
+        updates: list[AzureUpdate] = []
+        skip = 0
+        headers = {
+            "Accept": "application/json",
+            "User-Agent": "AzBrief/1.0 (Azure Update Intelligence Agent)",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=30.0, headers=headers) as client:
+                while True:
+                    response = await client.get(
+                        AZURE_UPDATE_API_BASE,
+                        params={
+                            "$count": "true",
+                            "$top": str(AZURE_UPDATE_API_PAGE_SIZE),
+                            "$skip": str(skip),
+                            "$filter": date_filter,
+                        },
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                    raw_items = payload.get("value", []) if isinstance(payload, dict) else []
+                    if not isinstance(raw_items, list) or not raw_items:
+                        break
+
+                    for raw_item in raw_items:
+                        if not isinstance(raw_item, dict):
+                            continue
+                        update = self._history_record_to_update(raw_item)
+                        if update:
+                            updates.append(update)
+
+                    skip += len(raw_items)
+                    total = payload.get("@odata.count")
+                    if isinstance(total, int):
+                        if skip >= total:
+                            break
+                    elif len(raw_items) < AZURE_UPDATE_API_PAGE_SIZE:
+                        break
+        except (httpx.HTTPError, ValueError, TypeError) as error:
+            logger.warning(
+                "Failed to fetch Azure Update date range",
+                start=start.isoformat(),
+                end=end.isoformat() if end else "now",
+                error_type=type(error).__name__,
+            )
+            return []
+
+        logger.info(
+            "Fetched Azure Update date range",
+            start=start.isoformat(),
+            end=end.isoformat() if end else "now",
+            count=len(updates),
+        )
+        return updates
 
     def load_history_updates(self, history_path: Optional[Path] = None) -> list[AzureUpdate]:
         """Load AzureUpdate objects from the local history archive JSONL.
@@ -671,7 +765,7 @@ class AzureUpdateParser:
         return AzureUpdate(
             id=update_id,
             title=title,
-            description=record.get("description", "") or "",
+            description=self._clean_html(record.get("description", "") or ""),
             link=self._build_update_link(update_id),
             published_date=self._parse_iso_date(record.get("created", "")),
             categories=categories,

@@ -8,11 +8,14 @@ Azure MCP Server 배포의 resource ownership을 기능별 Bicep module로 분�
 
 | 파일 | 책임 |
 |---|---|
-| [`aca-infrastructure.bicep`](aca-infrastructure.bicep) | MCP Container App, environment, system-assigned identity, ingress, scale, probe |
-| [`application-insights.bicep`](application-insights.bicep) | 기존 connection string 재사용 또는 새 App Insights 생성 |
+| [`aca-infrastructure.bicep`](aca-infrastructure.bicep) | 공용 Environment에 MCP Container App, system-assigned identity, ingress, scale, probe 구성 |
 | [`entra-app.bicep`](entra-app.bicep) | Entra application/service principal, identifier URI, delegated scope와 app role |
 | [`foundry-role-assignment-entraapp.bicep`](foundry-role-assignment-entraapp.bicep) | Foundry project identity에 MCP application role 부여 |
 | [`subscription-reader.bicep`](subscription-reader.bicep) | MCP Container App identity에 대상 subscription Reader 부여 |
+
+Environment와 관측 리소스는 여기서 생성하지 않습니다. Root Bicep이 기존 Application Insights를
+참조하며 MCP 콘솔 로그는 공용 Environment가 같은 Log Analytics에 수집합니다. MCP 직접
+Application Insights 추적·메트릭과 Microsoft telemetry는 비활성화합니다.
 
 ## Runtime 안전성
 

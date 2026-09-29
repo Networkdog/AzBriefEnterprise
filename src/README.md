@@ -19,12 +19,14 @@ identity에서 실행됩니다.
 | [`archive/`](archive/) | Container App/Job | canonical 문서 계약, reader 인가, 검색 API와 browser shell |
 | [`feedback/`](feedback/) | Container App | 공개 제출 폼, 검증과 비공개 저장, 저장 후 선택적 이메일 알림 |
 | [`email/`](email/) | App/Job | report/digest 렌더링과 ACS 전달 |
+| [report_presentation.py](report_presentation.py) | App/Job | 이메일·Archive 공통 문단 번호, 영향 JSON/빈 값, 범주별 표시 정규화 |
 | [`i18n/`](i18n/) | 공용 | 언어 registry와 fallback |
 | [`rss/`](rss/) | 공용 | Azure Update 수집·정규화 |
 | [`services/`](services/) | Hosted Agent/제어면 | Azure 및 공개 API data access, durable checkpoint/archive |
 | [`config.py`](config.py) | 공용 | environment를 검증된 `Settings`로 변환 |
 | [`middleware.py`](middleware.py) | Container App | API key와 bounded in-memory rate limiter |
 | [`logging_config.py`](logging_config.py) | 모든 entry point | structlog/stdout/file/Azure Monitor logging 구성 |
+| [`error_logging.py`](error_logging.py) | 모든 entry point | 예외 체인·스택 위치·HTTP 오류 식별자 수집과 비밀값·개인정보 마스킹 |
 | [`web_design.py`](web_design.py), [`web_fonts.py`](web_fonts.py) | 웹 화면 | 공통 디자인 token과 font/CSP 정책. Admin/Archive 탐색과 Feedback 전용 헤더는 별도 구성 |
 
 ## 실행 흐름
@@ -75,6 +77,10 @@ fail closed합니다.
 - 환경 설정은 `get_settings()`를 통해 읽고 새 setting은 `src/config.py`와 문서/배포 설정을 함께
   연결합니다.
 - structlog를 사용하며 Container App/Job은 파일 대신 stdout logging을 기본으로 합니다.
+- 공통 로깅 초기화가 App/Job/Hosted의 Application Insights 전송도 시작합니다. 경고·오류 예외의
+  상세는 마스킹 후 연결된 workspace의 `AppExceptions`에, 예외 없는 이벤트는 `AppTraces`에
+  전달합니다. 공개 API 오류는 상세를 노출하지 않으며 종료 시 OTel 버퍼를 제한된 시간 동안
+  비웁니다. `OTEL_SDK_DISABLED=true`는 오프라인 테스트 전용입니다.
 - machine-facing 분석 API는 `API_KEY`, `/admin`과 `/archive`는 EasyAuth allow-list를 사용하고,
   `/mcp`는 key가 없을 때도 열리지 않습니다.
 - `/feedback`은 활성화 시 공개 제출 경로이며 Admin/Archive 조회 권한을 부여하지 않습니다.

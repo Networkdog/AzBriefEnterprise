@@ -31,6 +31,16 @@ services:
       - protocol: responses
         version: 2.0.0
     environmentVariables:
+      - name: OTEL_ENABLED
+        value: 'true'
+      - name: AZURE_MONITOR_INGESTION_ENDPOINT
+        value: ${AZURE_MONITOR_INGESTION_ENDPOINT}
+      - name: AZURE_MONITOR_DCR_RULE_ID
+        value: ${AZURE_MONITOR_DCR_RULE_ID}
+      - name: AZURE_MONITOR_DCR_STREAM_NAME
+        value: ${AZURE_MONITOR_DCR_STREAM_NAME}
+      - name: AZBRIEF_RUNTIME
+        value: hosted-agent
       - name: AZURE_TENANT_ID
         value: ${AZURE_TENANT_ID}
       - name: AZURE_SUBSCRIPTION_ID

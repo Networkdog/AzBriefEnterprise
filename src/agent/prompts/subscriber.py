@@ -9,6 +9,9 @@ SUBSCRIBER_CUSTOMIZATION_PROMPT = """You are an expert at tailoring Azure Update
 ```json
 {base_analysis_json}
 ```
+`source_update` contains the original public announcement and is input-only. The supplied summary
+has already been generated from this source in the target language; preserve it and do not return
+this metadata object.
 
 ## Subscriber Information
 - **Name**: {subscriber_name}
@@ -51,7 +54,8 @@ Note: `job_relevance` evaluates role fit — it is independent of `importance` (
 **Maintain the original report's structure and content** while adjusting only:
 
 **If subscriber_relevance is "skip"**: Skip this step entirely — keep all text fields from the original unchanged (they will be translated in Step 3).
-- **one_line_summary**: Rewrite from the subscriber's role perspective. MUST remain 30-80 characters. Do NOT expand into a full sentence.
+- **one_line_summary**: Already summarized independently from source_update in the subscriber's
+  language. Preserve it verbatim; do not tailor it to the role, environment, or report conclusions.
 - **detailed_analysis**: Emphasize content relevant to the subscriber's role. Use ONLY information from the original — do NOT add new content. Preserve `> ` blockquote concept boxes exactly. Preserve the decision hinge, recommendation boundary, supported trade-off or hidden failure mode, owning operational responsibility, and decision-closure evidence; role tailoring may reprioritize these elements but must not delete them or turn them into generic advice. **Do NOT mention the subscriber's role name or title in the report text** — the report should read as a general professional analysis, not as "as a Security Engineer, you should...".
 - **affected_resources**: Move role-relevant resources to the top. May remove irrelevant resources
   only when no `resource_queries` are present. Verified query membership is immutable.
@@ -80,6 +84,11 @@ sentences, the tailored version must too.
 ### STEP 3: Language Translation (LAST)
 Translate all JSON **text values** into **{subscriber_language}**.
 JSON key names must NOT be changed.
+Preserve the supplied `one_line_summary` verbatim, even for `skip` or same-language reports.
+It was independently generated from the original announcement in {subscriber_language} and is
+not part of role-based rewriting. Do not add impact scope, work estimates or applicability verdicts.
+Keep the original English update title unchanged; proper product names may remain English but
+the summary sentence itself must be in {subscriber_language}.
 
 **CRITICAL — Do NOT translate these enum/code values** (keep exactly as-is in English):
 - `subscriber_relevance`: must be `"send"` or `"skip"`
@@ -95,7 +104,7 @@ JSON key names must NOT be changed.
 {language_translation_notes}
 
 Translation targets:
-- one_line_summary, detailed_analysis
+- detailed_analysis (one_line_summary is already localized and must remain unchanged)
 - impact_summary values (cost_impact, security_impact, performance_impact, operational_impact)
 - action_items values (task, procedure, risk_if_not_done, deadline, estimated_time)
 - relevance_evidence
@@ -104,7 +113,8 @@ Translation targets:
 - additional_checks items
 - reference_docs description and related_content (keep title and url unchanged)
 
-Do NOT translate: resource names, resource types, CLI commands, URLs (these are proper nouns/code).
+Do NOT translate: the original update title, resource names, resource types, CLI commands, URLs
+(these are proper nouns/code).
 
 ## Output Format
 Respond with the same JSON structure as the original, with subscriber_relevance and job_relevance added at the top:

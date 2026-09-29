@@ -1,16 +1,20 @@
 """FastAPI application entry point for AzBrief Enterprise."""
 
+import os
 from contextlib import asynccontextmanager
 from typing import Optional
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 from structlog import get_logger
+from structlog.contextvars import bound_contextvars
 
 from src.admin.configuration import get_admin_configuration
 from src.admin.router import router as admin_router
 from src.agent.hosted_client import HostedAgentAnalyzer
+from src.agent.telemetry import flush_telemetry
 from src.archive.models import ArchiveReceipt, ArchiveSource
 from src.archive.router import router as archive_router
 from src.archive.service import ArchiveService
@@ -32,13 +36,12 @@ _ALLOWED_URL_DOMAINS = {
     "azure.com",
 }
 
+# Suppress verbose console output in Container App mode
+os.environ.setdefault("AZBRIEF_VERBOSE", "false")
+os.environ.setdefault("AZBRIEF_RUNTIME", "container-app")
+
 # Configure structured logging (centralized)
 setup_logging(file_enabled=False)  # Container App: stdout only, no file
-
-# Suppress verbose console output in Container App mode
-import os
-
-os.environ.setdefault("AZBRIEF_VERBOSE", "false")
 
 logger = get_logger()
 
@@ -85,8 +88,11 @@ async def lifespan(app: FastAPI):
             yield
     finally:
         # Cleanup the runtime proxy. Each Hosted request owns its HTTP client.
-        if analyzer:
-            await analyzer.close()
+        try:
+            if analyzer:
+                await analyzer.close()
+        finally:
+            flush_telemetry()
 
     logger.info("Shutting down AzBrief application")
 
@@ -111,7 +117,16 @@ async def security_headers(request: Request, call_next):
     The admin page sets its own Content-Security-Policy with a per-request
     nonce, so an existing header is never overwritten here.
     """
-    response = await call_next(request)
+    with bound_contextvars(http_request_id=uuid4().hex):
+        try:
+            response = await call_next(request)
+        except Exception:
+            logger.exception(
+                "http_request_failed",
+                method=request.method,
+                route=getattr(request.scope.get("route"), "path", "unmatched"),
+            )
+            raise
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
@@ -197,6 +212,7 @@ async def health_check():
         cred.get_token("https://management.azure.com/.default")
         checks["azure_credential"] = "ok"
     except Exception as e:
+        logger.warning("health_credential_failed", error_type=type(e).__name__)
         checks["azure_credential"] = f"error: {str(e)[:80]}"
 
     # Check the full-analysis Hosted Agent configuration. Container Apps no

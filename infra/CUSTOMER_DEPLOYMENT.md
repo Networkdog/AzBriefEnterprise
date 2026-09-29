@@ -25,11 +25,39 @@ the two deployment names must differ. `coreReasoningEffort` accepts `low`, `medi
 Capacity units must be assessed independently. The models deploy serially before the private
 endpoint and project, and Admin readiness checks both deployments without invoking a model.
 
-`customerSetup` v2 binds both model deployments and effort and clears the legacy global model
+`customerSetup` v2/v3 binds both model deployments and effort and clears the legacy global model
 override in the named customer environment. Existing v1 outputs remain supported as explicit
 single-model installations. Do not reapply the foundation merely to change an existing Agent's
 model; preserve existing resources/secure parameters and use reviewed provisioning configuration.
 `--check` detects expected model/reasoning/sampling drift but does not replace a live model smoke.
+
+## Shared Infrastructure
+
+New installations use one Container Apps environment, one Application Insights component, one
+Log Analytics workspace, and one Direct DCR targeting its `AzBriefFailures_CL` table. The
+control-plane App and Job share their existing user-assigned identity and receive DCR-scoped
+`Monitoring Metrics Publisher`; Azure MCP remains a separate app with its own system-assigned
+identity and subscription Reader. The MCP template creates no additional environment, Application
+Insights component, workspace, failure table, or DCR.
+
+`customerSetup` v3 adds `containerAppEnvironmentId`, `containerAppWorkloadProfileName` and
+`applicationInsightsName`. Current v3 outputs also carry the non-secret DCR endpoint, immutable ID,
+resource ID, stream, and table name; older v3 contracts without those optional fields remain valid.
+The installer binds the DCR endpoint/ID/stream into the Hosted Agent environment and binds the
+environment/workload/Insights values into the MCP azd environment. The `Consumption` workload
+profile is used for VNet injection; consumption-only environments use an empty profile. No
+connection string or credential is added to the public setup contract. The `Mcp` stage requires
+v3; legacy v1/v2 outputs remain usable for non-MCP stages.
+
+Application Insights retains `DisableLocalAuth: true`. The pinned MCP
+[3.0.0-beta.38 exporter](https://github.com/microsoft/mcp/blob/Azure.Mcp.Server-3.0.0-beta.38/core/Microsoft.Mcp.Core/src/Extensions/OpenTelemetryExtensions.cs)
+sets a connection string but not a `TokenCredential`. Passing the shared connection string alone
+would not satisfy Entra-only ingestion. Therefore MCP direct Application Insights traces/metrics
+and Microsoft telemetry are disabled. MCP console logs still reach the shared workspace through
+the environment's log configuration; distinguish them by Container App name. No extra collector
+or telemetry-publishing role is added. AzBrief uses its authenticated exporter for traces and
+redacted application errors; this does not enable direct MCP telemetry.
+MCP trace/metric export would require a separately reviewed authenticated exporter or collector.
 
 ## Setup Stages
 
@@ -41,9 +69,9 @@ outputs; it previews the target and stage without proving live readiness. Only
 | Stage | Required before running | What completion establishes |
 |---|---|---|
 | `Configure` | Succeeded current foundation deployment, correct default CLI tenant/subscription, clean customer clone without a root `.env` | Named azd bindings match the non-secret ARM setup contract; no application is deployed by this stage |
-| `Mcp` | `Configure`, private Foundry connectivity, approved Graph/resource permissions | Separate pinned read-only MCP deployment and authenticated project connection; existing connections are not force-replaced |
+| `Mcp` | `Configure`, v3 setup contract, shared infrastructure ready, private Foundry connectivity, approved Graph/resource permissions | Separate pinned read-only MCP app in the shared environment and authenticated project connection; existing connections are not force-replaced |
 | `Agents` | MCP URL recorded, clean reviewed source, model and Foundry access | Import/full tests and roster check pass, and the intended Hosted name is active; evidence permissions and analysis acceptance remain separate |
-| `Application` | Manual Job, approved immutable ACR digest and App/Job managed-identity pull access | Paired image and bootstrap port/probe changes are submitted and read back; revision health is checked in `Verify` |
+| `Application` | Manual Job, approved immutable ACR digest and matching App/Job registry authentication (ManagedIdentity or Credentials) | Paired image and bootstrap port/probe changes are submitted and read back; revision health is checked in `Verify` |
 | `Verify` | New App revision Healthy/Running, same App/Job digest, configured customer environment | Runtime/roster/health checks pass without model calls or email; it does not prove a canonical archive write or recipient inbox delivery |
 | `EnableSchedule` | `Verify` plus operator-owned analysis/archive/auth/email acceptance and `-AcceptOperationalChecks` | Readiness is rechecked and the scheduled Job configuration is read back; the first real digest still needs observation |
 
@@ -57,24 +85,75 @@ are not globally rolled back. Preserve the stage output and inspect partial stat
 |---|---|
 | Release | Use a reviewed commit or release tag. The public `main` button is mutable; for a fixed release, replace `main` with the same reviewed ref in **both** the ARM and UI URLs. Use that same source for image and Hosted builds. |
 | Azure target | Choose the customer tenant, subscription, a dedicated resource group, and regional/data-residency policy. Never reuse the maintainer's development azd environment or `.env`. |
-| Azure permissions | The deployment operator needs resource creation plus role-assignment rights at the required resource-group/subscription/ACR scopes. This is not a runtime permission grant. |
+| Azure permissions | The deployment operator needs resource creation plus role-assignment rights at the required customer resource-group/subscription scopes. Customer-owned ACR builds and role grants need separate ACR rights; consuming a publisher digest with a pull token does not. |
 | Entra permissions | Azure MCP creates an Entra application/service principal and assigns its app role to the Foundry project identity. Obtain customer approval for these Microsoft Graph operations separately; Azure subscription Owner alone is insufficient. Use a dedicated deployment identity approved by the directory administrator. |
 | Foundry | Verify Hosted Agents, VNet injection, both exact model/version/SKU combinations, reasoning/tool/schema support, and separate quotas in the selected region. The form requires approved versions for both suggested models. Capacity is model-specific units, not universally thousands of TPM. |
 | Residency | Global Standard can process requests outside the account region. Regional Standard and Data Zone Standard have different availability, quota, and residency boundaries. Have the customer approve the selected SKU. |
 | Network | Provide a VNet-connected deployment host with private DNS resolution. Ordinary Cloud Shell and a public hosted CI runner are not automatically inside this VNet. Do not open Foundry, Key Vault, or Storage to work around access failures. |
-| Registry | Provide an existing customer ACR, its exact login server and RBAC/ABAC permission mode. The deployment operator needs remote-build/push access; App/Job receive pull-only access later. No registry password is used. |
+| Registry | Use a same-tenant ACR with ManagedIdentity (default), or a publisher/developer ACR in another tenant with Credentials. Supply its exact login server and ensure customer-network reachability. External consumers need only a customer-specific repository pull token, not build/push rights. |
 | Browser access | Recommended: prepare a single-tenant Entra application, client secret and explicit administrator object IDs/UPNs. Enter the secret directly in the Portal password field, never in chat or source control. Add the callback URI after the app hostname is known. |
 | Email | Choose the Communication Services data location and one approved acceptance mailbox. Verify service availability, sending limits, and the customer's mail-filtering policy. Production subscribers can be added after acceptance. |
-| Cost | Budget for model tokens, Container App minimum replicas, Job runtime, the separate Azure MCP app/environment, private endpoints, storage, registry builds/storage, logs and ACS email. Obtain a customer-specific estimate and budget alert; no fixed monthly price is implied. |
+| Cost | Budget for model tokens, Container App minimum replicas, Job runtime, the separate Azure MCP app in the shared environment, private endpoints, storage, registry builds/storage, logs and ACS email. Obtain a customer-specific estimate and budget alert; no fixed monthly price is implied. |
 
-The current Azure MCP module uses a separate **public HTTPS ingress protected by Entra** and
-subscription Reader. VNet isolation of Foundry/Key Vault/Storage does not make that MCP ingress
-private. A customer that requires every endpoint to be private must resolve this deployment
-constraint before acceptance; do not remove MCP authentication or broaden its identity.
+Azure MCP shares the control-plane environment's VNet and public/internal boundary, while retaining
+Entra authentication and subscription Reader. VNet integration alone does not make ingress private.
+With `internalIngressOnly: true`, MCP's app-level `external: true` allows callers outside the
+environment over the VNet, not over the public internet. Verify the actual Foundry managed MCP
+call path and private DNS before accepting an internal deployment. Do not remove authentication,
+open public access, or broaden identities to work around a connectivity failure.
 
 Resource providers must be available/registered: `Microsoft.App`, `Microsoft.CognitiveServices`,
 `Microsoft.Communication`, `Microsoft.KeyVault`, `Microsoft.Network`, `Microsoft.Storage`,
 `Microsoft.ManagedIdentity`, `Microsoft.Insights`, and `Microsoft.OperationalInsights`.
+
+### External-Tenant Registry
+
+The control-plane image may live in the developer's tenant while the customer's App, Job,
+Key Vault, identities and data remain in the customer tenant. Select **Customer-specific pull
+token (including another tenant)** in the Portal's registry authentication control. Existing
+same-tenant installations keep **Managed identity (same tenant)** by default.
+
+| Foundation parameter | External-registry value |
+|---|---|
+| `containerRegistryServer` | Publisher ACR login server, for example `publisher.azurecr.io` |
+| `containerRegistryAuthMode` | `Credentials` |
+| `containerRegistryUsername` | Customer-specific ACR token name, or an approved pull-only service principal client ID |
+| `containerRegistryPassword` | Secure password input, entered directly in the Portal or supplied through a protected ARM parameter reference |
+
+The publisher creates a scope map limited to the `azbrief-enterprise` repository with
+`content/read` and, when tag/manifest inspection is needed, `metadata/read`. Create a separate
+token for each customer, select that scope map, generate its password in the ACR Portal, and set
+an approved expiry and rotation owner. Keep the ACR administrator account disabled. Do not use
+registry-wide scope maps or give consumers write/delete permissions. Non-Entra repository tokens
+are available in all ACR tiers and do not require a customer identity or subscription in the
+publisher tenant. A publisher service principal is an alternative only with the correct
+read-only RBAC/ABAC permissions; never try to grant the customer's Managed Identity directly
+across tenants. `containerRegistryRoleAssignmentMode` is unused in Credentials mode.
+
+The foundation stores the password as `container-registry-password` in the **customer's**
+existing Key Vault. Both App and Job use `username`/`passwordSecretRef`; their existing UAMI reads
+the Key Vault reference, not the publisher ACR. The password is not an application environment
+variable. `customerSetup` adds only the authentication mode and ordinary Key Vault base URI;
+it carries no registry password, username or secret path. Older contracts without the mode
+continue to mean ManagedIdentity. Customer setup checks both runtime bindings without retrieving
+the password. Never put it into chat, `.env`, committed parameters or command-line arguments.
+
+Authentication does not provide connectivity. Verify DNS and outbound HTTPS from the customer
+Container Apps environment to the registry login endpoint and its documented image-data/storage
+endpoints. An ACR firewall must permit the actual customer egress, or use a separately approved
+Private Link/DNS design. This template does not create an external ACR, private endpoint,
+cross-tenant consent, firewall exception or tenant switch. Do not make customer Key Vault,
+Foundry or Storage public to bypass a registry connectivity problem.
+
+For rotation, keep the old token password valid while the publisher creates the alternate
+password. Update the customer's Key Vault secret through an approved secret-management channel.
+The foundation uses a versionless reference; allow secret refresh and verify a fresh App image
+pull and import-only Job execution with the new credential before revoking the old one. Cached
+images or a still-running revision do not prove new pull authentication. Retain approved current
+and rollback digests, and rotate before expiry.
+
+References: [ACR repository-scoped tokens](https://learn.microsoft.com/azure/container-registry/container-registry-token-based-repository-permissions)
+and [Container Apps registry authentication](https://learn.microsoft.com/azure/container-apps/containers#container-registries).
 
 ## 1. Deploy The Foundation
 
@@ -150,7 +229,15 @@ $customer = @{
 
 `Configure` writes individual `azd env set NAME VALUE` bindings, including the project endpoint,
 ARM ID, tenant, model policy, Hosted name, and both name forms for each of the six specialists. It
-refuses to rebind an existing environment to another tenant/subscription/project and restores
+also reads `APPLICATIONINSIGHTS_CONNECTION_STRING` from the existing App/Job, requires a non-empty
+matching destination, and records it in the named azd environment for local tooling. With v3 it also
+checks the shared Application Insights component. Hosted does not consume a manifest override:
+Foundry injects this reserved setting from the project's `AppInsights` connection. The foundation
+creates that connection using `ProjectManagedIdentity` and the required `ResourceId` and
+`ApplicationInsightsConnectionString` metadata. Existing projects must connect the same component
+through project monitoring before Hosted publication; never add a second monitoring destination.
+The public ARM setup contract still contains no connection string.
+It refuses to rebind an existing environment to another tenant/subscription/project and restores
 a pre-existing default environment after creating the new one. It never evaluates command
 strings returned by ARM. `-SetupFile` accepts a saved `customerSetup` object **only with
 `-WhatIf`** for offline contract review; live stages always re-read ARM.
@@ -169,11 +256,53 @@ From the private-network deployment host:
 namespace restriction. It creates the project-managed-identity connection and stores the server
 URL only in the named customer environment. Use `-ServiceManagementReference '<guid>'` on this
 stage when the customer's directory requires that application metadata.
+Before provisioning, it checks the App/Job environment, region/profile, Entra-only Application
+Insights and the common workspace destination. A legacy MCP app in a different environment stops
+the stage before any provisioning. After provisioning it reads the MCP app back and checks its
+environment and disabled direct exporters. `Verify` and `EnableSchedule` repeat these v3 checks.
+These are configuration checks, not proof that a log has arrived or a private MCP call succeeds.
 
 The stage deliberately does not overwrite an existing project connection with `--force`.
 If creation reports that the connection already exists, inspect it with `azd ai connection show`
 in the same environment, confirm the exact target/authentication/audience, and reconcile it with
 the customer owner. Do not delete or replace an unreviewed connection to make setup pass.
+
+## Consolidating Existing Installations
+
+This is a planned migration, not an image-only upgrade or an automatic cleanup. An existing MCP
+app cannot switch its managed environment through this setup flow. The script stops rather than
+deleting or replacing it. Incremental ARM deployments also do not delete old resources that have
+been removed from a template. Use a reviewed maintenance window and record rollback information.
+
+1. Pause scheduled/manual analysis with the operator's existing controls and record the prior
+  schedule, images, MCP URL, environment, Entra application/connection and Reader assignments.
+  Preserve secure deployment inputs and monitoring retention/export requirements outside Git.
+2. Validate/what-if the current foundation with the installation's existing parameters, immutable
+  App/Job images, secrets and network configuration. Apply only an approved non-destructive
+  update to obtain v3 outputs and the single-environment Admin readiness inventory. Do not
+  recreate Foundry, change its injection mode, reset storage, or restore bootstrap images.
+3. Run `Configure` against that deployment. Explicitly approve recreating only the MCP Container
+  App in the shared environment. Remove the old MCP app during the window, preserving its old
+  environment and monitoring resources for rollback/history. Its replacement gets a new
+  system-assigned principal; the MCP template grants Reader to that new principal.
+4. Review the existing named Foundry project connection before replacement. Its old MCP URL will
+  change; retain its configuration, then remove only that approved connection before running
+  `Mcp`, which creates the new authenticated connection without `--force`. Never remove unrelated
+  connections or the MCP Entra application. Rerun `Agents` to publish/check matching definitions
+  and the Hosted configuration, then use the normal `Verify` and operational acceptance gates.
+5. Confirm a real authenticated read-only MCP call and new MCP console rows in the common
+  workspace, as well as AzBrief tracing in the shared Application Insights. Confirm no MCP
+  ingestion-authentication errors. Only then restore the approved schedule.
+6. After acceptance and explicit deletion approval, remove the empty old MCP environment and
+  obsolete identity role assignments. Retire the old MCP Application Insights/workspace only
+  when retention/export obligations permit; historical telemetry is not moved automatically.
+  Never delete the shared environment, shared monitoring, or a workspace used by another service.
+
+The installer does not execute these destructive steps. Rollback may require recreating the MCP
+app on its recorded old environment and restoring the previous connection/Agent versions; an
+image rollback alone cannot restore a changed hostname or system-assigned principal.
+
+## Agent Publication
 
 `Agents` requires a clean source checkout, runs import/full tests, provisions the six distinct
 Prompt Agents, runs the exact roster check, publishes the Hosted source, and verifies its name
@@ -189,6 +318,9 @@ azd ai agent show azbrief-analysis-hosted --environment $customer.Environment --
 az role assignment create --subscription $customer.SubscriptionId `
   --assignee-object-id '<dedicated-hosted-agent-principal-id>' --assignee-principal-type ServicePrincipal `
   --role Reader --scope "/subscriptions/$($customer.SubscriptionId)"
+az role assignment create --subscription $customer.SubscriptionId `
+  --assignee-object-id '<dedicated-hosted-agent-principal-id>' --assignee-principal-type ServicePrincipal `
+  --role 'Monitoring Metrics Publisher' --scope $customer.azureMonitorDcrResourceId
 ```
 
 Repeat only for explicitly approved evidence scopes. Allow time for role propagation. Billing
@@ -196,9 +328,34 @@ hierarchy access requires a separate Billing Reader or equivalent read-only bill
 subscription Reader does not grant it. Add service-specific data-plane permissions only for
 tools the customer needs. Never solve a missing role by granting broad Contributor rights.
 
+Grant the dedicated Hosted principal **Foundry User** (`53ca6127-db72-4b80-b1b0-d745d6d5456d`)
+at `customerSetup.foundryProjectId`. The native specialist FunctionTool loop creates and deletes
+conversations; subscription Reader alone produces an `agents/write` 403 even when model inference
+and tenant inventory appear to work. Do not grant this permission at subscription scope.
+
+For detailed error logs, separately grant the dedicated Hosted principal **Monitoring Metrics
+Publisher** on the existing Application Insights component and on
+`customerSetup.azureMonitorDcrResourceId`. The foundation already grants both scoped roles to the
+App/Job UAMI, not to the subsequently created Hosted identity. Keep `DisableLocalAuth: true`; a
+connection string or DCR endpoint identifies a destination but cannot replace Entra authorization.
+The project managed identity also needs component-scoped Monitoring Metrics Publisher for service
+traces; the foundation assigns it. Use Project Managed Identity authentication on the monitoring
+connection and leave the reserved connection-string environment variable out of the Hosted manifest.
+The Hosted manifest enables `OTEL_ENABLED`, reuses Application Insights, and sends only errors or
+failure-marked records to `AzBriefFailures_CL`. Do not carry the test-only
+`OTEL_SDK_DISABLED=true` into deployment.
+
+After deploying the App/Job and Hosted source, verify a known failure's `trace_id` in the shared
+workspace's `AppExceptions` (and `AppTraces` for warnings/errors without exceptions), using the
+[failure-event query](../README.md#failure-events-in-log-analytics). Confirm the same event in
+`AzBriefFailures_CL`, including `FailureKind`, runtime, run/update/trace correlation, and redacted
+error fields. Export initialization and offline tests do not establish data arrival; check DCR
+ingestion connectivity, role propagation, retention/access controls and exporter warnings separately.
+
 ## 4. Build And Install The Control Plane
 
-Build the **same reviewed source** into a unique customer ACR tag. Do not overwrite a release tag:
+For **ManagedIdentity**, build the **same reviewed source** into a unique customer ACR tag.
+Do not overwrite a release tag:
 
 ```powershell
 $acrName = '<customer-acr-name>'
@@ -215,14 +372,28 @@ Grant the **Container Apps UAMI** pull-only access on that ACR, using `Container
 Repository Reader` for ABAC or `AcrPull` for legacy RBAC. The foundation's `grantAcrPullCommand`
 shows the correct role for the mode supplied to the form. It is a different identity and scope
 from Hosted evidence access. Confirm both App and Job use the configured registry with managed
-identity before continuing. The setup script never uses registry passwords.
+identity before continuing. This role-grant step applies only to ManagedIdentity mode.
+
+For **Credentials**, the publisher builds that reviewed release in a separate publisher-tenant
+session and supplies the immutable digest plus source/build provenance. The customer deployment
+session stays signed into the customer tenant and needs no publisher ACR management access:
+
+```powershell
+$image = 'publisher.azurecr.io/azbrief-enterprise@sha256:<64-lowercase-hex-digest>'
+```
+
+Both resources must already have the credential/Key Vault binding from the foundation. Do not
+run `grantAcrPullCommand` as a cross-tenant role grant; its Credentials-mode output explains that
+no customer identity grant is required. Neither installation nor upgrade scripts read the token
+password. Use the following initial-install commands for either authentication mode:
 
 ```powershell
 ./scripts/setup_customer.ps1 @customer -Stage Application -Image $image -WhatIf
 ./scripts/setup_customer.ps1 @customer -Stage Application -Image $image
 ```
 
-This initial-install path requires a Manual Job, verifies both registry bindings and runtime
+This initial-install path requires a Manual Job, verifies both registry authentication modes,
+attached identities and credential secret references as applicable, and verifies runtime
 targets, updates Job/App to the same digest, and changes the bootstrap port/probes to
 8000 + `/health` without replacing runtime environment variables or Key Vault references.
 On an update failure it submits the previous images/port/probes for rollback and returns a
@@ -245,12 +416,14 @@ must not reach Admin/Archive data. Record the client-secret expiry and customer 
 ./scripts/setup_customer.ps1 @customer -Stage Verify
 ```
 
-This checks App/Job digest parity, port/revision health, the intended active Hosted Agent, exact
+This checks App/Job digest and registry-authentication parity, port/revision health, the intended active Hosted Agent, exact
 specialist roster, application health, and closure of temporary Foundry public access in VNet
 mode. It does not invoke a model, inspect private report content, or send email.
 
 Complete these operational checks with the customer's authorized operator:
 
+- Confirm actual image pulls from both runtimes, including a fresh import-only Job execution.
+  Registry metadata validation alone does not prove token validity, network access or expiry.
 - Sign in with an allowed administrator and confirm an unrelated/anonymous principal is denied.
 - In Admin readiness, confirm the declared support resources, agent versions and storage access.
 - Run exactly one recent update in Admin with **send email off**. Require `analyzed=1`,
@@ -282,6 +455,22 @@ quality release gates; use the existing quality campaign for source/prompt quali
 
 ## Upgrades And Recovery
 
+For an already-running installation consuming publisher images, use the approved digest directly:
+
+```powershell
+./scripts/deploy_dev.ps1 -SubscriptionId '<customer-subscription-id>' `
+  -ResourceGroup '<customer-resource-group>' -ContainerAppName '<customer-app-name>' `
+  -SchedulerJobName '<customer-job-name>' `
+  -PrebuiltImage 'publisher.azurecr.io/azbrief-enterprise@sha256:<64-lowercase-hex-digest>' -WhatIf
+```
+
+Review the preview, then run the same command without `-WhatIf`. `-PrebuiltImage` must not be
+combined with `-AcrName`, `-ImageName` or `-ImageTag`. It skips ACR lookup/build/digest discovery,
+not local import/tests, revision health, HTTPS health, import-only Job smoke or rollback. Both
+runtime registry bindings must already match and remain unchanged after rollout. Local source
+fingerprints describe the validation checkout, not proof of the publisher artifact's provenance.
+This is not the bootstrap installer and does not configure credentials or switch registries.
+
 - Keep a supported old image digest and Hosted version. For normal upgrades, use
   [deploy_hosted_agent.ps1](../scripts/deploy_hosted_agent.ps1) and then
   [deploy_dev.ps1](../scripts/deploy_dev.ps1) with explicit customer targets. Despite its filename,
@@ -294,6 +483,16 @@ quality release gates; use the existing quality campaign for source/prompt quali
   generated API key or disable console authentication. For a deliberate full-template update,
   preserve **all** existing secure parameters and set `enableScheduledRuns=true` explicitly only
   when the installation has already passed acceptance; omission returns the Job to Manual.
+- Switching an existing installation to a publisher registry is a separately reviewed foundation
+  change. First make approved current/rollback images available there, preserve every existing
+  secure input (including the registry password), and supply the intended real `containerImage`
+  and schedule state. Keep the old access valid until new pulls are verified; do not remove the
+  only pull binding for a still-used image. `-PrebuiltImage` alone cannot perform this migration.
+- Adding `AzBriefFailures_CL` to an existing installation is a deliberate infrastructure update,
+  not an image-only rollout. Redeploy the reviewed foundation with every existing secure parameter,
+  confirm the custom table/DCR and App/Job DCR role, rerun `Configure` to bind Hosted variables,
+  grant its dedicated identity DCR-scoped Monitoring Metrics Publisher, then publish Hosted and
+  roll out the matching App/Job image. A new image alone cannot create the table or DCR.
 - If Verify fails while a revision is provisioning, inspect its state and logs; rerun Verify after
   it is ready. Do not weaken probes, private access, authentication, or acceptance checks.
 - If a stage fails, it is incomplete even if earlier resources were created. Inspect those

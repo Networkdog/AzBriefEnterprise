@@ -11,6 +11,7 @@ pytest로 검증합니다. 대부분 외부 Azure/Foundry 호출을 mock해 빠�
 |---|---|
 | Hosted 경계 | [`test_hosted_contract.py`](test_hosted_contract.py), [`test_hosted_client.py`](test_hosted_client.py), [`test_hosted_agent.py`](test_hosted_agent.py) |
 | Agent loop와 resilience | [`test_analyzer.py`](test_analyzer.py), [`test_context_store.py`](test_context_store.py), [`test_resilience.py`](test_resilience.py) |
+| Learn more 재귀 조사 | [test_documentation_traversal.py](test_documentation_traversal.py), [test_learn_document_fetch.py](test_learn_document_fetch.py): 자동 1단계·질문 기반 2단계·깊이/예산/중복 경계·전체 본문 ref·분석 전달·취소 정리·안전한 리디렉션 |
 | Foundry specialist team | [`test_foundry_backend.py`](test_foundry_backend.py), [`test_foundry_multi_agent.py`](test_foundry_multi_agent.py), [`test_provision_foundry_agents.py`](test_provision_foundry_agents.py) |
 | KQL과 Azure evidence | [`test_kql_sanitize.py`](test_kql_sanitize.py), [`test_kql_retry.py`](test_kql_retry.py), [`test_impact_tools.py`](test_impact_tools.py), [`test_billing.py`](test_billing.py) |
 | 제어면 | [`test_api.py`](test_api.py), [`test_admin.py`](test_admin.py), [`test_admin_readiness.py`](test_admin_readiness.py), [`test_archive.py`](test_archive.py), [`test_mcp_server.py`](test_mcp_server.py), [`test_orchestrator.py`](test_orchestrator.py), [`test_scheduler.py`](test_scheduler.py) |
@@ -21,7 +22,10 @@ pytest로 검증합니다. 대부분 외부 Azure/Foundry 호출을 mock해 빠�
 | Data access | [`test_services.py`](test_services.py), [`test_runtime_inventory.py`](test_runtime_inventory.py), [`test_checkpoint.py`](test_checkpoint.py), [`test_archive_store.py`](test_archive_store.py), [`test_rss_parser.py`](test_rss_parser.py) |
 | 결정론적 평가 | [`test_archive_evaluation.py`](test_archive_evaluation.py), [`test_quality_evaluator.py`](test_quality_evaluator.py), [`test_quality_campaign.py`](test_quality_campaign.py) |
 | Security/config | [`test_security.py`](test_security.py), [`test_config.py`](test_config.py), [`test_enterprise_config.py`](test_enterprise_config.py) |
+| 상세 오류 로그 | [test_error_logging.py](test_error_logging.py), [test_logging_config.py](test_logging_config.py), [test_telemetry.py](test_telemetry.py): 예외 체인·마스킹·실제 OTel 메모리 sink/ExceptionData 변환·DCR 즉시 전송·재귀 차단·종료 flush |
+| Admin 오류 이력 | [test_admin_errors.py](test_admin_errors.py), [browser/admin_errors.cjs](browser/admin_errors.cjs): 실제 SDK 열 형식, 시간·마스킹·인가·조회 제한, 메모리와 독립적인 로그 조회, Local/UTC, run drilldown, 요청 경합과 모바일 긴 오류 표시 |
 | 고객 배포 | [test_customer_deployment.py](test_customer_deployment.py): 독립 폴더·가짜 CLI 기반 대상 격리, MCP 리전/인증, Agent 게시 gate, 이미지/포트 전환·되돌림, 스케줄 설정 보존, 버튼·폼 계약 |
+| KT 인프라 | [test_kt_deployment.py](test_kt_deployment.py): compiled ARM의 private/minimum/Capability Host/no-Insights 계약, CIDR·위임·주소 충돌, 기존 subnet·DNS 보존, 대상 격리, 단계별 재조회·실패 차단. Azure 호출 없는 mock 검증 |
 | 공개 저장소 위생 | [`test_repository_hygiene.py`](test_repository_hygiene.py) |
 | 웹 사용자 흐름 | [browser/control_surfaces.cjs](browser/control_surfaces.cjs): 탐색·필터 URL·요청 경합·반응형 검사. Feedback 절은 이전 컨트롤을 전제로 하므로 현행 폼에 맞춘 수정 필요 |
 
@@ -32,6 +36,24 @@ test가 공유하는 realistic fixture를 제공합니다.
 
 고객 배포의 오프라인 검증은 PowerShell 7을 사용하며 실제 Azure 호출이나 모델·메일 비용이 없습니다.
 Windows 전용 CLI shim 검사는 Windows CI에서 수행하고, 나머지 계약은 Linux CI에서도 검사합니다.
+
+배포 스크립트 테스트는 실제 PowerShell로 pytest 구간의 `OTEL_SDK_DISABLED=true` 적용과
+성공·실패 후 기존 환경값 복원을 검사합니다. 운영 계측 설정은 바꾸지 않습니다.
+Archive 평가 단위 테스트는 시간을 통제해 P95 기준의 통과와 1,000ms에서의 실패를 검증합니다.
+실제 성능은 `python -m scripts.evaluate_archive`로 별도 측정하며 단위 테스트를 성능 증거로
+해석하지 않습니다.
+
+상세 오류 테스트는 합성 오류와 메모리 exporter를 사용하며 Azure에 전송하지 않습니다.
+API/Hosted 응답의 비공개 상세 차단과 로그의 상관관계, scheduler 종료 시 flush, 고객 Configure의
+동일한 Application Insights 연결도 검사합니다. `tests/test_logging_config.py`는 일반 INFO/WARNING을
+제외하고 오류·예외·failure suffix·failed/partial 상태·양수 실패 counter만 DCR batch에 들어가는지
+검사하며, `tests/test_enterprise_config.py`는 그 batch schema와 `AzBriefFailures_CL`/Direct DCR
+schema가 정확히 같은지 확인합니다. 로컬 검증은 실제 Log Analytics 수신 증거가 아닙니다.
+한국어 Windows에서 PowerShell subprocess의 UTF-8 오류 출력을 읽을 때는 테스트 프로세스에
+`PYTHONUTF8=1`을 설정합니다.
+고객 배포의 모의 PowerShell 실행은 UTF-8·`NormalView`·plain text를 사용해 터미널 너비나
+ANSI 색상 때문에 오류 문구 assertion이 달라지지 않게 합니다. 오류 코드, 비밀 비노출,
+실패 시 무변경 검사는 그대로 유지하며 배포 게이트에서 테스트를 생략하지 않습니다.
 
 ```powershell
 & .\.venv\Scripts\Activate.ps1
@@ -67,6 +89,9 @@ Archive까지 연결이 유지되는지 확인합니다.
 [test_orchestrator.py](test_orchestrator.py)는 한 실행의 UTC 월~일 게시 주별 발송을 검증합니다.
 100개 공지의 전체 보존, 시차·naive 날짜·연도 경계·날짜 없음, 수신자 언어·범위, 일부 주의
 발송 거절/예외 후 계속 처리와 `email_sent` 집계를 포함합니다. 이 변경은 스케줄 주기를 바꾸지 않습니다.
+수동 최근 N개·기간 선택은 101개와 250개 전체 처리, 게시 순서와 checkpoint 격리를 검사합니다.
+[test_admin.py](test_admin.py)는 100개 초과 API 요청과 화면 입력의 상한 제거를 검증하며,
+빈 값·0·음수·소수와 잘못된 선택 조건은 계속 거부하는지 확인합니다.
 
 이메일 화면 검사는 `python -m scripts.preview_email --output-dir out/email-editorial-preview --language all`
 실행 후 생성된 HTML 하나를 Playwright MCP에서 엽니다. `browser_run_code_unsafe`에 `filename`으로
@@ -80,8 +105,9 @@ HTTP만 허용합니다. ko/en/ja·single/digest·full/inline-only·1440/768/640
 제목·리드·발행물 로고·건수·장/목차 번호·배지의 실제 글자 경계와, 모든 폭에서 제목 아래
 전체 폭 본문이 같은 시작선에 놓이는지 검사합니다. DBIR 참고 디자인 테스트는 40px/28px
 주제목, 24px/20px 섹션 제목, 18px/16px 평문 리드, 12px 단일 상태 라벨, sans 숫자를 확인합니다.
-브리프의 66%/34% 정렬과 fallback 세로 순서, 직접 라벨 가로 막대의 실제 길이·수치 경계·행 제목도
-검사합니다. 분석 완료 분모, 0건·100%·세 자리 집계는 renderer 테스트로 검증하며 15% 제목 레일,
+전체 폭 요약문·소제목 제거, 작은 평가 라벨의 높이·줄바꿈과 간결한 건수 표시를 검사합니다.
+분석 완료·생략 건수와 0건·세 자리 집계, 리소스·유형·리소스 그룹·구독 순서와 Portal 링크는
+renderer 테스트로 검증하며 15% 제목 레일,
 어절 강제 분절, 중복 숨김 배지는 요구하지 않습니다.
 음영 검사는 설명 박스 배경, 등급 셀 전체의 색과 테두리 없는 단일 텍스트를 포함합니다.
 본문은 공통 14px 토큰을 사용하며, 푸터 소개 문구 제거는 ko/en/ja HTML·일반 텍스트로 검증합니다.
@@ -105,6 +131,12 @@ runner에서도 호출할 수 있으며 기본 주소는 `http://127.0.0.1:8765`
 따라서 이 스크립트 전체를 현재 화면의 검증 완료 근거로 삼지 말고 해당 assertion을 먼저 맞춰야
 합니다. [test_feedback.py](test_feedback.py)와 Admin의 합성 미리보기 테스트는 현재 서버 응답과
 renderer 호출을 검증하지만 이 브라우저 상호작용 검사를 대신하지 않습니다.
+
+[browser/admin_errors.cjs](browser/admin_errors.cjs)는 같은 합성 서버에서 독립 실행할 수 있는
+`async function checkAdminErrors(page, baseUrl)`입니다. Error history의 최초 진입·재조회,
+메모리에 없는 실행, 실행/Hosted trace 연결, 일시 전환, 조회 실패·빈 목록·늦은 응답, HTML
+문자열의 비실행을 검증합니다. 1440/768/390/320px에서 긴 메시지의 overflow를 확인하고
+`out/admin-error-history-*.png`를 생성합니다. 이는 실제 Azure 로그 수신·권한 검증이 아닙니다.
 
 전체 suite는 project default coverage option을 명시적으로 제거하고 첫 실패에서 멈출 수 있습니다.
 

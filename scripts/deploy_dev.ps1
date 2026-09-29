@@ -17,6 +17,9 @@ param(
 
     [string]$ImageTag = "",
 
+    [ValidatePattern('^[a-z0-9.-]+(?::[0-9]+)?/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$')]
+    [string]$PrebuiltImage = "",
+
     [string]$ContainerName = "",
 
     [ValidateRange(60, 3600)]
@@ -243,6 +246,57 @@ function Get-ContainerEnvironmentNames {
         return @()
     }
     return @($environmentProperty.Value | ForEach-Object { [string]$_.name })
+}
+
+function Assert-PrebuiltRegistryConfiguration {
+    param([object]$App, [object]$Job, [string]$Image)
+
+    $registryServer = $Image.Split('/')[0]
+    $resources = ConvertFrom-Json -AsHashtable -Depth 100 -InputObject (
+        ConvertTo-Json -InputObject @($App, $Job) -Depth 100
+    )
+    $expectedBinding = ''
+    foreach ($resource in $resources) {
+        $configuration = $resource.properties.configuration
+        $registries = @($configuration['registries'] | Where-Object { $_.server -eq $registryServer })
+        if ($registries.Count -ne 1) {
+            throw 'PrebuiltImage requires a matching registry already configured on BOTH resources.'
+        }
+        $registry = $registries[0]
+        $secret = @{}
+        if ($registry['passwordSecretRef']) {
+            if ($registry['identity'] -or [string]::IsNullOrWhiteSpace([string]$registry['username'])) {
+                throw 'PrebuiltImage registry credentials must not be mixed with a registry identity.'
+            }
+            $secrets = @($configuration['secrets'] | Where-Object { $_.name -ceq $registry.passwordSecretRef })
+            if ($secrets.Count -ne 1 -or $secrets[0]['value'] -or
+                $secrets[0]['keyVaultUrl'] -notmatch '^https://[a-z0-9-]+\.(vault\.azure\.net|vault\.usgovcloudapi\.net|vault\.azure\.cn)/secrets/[a-z0-9-]+(?:/[a-f0-9]+)?$') {
+                throw 'PrebuiltImage registry passwords must use an existing Azure Key Vault reference.'
+            }
+            $secret = $secrets[0]
+            $identityId = $secret['identity']
+        }
+        else {
+            if ($registry['username']) {
+                throw 'PrebuiltImage registry username requires a passwordSecretRef.'
+            }
+            $identityId = $registry['identity']
+        }
+        $identity = $resource['identity']
+        if (-not $identityId -or -not $identity -or -not $identity['userAssignedIdentities'] -or
+            $identityId -notin @($identity.userAssignedIdentities.Keys)) {
+            throw 'PrebuiltImage registry authentication requires an attached user-assigned identity.'
+        }
+        $binding = ConvertTo-Json -Compress -InputObject @(
+            $registryServer, $registry['identity'], $registry['username'],
+            $registry['passwordSecretRef'], $secret['keyVaultUrl'], $identityId
+        )
+        if ($expectedBinding -and $expectedBinding -cne $binding) {
+            throw 'PrebuiltImage registry authentication must match on BOTH resources.'
+        }
+        $expectedBinding = $binding
+    }
+    return $expectedBinding
 }
 
 function Get-DockerInputFingerprint {
@@ -615,6 +669,9 @@ try {
     if ($ImageTag -eq "latest") {
         throw "The mutable 'latest' tag is not allowed for a development deployment."
     }
+    if ($PrebuiltImage -and @('AcrName', 'ImageName', 'ImageTag').Where({ $PSBoundParameters.ContainsKey($_) }).Count -gt 0) {
+        throw 'PrebuiltImage cannot be combined with AcrName, ImageName or ImageTag build options.'
+    }
 
     $account = Invoke-AzJson -ArgumentList @("account", "show")
     if (-not $SubscriptionId) {
@@ -661,20 +718,25 @@ try {
         }
     }
 
-    if (-not $AcrName) {
-        $registries = @($appBefore.properties.configuration.registries)
-        if ($registries.Count -ne 1 -or -not $registries[0].server) {
-            throw "Pass -AcrName because the Container App does not identify one registry."
-        }
-        $AcrName = ([string]$registries[0].server).Split(".")[0]
+    if ($PrebuiltImage) {
+        $registryBindingBefore = Assert-PrebuiltRegistryConfiguration -App $appBefore -Job $jobBefore -Image $PrebuiltImage
     }
-    $acrLoginServer = Invoke-AzText -ArgumentList @(
-        "acr", "show",
-        "--name", $AcrName,
-        "--query", "loginServer"
-    )
-    if (-not $acrLoginServer) {
-        throw "ACR login server could not be resolved for $AcrName."
+    else {
+        if (-not $AcrName) {
+            $registries = @($appBefore.properties.configuration.registries)
+            if ($registries.Count -ne 1 -or -not $registries[0].server) {
+                throw "Pass -AcrName because the Container App does not identify one registry."
+            }
+            $AcrName = ([string]$registries[0].server).Split(".")[0]
+        }
+        $acrLoginServer = Invoke-AzText -ArgumentList @(
+            "acr", "show",
+            "--name", $AcrName,
+            "--query", "loginServer"
+        )
+        if (-not $acrLoginServer) {
+            throw "ACR login server could not be resolved for $AcrName."
+        }
     }
 
     $fingerprint = Get-DockerInputFingerprint
@@ -682,23 +744,27 @@ try {
     if ($LASTEXITCODE -ne 0 -or -not $commit) {
         throw "Unable to resolve the current Git commit."
     }
-    if (-not $ImageTag) {
+    if (-not $PrebuiltImage -and -not $ImageTag) {
         $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddHHmmss")
         $ImageTag = "dev-$commit-$($fingerprint.Sha256.Substring(0, 10))-$timestamp"
     }
-    $taggedImage = "$acrLoginServer/$ImageName`:$ImageTag"
+    $taggedImage = if ($PrebuiltImage) { '' } else { "$acrLoginServer/$ImageName`:$ImageTag" }
+    $plannedImage = if ($PrebuiltImage) { $PrebuiltImage } else { $taggedImage }
 
     Write-Host "Development deployment plan"
     Write-Host "  Subscription: $SubscriptionId"
     Write-Host "  Resource group: $ResourceGroup"
     Write-Host "  Container App: $ContainerAppName"
     Write-Host "  Scheduler Job: $SchedulerJobName"
-    Write-Host "  Image: $taggedImage"
+    Write-Host "  Image: $plannedImage"
     Write-Host "  Docker inputs: $($fingerprint.FileCount) files, $($fingerprint.TotalBytes) bytes"
-    Write-Host "  Source SHA256: $($fingerprint.Sha256)"
+    Write-Host "  Validation checkout SHA256: $($fingerprint.Sha256)"
+    if ($PrebuiltImage) {
+        Write-Warning 'Prebuilt image source provenance must be verified separately; local tests cover this checkout, not the publisher build.'
+    }
 
     $target = "$ContainerAppName and $SchedulerJobName in $ResourceGroup"
-    $action = "Build $taggedImage and roll both resources forward"
+    $action = if ($PrebuiltImage) { "Deploy approved digest $PrebuiltImage to both resources without an ACR build" } else { "Build $taggedImage and roll both resources forward" }
     if (-not $PSCmdlet.ShouldProcess($target, $action)) {
         return
     }
@@ -714,7 +780,12 @@ try {
         )
     }
     if ($dirtyInputs.Count -gt 0) {
-        Write-Warning "Deploying dirty Docker inputs; the source fingerprint is the deployment lineage."
+        if ($PrebuiltImage) {
+            Write-Warning 'Local validation uses a dirty checkout; its fingerprint does not establish prebuilt image provenance.'
+        }
+        else {
+            Write-Warning "Deploying dirty Docker inputs; the source fingerprint is the deployment lineage."
+        }
     }
 
     Invoke-NativeChecked -FilePath "git" -ArgumentList @(
@@ -722,9 +793,16 @@ try {
     )
     Invoke-NativeChecked -FilePath "python" -ArgumentList @("-c", "import src")
     if (-not $SkipTests) {
-        Invoke-NativeChecked -FilePath "python" -ArgumentList @(
-            "-m", "pytest", "tests/", "-o", "addopts=", "-x"
-        )
+        $previousOtelSdkDisabled = $env:OTEL_SDK_DISABLED
+        try {
+            $env:OTEL_SDK_DISABLED = "true"
+            Invoke-NativeChecked -FilePath "python" -ArgumentList @(
+                "-m", "pytest", "tests/", "-o", "addopts=", "-x"
+            )
+        }
+        finally {
+            $env:OTEL_SDK_DISABLED = $previousOtelSdkDisabled
+        }
     }
 
     $validatedFingerprint = Get-DockerInputFingerprint
@@ -732,30 +810,35 @@ try {
         throw "Docker inputs changed during validation. No image was built; rerun with stable source."
     }
 
-    if (Test-AcrImageExists -Registry $AcrName -Image "$ImageName`:$ImageTag") {
-        throw "Refusing to overwrite existing immutable image tag $ImageName`:$ImageTag."
+    if ($PrebuiltImage) {
+        $deployedImage = $PrebuiltImage
     }
+    else {
+        if (Test-AcrImageExists -Registry $AcrName -Image "$ImageName`:$ImageTag") {
+            throw "Refusing to overwrite existing immutable image tag $ImageName`:$ImageTag."
+        }
 
-    Invoke-NativeChecked -FilePath "az" -ArgumentList @(
-        "acr", "build",
-        "--registry", $AcrName,
-        "--image", "$ImageName`:$ImageTag",
-        "--file", "Dockerfile",
-        "--source-acr-auth-id", "[caller]",
-        "--subscription", $SubscriptionId,
-        "--only-show-errors",
-        "."
-    )
-    $imageDigest = Invoke-AzText -ArgumentList @(
-        "acr", "repository", "show",
-        "--name", $AcrName,
-        "--image", "$ImageName`:$ImageTag",
-        "--query", "digest"
-    )
-    if ($imageDigest -notmatch '^sha256:[0-9a-f]{64}$') {
-        throw "ACR returned an invalid image digest: $imageDigest"
+        Invoke-NativeChecked -FilePath "az" -ArgumentList @(
+            "acr", "build",
+            "--registry", $AcrName,
+            "--image", "$ImageName`:$ImageTag",
+            "--file", "Dockerfile",
+            "--source-acr-auth-id", "[caller]",
+            "--subscription", $SubscriptionId,
+            "--only-show-errors",
+            "."
+        )
+        $imageDigest = Invoke-AzText -ArgumentList @(
+            "acr", "repository", "show",
+            "--name", $AcrName,
+            "--image", "$ImageName`:$ImageTag",
+            "--query", "digest"
+        )
+        if ($imageDigest -notmatch '^sha256:[0-9a-f]{64}$') {
+            throw "ACR returned an invalid image digest: $imageDigest"
+        }
+        $deployedImage = "$acrLoginServer/$ImageName@$imageDigest"
     }
-    $deployedImage = "$acrLoginServer/$ImageName@$imageDigest"
 
     $builtFingerprint = Get-DockerInputFingerprint
     if ($builtFingerprint.Sha256 -ne $fingerprint.Sha256) {
@@ -795,6 +878,12 @@ try {
                 "Scheduler Job uses '$($updatedJobContainer.image)' instead of '$deployedImage'."
             )
         }
+        if ($PrebuiltImage) {
+            $registryBindingAfter = Assert-PrebuiltRegistryConfiguration -App (Get-ContainerApp) -Job $updatedJob -Image $deployedImage
+            if ($registryBindingAfter -cne $registryBindingBefore) {
+                throw 'Registry authentication changed during the prebuilt image deployment.'
+            }
+        }
 
         $jobExecution = "skipped"
         if (-not $SkipJobSmoke) {
@@ -830,7 +919,9 @@ try {
         JobSmokeExecution = $jobExecution
         TaggedImage = $taggedImage
         DeployedImage = $deployedImage
-        SourceSha256 = $fingerprint.Sha256
+        DeploymentMode = if ($PrebuiltImage) { 'PrebuiltImage' } else { 'AcrBuild' }
+        SourceSha256 = if ($PrebuiltImage) { 'unverified (publisher build)' } else { $fingerprint.Sha256 }
+        ValidationCheckoutSha256 = $fingerprint.Sha256
         HealthUrl = $healthUrl
     } | Format-List
 }

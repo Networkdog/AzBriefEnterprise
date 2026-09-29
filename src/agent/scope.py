@@ -23,6 +23,7 @@ SCOPED_ANALYSIS_TOOL_NAMES = frozenset(
         "search_azure_docs",
         "get_service_documentation",
         "search_update_related_docs",
+        "fetch_documentation_link",
         "query_tool_result",
     }
 )

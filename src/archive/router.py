@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import secrets
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -19,6 +19,7 @@ from src.archive.page import render_archive_page
 from src.archive.service import get_archive_service
 from src.config import get_settings
 from src.middleware import rate_limiter
+from src.report_presentation import report_presentation
 from src.services.archive import ArchiveCursorError, ArchiveIntegrityError
 from src.web_design import DEFAULT_WEB_UI_LANGUAGE
 from src.web_fonts import WEB_FONT_CSP_SOURCE
@@ -146,8 +147,9 @@ async def get_archive_analysis(
     request: Request,
     response: Response,
     _: AdminPrincipal = Depends(require_archive_reader),
+    view: Literal["document", "report"] = "document",
 ) -> dict:
-    """Return one validated canonical analysis document."""
+    """Return a canonical document, optionally with separate normalized display values."""
     rate_limiter.check(request)
     try:
         document = await get_archive_service().get(archive_id)
@@ -164,4 +166,7 @@ async def get_archive_analysis(
     if document is None:
         raise HTTPException(status_code=404, detail="Archive entry was not found.")
     response.headers["Cache-Control"] = "private, no-store"
-    return document.model_dump(mode="json")
+    payload = document.model_dump(mode="json")
+    if view == "report":
+        payload["presentation"] = report_presentation(payload["result"])
+    return payload

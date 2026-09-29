@@ -14,15 +14,18 @@ import hashlib
 import json
 import re
 import time
+from asyncio import AbstractEventLoop
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import copy
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterator, Optional
+from urllib.parse import urlsplit
 
 from langchain_core.messages import AIMessage
 from structlog import get_logger
 
+from src.agent.resilience import _extract_retry_after, calculate_backoff
 from src.agent.scope import current_analysis_scope
 from src.config import EVIDENCE_SPECIALIST_ROLES, Settings
 
@@ -89,6 +92,9 @@ SPECIALIST_LOCAL_TOOL_NAMES: dict[str, frozenset[str]] = {
 
 MAX_AGENT_TOOL_ROUNDS = 6
 MAX_AGENT_TOOL_CALLS_PER_ROUND = 8
+_PUBLIC_MCP_MAX_RETRIES = 3
+_PUBLIC_MCP_ENDPOINTS = frozenset({("learn.microsoft.com", "/api/mcp")})
+_PUBLIC_MCP_TRANSIENT_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504, 529})
 
 
 class FoundryAgentError(RuntimeError):
@@ -216,12 +222,15 @@ def build_foundry_function_tools(tools: dict[str, Any]) -> list[Any]:
 
 
 def build_specialist_text_options(role: str) -> Any:
-    """Build the strict JSON response format for one evidence specialist."""
+    """Build the persisted JSON format for evidence specialists and the reviewer."""
     from azure.ai.projects.models import (
         PromptAgentDefinitionTextOptions,
+        TextResponseFormatJsonObject,
         TextResponseFormatJsonSchema,
     )
 
+    if role == "quality_reviewer":
+        return PromptAgentDefinitionTextOptions(format=TextResponseFormatJsonObject())
     if role in EVIDENCE_SPECIALIST_ROLES:
         evidence_patterns = {
             "resource_graph": "^(/subscriptions/|resource:|tool:|query:)",
@@ -686,6 +695,7 @@ def _run_foundry_agent_sync(
     trace_id: str = "",
     task_id: str = "",
     disable_tools: bool = False,
+    caller_loop: Optional[AbstractEventLoop] = None,
 ) -> FoundryAgentInvocation:
     """Invoke one current Foundry Prompt Agent through the Responses API.
 
@@ -696,6 +706,7 @@ def _run_foundry_agent_sync(
         local_tools: Allow-listed function implementations declared on the Agent.
         trace_id: Analysis trace used to isolate oversized tool results.
         task_id: Stage identifier used for tool-result observability.
+        caller_loop: Owning loop for shared asynchronous tool clients, when invoked asynchronously.
 
     Returns:
         The response text and observability metadata.
@@ -730,7 +741,8 @@ def _run_foundry_agent_sync(
         if local_tools:
             conversation = openai_client.conversations.create()
             conversation_id = str(conversation.id)
-            tool_loop = asyncio.new_event_loop()
+            if caller_loop is None:
+                tool_loop = asyncio.new_event_loop()
 
         response_input: Any = prompt
         total_usage = {
@@ -808,7 +820,12 @@ def _run_foundry_agent_sync(
                         return_exceptions=True,
                     )
 
-                results = tool_loop.run_until_complete(_execute_calls())
+                if caller_loop is not None:
+                    results = asyncio.run_coroutine_threadsafe(
+                        _execute_calls(), caller_loop
+                    ).result()
+                else:
+                    results = tool_loop.run_until_complete(_execute_calls())
                 outputs = []
                 for (item, name, _, args), result in zip(parsed_calls, results):
                     if isinstance(result, BaseException):
@@ -929,6 +946,45 @@ def _run_foundry_agent_sync(
 # ---------------------------------------------------------------------------
 
 
+def _public_mcp_failure_status(error: Exception) -> Optional[int]:
+    """Identify transient discovery errors for explicitly trusted public MCP endpoints."""
+    if getattr(error, "status_code", None) != 400:
+        return None
+    body = getattr(error, "body", None)
+    if not isinstance(body, dict):
+        return None
+    detail = body.get("error", body)
+    if not isinstance(detail, dict) or detail.get("code") != "tool_user_error":
+        return None
+    message = detail.get("message")
+    if not isinstance(message, str):
+        return None
+    match = re.match(
+        r"\[Failed Dependency\] while enumerating tools, the dependency call to the MCP server: "
+        r"(https://\S+) failed with status code (\d{3})(?:[,\s.]|$)",
+        message,
+        re.IGNORECASE,
+    )
+    if match is None:
+        return None
+    try:
+        endpoint = urlsplit(match.group(1))
+        if (
+            endpoint.scheme != "https"
+            or endpoint.username is not None
+            or endpoint.password is not None
+            or endpoint.port not in (None, 443)
+            or endpoint.query
+            or endpoint.fragment
+            or (endpoint.hostname, endpoint.path.rstrip("/")) not in _PUBLIC_MCP_ENDPOINTS
+        ):
+            return None
+    except ValueError:
+        return None
+    status = int(match.group(2))
+    return status if status in _PUBLIC_MCP_TRANSIENT_STATUS_CODES else None
+
+
 async def _invoke_foundry_agent(
     project_endpoint: str,
     agent_name: str,
@@ -945,7 +1001,7 @@ async def _invoke_foundry_agent(
         project_endpoint: Foundry project endpoint.
         agent_name: Name of the agent already published in the project.
         prompt: Fully rendered prompt to send.
-        timeout_s: Per-agent wall-clock timeout.
+        timeout_s: Per-agent wall-clock timeout, including public MCP retries.
         local_tools: Allow-listed application function implementations.
         trace_id: Analysis trace used for context-store isolation.
         task_id: Stage identifier used for tool-result logging.
@@ -955,10 +1011,11 @@ async def _invoke_foundry_agent(
     """
     import asyncio
 
-    try:
-        with foundry_invocation_context(trace_id, task_id):
-            return await asyncio.wait_for(
-                asyncio.to_thread(
+    async def invoke_with_public_mcp_retry() -> FoundryAgentInvocation:
+        attempt = 0
+        while True:
+            try:
+                return await asyncio.to_thread(
                     _run_foundry_agent_sync,
                     project_endpoint,
                     agent_name,
@@ -967,9 +1024,34 @@ async def _invoke_foundry_agent(
                     trace_id,
                     task_id,
                     disable_tools,
-                ),
-                timeout=timeout_s,
-            )
+                    asyncio.get_running_loop(),
+                )
+            except Exception as exc:
+                upstream_status = _public_mcp_failure_status(exc)
+                if local_tools or upstream_status is None or attempt >= _PUBLIC_MCP_MAX_RETRIES:
+                    raise
+                retry_after = _extract_retry_after(exc)
+                delay = calculate_backoff(
+                    attempt, base_delay=10.0, max_delay=40.0, retry_after=retry_after
+                )
+                attempt += 1
+                logger.info(
+                    "foundry_public_mcp_retry",
+                    trace_id=trace_id,
+                    task_id=task_id,
+                    agent=agent_name,
+                    status_code=400,
+                    upstream_status_code=upstream_status,
+                    attempt=attempt,
+                    max_retries=_PUBLIC_MCP_MAX_RETRIES,
+                    delay_s=round(delay, 2),
+                    retry_after=retry_after,
+                )
+                await asyncio.sleep(delay)
+
+    try:
+        with foundry_invocation_context(trace_id, task_id):
+            return await asyncio.wait_for(invoke_with_public_mcp_retry(), timeout=timeout_s)
     except Exception as exc:  # pragma: no cover - requires live SDK
         logger.warning(
             "foundry_agent_failed",
@@ -1098,12 +1180,16 @@ def build_specialist_collaboration_node(
         import time
 
         update_context = state.get("update_context", "")
+        documentation = state.get("documentation_context", "")
+        specialist_context = (
+            f"{update_context}\n\n{documentation}" if documentation else update_context
+        )
         trace_id = state.get("trace_id", "")
         started = time.time()
         sections: list[SpecialistEvidence] = []
         results = await asyncio.gather(
             *[
-                _run_specialist(role, update_context, trace_id)
+                _run_specialist(role, specialist_context, trace_id)
                 for role in EVIDENCE_SPECIALIST_ROLES
             ],
             return_exceptions=True,

@@ -12,6 +12,11 @@ TOOLS_PROMPT = """## Available Tools
   set `include_content=true` and pass the primary Region names in `focus_terms`; this fetches the
   official pages and returns source excerpts around those Regions or an all-Regions statement.
 - `get_service_documentation`: Service-specific documentation lookup
+- `fetch_documentation_link`: Read an actual body link from the Learn more investigation.
+  Supply its fetched `parent_url`, observed `url`, and concrete unresolved `question`.
+  Depth 0/selected depth 1 are prefetched; depth 2 is conditional and terminal. Runtime page/time,
+  depth, deduplication and URL checks cannot be bypassed by inventing a new root. Read stored
+  full-text refs first; blocked or exhausted sources remain explicit evidence gaps.
 
 ### Azure Resource Graph
 - `get_service_resource_details`: Optional service baseline; use only when its fields answer the question
