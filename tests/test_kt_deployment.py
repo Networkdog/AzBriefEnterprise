@@ -26,6 +26,11 @@ RESOURCE_NAME_DEFAULTS = {
     "containerAppsEnvironmentName": "cae-azbrief-kt",
     "containerAppName": "ca-azbrief-kt",
 }
+SUBNET_NAMES = {
+    "peSubnetName": "snet-private-endpoints",
+    "foundrySubnetName": "snet-foundry-agent",
+    "containerAppsSubnetName": "snet-container-apps",
+}
 
 
 @pytest.fixture(scope="module")
@@ -44,6 +49,7 @@ def values(template: dict) -> dict:
         location="eastus2",
         virtualNetworkResourceGroupName="rg-network",
         virtualNetworkName="vnet-kt",
+        **SUBNET_NAMES,
         foundryAccountName="ai-kt-test",
         agentStorageAccountName="stktagenttest",
         stateStorageAccountName="stktstatetest",
@@ -114,15 +120,22 @@ def test_new_resource_names_have_editable_literal_defaults(
         assert 3 <= len(expected) <= 32
 
 
-def test_only_existing_network_name_parameters_remain_required(template: dict):
-    for parameter in ("location", "virtualNetworkResourceGroupName", "virtualNetworkName"):
+def test_only_existing_network_parameters_remain_required(template: dict):
+    for parameter in (
+        "location",
+        "virtualNetworkResourceGroupName",
+        "virtualNetworkName",
+        *SUBNET_NAMES,
+    ):
         assert "defaultValue" not in template["parameters"][parameter]
-    new_name_parameters = {
+    defaulted_name_parameters = {
         key
-        for key in template["parameters"]
-        if key.endswith("Name") and not key.startswith("virtualNetwork")
+        for key, definition in template["parameters"].items()
+        if key.endswith("Name")
+        and not key.startswith("virtualNetwork")
+        and "defaultValue" in definition
     }
-    assert new_name_parameters == set(RESOURCE_NAME_DEFAULTS)
+    assert defaulted_name_parameters == set(RESOURCE_NAME_DEFAULTS)
 
 
 def test_cli_resolves_prefilled_names_from_only_explicit_network_inputs(
@@ -130,12 +143,18 @@ def test_cli_resolves_prefilled_names_from_only_explicit_network_inputs(
 ):
     parameters = {
         key: {"value": values[key]}
-        for key in ("location", "virtualNetworkResourceGroupName", "virtualNetworkName")
+        for key in (
+            "location",
+            "virtualNetworkResourceGroupName",
+            "virtualNetworkName",
+            *SUBNET_NAMES,
+        )
     }
     path = tmp_path / "parameters.json"
     path.write_text(json.dumps({"parameters": parameters}), encoding="utf-8")
     loaded = kt.load_parameters(path)
     assert {key: loaded[key] for key in RESOURCE_NAME_DEFAULTS} == RESOURCE_NAME_DEFAULTS
+    assert {key: loaded[key] for key in SUBNET_NAMES} == SUBNET_NAMES
     for key in parameters:
         assert loaded[key] == values[key]
     assert [spec["name"] for spec in kt.endpoint_specs(loaded, GROUP)] == [
@@ -148,17 +167,36 @@ def test_cli_resolves_prefilled_names_from_only_explicit_network_inputs(
     ]
 
 
+def test_cli_requires_explicit_subnet_role_names(tmp_path: Path, values: dict):
+    parameters = {
+        key: {"value": values[key]}
+        for key in ("location", "virtualNetworkResourceGroupName", "virtualNetworkName")
+    }
+    path = tmp_path / "parameters.json"
+    path.write_text(json.dumps({"parameters": parameters}), encoding="utf-8")
+    with pytest.raises(ValueError, match="Missing required parameter: peSubnetName"):
+        kt.load_parameters(path)
+
+
 def test_cli_keeps_explicit_name_overrides(tmp_path: Path, values: dict):
     supplied = {
         key: {"value": value} for key, value in values.items() if key not in kt.INTERNAL_PARAMETERS
     }
     for key, default in RESOURCE_NAME_DEFAULTS.items():
         supplied[key] = {"value": default + "01"}
+    supplied["peSubnetName"] = {"value": "private-endpoints-prod"}
+    supplied["foundrySubnetName"] = {"value": "foundry-agents-prod"}
+    supplied["containerAppsSubnetName"] = {"value": "container-apps-prod"}
     path = tmp_path / "parameters.json"
     path.write_text(json.dumps({"parameters": supplied}), encoding="utf-8")
     loaded = kt.load_parameters(path)
     assert {key: loaded[key] for key in RESOURCE_NAME_DEFAULTS} == {
         key: default + "01" for key, default in RESOURCE_NAME_DEFAULTS.items()
+    }
+    assert {key: loaded[key] for key in SUBNET_NAMES} == {
+        "peSubnetName": "private-endpoints-prod",
+        "foundrySubnetName": "foundry-agents-prod",
+        "containerAppsSubnetName": "container-apps-prod",
     }
 
 
@@ -168,6 +206,9 @@ def test_example_prefills_the_same_resource_names():
     )["parameters"]
     assert {key: example[key]["value"] for key in RESOURCE_NAME_DEFAULTS} == RESOURCE_NAME_DEFAULTS
     assert example["virtualNetworkName"]["value"] == "<existing-vnet-name>"
+    assert example["peSubnetName"]["value"] == "<existing-private-endpoint-subnet-name>"
+    assert example["foundrySubnetName"]["value"] == "<existing-foundry-subnet-name>"
+    assert example["containerAppsSubnetName"]["value"] == "<existing-container-apps-subnet-name>"
 
 
 @pytest.fixture(scope="module")
@@ -204,6 +245,8 @@ def test_kt_wizard_has_distinct_steps_and_matching_outputs(wizard: dict, templat
     assert outputs["virtualNetworkResourceGroupName"] == (
         "[first(skip(split(steps('network').virtualNetwork.id, '/'), 4))]"
     )
+    for parameter in SUBNET_NAMES:
+        assert outputs[parameter] == f"[steps('network').{parameter}]"
     for parameter in RESOURCE_NAME_DEFAULTS:
         assert outputs[parameter] == f"[steps('names').{parameter}]"
     assert "bootstrapImage" not in outputs
@@ -212,27 +255,48 @@ def test_kt_wizard_has_distinct_steps_and_matching_outputs(wizard: dict, templat
 
 def test_wizard_only_selects_existing_same_region_network_and_reads_subnets(wizard: dict):
     controls = _ui_controls(wizard, "network")
+    order = [
+        control["name"]
+        for step in wizard["steps"]
+        if step["name"] == "network"
+        for control in step["elements"]
+    ]
     selector = controls["virtualNetwork"]
     assert selector["type"] == "Microsoft.Solutions.ResourceSelector"
     assert selector["resourceType"] == "Microsoft.Network/virtualNetworks"
     assert selector["options"]["filter"] == {"subscription": "onBasics", "location": "onBasics"}
     assert "defaultValue" not in selector
-    for api, field, subnet, flag in (
-        ("peSubnetApi", "pePrefix", "PESubnet", "createPESubnet"),
-        ("foundrySubnetApi", "foundryPrefix", "FoundrySubnet", "createFoundrySubnet"),
+    assert controls["virtualNetworkApi"]["request"] == {
+        "method": "GET",
+        "path": "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]",
+    }
+    for name_control, api, field, flag in (
+        ("peSubnetName", "peSubnetApi", "pePrefix", "createPESubnet"),
         (
+            "foundrySubnetName",
+            "foundrySubnetApi",
+            "foundryPrefix",
+            "createFoundrySubnet",
+        ),
+        (
+            "containerAppsSubnetName",
             "containerAppsSubnetApi",
             "containerAppsPrefix",
-            "ContainerAppsSubnet",
             "createContainerAppsSubnet",
         ),
     ):
+        subnet_selector = controls[name_control]
+        assert subnet_selector["type"] == "Microsoft.Common.DropDown"
+        assert subnet_selector["constraints"]["required"] is True
+        allowed = subnet_selector["constraints"]["allowedValues"]
+        assert "virtualNetworkApi.properties.subnets" in allowed
+        assert "s.name" in allowed
         assert controls[api]["type"] == "Microsoft.Solutions.ArmApiControl"
         assert controls[api]["request"] == {
             "method": "GET",
             "path": (
                 "[concat(steps('network').virtualNetwork.id, "
-                f"'/subnets/{subnet}?api-version=2024-05-01')]"
+                f"'/subnets/', steps('network').{name_control}, '?api-version=2024-05-01')]"
             ),
         }
         assert controls[field]["constraints"]["required"] is True
@@ -243,8 +307,16 @@ def test_wizard_only_selects_existing_same_region_network_and_reads_subnets(wiza
             for rule in rules
         )
         assert any("delegations" in rule.get("isValid", "") for rule in rules)
+        assert wizard["outputs"][name_control] == f"[steps('network').{name_control}]"
         assert wizard["outputs"][flag] is False
+        assert order.index(name_control) < order.index(api) < order.index(field)
+    assert (
+        "not(equals(s.name, steps('network').foundrySubnetName))"
+        in controls["containerAppsSubnetName"]["constraints"]["allowedValues"]
+    )
     serialized = json.dumps(wizard)
+    for fixed_name in ("PESubnet", "FoundrySubnet", "ContainerAppsSubnet"):
+        assert f"/subnets/{fixed_name}?api-version" not in serialized
     assert "Microsoft.Network.VirtualNetworkCombo" not in serialized
     assert "Microsoft.Common.PasswordBox" not in serialized
 
@@ -377,20 +449,26 @@ def test_compiled_template_has_no_vnet_or_insights_and_fits_arm_limit(template: 
 
 
 def test_minimum_subnets_are_conditional_child_modules(template: dict):
-    for module, flag, name in (
-        ("peSubnet", "createPESubnet", "PESubnet"),
-        ("foundrySubnet", "createFoundrySubnet", "FoundrySubnet"),
-        ("containerAppsSubnet", "createContainerAppsSubnet", "ContainerAppsSubnet"),
+    for module, flag, name_parameter in (
+        ("peSubnet", "createPESubnet", "peSubnetName"),
+        ("foundrySubnet", "createFoundrySubnet", "foundrySubnetName"),
+        ("containerAppsSubnet", "createContainerAppsSubnet", "containerAppsSubnetName"),
     ):
         definition = template["resources"][module]
         assert definition["condition"] == f"[parameters('{flag}')]"
         assert template["parameters"][flag]["defaultValue"] is False
-        assert _params(template, module)["name"] == name
+        assert _params(template, module)["name"] == f"[parameters('{name_parameter}')]"
         assert definition["resourceGroup"] == "[parameters('virtualNetworkResourceGroupName')]"
         if module != "peSubnet":
             assert _params(template, module)["delegation"] == "Microsoft.App/environments"
     assert "peSubnet" in template["resources"]["foundrySubnet"]["dependsOn"]
     assert "foundrySubnet" in template["resources"]["containerAppsSubnet"]["dependsOn"]
+    for variable, parameter in (
+        ("peSubnetId", "peSubnetName"),
+        ("foundrySubnetId", "foundrySubnetName"),
+        ("containerAppsSubnetId", "containerAppsSubnetName"),
+    ):
+        assert f"parameters('{parameter}')" in template["variables"][variable]
 
 
 def test_foundry_standard_setup_and_connection_roles(template: dict):
@@ -499,21 +577,31 @@ def test_new_subnets_use_exact_example_minima(values: dict, vnet: dict):
     original = copy.deepcopy(vnet)
     plans = kt.plan_subnets(values, vnet)
     assert [plan.network.prefixlen for plan in plans] == [28, 27, 27]
+    assert [plan.name for plan in plans] == [
+        "snet-private-endpoints",
+        "snet-foundry-agent",
+        "snet-container-apps",
+    ]
     assert all(plan.create for plan in plans)
     assert vnet == original
 
 
 def test_existing_subnets_preserve_nsg_routes_policies_and_larger_sizes(values: dict, vnet: dict):
     vnet["properties"]["subnets"] = [
-        _subnet("PESubnet", "10.70.1.0/24"),
-        _subnet("FoundrySubnet", "10.70.2.0/24", True),
-        _subnet("ContainerAppsSubnet", "10.70.3.0/24", True),
+        _subnet(values["peSubnetName"], "10.70.1.0/24"),
+        _subnet(values["foundrySubnetName"], "10.70.2.0/24", True),
+        _subnet(values["containerAppsSubnetName"], "10.70.3.0/24", True),
     ]
-    for _, parameter, _, _ in kt.SUBNETS:
+    for _, _, parameter, _, _ in kt.SUBNETS:
         values[parameter] = ""
     original = copy.deepcopy(vnet)
     plans = kt.plan_subnets(values, vnet)
     assert not any(plan.create for plan in plans)
+    assert [plan.name for plan in plans] == [
+        "snet-private-endpoints",
+        "snet-foundry-agent",
+        "snet-container-apps",
+    ]
     assert vnet == original
 
 
@@ -541,11 +629,17 @@ def test_bad_network_inputs_fail_closed(
 
 
 def test_existing_subnet_is_not_resized_or_redelegated(values: dict, vnet: dict):
-    vnet["properties"]["subnets"] = [_subnet("FoundrySubnet", "10.70.0.32/27")]
+    vnet["properties"]["subnets"] = [_subnet(values["foundrySubnetName"], "10.70.0.32/27")]
     with pytest.raises(ValueError, match="incompatible delegation"):
         kt.plan_subnets(values, vnet)
-    vnet["properties"]["subnets"][0] = _subnet("FoundrySubnet", "10.70.0.128/27", True)
+    vnet["properties"]["subnets"][0] = _subnet(values["foundrySubnetName"], "10.70.0.128/27", True)
     with pytest.raises(ValueError, match="will not be resized"):
+        kt.plan_subnets(values, vnet)
+
+
+def test_subnet_roles_require_distinct_names(values: dict, vnet: dict):
+    values["containerAppsSubnetName"] = values["foundrySubnetName"].upper()
+    with pytest.raises(ValueError, match="must be distinct"):
         kt.plan_subnets(values, vnet)
 
 
@@ -602,17 +696,24 @@ class FakeAzure(kt.AzureCli):
                     "properties": {
                         "publicNetworkAccess": self.public_access,
                         "networkInjections": [
-                            {"scenario": "agent", "subnetArmId": f"{VNET}/subnets/FoundrySubnet"}
+                            {
+                                "scenario": "agent",
+                                "subnetArmId": (
+                                    f"{VNET}/subnets/{self.values['foundrySubnetName']}"
+                                ),
+                            }
                         ],
                         "vnetConfiguration": {
-                            "infrastructureSubnetId": f"{VNET}/subnets/ContainerAppsSubnet"
+                            "infrastructureSubnetId": (
+                                f"{VNET}/subnets/{self.values['containerAppsSubnetName']}"
+                            )
                         },
                     }
                 }
             if resource_id.endswith(f"/privateEndpoints/{spec['name']}"):
                 return {
                     "properties": {
-                        "subnet": {"id": f"{VNET}/subnets/PESubnet"},
+                        "subnet": {"id": f"{VNET}/subnets/{self.values['peSubnetName']}"},
                         "privateLinkServiceConnections": [
                             {
                                 "properties": {
@@ -671,10 +772,14 @@ class FakeAzure(kt.AzureCli):
         self.deployments.append(copy.deepcopy(values))
         if mode == "create":
             self.stage += 1
-            for subnet_name, prefix, create_flag, _ in kt.SUBNETS:
+            for role, name_parameter, prefix, create_flag, _ in kt.SUBNETS:
                 if values[create_flag]:
                     self.vnet["properties"]["subnets"].append(
-                        _subnet(subnet_name, values[prefix], subnet_name != "PESubnet")
+                        _subnet(
+                            values[name_parameter],
+                            values[prefix],
+                            role != "private_endpoint",
+                        )
                     )
             for spec in kt.endpoint_specs(values, GROUP):
                 for resource_id in (
@@ -714,9 +819,14 @@ def test_deploy_stages_reinventory_before_host_and_never_rewrite_subnets(values:
     assert len(cli.deployments) == 2
     assert cli.deployments[0]["deployCapabilityHost"] is False
     assert cli.deployments[1]["deployCapabilityHost"] is True
-    assert all(cli.deployments[0][row[2]] for row in kt.SUBNETS)
-    assert not any(cli.deployments[1][row[2]] for row in kt.SUBNETS)
+    assert all(cli.deployments[0][row[3]] for row in kt.SUBNETS)
+    assert not any(cli.deployments[1][row[3]] for row in kt.SUBNETS)
     assert len(cli.vnet["properties"]["subnets"]) == 3
+    assert {subnet["name"] for subnet in cli.vnet["properties"]["subnets"]} == {
+        "snet-private-endpoints",
+        "snet-foundry-agent",
+        "snet-container-apps",
+    }
     assert values["existingPrivateDnsZoneIds"] == {}
 
 
@@ -736,7 +846,7 @@ def test_unowned_resource_and_busy_subnet_are_not_adopted(values: dict, vnet: di
         kt.run(cli, values, "deploy")
     assert not cli.deployments
     cli.resources = {}
-    busy = _subnet("FoundrySubnet", values["foundrySubnetAddressPrefix"], True)
+    busy = _subnet(values["foundrySubnetName"], values["foundrySubnetAddressPrefix"], True)
     busy["properties"]["serviceAssociationLinks"] = [{"name": "other-account"}]
     cli.vnet["properties"]["subnets"].append(busy)
     with pytest.raises(ValueError, match="occupied"):
@@ -746,7 +856,9 @@ def test_unowned_resource_and_busy_subnet_are_not_adopted(values: dict, vnet: di
 
 def test_existing_pe_subnet_requires_enough_actual_free_ips(values: dict, vnet: dict):
     cli = FakeAzure(values, vnet)
-    cli.vnet["properties"]["subnets"].append(_subnet("PESubnet", values["peSubnetAddressPrefix"]))
+    cli.vnet["properties"]["subnets"].append(
+        _subnet(values["peSubnetName"], values["peSubnetAddressPrefix"])
+    )
     cli.free_ips = False
     with pytest.raises(ValueError, match="verify 9 free"):
         kt.run(cli, values, "deploy")

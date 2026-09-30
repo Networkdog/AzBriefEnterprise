@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "8284356509290910416"
+      "templateHash": "7804016008243594269"
     }
   },
   "parameters": {
@@ -26,6 +26,24 @@
       "type": "string",
       "metadata": {
         "description": "Existing VNet name. This template never deploys a VNet resource."
+      }
+    },
+    "peSubnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "Existing or CLI-created subnet used for private endpoints. The name is not fixed."
+      }
+    },
+    "foundrySubnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "Existing or CLI-created subnet dedicated to Foundry injection. The name is not fixed."
+      }
+    },
+    "containerAppsSubnetName": {
+      "type": "string",
+      "metadata": {
+        "description": "Existing or CLI-created subnet dedicated to Container Apps. The name is not fixed."
       }
     },
     "foundryAccountName": {
@@ -81,21 +99,21 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Used ONLY for a missing PESubnet. Minimum for this nine-IP endpoint budget is /28."
+        "description": "Used ONLY when the selected private-endpoint subnet is missing. Minimum is /28."
       }
     },
     "foundrySubnetAddressPrefix": {
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Used ONLY for a missing FoundrySubnet. /27 minimum; /24 recommended for growth."
+        "description": "Used ONLY when the selected Foundry subnet is missing. /27 minimum; /24 recommended."
       }
     },
     "containerAppsSubnetAddressPrefix": {
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Used ONLY for a missing ContainerAppsSubnet. Workload-profile minimum is /27."
+        "description": "Used ONLY when the selected Container Apps subnet is missing. /27 minimum."
       }
     },
     "createPESubnet": {
@@ -166,9 +184,9 @@
   },
   "variables": {
     "vnetId": "[resourceId(parameters('virtualNetworkResourceGroupName'), 'Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
-    "peSubnetId": "[format('{0}/subnets/PESubnet', variables('vnetId'))]",
-    "foundrySubnetId": "[format('{0}/subnets/FoundrySubnet', variables('vnetId'))]",
-    "containerAppsSubnetId": "[format('{0}/subnets/ContainerAppsSubnet', variables('vnetId'))]",
+    "peSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName'))]",
+    "foundrySubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('foundrySubnetName'))]",
+    "containerAppsSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('containerAppsSubnetName'))]",
     "foundryAccountId": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName'))]",
     "agentStorageId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('agentStorageAccountName'))]",
     "stateStorageId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('stateStorageAccountName'))]",
@@ -309,7 +327,7 @@
             "value": "[parameters('virtualNetworkName')]"
           },
           "name": {
-            "value": "PESubnet"
+            "value": "[parameters('peSubnetName')]"
           },
           "addressPrefix": {
             "value": "[parameters('peSubnetAddressPrefix')]"
@@ -750,7 +768,7 @@
             "value": "[parameters('virtualNetworkName')]"
           },
           "name": {
-            "value": "FoundrySubnet"
+            "value": "[parameters('foundrySubnetName')]"
           },
           "addressPrefix": {
             "value": "[parameters('foundrySubnetAddressPrefix')]"
@@ -1194,7 +1212,7 @@
             "value": "[parameters('virtualNetworkName')]"
           },
           "name": {
-            "value": "ContainerAppsSubnet"
+            "value": "[parameters('containerAppsSubnetName')]"
           },
           "addressPrefix": {
             "value": "[parameters('containerAppsSubnetAddressPrefix')]"

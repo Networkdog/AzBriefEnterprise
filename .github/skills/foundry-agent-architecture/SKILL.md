@@ -47,9 +47,10 @@ The two runtimes have separate identities. The Container Apps UAMI owns Key Vaul
 ## Procedure
 
 For the separate [KT infrastructure profile](../../../infra/kt/README.md), distinguish platform
-bootstrap from application readiness. The existing VNet is never recreated; FoundrySubnet and
-ContainerAppsSubnet are separate /27-minimum delegations, and PESubnet /28 holds all private
-endpoints. Use a project Capability Host with AAD Blob/Cosmos/Search bindings after private
+bootstrap from application readiness. The existing VNet is never recreated; subnet names are
+operator-selected rather than fixed. Distinct Foundry and Container Apps subnets are /27-minimum
+`Microsoft.App/environments` delegations, while the /28-minimum private-endpoint subnet has no
+service delegation. Use a project Capability Host with AAD Blob/Cosmos/Search bindings after private
 DNS and provisioning roles, then grant generated-container data roles. Network injection
 already creates the account host; do not create a second one or auto-delete a conflicting host.
 No Application Insights is created, and the standard customerSetup/MCP workflow is not
@@ -62,8 +63,8 @@ New resource names use editable literal KT-profile defaults, not a verified cust
 standard. Keep the existing network inputs explicit and the compiled ARM, parameter example and
 CLI-resolved names aligned; preserve operator overrides and check global name availability.
 The KT README button pairs its own ARM and CreateUIDefinition, never the standard UI.
-The guided form uses an existing-VNet selector and read-only named-subnet checks, preserves
-editable defaults, and emits false subnet-create flags. Its foundation-only default and explicit
+The guided form reads the selected VNet's subnet inventory, maps arbitrary existing names to the
+three roles, preserves editable resource defaults, and emits false subnet-create flags. Its foundation-only default and explicit
 completion-stage acknowledgement do not replace CLI ownership/IP checks or host readiness waits.
 Keep the prerequisites and actual validation limits visible in both language READMEs.
 

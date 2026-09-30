@@ -41,17 +41,24 @@ ACA_RESERVED = tuple(
     )
 )
 SUBNETS = (
-    ("PESubnet", "peSubnetAddressPrefix", "createPESubnet", 28),
-    ("FoundrySubnet", "foundrySubnetAddressPrefix", "createFoundrySubnet", 27),
-    ("ContainerAppsSubnet", "containerAppsSubnetAddressPrefix", "createContainerAppsSubnet", 27),
+    ("private_endpoint", "peSubnetName", "peSubnetAddressPrefix", "createPESubnet", 28),
+    ("foundry", "foundrySubnetName", "foundrySubnetAddressPrefix", "createFoundrySubnet", 27),
+    (
+        "container_apps",
+        "containerAppsSubnetName",
+        "containerAppsSubnetAddressPrefix",
+        "createContainerAppsSubnet",
+        27,
+    ),
 )
-INTERNAL_PARAMETERS = {row[2] for row in SUBNETS} | {"deployCapabilityHost"}
+INTERNAL_PARAMETERS = {row[3] for row in SUBNETS} | {"deployCapabilityHost"}
 
 
 @dataclass(frozen=True)
 class SubnetPlan:
     """A read-only decision to reuse a subnet or create a missing child resource."""
 
+    role: str
     name: str
     network: IPv4Network
     create_parameter: str
@@ -78,11 +85,17 @@ def plan_subnets(parameters: dict[str, Any], vnet: dict[str, Any]) -> list[Subne
     """Validate size, scope, delegation and overlap before proposing any subnet writes."""
     if parameters["location"].casefold() != vnet["location"].casefold():
         raise ValueError("Foundry and the existing VNet must have the same Azure region")
+    requested_names = [str(parameters[row[1]]).strip() for row in SUBNETS]
+    if any(not name or "/" in name for name in requested_names):
+        raise ValueError("Each subnet name must be a non-empty child resource name")
+    if len({name.casefold() for name in requested_names}) != len(requested_names):
+        raise ValueError("Private Endpoint, Foundry, and Container Apps subnets must be distinct")
     spaces = tuple(_ipv4(cidr) for cidr in vnet["properties"]["addressSpace"]["addressPrefixes"])
     existing = {subnet["name"].casefold(): subnet for subnet in vnet["properties"]["subnets"]}
     occupied = [(name, _ipv4(_subnet_prefix(subnet))) for name, subnet in existing.items()]
     plans: list[SubnetPlan] = []
-    for name, prefix_parameter, create_parameter, minimum in SUBNETS:
+    for role, name_parameter, prefix_parameter, create_parameter, minimum in SUBNETS:
+        name = str(parameters[name_parameter]).strip()
         subnet = existing.get(name.casefold())
         supplied = parameters.get(prefix_parameter, "")
         prefix = _subnet_prefix(subnet) if subnet is not None else supplied
@@ -99,8 +112,8 @@ def plan_subnets(parameters: dict[str, Any], vnet: dict[str, Any]) -> list[Subne
             raise ValueError(f"{name} must use RFC1918 private IPv4 space")
         if not any(network.subnet_of(space) for space in spaces):
             raise ValueError(f"{name} is outside the existing VNet address space")
-        if name == "ContainerAppsSubnet" and any(network.overlaps(r) for r in ACA_RESERVED):
-            raise ValueError("ContainerAppsSubnet overlaps a Container Apps reserved range")
+        if role == "container_apps" and any(network.overlaps(r) for r in ACA_RESERVED):
+            raise ValueError(f"{name} overlaps a Container Apps reserved range")
         if any(
             network.overlaps(other)
             for other_name, other in occupied
@@ -112,14 +125,14 @@ def plan_subnets(parameters: dict[str, Any], vnet: dict[str, Any]) -> list[Subne
                 item["properties"]["serviceName"]
                 for item in subnet["properties"].get("delegations", [])
             ]
-            expected = [] if name == "PESubnet" else ["Microsoft.App/environments"]
+            expected = [] if role == "private_endpoint" else ["Microsoft.App/environments"]
             if sorted(delegations) != expected:
                 raise ValueError(
                     f"{name} has incompatible delegation; existing settings are not changed"
                 )
         else:
             occupied.append((name.casefold(), network))
-        plans.append(SubnetPlan(name, network, create_parameter, subnet is None))
+        plans.append(SubnetPlan(role, name, network, create_parameter, subnet is None))
     return plans
 
 
@@ -380,7 +393,7 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
         if spec["target"].casefold() in by_id:
             owner = cli.get(spec["target"], api)["properties"]
             expected = f"{vnet_id}/subnets/{plan.name}"
-            if plan.name == "FoundrySubnet":
+            if plan.role == "foundry":
                 bindings = owner.get("networkInjections", [])
                 matches = any(
                     binding.get("scenario") == "agent"
@@ -419,7 +432,7 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
         props = cli.get(endpoint_id, NETWORK_API)["properties"]
         connections = props.get("privateLinkServiceConnections", [])
         if (
-            not _same_id(props["subnet"]["id"], f"{vnet_id}/subnets/PESubnet")
+            not _same_id(props["subnet"]["id"], f"{vnet_id}/subnets/{plans[0].name}")
             or len(connections) != 1
             or not _same_id(connections[0]["properties"]["privateLinkServiceId"], spec["target"])
             or connections[0]["properties"]["groupIds"] != [spec["group"]]
@@ -457,7 +470,7 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                 break
         if available < required_ips:
             raise ValueError(
-                f"Could not verify {required_ips} free PESubnet IPs within the bounded check"
+                f"Could not verify {required_ips} free IPs in {pe.name} within the bounded check"
             )
 
     zones = [
@@ -495,6 +508,7 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
         prepared[plan.create_parameter] = plan.create
         logger.info(
             "kt_subnet_plan",
+            subnet_role=plan.role,
             subnet=plan.name,
             cidr=str(plan.network),
             action="create" if plan.create else "reuse_unchanged",
@@ -531,7 +545,7 @@ def wait_for_host(cli: AzureCli, scope: str, expected_name: str | None = None) -
 def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
     """Read back public-network controls and all approved endpoint/DNS bindings."""
     prepared = prepare(cli, values)
-    if any(prepared[row[2]] for row in SUBNETS):
+    if any(prepared[row[3]] for row in SUBNETS):
         raise RuntimeError("A required subnet is absent after deployment")
     versions = (FOUNDRY_API, "2023-05-01", "2023-05-01", "2024-11-15", "2023-11-01", "2025-01-01")
     for spec, api in zip(endpoint_specs(values, cli.group_id), versions):

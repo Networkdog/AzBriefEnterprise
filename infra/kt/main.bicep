@@ -9,6 +9,15 @@ param virtualNetworkResourceGroupName string
 @description('Existing VNet name. This template never deploys a VNet resource.')
 param virtualNetworkName string
 
+@description('Existing or CLI-created subnet used for private endpoints. The name is not fixed.')
+param peSubnetName string
+
+@description('Existing or CLI-created subnet dedicated to Foundry injection. The name is not fixed.')
+param foundrySubnetName string
+
+@description('Existing or CLI-created subnet dedicated to Container Apps. The name is not fixed.')
+param containerAppsSubnetName string
+
 @description('Globally unique name for a NEW network-injected Foundry account.')
 param foundryAccountName string = 'ai-azbrief-kt'
 
@@ -30,13 +39,13 @@ param projectName string = 'azbrief-kt'
 param containerAppsEnvironmentName string = 'cae-azbrief-kt'
 param containerAppName string = 'ca-azbrief-kt'
 
-@description('Used ONLY for a missing PESubnet. Minimum for this nine-IP endpoint budget is /28.')
+@description('Used ONLY when the selected private-endpoint subnet is missing. Minimum is /28.')
 param peSubnetAddressPrefix string = ''
 
-@description('Used ONLY for a missing FoundrySubnet. /27 minimum; /24 recommended for growth.')
+@description('Used ONLY when the selected Foundry subnet is missing. /27 minimum; /24 recommended.')
 param foundrySubnetAddressPrefix string = ''
 
-@description('Used ONLY for a missing ContainerAppsSubnet. Workload-profile minimum is /27.')
+@description('Used ONLY when the selected Container Apps subnet is missing. /27 minimum.')
 param containerAppsSubnetAddressPrefix string = ''
 
 @description('Derived by scripts/deploy_kt.py after inventory. The Portal form reuses prepared subnets.')
@@ -77,9 +86,9 @@ var vnetId = resourceId(
   'Microsoft.Network/virtualNetworks',
   virtualNetworkName
 )
-var peSubnetId = '${vnetId}/subnets/PESubnet'
-var foundrySubnetId = '${vnetId}/subnets/FoundrySubnet'
-var containerAppsSubnetId = '${vnetId}/subnets/ContainerAppsSubnet'
+var peSubnetId = '${vnetId}/subnets/${peSubnetName}'
+var foundrySubnetId = '${vnetId}/subnets/${foundrySubnetName}'
+var containerAppsSubnetId = '${vnetId}/subnets/${containerAppsSubnetName}'
 var foundryAccountId = resourceId('Microsoft.CognitiveServices/accounts', foundryAccountName)
 var agentStorageId = resourceId('Microsoft.Storage/storageAccounts', agentStorageAccountName)
 var stateStorageId = resourceId('Microsoft.Storage/storageAccounts', stateStorageAccountName)
@@ -101,7 +110,7 @@ module peSubnet 'br/public:avm/res/network/virtual-network/subnet:0.2.0' = if (c
   scope: resourceGroup(virtualNetworkResourceGroupName)
   params: {
     virtualNetworkName: virtualNetworkName
-    name: 'PESubnet'
+    name: peSubnetName
     addressPrefix: peSubnetAddressPrefix
     privateEndpointNetworkPolicies: 'Disabled'
     enableTelemetry: false
@@ -113,7 +122,7 @@ module foundrySubnet 'br/public:avm/res/network/virtual-network/subnet:0.2.0' = 
   scope: resourceGroup(virtualNetworkResourceGroupName)
   params: {
     virtualNetworkName: virtualNetworkName
-    name: 'FoundrySubnet'
+    name: foundrySubnetName
     addressPrefix: foundrySubnetAddressPrefix
     delegation: 'Microsoft.App/environments'
     enableTelemetry: false
@@ -129,7 +138,7 @@ module containerAppsSubnet 'br/public:avm/res/network/virtual-network/subnet:0.2
   scope: resourceGroup(virtualNetworkResourceGroupName)
   params: {
     virtualNetworkName: virtualNetworkName
-    name: 'ContainerAppsSubnet'
+    name: containerAppsSubnetName
     addressPrefix: containerAppsSubnetAddressPrefix
     delegation: 'Microsoft.App/environments'
     enableTelemetry: false

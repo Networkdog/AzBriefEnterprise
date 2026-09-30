@@ -21,15 +21,15 @@
 |---|---|
 | VNet | 지정한 기존 VNet만 사용. VNet 리소스나 전체 subnet 목록을 PUT하지 않음 |
 | Foundry | `AIServices/S0`, 시스템 ID, 로컬 키 인증 비활성, Public Network Access 비활성 |
-| Foundry inbound | `account` Private Endpoint → `PESubnet` |
-| Foundry outbound | 계정 최초 생성 시 `scenario=agent`, `FoundrySubnet`으로 VNet Injection |
+| Foundry inbound | `account` Private Endpoint → 선택한 Private Endpoint subnet |
+| Foundry outbound | 계정 최초 생성 시 `scenario=agent`, 선택한 Foundry 전용 subnet으로 VNet Injection |
 | Capability Host | 자동 생성되는 account host 확인 후, project `agents` host 생성. account host 중복 생성 없음 |
 | Agent backing storage | 별도 StorageV2 / Standard_LRS / Blob PE / Public Network Access 비활성 / Entra 전용 |
 | 상태·아카이브 storage | 별도 StorageV2 / Standard_LRS / Blob PE. `azbrief-state`, `azbrief-archive` private container |
 | Cosmos DB | NoSQL, 단일 리전 Serverless, `Sql` PE, Public Network Access·로컬 키 인증 비활성 |
 | AI Search | Basic, replica 1 / partition 1, `searchService` PE, Public Network Access·로컬 키 인증 비활성 |
 | Container Apps Environment | Workload Profiles 유형, **Consumption** 프로필, 전용 subnet 주입, Public Network Access 비활성 |
-| Container Apps inbound | Environment의 `managedEnvironments` PE → `PESubnet` |
+| Container Apps inbound | Environment의 `managedEnvironments` PE → 선택한 Private Endpoint subnet |
 | 준비용 Container App | **0.25 vCPU / 0.5 GiB**, 최소 replica 0 / 최대 1, HTTPS, 포트 80의 hello-world 이미지 |
 | Application Insights | **배포하지 않음**. Foundry 연결, 계측 설정, publishing 역할도 생성하지 않음 |
 | Log Analytics | 기존 workspace ID를 선택적으로 연결. 새 workspace·DCR·AMPLS는 생성하지 않음 |
@@ -67,7 +67,7 @@ Portal ARM 입력 화면과 CLI는 다음 이름을 미리 채웁니다. 기존 
 Storage는 Azure 이름 제약에 따라 하이픈 없이 소문자·숫자만 사용합니다. 기존 project/App/
 Environment 기본값은 유지하며, Private Endpoint는 `pe-<대상 리소스 이름>`, 제어면 ID는
 `id-<Container App 이름>`으로 계속 파생합니다. 서비스가 정하는 DNS zone, Capability Host 및
-컨테이너 이름이나 명시된 subnet 이름은 바꾸지 않습니다.
+컨테이너 이름은 바꾸지 않습니다. subnet 이름은 고정하지 않고 선택한 실제 이름을 그대로 사용합니다.
 
 **기존 `virtualNetworkName`은 기본값 없이 직접 입력**합니다. 해당 VNet의 resource group과
 location도 실제 값이 필요합니다. 기본 이름은 전역 가용성을 보장하거나 예약하지 않으므로
@@ -77,13 +77,17 @@ CLI도 명시한 이름을 그대로 사용합니다. 기존 배포에 재적용
 
 ## 최소 서브넷과 기존 설정 보존
 
-| 이름 | 새로 만들 때의 최소 크기 | 위임 | 용도 |
+| 역할(이름 제한 없음) | 새로 만들 때의 최소 크기 | 위임 | 용도 |
 |---|---|---|---|
-| `PESubnet` | **/28** — 16개 주소 중 Azure 예약 5개 제외 11개 | 없음 | 여섯 PE의 보수적인 9개 IP 예산 |
-| `FoundrySubnet` | **/27** | `Microsoft.App/environments` | 하나의 Foundry 계정 전용 |
-| `ContainerAppsSubnet` | **/27** | `Microsoft.App/environments` | Container Apps Environment 전용 |
+| Private Endpoint subnet | **/28** — 16개 주소 중 Azure 예약 5개 제외 11개 | 없음 | 여섯 PE의 보수적인 9개 IP 예산 |
+| Foundry 전용 subnet | **/27** | `Microsoft.App/environments` | 하나의 Foundry 계정 전용 |
+| Container Apps 전용 subnet | **/27** | `Microsoft.App/environments` | Container Apps Environment 전용 |
 
 Foundry와 Container Apps는 위임 이름이 같아도 **같은 서브넷을 공유할 수 없습니다**.
+Portal은 선택한 VNet의 실제 subnet 목록을 읽어 역할별 드롭다운으로 표시합니다. 고정된
+`PESubnet`·`FoundrySubnet`·`ContainerAppsSubnet` 이름은 요구하지 않습니다. CLI에서는
+`peSubnetName`, `foundrySubnetName`, `containerAppsSubnetName`으로 같은 매핑을 명시하며,
+세 이름은 대소문자를 무시하고 서로 달라야 합니다.
 Foundry의 `/24`는 운영 확장 권장값이며 여기서는 요청한 최소 `/27`을 사용합니다.
 입력 CIDR은 KT 네트워크 관리자가 승인해야 합니다. 예시의 `10.70.*`는 실제 KT 주소가 아닙니다.
 더 큰 기존 서브넷은 축소하지 않으며, 신규 서브넷에도 명시적으로 더 큰 CIDR을 줄 수 있습니다.
@@ -96,7 +100,7 @@ Cosmos 리전이나 storage 서비스 PE를 추가하면 예산을 다시 계산
 CLI는 매번 live inventory를 읽어 **없는 child subnet만** 생성하도록 플래그를 계산합니다.
 기존 subnet의 NSG, UDR, delegation, prefix, endpoint policy를 재배포하지 않습니다.
 맞지 않는 CIDR·위임, 다른 서비스가 점유한 전용 subnet, 주소 중첩, ACA 예약 주소는 중단 사유입니다.
-기존 `PESubnet`은 필요한 새 PE에 대해 실제 IP 가용성을 조회합니다. 최대 256개 후보만 확인하며
+선택한 Private Endpoint subnet은 필요한 새 PE에 대해 실제 IP 가용성을 조회합니다. 최대 256개 후보만 확인하며
 충분한 주소를 확인하지 못하면 추측해서 진행하지 않습니다. 기존 PE는 대상·subnet·승인을 검사합니다.
 
 **네트워크 변경 창을 독점해서 사용하십시오.** 사전 조회와 ARM 쓰기는 원자적 연산이 아니므로,
@@ -144,15 +148,16 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
 | 화면 | 제공 기능 |
 |---|---|
 | 기본 사항 | 배포 구독·RG·지역 선택, 프라이빗 bootstrap 범위 안내 |
-| 기존 네트워크 | 같은 구독·지역의 기존 VNet 선택. 세 개의 고정 이름 subnet을 ARM GET으로 읽고 CIDR·위임 확인 |
+| 기존 네트워크 | 같은 구독·지역의 기존 VNet 선택. 이름과 무관하게 역할별 기존 subnet을 선택하고 ARM GET으로 CIDR·위임 확인 |
 | 리소스 이름 | 여덟 기본 이름 편집, Azure 문자·길이 검사, Storage 분리 및 여섯 PE 대상 이름 충돌 차단 |
 | 비용·DNS·로그 | Search Basic/S1 선택, DNS zone 생성 또는 중앙 RG의 일곱 zone 재사용, 기존 Log Analytics 선택 연결 |
 | 단계·필수 확인 | 선택 요약, 기반/완료 단계 선택, 사전검사·소유권·비용·bootstrap 범위 동의 |
 
-VNet을 새로 만드는 옵션은 없습니다. 조회된 subnet 주소 필드는 표시·검증용이며 배포 출력에
-전달되지 않습니다. 조회 실패·없는 subnet·너무 작은 CIDR·다른 위임은 진행 조건을 충족하지
-못합니다. `createPESubnet`, `createFoundrySubnet`, `createContainerAppsSubnet`은 항상 `false`를
-전달하므로 **Portal에서는 준비된 서브넷만 재사용**합니다. 새 subnet이 필요하면 CLI를 사용합니다.
+VNet을 새로 만드는 옵션은 없습니다. 선택한 subnet 이름은 배포 매개변수로 전달되며 조회된
+주소 필드는 표시·검증용입니다. 조회 실패·없는 subnet·너무 작은 CIDR·다른 위임은 진행 조건을
+충족하지 못합니다. `createPESubnet`, `createFoundrySubnet`, `createContainerAppsSubnet`은 항상
+`false`를 전달하므로 **Portal에서는 준비된 서브넷만 재사용**합니다. 새 subnet이 필요하면
+CLI에서 같은 역할별 이름과 CIDR을 명시합니다.
 공식 `VirtualNetworkCombo`는 기존 VNet 안의 subnet 생성을 지원하지 않고 새 VNet도 제안하므로,
 이 UI는 existing-resource selector와 read-only API control을 사용합니다.
 

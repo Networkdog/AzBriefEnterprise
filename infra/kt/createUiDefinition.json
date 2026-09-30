@@ -40,7 +40,7 @@
             "type": "Microsoft.Common.InfoBox",
             "options": {
               "icon": "Warning",
-              "text": "새 VNet이나 서브넷은 만들지 않습니다. PESubnet(/28 이상), FoundrySubnet(/27 이상), ContainerAppsSubnet(/27 이상)을 먼저 준비하십시오. 이 화면은 ARM의 주소·위임을 읽지만 IP 여유·점유자·DNS·NSG·UDR·권한 검증을 대신하지 않습니다. 서브넷이 없으면 CLI 사전검사·생성 절차를 사용하십시오."
+              "text": "새 VNet이나 서브넷은 만들지 않습니다. 이름과 관계없이 Private Endpoint용(/28 이상), Foundry 전용(/27 이상), Container Apps 전용(/27 이상) 서브넷을 선택하십시오. 이 화면은 ARM의 주소·위임을 읽지만 IP 여유·점유자·DNS·NSG·UDR·권한 검증을 대신하지 않습니다. 서브넷이 없으면 CLI 사전검사·생성 절차를 사용하십시오."
             }
           },
           {
@@ -53,33 +53,37 @@
             }
           },
           {
+            "name": "virtualNetworkApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]"
+            }
+          },
+          {
+            "name": "peSubnetName",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Private Endpoint subnet",
+            "placeholder": "위임이 없는 기존 subnet을 선택하십시오.",
+            "filter": true,
+            "toolTip": "서브넷 이름은 제한하지 않습니다. 선택한 VNet에서 서비스 위임이 없는 subnet만 표시합니다.",
+            "constraints": {
+              "allowedValues": "[map(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => equals(length(coalesce(s.properties.delegations, parse('[]'))), 0)), (s) => parse(concat('{\"label\":\"', s.name, '\",\"value\":\"', s.name, '\"}')))]",
+              "required": true
+            }
+          },
+          {
             "name": "peSubnetApi",
             "type": "Microsoft.Solutions.ArmApiControl",
             "request": {
               "method": "GET",
-              "path": "[concat(steps('network').virtualNetwork.id, '/subnets/PESubnet?api-version=2024-05-01')]"
-            }
-          },
-          {
-            "name": "foundrySubnetApi",
-            "type": "Microsoft.Solutions.ArmApiControl",
-            "request": {
-              "method": "GET",
-              "path": "[concat(steps('network').virtualNetwork.id, '/subnets/FoundrySubnet?api-version=2024-05-01')]"
-            }
-          },
-          {
-            "name": "containerAppsSubnetApi",
-            "type": "Microsoft.Solutions.ArmApiControl",
-            "request": {
-              "method": "GET",
-              "path": "[concat(steps('network').virtualNetwork.id, '/subnets/ContainerAppsSubnet?api-version=2024-05-01')]"
+              "path": "[concat(steps('network').virtualNetwork.id, '/subnets/', steps('network').peSubnetName, '?api-version=2024-05-01')]"
             }
           },
           {
             "name": "pePrefix",
             "type": "Microsoft.Common.TextBox",
-            "label": "PESubnet 주소 — ARM 조회값",
+            "label": "Private Endpoint subnet 주소 — ARM 조회값",
             "defaultValue": "[coalesce(steps('network').peSubnetApi.properties.addressPrefix, if(empty(steps('network').peSubnetApi.properties.addressPrefixes), '', first(steps('network').peSubnetApi.properties.addressPrefixes)), '')]",
             "toolTip": "자동 조회된 CIDR을 유지하십시오. 비어 있으면 해당 서브넷이 없거나 조회 권한이 없습니다. 여기서 값을 입력해도 서브넷이 생성되거나 변경되지 않습니다.",
             "constraints": {
@@ -91,11 +95,11 @@
                 },
                 {
                   "isValid": "[equals(steps('network').pePrefix, coalesce(steps('network').peSubnetApi.properties.addressPrefix, if(empty(steps('network').peSubnetApi.properties.addressPrefixes), '', first(steps('network').peSubnetApi.properties.addressPrefixes)), ''))]",
-                  "message": "선택한 VNet의 실제 PESubnet 조회값을 사용하십시오."
+                  "message": "선택한 Private Endpoint subnet의 실제 ARM 조회값을 사용하십시오."
                 },
                 {
                   "isValid": "[equals(length(coalesce(steps('network').peSubnetApi.properties.delegations, parse('[]'))), 0)]",
-                  "message": "PESubnet에는 서비스 위임이 없어야 합니다."
+                  "message": "Private Endpoint subnet에는 서비스 위임이 없어야 합니다."
                 },
                 {
                   "isValid": "[lessOrEquals(length(coalesce(steps('network').peSubnetApi.properties.addressPrefixes, parse('[]'))), 1)]",
@@ -105,9 +109,29 @@
             }
           },
           {
+            "name": "foundrySubnetName",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Foundry 전용 subnet",
+            "placeholder": "Microsoft.App/environments 위임 subnet을 선택하십시오.",
+            "filter": true,
+            "toolTip": "서브넷 이름은 제한하지 않습니다. Foundry 계정 하나가 독점 사용할 기존 subnet을 선택하십시오.",
+            "constraints": {
+              "allowedValues": "[map(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => and(equals(length(coalesce(s.properties.delegations, parse('[]'))), 1), equals(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments'))), 1))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"value\":\"', s.name, '\"}')))]",
+              "required": true
+            }
+          },
+          {
+            "name": "foundrySubnetApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat(steps('network').virtualNetwork.id, '/subnets/', steps('network').foundrySubnetName, '?api-version=2024-05-01')]"
+            }
+          },
+          {
             "name": "foundryPrefix",
             "type": "Microsoft.Common.TextBox",
-            "label": "FoundrySubnet 주소 — ARM 조회값",
+            "label": "Foundry 전용 subnet 주소 — ARM 조회값",
             "defaultValue": "[coalesce(steps('network').foundrySubnetApi.properties.addressPrefix, if(empty(steps('network').foundrySubnetApi.properties.addressPrefixes), '', first(steps('network').foundrySubnetApi.properties.addressPrefixes)), '')]",
             "toolTip": "Foundry 계정 하나만 사용하는 전용 서브넷입니다. Container Apps와 공유하지 마십시오.",
             "constraints": {
@@ -119,11 +143,11 @@
                 },
                 {
                   "isValid": "[equals(steps('network').foundryPrefix, coalesce(steps('network').foundrySubnetApi.properties.addressPrefix, if(empty(steps('network').foundrySubnetApi.properties.addressPrefixes), '', first(steps('network').foundrySubnetApi.properties.addressPrefixes)), ''))]",
-                  "message": "선택한 VNet의 실제 FoundrySubnet 조회값을 사용하십시오."
+                  "message": "선택한 Foundry 전용 subnet의 실제 ARM 조회값을 사용하십시오."
                 },
                 {
                   "isValid": "[and(equals(length(coalesce(steps('network').foundrySubnetApi.properties.delegations, parse('[]'))), 1), equals(length(filter(coalesce(steps('network').foundrySubnetApi.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments'))), 1))]",
-                  "message": "FoundrySubnet을 Microsoft.App/environments에 위임해야 합니다."
+                  "message": "Foundry 전용 subnet을 Microsoft.App/environments에 위임해야 합니다."
                 },
                 {
                   "isValid": "[lessOrEquals(length(coalesce(steps('network').foundrySubnetApi.properties.addressPrefixes, parse('[]'))), 1)]",
@@ -133,9 +157,29 @@
             }
           },
           {
+            "name": "containerAppsSubnetName",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Container Apps 전용 subnet",
+            "placeholder": "Foundry와 다른 Microsoft.App/environments 위임 subnet을 선택하십시오.",
+            "filter": true,
+            "toolTip": "서브넷 이름은 제한하지 않습니다. Foundry 전용 subnet과 공유할 수 없습니다.",
+            "constraints": {
+              "allowedValues": "[map(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => and(not(equals(s.name, steps('network').foundrySubnetName)), and(equals(length(coalesce(s.properties.delegations, parse('[]'))), 1), equals(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments'))), 1)))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"value\":\"', s.name, '\"}')))]",
+              "required": true
+            }
+          },
+          {
+            "name": "containerAppsSubnetApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat(steps('network').virtualNetwork.id, '/subnets/', steps('network').containerAppsSubnetName, '?api-version=2024-05-01')]"
+            }
+          },
+          {
             "name": "containerAppsPrefix",
             "type": "Microsoft.Common.TextBox",
-            "label": "ContainerAppsSubnet 주소 — ARM 조회값",
+            "label": "Container Apps 전용 subnet 주소 — ARM 조회값",
             "defaultValue": "[coalesce(steps('network').containerAppsSubnetApi.properties.addressPrefix, if(empty(steps('network').containerAppsSubnetApi.properties.addressPrefixes), '', first(steps('network').containerAppsSubnetApi.properties.addressPrefixes)), '')]",
             "toolTip": "Container Apps Environment 전용입니다. 현재 조회한 주소를 유지하십시오.",
             "constraints": {
@@ -147,11 +191,11 @@
                 },
                 {
                   "isValid": "[equals(steps('network').containerAppsPrefix, coalesce(steps('network').containerAppsSubnetApi.properties.addressPrefix, if(empty(steps('network').containerAppsSubnetApi.properties.addressPrefixes), '', first(steps('network').containerAppsSubnetApi.properties.addressPrefixes)), ''))]",
-                  "message": "선택한 VNet의 실제 ContainerAppsSubnet 조회값을 사용하십시오."
+                  "message": "선택한 Container Apps 전용 subnet의 실제 ARM 조회값을 사용하십시오."
                 },
                 {
                   "isValid": "[and(equals(length(coalesce(steps('network').containerAppsSubnetApi.properties.delegations, parse('[]'))), 1), equals(length(filter(coalesce(steps('network').containerAppsSubnetApi.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments'))), 1))]",
-                  "message": "ContainerAppsSubnet을 Microsoft.App/environments에 위임해야 합니다."
+                  "message": "Container Apps 전용 subnet을 Microsoft.App/environments에 위임해야 합니다."
                 },
                 {
                   "isValid": "[lessOrEquals(length(coalesce(steps('network').containerAppsSubnetApi.properties.addressPrefixes, parse('[]'))), 1)]",
@@ -364,7 +408,7 @@
             "type": "Microsoft.Common.InfoBox",
             "options": {
               "icon": "Info",
-              "text": "[concat('VNet: ', coalesce(steps('network').virtualNetwork.name, ''), ' | 지역: ', coalesce(steps('network').virtualNetwork.location, ''), ' | Foundry: ', steps('names').foundryAccountName, ' | App: ', steps('names').containerAppName, ' | Search: ', steps('options').searchSku)]"
+              "text": "[concat('VNet: ', coalesce(steps('network').virtualNetwork.name, ''), ' | PE subnet: ', steps('network').peSubnetName, ' | Foundry subnet: ', steps('network').foundrySubnetName, ' | ACA subnet: ', steps('network').containerAppsSubnetName, ' | 지역: ', coalesce(steps('network').virtualNetwork.location, ''), ' | Foundry: ', steps('names').foundryAccountName, ' | App: ', steps('names').containerAppName, ' | Search: ', steps('options').searchSku)]"
             }
           },
           {
@@ -413,6 +457,9 @@
       "location": "[steps('network').virtualNetwork.location]",
       "virtualNetworkResourceGroupName": "[first(skip(split(steps('network').virtualNetwork.id, '/'), 4))]",
       "virtualNetworkName": "[steps('network').virtualNetwork.name]",
+      "peSubnetName": "[steps('network').peSubnetName]",
+      "foundrySubnetName": "[steps('network').foundrySubnetName]",
+      "containerAppsSubnetName": "[steps('network').containerAppsSubnetName]",
       "foundryAccountName": "[steps('names').foundryAccountName]",
       "agentStorageAccountName": "[steps('names').agentStorageAccountName]",
       "stateStorageAccountName": "[steps('names').stateStorageAccountName]",

@@ -280,8 +280,10 @@ AzBriefEnterprise/
 ## Deployment Topology
 
 KT's separate `infra/kt` ARM/UI pair uses editable profile naming defaults (not a verified
-corporate naming standard), existing-VNet selection and read-only subnet checks. The UI always
-reuses prepared subnets and defaults to foundation-only provisioning. Keep the README button
+corporate naming standard), existing-VNet selection and role-based read-only subnet checks.
+Subnet names are operator-selected and never fixed; the private-endpoint subnet has no delegation,
+while distinct Foundry and Container Apps subnets require `Microsoft.App/environments`. The UI
+always reuses prepared subnets and defaults to foundation-only provisioning. Keep the README button
 paired with that UI and retain the CLI/preflight and explicit completion-stage caveats in its guide.
 When no existing Log Analytics workspace is selected, pass `null` for the managed-environment
 `appLogsConfiguration`; AVM 0.16.0 accepts only the `azure-monitor` and `log-analytics`
