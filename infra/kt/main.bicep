@@ -10,21 +10,21 @@ param virtualNetworkResourceGroupName string
 param virtualNetworkName string
 
 @description('Globally unique name for a NEW network-injected Foundry account.')
-param foundryAccountName string
+param foundryAccountName string = 'ai-azbrief-kt'
 
 @description('Globally unique name for the Foundry agent backing StorageV2 account.')
 @maxLength(24)
-param agentStorageAccountName string
+param agentStorageAccountName string = 'stazbriefktagent'
 
 @description('Separate StorageV2 account for AzBrief state/archive; never shared with project identity.')
 @maxLength(24)
-param stateStorageAccountName string
+param stateStorageAccountName string = 'stazbriefktstate'
 
 @description('Globally unique name for the single-region Cosmos DB for NoSQL account.')
-param cosmosAccountName string
+param cosmosAccountName string = 'cosmos-azbrief-kt'
 
 @description('Globally unique name for Azure AI Search.')
-param searchServiceName string
+param searchServiceName string = 'srch-azbrief-kt'
 
 param projectName string = 'azbrief-kt'
 param containerAppsEnvironmentName string = 'cae-azbrief-kt'
@@ -39,7 +39,7 @@ param foundrySubnetAddressPrefix string = ''
 @description('Used ONLY for a missing ContainerAppsSubnet. Workload-profile minimum is /27.')
 param containerAppsSubnetAddressPrefix string = ''
 
-@description('Derived by scripts/deploy_kt.ps1 after inventory. Do not set these flags manually.')
+@description('Derived by scripts/deploy_kt.py after inventory. The Portal form reuses prepared subnets.')
 param createPESubnet bool = false
 param createFoundrySubnet bool = false
 param createContainerAppsSubnet bool = false

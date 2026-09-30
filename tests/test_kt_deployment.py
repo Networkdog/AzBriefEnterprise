@@ -2,7 +2,9 @@
 
 import copy
 import json
+import re
 import subprocess
+from itertools import combinations
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,16 @@ SUBSCRIPTION = "11111111-1111-1111-1111-111111111111"
 TENANT = "22222222-2222-2222-2222-222222222222"
 GROUP = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-kt-test"
 VNET = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-network/providers/Microsoft.Network/virtualNetworks/vnet-kt"
+RESOURCE_NAME_DEFAULTS = {
+    "foundryAccountName": "ai-azbrief-kt",
+    "agentStorageAccountName": "stazbriefktagent",
+    "stateStorageAccountName": "stazbriefktstate",
+    "cosmosAccountName": "cosmos-azbrief-kt",
+    "searchServiceName": "srch-azbrief-kt",
+    "projectName": "azbrief-kt",
+    "containerAppsEnvironmentName": "cae-azbrief-kt",
+    "containerAppName": "ca-azbrief-kt",
+}
 
 
 @pytest.fixture(scope="module")
@@ -86,6 +98,254 @@ def _params(template: dict, module: str) -> dict:
         key: value["value"] if isinstance(value, dict) else value
         for key, value in template["resources"][module]["properties"]["parameters"].items()
     }
+
+
+@pytest.mark.parametrize(("parameter", "expected"), RESOURCE_NAME_DEFAULTS.items())
+def test_new_resource_names_have_editable_literal_defaults(
+    template: dict, parameter: str, expected: str
+):
+    definition = template["parameters"][parameter]
+    assert definition["defaultValue"] == expected
+    assert "allowedValues" not in definition
+    if "StorageAccount" in parameter:
+        assert re.fullmatch(r"[a-z0-9]{3,24}", expected)
+    else:
+        assert re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", expected)
+        assert 3 <= len(expected) <= 32
+
+
+def test_only_existing_network_name_parameters_remain_required(template: dict):
+    for parameter in ("location", "virtualNetworkResourceGroupName", "virtualNetworkName"):
+        assert "defaultValue" not in template["parameters"][parameter]
+    new_name_parameters = {
+        key
+        for key in template["parameters"]
+        if key.endswith("Name") and not key.startswith("virtualNetwork")
+    }
+    assert new_name_parameters == set(RESOURCE_NAME_DEFAULTS)
+
+
+def test_cli_resolves_prefilled_names_from_only_explicit_network_inputs(
+    tmp_path: Path, values: dict
+):
+    parameters = {
+        key: {"value": values[key]}
+        for key in ("location", "virtualNetworkResourceGroupName", "virtualNetworkName")
+    }
+    path = tmp_path / "parameters.json"
+    path.write_text(json.dumps({"parameters": parameters}), encoding="utf-8")
+    loaded = kt.load_parameters(path)
+    assert {key: loaded[key] for key in RESOURCE_NAME_DEFAULTS} == RESOURCE_NAME_DEFAULTS
+    for key in parameters:
+        assert loaded[key] == values[key]
+    assert [spec["name"] for spec in kt.endpoint_specs(loaded, GROUP)] == [
+        "pe-ai-azbrief-kt",
+        "pe-stazbriefktagent",
+        "pe-stazbriefktstate",
+        "pe-cosmos-azbrief-kt",
+        "pe-srch-azbrief-kt",
+        "pe-cae-azbrief-kt",
+    ]
+
+
+def test_cli_keeps_explicit_name_overrides(tmp_path: Path, values: dict):
+    supplied = {
+        key: {"value": value} for key, value in values.items() if key not in kt.INTERNAL_PARAMETERS
+    }
+    for key, default in RESOURCE_NAME_DEFAULTS.items():
+        supplied[key] = {"value": default + "01"}
+    path = tmp_path / "parameters.json"
+    path.write_text(json.dumps({"parameters": supplied}), encoding="utf-8")
+    loaded = kt.load_parameters(path)
+    assert {key: loaded[key] for key in RESOURCE_NAME_DEFAULTS} == {
+        key: default + "01" for key, default in RESOURCE_NAME_DEFAULTS.items()
+    }
+
+
+def test_example_prefills_the_same_resource_names():
+    example = json.loads(
+        (kt.TEMPLATE.parent / "main.parameters.example.json").read_text(encoding="utf-8")
+    )["parameters"]
+    assert {key: example[key]["value"] for key in RESOURCE_NAME_DEFAULTS} == RESOURCE_NAME_DEFAULTS
+    assert example["virtualNetworkName"]["value"] == "<existing-vnet-name>"
+
+
+@pytest.fixture(scope="module")
+def wizard() -> dict:
+    return json.loads((kt.TEMPLATE.parent / "createUiDefinition.json").read_text(encoding="utf-8"))[
+        "parameters"
+    ]
+
+
+def _ui_controls(wizard: dict, step: str) -> dict[str, dict]:
+    return {
+        control["name"]: control
+        for section in wizard["steps"]
+        if section["name"] == step
+        for control in section["elements"]
+    }
+
+
+def _ui_regex(control: dict) -> str:
+    constraints = control["constraints"]
+    return constraints.get("regex") or next(
+        rule["regex"] for rule in constraints["validations"] if "regex" in rule
+    )
+
+
+def test_kt_wizard_has_distinct_steps_and_matching_outputs(wizard: dict, template: dict):
+    assert [step["name"] for step in wizard["steps"]] == ["network", "names", "options", "review"]
+    outputs = wizard["outputs"]
+    assert set(outputs) <= set(template["parameters"])
+    required = {name for name, spec in template["parameters"].items() if "defaultValue" not in spec}
+    assert required <= set(outputs)
+    assert outputs["location"] == "[steps('network').virtualNetwork.location]"
+    assert outputs["virtualNetworkName"] == "[steps('network').virtualNetwork.name]"
+    assert outputs["virtualNetworkResourceGroupName"] == (
+        "[first(skip(split(steps('network').virtualNetwork.id, '/'), 4))]"
+    )
+    for parameter in RESOURCE_NAME_DEFAULTS:
+        assert outputs[parameter] == f"[steps('names').{parameter}]"
+    assert "bootstrapImage" not in outputs
+    assert not any("secret" in key.lower() for key in outputs)
+
+
+def test_wizard_only_selects_existing_same_region_network_and_reads_subnets(wizard: dict):
+    controls = _ui_controls(wizard, "network")
+    selector = controls["virtualNetwork"]
+    assert selector["type"] == "Microsoft.Solutions.ResourceSelector"
+    assert selector["resourceType"] == "Microsoft.Network/virtualNetworks"
+    assert selector["options"]["filter"] == {"subscription": "onBasics", "location": "onBasics"}
+    assert "defaultValue" not in selector
+    for api, field, subnet, flag in (
+        ("peSubnetApi", "pePrefix", "PESubnet", "createPESubnet"),
+        ("foundrySubnetApi", "foundryPrefix", "FoundrySubnet", "createFoundrySubnet"),
+        (
+            "containerAppsSubnetApi",
+            "containerAppsPrefix",
+            "ContainerAppsSubnet",
+            "createContainerAppsSubnet",
+        ),
+    ):
+        assert controls[api]["type"] == "Microsoft.Solutions.ArmApiControl"
+        assert controls[api]["request"] == {
+            "method": "GET",
+            "path": (
+                "[concat(steps('network').virtualNetwork.id, "
+                f"'/subnets/{subnet}?api-version=2024-05-01')]"
+            ),
+        }
+        assert controls[field]["constraints"]["required"] is True
+        rules = controls[field]["constraints"]["validations"]
+        assert any(
+            rule.get("isValid", "").startswith(f"[equals(steps('network').{field},")
+            and f"{api}.properties.addressPrefix" in rule["isValid"]
+            for rule in rules
+        )
+        assert any("delegations" in rule.get("isValid", "") for rule in rules)
+        assert wizard["outputs"][flag] is False
+    serialized = json.dumps(wizard)
+    assert "Microsoft.Network.VirtualNetworkCombo" not in serialized
+    assert "Microsoft.Common.PasswordBox" not in serialized
+
+
+@pytest.mark.parametrize(
+    ("field", "prefix", "valid"),
+    [
+        ("pePrefix", "10.70.0.0/28", True),
+        ("pePrefix", "10.70.0.0/29", False),
+        ("foundryPrefix", "10.70.0.32/27", True),
+        ("foundryPrefix", "10.70.0.32/28", False),
+        ("foundryPrefix", "172.16.0.0/12", True),
+        ("foundryPrefix", "172.16.0.0/11", False),
+        ("containerAppsPrefix", "192.168.0.0/24", True),
+        ("containerAppsPrefix", "10.70.0.64/28", False),
+        ("containerAppsPrefix", "172.30.0.0/16", False),
+        ("containerAppsPrefix", "172.31.0.0/16", False),
+        ("containerAppsPrefix", "172.16.0.0/12", False),
+        ("containerAppsPrefix", "172.24.0.0/13", False),
+        ("containerAppsPrefix", "172.28.0.0/14", False),
+        ("containerAppsPrefix", "172.16.0.0/13", True),
+        ("containerAppsPrefix", "172.24.0.0/14", True),
+        ("containerAppsPrefix", "172.28.0.0/15", True),
+        ("containerAppsPrefix", "8.8.8.0/24", False),
+        ("containerAppsPrefix", "fd00::/64", False),
+        ("containerAppsPrefix", "", False),
+    ],
+)
+def test_wizard_subnet_regex_limits(wizard: dict, field: str, prefix: str, valid: bool):
+    assert bool(re.fullmatch(_ui_regex(_ui_controls(wizard, "network")[field]), prefix)) is valid
+
+
+def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, template: dict):
+    controls = _ui_controls(wizard, "names")
+    for name, expected in RESOURCE_NAME_DEFAULTS.items():
+        control = controls[name]
+        assert control["type"] == "Microsoft.Common.TextBox"
+        assert control["defaultValue"] == template["parameters"][name]["defaultValue"] == expected
+        assert control["constraints"]["required"] is True
+        assert re.fullmatch(_ui_regex(control), expected)
+        assert re.fullmatch(_ui_regex(control), expected + "01")
+        assert not re.fullmatch(_ui_regex(control), "bad name!")
+    assert not re.fullmatch(_ui_regex(controls["agentStorageAccountName"]), "st-azbrief")
+    assert not re.fullmatch(_ui_regex(controls["containerAppName"]), "ca--bad")
+    uniqueness = controls["containerAppsEnvironmentName"]["constraints"]["validations"][1][
+        "isValid"
+    ]
+    pairs = re.findall(r"equals\(steps\('names'\)\.(\w+), steps\('names'\)\.(\w+)\)", uniqueness)
+    expected_names = [
+        key for key in RESOURCE_NAME_DEFAULTS if key not in {"projectName", "containerAppName"}
+    ]
+    assert {frozenset(pair) for pair in pairs} == {
+        frozenset(pair) for pair in combinations(expected_names, 2)
+    }
+    assert uniqueness.startswith("[not(or(")
+
+
+def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
+    options = _ui_controls(wizard, "options")
+    review = _ui_controls(wizard, "review")
+    outputs = wizard["outputs"]
+    assert {v["value"] for v in options["searchSku"]["constraints"]["allowedValues"]} == {
+        "basic",
+        "standard",
+    }
+    assert review["deploymentStage"]["defaultValue"] == "1단계 — 기반·연결·권한만 배포"
+    assert (
+        outputs["deployCapabilityHost"] == "[equals(steps('review').deploymentStage, 'complete')]"
+    )
+    assert review["hostReady"]["visible"] == outputs["deployCapabilityHost"]
+    for name in ("hostReady", "networkReady", "ownershipReady", "scopeAccepted"):
+        assert review[name]["constraints"]["required"] is True
+    assert options["workspaceId"]["visible"] == "[steps('options').collectLogs]"
+    assert outputs["logAnalyticsWorkspaceResourceId"] == (
+        "[if(steps('options').collectLogs, steps('options').workspaceId, '')]"
+    )
+    dns = outputs["existingPrivateDnsZoneIds"]
+    for zone in (
+        "cognitiveservices.azure.com",
+        "openai.azure.com",
+        "services.ai.azure.com",
+        "blob.core.windows.net",
+        "documents.azure.com",
+        "search.windows.net",
+    ):
+        assert f'"privatelink.{zone}"' in dns
+        assert f"/providers/Microsoft.Network/privateDnsZones/privatelink.{zone}" in dns
+    assert ".azurecontainerapps.io" in dns
+    assert "steps('network').virtualNetwork.location" in dns
+    assert dns.startswith("[if(equals(steps('options').dnsMode, 'existing'), parse(concat(")
+    assert dns.endswith("parse('{}'))]")
+    assert outputs["searchSku"] == "[steps('options').searchSku]"
+
+
+def test_wizard_step_references_resolve_and_hidden_fields_do_not_escape(wizard: dict):
+    steps = {
+        step["name"]: {control["name"] for control in step["elements"]} for step in wizard["steps"]
+    }
+    for step, control in re.findall(r"steps\('(\w+)'\)\.(\w+)", json.dumps(wizard)):
+        assert step in steps and control in steps[step]
+    assert not {"pePrefix", "foundryPrefix", "containerAppsPrefix"} & set(wizard["outputs"])
 
 
 def test_compiled_template_has_no_vnet_or_insights_and_fits_arm_limit(template: dict):

@@ -92,25 +92,6 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 - **Model fallback**: After `MAX_CONSECUTIVE_OVERLOAD_ERRORS` (3) consecutive 529 errors, raise `ModelFallbackError` to trigger model switch. Cleanly separates retry exhaustion from model switching logic
 - **Stale connection detection**: Detect ECONNRESET/EPIPE for targeted recovery (disable keep-alive pooling + reconnect) instead of generic retry
 - **LLM-assisted tool repair**: On tool failure, the Resource Graph specialist repairs KQL and the coordinator repairs other tool arguments, with bounded retries and a circuit breaker. Never fall back across specialist roles; use meaning-preserving lexical repair or preserve a gap, never replace a failed question with a generic builder/count
-- **Learn transport recovery**: `FOUNDRY_COORDINATOR_LEARN_TRANSPORT=hosted` is an explicit
-  provisioning alternative to the default `managed_mcp`. It removes only the coordinator's
-  managed Learn MCP attachment and uses the existing allow-listed public-document tools through
-  `local_tool_calls`. Keep Learn-first evidence, the same Agent/model and all scope/URL/validation
-  guards. A managed discovery 504 may surface as 400 `tool_user_error` even with `tool_choice=none`;
-  do not broadly retry 400s or infer an Azure MCP permission problem. Publish the coordinator and
-  run `--check` with the same setting; never edit developer `.env` implicitly.
-- **Reviewer output integrity**: Persist Quality Reviewer JSON-object mode for evidence verdicts,
-  dimension scores and action reviews. Keep their distinct runtime schemas, rubrics and fail-closed
-  parsing; valid JSON is not a sufficient verdict. `--check` must reject missing output mode.
-  Foundry logprob normalization stays disabled, so no plain single-digit response is required.
-- **Public MCP discovery retry**: `foundry_backend.py` allows three retries after the initial
-  request for structured 400 `tool_user_error` discovery failures at the explicit public endpoint
-  allow-list (currently only HTTPS `learn.microsoft.com/api/mcp`), with upstream
-  408/429/500/502/503/504/529. Honor server retry hints or 10/20/40 seconds plus jitter within one
-  existing Agent timeout. Never retry auth/invalid requests, unknown or tenant MCP endpoints, or
-  replay native local-tool invocations. Cancellation stops retries; exhaustion propagates the
-  original failure without another sleep. Log trace/task and attempt metadata, not error bodies.
-  This is Hosted runtime policy; a control-plane deployment alone does not activate it.
 - **Multi-turn output recovery**: If LLM hits output token limit, inject meta-message ("Resume directly — no apology, no recap") and retry up to 3 times
 - **Error withholding**: Recoverable errors (prompt-too-long, max-output-tokens) are not surfaced to callers until recovery is attempted. Surface only if recovery fails
 - **Graceful degradation**: If Resource Graph, Azure MCP, or Azure API evidence fails, preserve an explicit `partial` gap and reduce confidence. Missing specialist evidence never becomes confirmed absence and never falls back to a general-purpose Prompt Agent
@@ -298,21 +279,10 @@ AzBriefEnterprise/
 
 ## Deployment Topology
 
-The customer-specific `infra/kt` profile is a separate private infrastructure bootstrap, not a
-replacement for the standard product template. It requires an existing VNet; only missing
-PESubnet (/28), FoundrySubnet (/27) and ContainerAppsSubnet (/27) child resources are created
-after `scripts/deploy_kt.py` live preflight. Preserve existing NSGs, routes, delegation and CIDRs;
-never redeploy the VNet/subnet collection or infer customer targets from developer `.env`.
-Use Consumption 0.25 vCPU/0.5 GiB and scale-to-zero only for the bootstrap App. Before actual
-in-process Manual Runs, use minReplicas >= 1 and validate memory. Foundry Standard Setup needs
-private Blob, Cosmos and Search plus project Capability Host; do not duplicate the automatically
-created injected-account host. Keep project storage isolated from canonical archive storage.
-KT creates no Application Insights; existing Log Analytics is optional. Its `ktFoundation`
-output is not `customerSetup`, and standard setup/MCP scripts require an explicit KT adaptation.
-Models, Agent versions, application auth/email and scheduler are a separate handoff, not silently
-completed by foundation success. Compile KT ARM with the pinned Bicep version and test its
-read-only/default, minimum-size, ownership, host-binding and create/reuse guards. Do not reapply
-bootstrap over a promoted application. Minimum allocations are not live capacity acceptance.
+KT's separate `infra/kt` ARM/UI pair uses editable profile naming defaults (not a verified
+corporate naming standard), existing-VNet selection and read-only subnet checks. The UI always
+reuses prepared subnets and defaults to foundation-only provisioning. Keep the README button
+paired with that UI and retain the CLI/preflight and explicit completion-stage caveats in its guide.
 
 New customer installations start from the paired README ARM/UI button
 (`infra/azbrief-enterprise-deploy.json` + `infra/createUiDefinition.json`) and follow
@@ -335,18 +305,6 @@ Bicep compiler to the version that generated the checked-in ARM, and test setup 
 The guided VNet profile must bind Foundry and the VNet to the same deployment region.
 Keep CI `contents: read` permissions at the workflow root, never inside an event. Include the CI
 file itself in both push/PR path filters and retain its deployment-contract regression assertions.
-
-Control-plane images may reside in a publisher/developer tenant. Keep
-`containerRegistryAuthMode=ManagedIdentity` as the same-tenant default; `Credentials` uses a
-customer-specific repository pull token stored in the customer Key Vault and referenced by both
-App and Job. Never enable the ACR administrator, grant customer Managed Identity across tenants,
-copy registry credentials into application settings/setup outputs, or switch the deployment
-tenant implicitly. Setup outputs carry only the mode and ordinary Key Vault base URI; validate
-the fixed secret path locally. Initial Application/Verify/EnableSchedule check both bindings.
-`deploy_dev.ps1 -PrebuiltImage` accepts an approved immutable digest without ACR lookup/build;
-preserve health, import-only Job smoke, unchanged authentication and rollback gates. Its local
-checkout fingerprint is not publisher-image provenance. Network access, fresh pulls and token
-rotation require separate customer acceptance. Do not change Hosted/Prompt Agent policy for this.
 
 Customer setup v3 binds one shared Container Apps environment, workload profile, Application
 Insights component and its Log Analytics workspace. New v3 outputs may additionally carry the
@@ -500,11 +458,7 @@ Native form validation and the in-flight submit lock remain. Failed requests ret
 successful storage resets the form and restores its original report reference. Status messages
 distinguish notification failure from failed storage, while receipt IDs remain in API responses.
 Use `python -m scripts.preview_web --port 8765` for loopback-only synthetic checks, never a live
-tenant for styling tests. Its Admin error-history fixture must use the real response schema,
-valid run IDs and bounded hour/run/limit filters, without opening a Log Analytics client.
-Customer-deployment test harnesses render PowerShell errors as UTF-8 plain-text NormalView so
-line wrapping/color cannot break guard assertions; preserve exit-code and no-mutation checks.
-`tests/browser/control_surfaces.cjs` is a standalone Playwright page
+tenant for styling tests. `tests/browser/control_surfaces.cjs` is a standalone Playwright page
 function covering workflows and 1440/768/390/320px layouts, but its Feedback section still targets
 retired controls and must be updated before claiming current browser coverage. Keep generated
 screenshots in `out/` and do not substitute Python renderer tests for browser interaction checks.

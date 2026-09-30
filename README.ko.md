@@ -19,10 +19,13 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md): 기반 배포 후 고객별 설정과 인수 검증을 진행합니다.
 
-[KT 전용 프라이빗 인프라](infra/kt/README.md): 기존 VNet에 Foundry Capability Host, 사설 backing
-storage와 최소 크기의 Consumption Container App을 배포하는 별도 bootstrap입니다.
-Application Insights 없이 `PESubnet` /28, Foundry·Container Apps 각각 /27을 사용합니다.
-일반 템플릿을 교체하거나 AzBrief 애플리케이션 설정까지 완료하는 템플릿은 아닙니다.
+**KT 전용 프라이빗 인프라 — 안내형 배포**
+
+[![Deploy KT to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2FcreateUiDefinition.json)
+
+[KT 설정 가이드](infra/kt/README.md): 기존 VNet 선택, 서브넷 조회·기본 이름 검토, DNS/로그·배포
+단계 선택을 제공합니다. 기본값은 기반만 배포하는 1단계이며, CLI 사전검사를 대체하거나
+애플리케이션 설정까지 자동 완료하지 않습니다.
 
 </div>
 
@@ -638,7 +641,7 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
 
 **먼저 [고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md)를 확인하십시오.** 버튼은 승인된 모델과 버전,
-고객 또는 개발자 소유 ACR, 이메일, Entra 접근을 입력하는 탭형 폼을 엽니다. VNet 격리를 유지하고 임시 공용
+기존 고객 ACR, 이메일, Entra 접근을 입력하는 탭형 폼을 엽니다. VNet 격리를 유지하고 임시 공용
 접근과 정기 실행은 끄며 Key Vault purge protection을 켭니다. 준비용 앱은 80 포트와 `/`로
 응답하지만 아직 AzBrief 서비스는 아닙니다. 초기 동시 분석 수는 1입니다. 후속 설정은 VNet에
 연결된 배포 호스트에서 수행하며 고객별 소스 폴더와 azd 환경을 개발 환경과 분리합니다.
@@ -695,20 +698,6 @@ Log Analytics에서 앱 이름으로 구분해 조회합니다. Application Insi
   Admin/MCP 제어면에 사용합니다. Hosted Agent는 배포 시 생성되는 별도 identity로 tenant
   evidence를 조회합니다. 구독 Reader와 서비스별 data-plane 역할은 **Hosted Agent identity**에
   부여해야 하며 template은 광범위한 권한을 자동으로 부여하지 않습니다.
-
-### 외부 테넌트 레지스트리
-
-제어면 이미지를 보관하는 ACR은 개발자 테넌트에 둘 수 있습니다. 같은 테넌트의 기존 방식은
-`containerRegistryAuthMode=ManagedIdentity`를 유지합니다. 외부 ACR은 `Credentials`를 선택하고
-개발자 ACR 로그인 서버, 고객별 저장소 읽기 전용 토큰 이름과 보안 비밀번호를 입력합니다.
-비밀번호는 고객사 Key Vault에 저장하고 App과 Job이 같은 비밀 참조를 사용합니다. 고객사 ID에
-다른 테넌트의 권한을 부여하거나 애플리케이션의 테넌트 설정을 바꾸지 않습니다.
-
-이후 업그레이드는 [scripts/deploy_dev.ps1](scripts/deploy_dev.ps1)의
-`-PrebuiltImage <registry>/azbrief-enterprise@sha256:<digest>`로 개발자 ACR 조회·빌드 없이
-수행할 수 있습니다. 상태 확인, Job 스모크 검사와 롤백은 유지합니다. 로컬 테스트가 개발자
-이미지의 출처를 증명하지는 않습니다. 토큰 범위·만료·회전, 네트워크와 실제 pull 검증은
-[외부 레지스트리 가이드](infra/CUSTOMER_DEPLOYMENT.md#external-tenant-registry)를 따르십시오.
 
 ### 네트워크 격리 (`networkIsolationMode`)
 
@@ -805,9 +794,8 @@ $customer = @{
   Billing hierarchy와 다른 데이터 평면 권한은 고객의 별도 승인이 필요합니다.
   `managedIdentityPrincipalId`는 Container Apps UAMI이며 Hosted identity가 아닙니다.
   `grantReaderCommand`는 이제 Hosted principal을 명시적으로 입력하도록 요구합니다.
-2. 같은 검토된 소스로 immutable ACR digest를 빌드하고 같은 테넌트의 App/Job identity에
-  RBAC/ABAC pull-only 역할을 부여하거나, Credentials 설정과 승인된 개발자 digest를 사용합니다.
-  해당 digest로 `Application` 단계를 실행하며 테넌트 간 ID 권한 부여는 필요하지 않습니다.
+2. 같은 검토된 소스로 immutable ACR digest를 빌드하고 App/Job identity에 올바른 RBAC/ABAC
+  pull-only 역할을 부여합니다. 해당 digest로 `Application` 단계를 실행합니다.
 3. 브라우저 화면을 활성화했다면 Entra Web 콜백을 추가하고 허용 사용자와 거부 사용자를 검증합니다.
 4. `Verify` 후 이메일을 끈 단건 분석에서 archive 저장을 확인하고, 명시적으로 승인된 테스트
   이메일을 한 번 보냅니다. 단순 `completed`가 아니라 개별 처리 카운터를 확인합니다.
@@ -872,7 +860,7 @@ FOUNDRY_QUALITY_REVIEWER_AGENT_NAME=azbrief-quality-reviewer
 
 | 전문가 | 실행 지점 | 책임과 도구 경계 |
 |---|---|---|
-| `coordinator` | Planning 및 범위가 제한된 task 수정 | 업데이트와 Microsoft Learn을 먼저 읽고 전문가 결과를 조정하며 최소 근거 계획을 만듭니다. 설정에 따라 관리형 Learn MCP 또는 Hosted 문서 도구와 선택적 Web Search를 사용하며 tenant 변경 도구는 받지 않습니다 |
+| `coordinator` | Planning 및 범위가 제한된 task 수정 | 업데이트와 Microsoft Learn을 먼저 읽고 전문가 결과를 조정하며 최소 근거 계획을 만듭니다. Learn MCP와 선택적 Web Search를 받지만 tenant 변경 도구는 받지 않습니다 |
 | `resource_graph` | 병렬 근거 수집 pass, 실행 중 KQL 복구 | 제한된 dialect의 Resource Graph KQL을 작성하고 schema 및 빈 filter를 탐색하며, query를 실행하고 반환된 property 값을 해석합니다. Resource Graph/schema/result-retrieval FunctionTool만 받습니다 |
 | `azure_mcp` | 병렬 근거 수집 pass | Entra 인증 읽기 전용 Azure MCP Server에서 resource group, Resource Health, Advisor를 사용합니다. 해당 managed MCP connection만 받으며 local ARM fallback은 없습니다 |
 | `azure_api` | 병렬 근거 수집 pass | Resource Graph 또는 Azure MCP에서 얻을 수 없는 사실을 위해 읽기 전용 ARM, Policy, Health, Advisor, Activity Log, Cost Management, Billing 도구를 사용합니다 |
@@ -918,34 +906,6 @@ alias만 참여하며 누락되거나 알 수 없는 설정으로 gate를 충족
 아닙니다. 실제 모델 ID, 승인된 버전, Responses·도구·strict JSON·추론 지원, 리전별 할당량과
 비용을 확인하고 같은 사례로 비교한 뒤 운영에 적용하십시오. 요청한 Terra/Luna 기본값이
 카탈로그 가용성이나 성능을 보장하지는 않습니다.
-
-`FOUNDRY_COORDINATOR_LEARN_TRANSPORT`는 프로비저닝 시 Coordinator의 문서 조회 경로를 정합니다.
-기본값 `managed_mcp`는 기존 Microsoft Learn MCP를 연결하며, `hosted`는 이미 구현된 Hosted
-문서 도구를 `local_tool_calls`로 실행합니다. Foundry의 관리형 MCP 도구 검색 중계 경로에 장애가
-있고 Microsoft Learn 직접 조회는 가능할 때 사용합니다. 같은 설정으로 `--roles coordinator`를
-게시하고 `--check`를 실행해야 합니다. 환경변수 변경이나 `tool_choice=none`만으로 저장된 MCP
-연결이 제거되지는 않습니다. 같은 Coordinator·모델, Learn 우선 근거 수집, 출처 URL, 범위와
-검증을 유지하며 Azure MCP 전문가를 끄거나 실패를 숨기거나 새 권한을 부여하지 않습니다.
-
-공용 MCP 도구 목록 조회에는 횟수가 제한된 런타임 재시도 정책을 적용합니다. 현재 허용 목록은
-`https://learn.microsoft.com/api/mcp`뿐입니다. 구조화된 HTTP 400 `tool_user_error`가 이 주소의
-도구 목록 조회 실패와 상위 서비스 상태 408, 429, 500, 502, 503, 504 또는 529를 명시하면
-최초 요청 후 최대 3회 재시도합니다(총 4회 시도). 서버의 재시도 대기시간 안내를 우선하며,
-없으면 10/20/40초에 지터를 더합니다. 전체 시도와 대기는 기존 Agent 호출 제한시간을 넘지
-않습니다. 인증 실패, 잘못된 요청, 다른 MCP 주소와 네이티브 로컬 도구 호출에는 이 재시도를
-적용하지 않습니다. 횟수를 소진하면 추가 대기 없이 원래 오류를 전달하며, 취소 시 재시도를
-중단합니다. 이 코드 정책은 Hosted Agent에 배포해야 하며, 제어 평면 이미지 갱신만으로는
-적용되지 않습니다.
-
-대량 실행에서는 분석 동시성이나 HTTP 요청 수뿐 아니라 모델 배포의 실제 분당 토큰 한도도
-확인해야 합니다. 근거 전문가와 품질 평가의 다섯 차원이 같은 모델 할당량을 공유합니다.
-품질·안전 검증은 유지하고 승인된 리전 할당량 안에서 기존 배포의 처리 용량을 조정하거나
-처리 속도를 제한하십시오. 한 건 성공으로 일괄 실행의 안정성을 판단하지 말고 이메일 없이
-전체 선택 범위를 검증해야 합니다.
-Quality Reviewer에는 근거 평가·차원별 점수·조치 검토 계약에 맞는 JSON 객체 출력을 설정합니다.
-자유 텍스트의 JSON 문법 오류 때문에 조사가 중단되는 경로를 막되, 런타임 필드·근거 검증과
-평가 기준은 그대로 유지합니다. JSON 모드 자체가 판단의 정확성을 보장하지는 않습니다.
-`--check`는 Reviewer가 일반 텍스트 출력으로 돌아간 경우 이를 구성 불일치로 처리합니다.
 
 다음 명령으로 roster를 만들거나 갱신합니다.
 
@@ -1120,8 +1080,6 @@ python -m scripts.preview_web --port 8765
 `http://127.0.0.1:8765/admin`, `/archive`, `/feedback`에서 확인합니다. 루프백 전용 **SYNTHETIC**
 미리보기는 이메일 합성 예제를 재사용하고 Archive v1을 검증합니다. 관리 변경은 메모리에만 반영하며,
 실분석은 차단하고 피드백 접수는 모의 응답으로 처리해 영구 저장하지 않습니다.
-Admin 오류 이력도 스키마를 검증한 합성 이벤트 3건과 유효한 Run ID를 사용합니다. 운영 API와
-같은 시간·실행·건수 제한 필터를 검증하되 Log Analytics는 조회하지 않습니다.
 [브라우저 검증](tests/browser/control_surfaces.cjs)은 탐색·요청 경합과 1440/768/390/320px
 레이아웃을 다루지만, Feedback 절은 제거된 언어 전환·접수증 컨트롤을 아직 전제로 합니다.
 현재 Feedback 화면의 검증 근거로 사용하기 전에 해당 assertion을 갱신해야 합니다. Python 단위
@@ -1223,8 +1181,7 @@ Prompt 예산보다 큰 도구 결과도 버리지 않습니다. 전체 텍스�
 | `FOUNDRY_CORE_MODEL_DEPLOYMENT` | 코어 프로비저닝 배포명. 비어 있으면 기본값 사용 | | `gpt-5-terra` |
 | `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT` | Azure MCP 프로비저닝 배포명. 비어 있으면 기본값 사용 | | `gpt-5-luna` |
 | `FOUNDRY_CORE_REASONING_EFFORT` | 코어 추론 수준: `low`, `medium`, `high` | | `medium` |
-| `FOUNDRY_COORDINATOR_LEARN_TRANSPORT` | Coordinator의 `managed_mcp` 또는 기존 `hosted` 공개 문서 도구 선택. 프로비저닝 설정 | | `managed_mcp` |
-| `FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED` | Coordinator의 Microsoft Learn 우선 출처 뒤에 Web Search 추가 | | `false` |
+| `FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED` | Coordinator의 기본 Microsoft Learn MCP 출처 뒤에 Web Search 추가 | | `false` |
 | `AZURE_MCP_SERVER_URL` | 읽기 전용 Azure MCP Container App의 HTTPS endpoint | Azure MCP specialist용 | — |
 | `AZURE_MCP_PROJECT_CONNECTION_NAME` | Azure MCP 인증에 사용하는 Foundry project connection | Azure MCP specialist용 | — |
 | `FOUNDRY_AGENT_TIMEOUT_S` | Agent별 제한 시간 | | `180` |

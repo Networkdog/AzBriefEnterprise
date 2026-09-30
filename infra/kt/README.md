@@ -1,7 +1,8 @@
 # KT 전용 프라이빗 인프라 템플릿
 
 [인프라 색인](../README.md) · [Bicep 원본](main.bicep) · [배포용 ARM](azuredeploy.json) ·
-[입력 예시](main.parameters.example.json) · [사전검사·배포 CLI](../../scripts/deploy_kt.py)
+[Portal UI](createUiDefinition.json) · [입력 예시](main.parameters.example.json) ·
+[사전검사·배포 CLI](../../scripts/deploy_kt.py)
 
 기존 VNet을 사용하는 **별도 인프라 초기 배포(bootstrap) 프로필**입니다.
 일반 Enterprise 템플릿, 개발 환경, 기존 VNet을 교체하지 않습니다.
@@ -44,6 +45,35 @@ Cosmos의 `enterprise_memory`에 Cosmos-native Data Contributor를 부여합니�
 제어면 UAMI는 **상태 storage Blob Data Contributor + 프로젝트 Foundry User**만 받습니다.
 프로젝트 ID가 canonical archive를 변경할 수 없도록 agent storage와 분리합니다.
 Hosted 전용 ID의 구독/테넌트 근거 조회 권한은 게시 후 별도 부여합니다.
+
+## 신규 리소스 기본 이름
+
+Portal ARM 입력 화면과 CLI는 다음 이름을 미리 채웁니다. 기존 KT 프로필의
+`<리소스약어>-azbrief-kt` 형식을 확장한 **수정 가능한 제안값**이며, KT 공식 명명 표준의
+서비스별 접두사·환경·리전 코드가 확인된 것은 아닙니다. 확인되지 않은 환경이나 리전 코드는
+추가하지 않았습니다. 실제 배포 전 KT의 승인된 명명 규칙에 맞게 검토하십시오.
+
+| 입력 | 기본값 |
+|---|---|
+| `foundryAccountName` | `ai-azbrief-kt` |
+| `agentStorageAccountName` | `stazbriefktagent` |
+| `stateStorageAccountName` | `stazbriefktstate` |
+| `cosmosAccountName` | `cosmos-azbrief-kt` |
+| `searchServiceName` | `srch-azbrief-kt` |
+| `projectName` | `azbrief-kt` |
+| `containerAppsEnvironmentName` | `cae-azbrief-kt` |
+| `containerAppName` | `ca-azbrief-kt` |
+
+Storage는 Azure 이름 제약에 따라 하이픈 없이 소문자·숫자만 사용합니다. 기존 project/App/
+Environment 기본값은 유지하며, Private Endpoint는 `pe-<대상 리소스 이름>`, 제어면 ID는
+`id-<Container App 이름>`으로 계속 파생합니다. 서비스가 정하는 DNS zone, Capability Host 및
+컨테이너 이름이나 명시된 subnet 이름은 바꾸지 않습니다.
+
+**기존 `virtualNetworkName`은 기본값 없이 직접 입력**합니다. 해당 VNet의 resource group과
+location도 실제 값이 필요합니다. 기본 이름은 전역 가용성을 보장하거나 예약하지 않으므로
+Foundry의 custom subdomain, Storage, Cosmos DB, Search 이름이 이미 사용 중이면 승인된 다른
+이름으로 입력하십시오. Portal의 이름 필드와 parameter JSON에서 모두 덮어쓸 수 있으며
+CLI도 명시한 이름을 그대로 사용합니다. 기존 배포에 재적용할 때는 원래 이름을 유지하십시오.
 
 ## 최소 서브넷과 기존 설정 보존
 
@@ -105,6 +135,42 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
 
 ## 사용 순서
 
+### Portal 버튼
+
+프로젝트 README의 KT 버튼은 GitHub `main` 브랜치의 [ARM](azuredeploy.json)과
+[전용 CreateUIDefinition](createUiDefinition.json)을 함께 엽니다. 두 파일을 같은 소스 버전으로
+게시하고 익명 접근이 가능하게 해야 합니다. 일반 Enterprise UI와 혼용하지 않습니다.
+
+| 화면 | 제공 기능 |
+|---|---|
+| 기본 사항 | 배포 구독·RG·지역 선택, 프라이빗 bootstrap 범위 안내 |
+| 기존 네트워크 | 같은 구독·지역의 기존 VNet 선택. 세 개의 고정 이름 subnet을 ARM GET으로 읽고 CIDR·위임 확인 |
+| 리소스 이름 | 여덟 기본 이름 편집, Azure 문자·길이 검사, Storage 분리 및 여섯 PE 대상 이름 충돌 차단 |
+| 비용·DNS·로그 | Search Basic/S1 선택, DNS zone 생성 또는 중앙 RG의 일곱 zone 재사용, 기존 Log Analytics 선택 연결 |
+| 단계·필수 확인 | 선택 요약, 기반/완료 단계 선택, 사전검사·소유권·비용·bootstrap 범위 동의 |
+
+VNet을 새로 만드는 옵션은 없습니다. 조회된 subnet 주소 필드는 표시·검증용이며 배포 출력에
+전달되지 않습니다. 조회 실패·없는 subnet·너무 작은 CIDR·다른 위임은 진행 조건을 충족하지
+못합니다. `createPESubnet`, `createFoundrySubnet`, `createContainerAppsSubnet`은 항상 `false`를
+전달하므로 **Portal에서는 준비된 서브넷만 재사용**합니다. 새 subnet이 필요하면 CLI를 사용합니다.
+공식 `VirtualNetworkCombo`는 기존 VNet 안의 subnet 생성을 지원하지 않고 새 VNet도 제안하므로,
+이 UI는 existing-resource selector와 read-only API control을 사용합니다.
+
+DNS 재사용 모드는 기존 중앙 DNS **리소스 그룹 ARM ID 하나**로 일곱 zone ID를 구성합니다.
+Foundry용 세 zone, blob/documents/search zone, 선택한 지역의 ACA zone이 그 RG에 모두 있어야
+하며 기존 VNet 링크·권한은 별도로 확인합니다. 일부 zone만 재사용하거나 여러 RG에 분산된
+구성은 CLI의 `existingPrivateDnsZoneIds` 개별 매핑을 사용하십시오. 로그 옵션은 기존 workspace만
+연결하며 Application Insights나 오류 커스텀 테이블을 만들지 않습니다.
+
+처음에는 기본 선택인 **1단계 — 기반·연결·권한만 배포**로 실행합니다
+(`deployCapabilityHost=false`). 성공 후 account Capability Host의 `Succeeded` 상태와 RBAC 전파를
+확인하고, **같은 RG·이름·네트워크·DNS 입력**으로 다시 열어 **2단계 — project Capability Host 구성**을
+선택합니다. UI는 두 배포를 자동 실행하거나 account host 준비를 기다리지 않습니다.
+단계를 자동 처리하고 점유자·실제 IP 여유·이름 소유권을 검사하려면 CLI를 사용하십시오.
+운영 이미지로 전환한 환경에 bootstrap을 다시 적용하지 마십시오.
+
+### CLI 사전검사와 배포
+
 필요 조건:
 
 1. **Azure public cloud**, 기존 VNet 및 대상 RG. VNet과 서비스의 subscription은 같아야 합니다.
@@ -116,7 +182,8 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
    Administrator. 기존 VNet과 중앙 DNS에 대해서도 필요한 join/link 권한을 별도로 확인합니다.
 5. Azure CLI와 이 저장소의 Python 가상 환경. 읽기·빌드 작업도 가상 환경을 활성화합니다.
 
-입력 예시를 Git 제외 폴더에 복사해 placeholder와 CIDR을 실제 승인값으로 바꿉니다.
+입력 예시를 Git 제외 폴더에 복사해 기존 네트워크 placeholder와 CIDR을 실제 승인값으로 바꿉니다.
+신규 리소스 이름은 위 기본값이 채워져 있으므로 KT 표준·전역 가용성을 확인한 뒤 필요하면 변경합니다.
 기존 subnet을 그대로 재사용한다면 해당 CIDR 값을 비워도 됩니다. 값이 있으면 기존 prefix와
 정확히 일치해야 합니다. 예시에는 실제 고객 ID, 비밀, 개발 환경 기본값이 없습니다.
 
@@ -206,6 +273,16 @@ Bicep **0.46.1**과 고정된 Azure Verified Modules를 사용합니다. compile
 않습니다. CI에서 다시 compile해 drift를 확인합니다. compile과 mock 테스트는 KT 구독의 정책,
 quota, RBAC 전파, Basic Search 호환성, 사설 DNS·실제 연결 성공을 증명하지 않습니다.
 
+UI 계약 테스트는 ARM 출력 매핑, 이름 기본값·정규식, 서브넷 최소값·예약 범위, 고정 재사용
+플래그와 단계별 확인을 검사합니다. 공개된 legacy CreateUIDefinition JSON Schema에는 문서화된
+`Microsoft.Solutions.ResourceSelector`와 `ArmApiControl` 형식이 아직 포함되어 있지 않습니다.
+기존 스키마가 지원하는 구조/일반 control 검증과 이 두 control의 Learn 계약 검증을 구분하며,
+전체 Portal 동작을 스키마 통과만으로 보장하지 않습니다.
+[공식 Sandbox](https://portal.azure.com/#blade/Microsoft_Azure_CreateUIDef/SandboxBlade)에서
+UI 파일을 붙여 넣어 Preview하고, VNet 변경·조회 거부·누락 subnet·두 배포 단계·DNS/로그 옵션을
+실제 고객 로그인으로 확인하십시오. 이번 로컬 작업에서는 Sandbox가 로그인 화면으로 이동하여
+렌더링 및 live ARM readback은 확인하지 못했습니다.
+
 - [Foundry agent networking 및 최소 subnet](https://learn.microsoft.com/azure/foundry/agents/how-to/virtual-networks)
 - [Capability Hosts](https://learn.microsoft.com/azure/foundry/agents/concepts/capability-hosts)
 - [Standard Agent Setup 및 BYO 서비스/RBAC](https://learn.microsoft.com/azure/foundry/agents/concepts/standard-agent-setup)
@@ -216,3 +293,6 @@ quota, RBAC 전파, Basic Search 호환성, 사설 DNS·실제 연결 성공을 
 - [Search Private Endpoint의 Basic 이상 조건](https://learn.microsoft.com/azure/search/service-create-private-endpoint)
 - [Cosmos Private Endpoint IP 수](https://learn.microsoft.com/azure/cosmos-db/how-to-configure-private-endpoints#fetch-the-private-ip-addresses)
 - [Azure Verified Modules 원본과 MIT 라이선스](https://github.com/Azure/bicep-registry-modules)
+- [기존 리소스 선택 control](https://learn.microsoft.com/azure/azure-resource-manager/managed-applications/microsoft-solutions-resourceselector)
+- [읽기 API control](https://learn.microsoft.com/azure/azure-resource-manager/managed-applications/microsoft-solutions-armapicontrol)
+- [Portal UI Sandbox 검증](https://learn.microsoft.com/azure/azure-resource-manager/managed-applications/test-createuidefinition)

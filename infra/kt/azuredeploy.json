@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "16941097032673307620"
+      "templateHash": "2777295987859680001"
     }
   },
   "parameters": {
@@ -30,12 +30,14 @@
     },
     "foundryAccountName": {
       "type": "string",
+      "defaultValue": "ai-azbrief-kt",
       "metadata": {
         "description": "Globally unique name for a NEW network-injected Foundry account."
       }
     },
     "agentStorageAccountName": {
       "type": "string",
+      "defaultValue": "stazbriefktagent",
       "maxLength": 24,
       "metadata": {
         "description": "Globally unique name for the Foundry agent backing StorageV2 account."
@@ -43,6 +45,7 @@
     },
     "stateStorageAccountName": {
       "type": "string",
+      "defaultValue": "stazbriefktstate",
       "maxLength": 24,
       "metadata": {
         "description": "Separate StorageV2 account for AzBrief state/archive; never shared with project identity."
@@ -50,12 +53,14 @@
     },
     "cosmosAccountName": {
       "type": "string",
+      "defaultValue": "cosmos-azbrief-kt",
       "metadata": {
         "description": "Globally unique name for the single-region Cosmos DB for NoSQL account."
       }
     },
     "searchServiceName": {
       "type": "string",
+      "defaultValue": "srch-azbrief-kt",
       "metadata": {
         "description": "Globally unique name for Azure AI Search."
       }
@@ -97,7 +102,7 @@
       "type": "bool",
       "defaultValue": false,
       "metadata": {
-        "description": "Derived by scripts/deploy_kt.ps1 after inventory. Do not set these flags manually."
+        "description": "Derived by scripts/deploy_kt.py after inventory. The Portal form reuses prepared subnets."
       }
     },
     "createFoundrySubnet": {

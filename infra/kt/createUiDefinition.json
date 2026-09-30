@@ -1,0 +1,433 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
+  "handler": "Microsoft.Azure.CreateUIDef",
+  "version": "0.1.2-preview",
+  "parameters": {
+    "config": {
+      "basics": {
+        "description": "KT 전용 프라이빗 AzBrief 인프라 초기 배포입니다. 기존 VNet과 준비된 서브넷을 재사용하고 Application Insights는 생성하지 않습니다. 실제 모델·Agent·인증·메일·스케줄 설정은 별도입니다.",
+        "location": {
+          "label": "기존 VNet과 같은 지역",
+          "toolTip": "다음 단계에서는 이 구독·지역에 있는 기존 VNet만 선택할 수 있습니다. Foundry Hosted/Standard Setup 지원과 고객 정책을 별도로 확인하십시오.",
+          "resourceTypes": [
+            "Microsoft.CognitiveServices/accounts",
+            "Microsoft.App/managedEnvironments",
+            "Microsoft.DocumentDB/databaseAccounts",
+            "Microsoft.Search/searchServices"
+          ]
+        }
+      }
+    },
+    "basics": [
+      {
+        "name": "scopeNotice",
+        "type": "Microsoft.Common.InfoBox",
+        "options": {
+          "icon": "Info",
+          "text": "전용 배포 리소스 그룹을 사용하십시오. Foundry·Storage·Cosmos DB·Search·Container Apps는 Private Endpoint로 연결됩니다. Container App은 0.25 vCPU / 0.5 GiB의 준비용 이미지이며 운영 애플리케이션이 아닙니다.",
+          "uri": "https://github.com/Networkdog/AzBriefEnterprise/blob/main/infra/kt/README.md"
+        }
+      }
+    ],
+    "steps": [
+      {
+        "name": "network",
+        "label": "기존 네트워크",
+        "bladeTitle": "준비된 VNet과 전용 서브넷 확인",
+        "elements": [
+          {
+            "name": "networkNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Warning",
+              "text": "새 VNet이나 서브넷은 만들지 않습니다. PESubnet(/28 이상), FoundrySubnet(/27 이상), ContainerAppsSubnet(/27 이상)을 먼저 준비하십시오. 이 화면은 ARM의 주소·위임을 읽지만 IP 여유·점유자·DNS·NSG·UDR·권한 검증을 대신하지 않습니다. 서브넷이 없으면 CLI 사전검사·생성 절차를 사용하십시오."
+            }
+          },
+          {
+            "name": "virtualNetwork",
+            "type": "Microsoft.Solutions.ResourceSelector",
+            "label": "기존 Virtual Network",
+            "resourceType": "Microsoft.Network/virtualNetworks",
+            "options": {
+              "filter": { "subscription": "onBasics", "location": "onBasics" }
+            }
+          },
+          {
+            "name": "peSubnetApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat(steps('network').virtualNetwork.id, '/subnets/PESubnet?api-version=2024-05-01')]"
+            }
+          },
+          {
+            "name": "foundrySubnetApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat(steps('network').virtualNetwork.id, '/subnets/FoundrySubnet?api-version=2024-05-01')]"
+            }
+          },
+          {
+            "name": "containerAppsSubnetApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat(steps('network').virtualNetwork.id, '/subnets/ContainerAppsSubnet?api-version=2024-05-01')]"
+            }
+          },
+          {
+            "name": "pePrefix",
+            "type": "Microsoft.Common.TextBox",
+            "label": "PESubnet 주소 — ARM 조회값",
+            "defaultValue": "[coalesce(steps('network').peSubnetApi.properties.addressPrefix, if(empty(steps('network').peSubnetApi.properties.addressPrefixes), '', first(steps('network').peSubnetApi.properties.addressPrefixes)), '')]",
+            "toolTip": "자동 조회된 CIDR을 유지하십시오. 비어 있으면 해당 서브넷이 없거나 조회 권한이 없습니다. 여기서 값을 입력해도 서브넷이 생성되거나 변경되지 않습니다.",
+            "constraints": {
+              "required": true,
+              "validations": [
+                {
+                  "regex": "^(?:10(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){3}/(?:[89]|1[0-9]|2[0-8])|172\\.(?:1[6-9]|2[0-9]|3[01])(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){2}/(?:1[2-9]|2[0-8])|192\\.168(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){2}/(?:1[6-9]|2[0-8]))$",
+                  "message": "RFC1918 IPv4 CIDR이며 /28 또는 더 큰 서브넷이어야 합니다."
+                },
+                {
+                  "isValid": "[equals(steps('network').pePrefix, coalesce(steps('network').peSubnetApi.properties.addressPrefix, if(empty(steps('network').peSubnetApi.properties.addressPrefixes), '', first(steps('network').peSubnetApi.properties.addressPrefixes)), ''))]",
+                  "message": "선택한 VNet의 실제 PESubnet 조회값을 사용하십시오."
+                },
+                {
+                  "isValid": "[equals(length(coalesce(steps('network').peSubnetApi.properties.delegations, parse('[]'))), 0)]",
+                  "message": "PESubnet에는 서비스 위임이 없어야 합니다."
+                },
+                {
+                  "isValid": "[lessOrEquals(length(coalesce(steps('network').peSubnetApi.properties.addressPrefixes, parse('[]'))), 1)]",
+                  "message": "이 배포 화면은 단일 IPv4 prefix 서브넷만 지원합니다."
+                }
+              ]
+            }
+          },
+          {
+            "name": "foundryPrefix",
+            "type": "Microsoft.Common.TextBox",
+            "label": "FoundrySubnet 주소 — ARM 조회값",
+            "defaultValue": "[coalesce(steps('network').foundrySubnetApi.properties.addressPrefix, if(empty(steps('network').foundrySubnetApi.properties.addressPrefixes), '', first(steps('network').foundrySubnetApi.properties.addressPrefixes)), '')]",
+            "toolTip": "Foundry 계정 하나만 사용하는 전용 서브넷입니다. Container Apps와 공유하지 마십시오.",
+            "constraints": {
+              "required": true,
+              "validations": [
+                {
+                  "regex": "^(?:10(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){3}/(?:[89]|1[0-9]|2[0-7])|172\\.(?:1[6-9]|2[0-9]|3[01])(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){2}/(?:1[2-9]|2[0-7])|192\\.168(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){2}/(?:1[6-9]|2[0-7]))$",
+                  "message": "RFC1918 IPv4 CIDR이며 /27 또는 더 큰 서브넷이어야 합니다."
+                },
+                {
+                  "isValid": "[equals(steps('network').foundryPrefix, coalesce(steps('network').foundrySubnetApi.properties.addressPrefix, if(empty(steps('network').foundrySubnetApi.properties.addressPrefixes), '', first(steps('network').foundrySubnetApi.properties.addressPrefixes)), ''))]",
+                  "message": "선택한 VNet의 실제 FoundrySubnet 조회값을 사용하십시오."
+                },
+                {
+                  "isValid": "[and(equals(length(coalesce(steps('network').foundrySubnetApi.properties.delegations, parse('[]'))), 1), equals(length(filter(coalesce(steps('network').foundrySubnetApi.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments'))), 1))]",
+                  "message": "FoundrySubnet을 Microsoft.App/environments에 위임해야 합니다."
+                },
+                {
+                  "isValid": "[lessOrEquals(length(coalesce(steps('network').foundrySubnetApi.properties.addressPrefixes, parse('[]'))), 1)]",
+                  "message": "이 배포 화면은 단일 IPv4 prefix 서브넷만 지원합니다."
+                }
+              ]
+            }
+          },
+          {
+            "name": "containerAppsPrefix",
+            "type": "Microsoft.Common.TextBox",
+            "label": "ContainerAppsSubnet 주소 — ARM 조회값",
+            "defaultValue": "[coalesce(steps('network').containerAppsSubnetApi.properties.addressPrefix, if(empty(steps('network').containerAppsSubnetApi.properties.addressPrefixes), '', first(steps('network').containerAppsSubnetApi.properties.addressPrefixes)), '')]",
+            "toolTip": "Container Apps Environment 전용입니다. 현재 조회한 주소를 유지하십시오.",
+            "constraints": {
+              "required": true,
+              "validations": [
+                {
+                  "regex": "^(?:10(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){3}/(?:[89]|1[0-9]|2[0-7])|172\\.(?:1[6-9]|2[0-3])(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){2}/(?:1[3-9]|2[0-7])|172\\.2[4-7](?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){2}/(?:1[4-9]|2[0-7])|172\\.2[89](?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){2}/(?:1[5-9]|2[0-7])|192\\.168(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){2}/(?:1[6-9]|2[0-7]))$",
+                  "message": "RFC1918 IPv4 /27 이상이 필요합니다. 172.30.0.0/16, 172.31.0.0/16은 ACA 예약 범위입니다."
+                },
+                {
+                  "isValid": "[equals(steps('network').containerAppsPrefix, coalesce(steps('network').containerAppsSubnetApi.properties.addressPrefix, if(empty(steps('network').containerAppsSubnetApi.properties.addressPrefixes), '', first(steps('network').containerAppsSubnetApi.properties.addressPrefixes)), ''))]",
+                  "message": "선택한 VNet의 실제 ContainerAppsSubnet 조회값을 사용하십시오."
+                },
+                {
+                  "isValid": "[and(equals(length(coalesce(steps('network').containerAppsSubnetApi.properties.delegations, parse('[]'))), 1), equals(length(filter(coalesce(steps('network').containerAppsSubnetApi.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments'))), 1))]",
+                  "message": "ContainerAppsSubnet을 Microsoft.App/environments에 위임해야 합니다."
+                },
+                {
+                  "isValid": "[lessOrEquals(length(coalesce(steps('network').containerAppsSubnetApi.properties.addressPrefixes, parse('[]'))), 1)]",
+                  "message": "이 배포 화면은 단일 IPv4 prefix 서브넷만 지원합니다."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "names",
+        "label": "리소스 이름",
+        "bladeTitle": "미리 채운 이름 검토",
+        "elements": [
+          {
+            "name": "namingNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Warning",
+              "text": "기존 KT 프로필 패턴을 확장한 수정 가능한 제안값입니다. KT 공식 명명 표준 준수나 전역 이름 가용성을 보장하지 않습니다. 2단계에서는 1단계와 정확히 같은 이름을 사용하십시오."
+            }
+          },
+          {
+            "name": "foundryAccountName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Foundry 계정",
+            "defaultValue": "ai-azbrief-kt",
+            "toolTip": "custom subdomain의 전역 가용성을 확인하십시오. 신규 계정만 VNet injection으로 만들 수 있습니다.",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$",
+              "validationMessage": "2~64자의 소문자·숫자·하이픈을 사용하고 양 끝은 문자나 숫자여야 합니다."
+            }
+          },
+          {
+            "name": "agentStorageAccountName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Agent backing Storage",
+            "defaultValue": "stazbriefktagent",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9]{3,24}$",
+              "validationMessage": "3~24자의 소문자·숫자만 사용할 수 있습니다. 전역 이름 가용성을 확인하십시오."
+            }
+          },
+          {
+            "name": "stateStorageAccountName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "상태·아카이브 Storage",
+            "defaultValue": "stazbriefktstate",
+            "toolTip": "프로젝트 ID가 canonical archive를 변경하지 못하도록 Agent storage와 분리합니다.",
+            "constraints": {
+              "required": true,
+              "validations": [
+                {
+                  "regex": "^[a-z0-9]{3,24}$",
+                  "message": "3~24자의 소문자·숫자만 사용할 수 있습니다."
+                },
+                {
+                  "isValid": "[not(equals(steps('names').agentStorageAccountName, steps('names').stateStorageAccountName))]",
+                  "message": "Agent backing Storage와 다른 이름을 사용하십시오."
+                }
+              ]
+            }
+          },
+          {
+            "name": "cosmosAccountName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Cosmos DB 계정",
+            "defaultValue": "cosmos-azbrief-kt",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9][a-z0-9-]{1,42}[a-z0-9]$",
+              "validationMessage": "3~44자의 소문자·숫자·하이픈을 사용하십시오."
+            }
+          },
+          {
+            "name": "searchServiceName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Azure AI Search",
+            "defaultValue": "srch-azbrief-kt",
+            "constraints": {
+              "required": true,
+              "regex": "^(?!.*--)[a-z0-9][a-z0-9-]{0,58}[a-z0-9]$",
+              "validationMessage": "2~60자의 소문자·숫자·단일 하이픈을 사용하십시오."
+            }
+          },
+          {
+            "name": "projectName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Foundry 프로젝트",
+            "defaultValue": "azbrief-kt",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$",
+              "validationMessage": "2~63자의 소문자·숫자·하이픈을 사용하십시오."
+            }
+          },
+          {
+            "name": "containerAppsEnvironmentName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Container Apps Environment",
+            "defaultValue": "cae-azbrief-kt",
+            "constraints": {
+              "required": true,
+              "validations": [
+                {
+                  "regex": "^[a-z][a-z0-9-]{0,58}[a-z0-9]$",
+                  "message": "2~60자, 소문자로 시작하고 소문자나 숫자로 끝나야 합니다."
+                },
+                {
+                  "isValid": "[not(or(equals(steps('names').foundryAccountName, steps('names').agentStorageAccountName), equals(steps('names').foundryAccountName, steps('names').stateStorageAccountName), equals(steps('names').foundryAccountName, steps('names').cosmosAccountName), equals(steps('names').foundryAccountName, steps('names').searchServiceName), equals(steps('names').foundryAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').agentStorageAccountName, steps('names').stateStorageAccountName), equals(steps('names').agentStorageAccountName, steps('names').cosmosAccountName), equals(steps('names').agentStorageAccountName, steps('names').searchServiceName), equals(steps('names').agentStorageAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').stateStorageAccountName, steps('names').cosmosAccountName), equals(steps('names').stateStorageAccountName, steps('names').searchServiceName), equals(steps('names').stateStorageAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').cosmosAccountName, steps('names').searchServiceName), equals(steps('names').cosmosAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').searchServiceName, steps('names').containerAppsEnvironmentName)))]",
+                  "message": "Private Endpoint 이름(pe-대상명)이 겹치지 않도록 Foundry·Storage 두 개·Cosmos·Search·Environment 이름을 모두 다르게 입력하십시오."
+                }
+              ]
+            }
+          },
+          {
+            "name": "containerAppName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "준비용 Container App",
+            "defaultValue": "ca-azbrief-kt",
+            "constraints": {
+              "required": true,
+              "regex": "^(?!.*--)[a-z][a-z0-9-]{0,30}[a-z0-9]$",
+              "validationMessage": "2~32자, 소문자로 시작하고 소문자나 숫자로 끝나야 합니다. 연속 하이픈은 사용할 수 없습니다."
+            }
+          }
+        ]
+      },
+      {
+        "name": "options",
+        "label": "비용·DNS·로그",
+        "elements": [
+          {
+            "name": "costNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Info",
+              "text": "Consumption 0.25 vCPU / 0.5 GiB, replica 0~1, 단일 리전 Cosmos Serverless, Storage LRS를 유지합니다. 앱이 0 replica여도 Search·Private Endpoint 여섯 개·DNS·storage 비용은 남습니다. Application Insights는 생성하지 않습니다."
+            }
+          },
+          {
+            "name": "searchSku",
+            "type": "Microsoft.Common.DropDown",
+            "label": "AI Search SKU",
+            "defaultValue": "Basic — 낮은 초기 비용",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                { "label": "Basic — 낮은 초기 비용", "value": "basic" },
+                { "label": "Standard S1 — 공식 Foundry 샘플 기준", "value": "standard" }
+              ]
+            },
+            "toolTip": "둘 다 replica 1 / partition 1입니다. Basic의 Capability Host·파일 검색·용량 적합성은 고객 환경에서 별도 검증해야 합니다."
+          },
+          {
+            "name": "dnsMode",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Private DNS",
+            "defaultValue": "배포 RG에 필요한 zone 일곱 개 생성",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                { "label": "배포 RG에 필요한 zone 일곱 개 생성", "value": "new" },
+                { "label": "기존 중앙 DNS RG의 zone 일곱 개 재사용", "value": "existing" }
+              ]
+            },
+            "toolTip": "이미 같은 zone이 VNet에 연결되어 있으면 재사용을 선택하십시오. 일부 zone만 있거나 여러 RG에 분산된 경우 CLI의 개별 zone ID 매핑을 사용하십시오."
+          },
+          {
+            "name": "dnsResourceGroupId",
+            "type": "Microsoft.Common.TextBox",
+            "label": "기존 중앙 DNS 리소스 그룹 ARM ID",
+            "placeholder": "/subscriptions/<GUID>/resourceGroups/<DNS-RG>",
+            "toolTip": "Foundry용 zone 세 개, blob, documents, search, 현재 지역의 azurecontainerapps zone이 모두 이 RG에 있어야 합니다. 해당 VNet 링크와 join 권한은 별도로 확인하십시오.",
+            "visible": "[equals(steps('options').dnsMode, 'existing')]",
+            "constraints": {
+              "required": true,
+              "regex": "^/subscriptions/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/resourceGroups/[a-zA-Z0-9_.()-]{1,90}$",
+              "validationMessage": "구독 GUID를 포함한 기존 리소스 그룹 ARM ID를 입력하십시오. 끝에 /를 붙이지 마십시오."
+            }
+          },
+          {
+            "name": "collectLogs",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "기존 Log Analytics workspace에 Container Apps 콘솔 로그 연결"
+          },
+          {
+            "name": "workspaceId",
+            "type": "Microsoft.Common.TextBox",
+            "label": "기존 Log Analytics workspace ARM ID",
+            "visible": "[steps('options').collectLogs]",
+            "toolTip": "workspace를 새로 만들지 않습니다. 로그 수집 비용은 추가될 수 있습니다. Application Insights나 오류 커스텀 테이블을 구성하는 옵션이 아닙니다.",
+            "constraints": {
+              "required": true,
+              "regex": "^/subscriptions/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/resourceGroups/[a-zA-Z0-9_.()-]{1,90}/providers/Microsoft\\.OperationalInsights/workspaces/[a-zA-Z0-9-]{4,63}$",
+              "validationMessage": "기존 Log Analytics workspace의 전체 ARM ID를 입력하십시오."
+            }
+          }
+        ]
+      },
+      {
+        "name": "review",
+        "label": "단계·필수 확인",
+        "elements": [
+          {
+            "name": "summary",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Info",
+              "text": "[concat('VNet: ', coalesce(steps('network').virtualNetwork.name, ''), ' | 지역: ', coalesce(steps('network').virtualNetwork.location, ''), ' | Foundry: ', steps('names').foundryAccountName, ' | App: ', steps('names').containerAppName, ' | Search: ', steps('options').searchSku)]"
+            }
+          },
+          {
+            "name": "deploymentStage",
+            "type": "Microsoft.Common.DropDown",
+            "label": "이번 배포 단계",
+            "defaultValue": "1단계 — 기반·연결·권한만 배포",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                { "label": "1단계 — 기반·연결·권한만 배포", "value": "foundation" },
+                { "label": "2단계 — 준비된 기반에 project Capability Host 구성", "value": "complete" }
+              ]
+            },
+            "toolTip": "처음에는 1단계를 배포하십시오. 계정의 자동 Capability Host와 권한 전파를 확인한 뒤 같은 입력으로 2단계를 배포합니다. 이 화면은 단계를 자동 실행하거나 준비 상태를 기다리지 않습니다."
+          },
+          {
+            "name": "hostReady",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "1단계가 성공했고 account Capability Host가 Succeeded이며, 같은 RG·이름·VNet·DNS 설정으로 진행함을 확인했습니다.",
+            "visible": "[equals(steps('review').deploymentStage, 'complete')]",
+            "constraints": { "required": true, "validationMessage": "계정 host 준비와 기존 입력을 확인하십시오." }
+          },
+          {
+            "name": "networkReady",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "전용 서브넷의 점유자·IP 여유, DNS/NSG/UDR/egress, 고객 정책·권한·리전 지원을 검증했고 동시 네트워크 변경이 없음을 확인했습니다.",
+            "constraints": { "required": true, "validationMessage": "Portal의 주소·위임 확인만으로 모든 사전검사가 끝나지 않습니다." }
+          },
+          {
+            "name": "ownershipReady",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "리소스 이름의 가용성과 소유권을 확인했으며, 다른 서비스나 이미 운영 이미지로 전환한 앱에 bootstrap을 덮어쓰지 않습니다.",
+            "constraints": { "required": true, "validationMessage": "기존 리소스 보호와 이름 가용성을 확인하십시오." }
+          },
+          {
+            "name": "scopeAccepted",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "유휴 비용이 남으며, 이번 배포에 모델·Agent 게시·운영 App/Job·인증·메일·스케줄 설정이 포함되지 않음을 확인했습니다.",
+            "constraints": { "required": true, "validationMessage": "비용과 인프라 초기 배포 범위를 확인하십시오." }
+          }
+        ]
+      }
+    ],
+    "outputs": {
+      "location": "[steps('network').virtualNetwork.location]",
+      "virtualNetworkResourceGroupName": "[first(skip(split(steps('network').virtualNetwork.id, '/'), 4))]",
+      "virtualNetworkName": "[steps('network').virtualNetwork.name]",
+      "foundryAccountName": "[steps('names').foundryAccountName]",
+      "agentStorageAccountName": "[steps('names').agentStorageAccountName]",
+      "stateStorageAccountName": "[steps('names').stateStorageAccountName]",
+      "cosmosAccountName": "[steps('names').cosmosAccountName]",
+      "searchServiceName": "[steps('names').searchServiceName]",
+      "projectName": "[steps('names').projectName]",
+      "containerAppsEnvironmentName": "[steps('names').containerAppsEnvironmentName]",
+      "containerAppName": "[steps('names').containerAppName]",
+      "createPESubnet": false,
+      "createFoundrySubnet": false,
+      "createContainerAppsSubnet": false,
+      "searchSku": "[steps('options').searchSku]",
+      "deployCapabilityHost": "[equals(steps('review').deploymentStage, 'complete')]",
+      "logAnalyticsWorkspaceResourceId": "[if(steps('options').collectLogs, steps('options').workspaceId, '')]",
+      "existingPrivateDnsZoneIds": "[if(equals(steps('options').dnsMode, 'existing'), parse(concat('{\"privatelink.cognitiveservices.azure.com\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.cognitiveservices.azure.com\",\"privatelink.openai.azure.com\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.openai.azure.com\",\"privatelink.services.ai.azure.com\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.services.ai.azure.com\",\"privatelink.blob.core.windows.net\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net\",\"privatelink.documents.azure.com\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.documents.azure.com\",\"privatelink.search.windows.net\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.search.windows.net\",\"privatelink.', steps('network').virtualNetwork.location, '.azurecontainerapps.io\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.', steps('network').virtualNetwork.location, '.azurecontainerapps.io\"}')), parse('{}'))]"
+    }
+  }
+}

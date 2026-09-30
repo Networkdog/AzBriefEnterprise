@@ -56,6 +56,14 @@ No Application Insights is created, and the standard customerSetup/MCP workflow 
 compatible without KT adaptation. Preserve the six-role Hosted architecture during the
 subsequent application handoff. Bootstrap scale-to-zero is not safe for long in-process
 Manual Runs. These are developer deployment rules, not model-facing instructions.
+New resource names use editable literal KT-profile defaults, not a verified customer corporate
+standard. Keep the existing network inputs explicit and the compiled ARM, parameter example and
+CLI-resolved names aligned; preserve operator overrides and check global name availability.
+The KT README button pairs its own ARM and CreateUIDefinition, never the standard UI.
+The guided form uses an existing-VNet selector and read-only named-subnet checks, preserves
+editable defaults, and emits false subnet-create flags. Its foundation-only default and explicit
+completion-stage acknowledgement do not replace CLI ownership/IP checks or host readiness waits.
+Keep the prerequisites and actual validation limits visible in both language READMEs.
 
 Provisioning uses two model tiers without changing the six distinct Agent identities. Core roles
 (coordinator, Resource Graph, Azure API, report writer and quality reviewer) default to `gpt-5-terra`
