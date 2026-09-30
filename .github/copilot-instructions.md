@@ -289,6 +289,10 @@ foundation-only provisioning. Keep the README button
 paired with that UI and retain the CLI/preflight and explicit completion-stage caveats in its guide.
 The Container Apps Environment must carry `publicNetworkAccess: Disabled` on its initial resource
 PUT because KT deny policy evaluates creation; never implement this as a post-deployment patch.
+The Portal form and CLI preflight must discover required Private DNS zones already linked to the
+selected VNet, reuse those exact IDs, and create only missing namespaces. Explicit zone IDs override
+same-ID discovery but must fail on conflicts; never create a second overlapping VNet link or copy
+Private Endpoint-managed records between zones.
 When no existing Log Analytics workspace is selected, pass `null` for the managed-environment
 `appLogsConfiguration`; AVM 0.16.0 accepts only the `azure-monitor` and `log-analytics`
 discriminators, so never restore `destination: none`.

@@ -61,6 +61,23 @@
             }
           },
           {
+            "name": "linkedPrivateDnsZonesApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "POST",
+              "path": "/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
+              "body": {
+                "subscriptions": [
+                  "[subscription().subscriptionId]"
+                ],
+                "query": "[concat('Resources | where type =~ \"microsoft.network/privatednszones/virtualnetworklinks\" | where tostring(properties.virtualNetwork.id) =~ \"', steps('network').virtualNetwork.id, '\" | extend zoneName=tostring(split(tostring(split(tolower(id), \"/privatednszones/\")[1]), \"/\")[0]) | where zoneName in~ (\"privatelink.cognitiveservices.azure.com\", \"privatelink.openai.azure.com\", \"privatelink.services.ai.azure.com\", \"privatelink.blob.core.windows.net\", \"privatelink.documents.azure.com\", \"privatelink.search.windows.net\", \"privatelink.', steps('network').virtualNetwork.location, '.azurecontainerapps.io\") | extend zoneId=substring(id, 0, indexof(tolower(id), \"/virtualnetworklinks/\")) | project zoneName, zoneId, registrationEnabled=tobool(properties.registrationEnabled) | distinct zoneName, zoneId, registrationEnabled')]",
+                "options": {
+                  "resultFormat": "objectArray"
+                }
+              }
+            }
+          },
+          {
             "name": "peSubnetName",
             "type": "Microsoft.Common.DropDown",
             "label": "Private Endpoint subnet",
@@ -255,15 +272,24 @@
             "name": "dnsMode",
             "type": "Microsoft.Common.DropDown",
             "label": "Private DNS",
-            "defaultValue": "배포 RG에 필요한 zone 일곱 개 생성",
+            "defaultValue": "자동 감지 — VNet 연결 zone 재사용, 없는 zone 생성",
             "constraints": {
               "required": true,
               "allowedValues": [
-                { "label": "배포 RG에 필요한 zone 일곱 개 생성", "value": "new" },
+                { "label": "자동 감지 — VNet 연결 zone 재사용, 없는 zone 생성", "value": "auto" },
                 { "label": "기존 중앙 DNS RG의 zone 일곱 개 재사용", "value": "existing" }
               ]
             },
-            "toolTip": "이미 같은 zone이 VNet에 연결되어 있으면 재사용을 선택하십시오. 일부 zone만 있거나 여러 RG에 분산된 경우 CLI의 개별 zone ID 매핑을 사용하십시오."
+            "toolTip": "자동 감지는 선택한 VNet에 이미 연결된 필수 namespace를 재사용하여 중복 zone link를 방지합니다. 다른 구독의 중앙 DNS는 기존 RG 방식을 사용하십시오."
+          },
+          {
+            "name": "dnsDiscovery",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": "[equals(steps('options').dnsMode, 'auto')]",
+            "options": {
+              "icon": "Info",
+              "text": "[concat('현재 VNet에 연결된 필수 Private DNS zone ', string(length(coalesce(steps('network').linkedPrivateDnsZonesApi.data, parse('[]')))), '개를 자동 재사용하고, 나머지만 배포 RG에 생성합니다.')]"
+            }
           },
           {
             "name": "dnsResourceGroupId",
@@ -369,6 +395,7 @@
       "createPESubnet": false,
       "createFoundrySubnet": false,
       "createContainerAppsSubnet": false,
+      "linkedPrivateDnsZones": "[if(equals(steps('options').dnsMode, 'auto'), coalesce(steps('network').linkedPrivateDnsZonesApi.data, parse('[]')), parse('[]'))]",
       "searchSku": "[steps('options').searchSku]",
       "deployCapabilityHost": "[equals(steps('review').deploymentStage, 'complete')]",
       "logAnalyticsWorkspaceResourceId": "[if(steps('options').collectLogs, steps('options').workspaceId, '')]",

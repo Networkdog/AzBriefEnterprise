@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "7804016008243594269"
+      "templateHash": "17073068547123097674"
     }
   },
   "parameters": {
@@ -138,6 +138,13 @@
         "description": "Zone-name to existing private-DNS-zone ARM ID. Existing zones and links are NOT modified."
       }
     },
+    "linkedPrivateDnsZones": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "VNet-linked private DNS zones discovered by the Portal form. Do not set manually."
+      }
+    },
     "logAnalyticsWorkspaceResourceId": {
       "type": "string",
       "defaultValue": "",
@@ -202,6 +209,8 @@
       "privatelink.search.windows.net",
       "[format('privatelink.{0}.azurecontainerapps.io', parameters('location'))]"
     ],
+    "discoveredPrivateDnsZoneIds": "[toObject(parameters('linkedPrivateDnsZones'), lambda('zone', lambdaVariables('zone').zoneName), lambda('zone', lambdaVariables('zone').zoneId))]",
+    "effectivePrivateDnsZoneIds": "[union(variables('discoveredPrivateDnsZoneIds'), parameters('existingPrivateDnsZoneIds'))]",
     "endpointSpecs": [
       {
         "name": "[format('pe-{0}', parameters('foundryAccountName'))]",
@@ -1645,7 +1654,7 @@
         "name": "dnsZones",
         "count": "[length(variables('dnsZoneNames'))]"
       },
-      "condition": "[not(contains(parameters('existingPrivateDnsZoneIds'), variables('dnsZoneNames')[copyIndex()]))]",
+      "condition": "[not(contains(variables('effectivePrivateDnsZoneIds'), variables('dnsZoneNames')[copyIndex()]))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "[format('kt-dns-{0}', copyIndex())]",
@@ -36059,7 +36068,7 @@
                   "name": "privateDnsZoneGroupConfigs",
                   "count": "[length(variables('endpointSpecs')[copyIndex()].zones)]",
                   "input": {
-                    "privateDnsZoneResourceId": "[coalesce(tryGet(parameters('existingPrivateDnsZoneIds'), variables('endpointSpecs')[copyIndex()].zones[copyIndex('privateDnsZoneGroupConfigs')]), resourceId('Microsoft.Network/privateDnsZones', variables('endpointSpecs')[copyIndex()].zones[copyIndex('privateDnsZoneGroupConfigs')]))]"
+                    "privateDnsZoneResourceId": "[coalesce(tryGet(variables('effectivePrivateDnsZoneIds'), variables('endpointSpecs')[copyIndex()].zones[copyIndex('privateDnsZoneGroupConfigs')]), resourceId('Microsoft.Network/privateDnsZones', variables('endpointSpecs')[copyIndex()].zones[copyIndex('privateDnsZoneGroupConfigs')]))]"
                   }
                 }
               ],

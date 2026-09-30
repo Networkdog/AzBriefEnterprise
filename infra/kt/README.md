@@ -152,7 +152,7 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
 | 기본 사항 | 배포 구독·RG·지역 선택, 프라이빗 bootstrap 범위 안내 |
 | 기존 네트워크 | 같은 구독·지역의 기존 VNet 선택. 이름과 무관하게 역할별 기존 subnet을 선택하고 ARM 조회 CIDR·위임으로 후보 제한 |
 | 리소스 이름 | 여덟 기본 이름 편집, Azure 문자·길이 검사, Storage 분리 및 여섯 PE 대상 이름 충돌 차단 |
-| 비용·DNS·로그 | Search Basic/S1 선택, DNS zone 생성 또는 중앙 RG의 일곱 zone 재사용, 기존 Log Analytics 선택 연결 |
+| 비용·DNS·로그 | Search Basic/S1 선택, VNet 연결 DNS zone 자동 재사용 또는 중앙 RG 명시, 기존 Log Analytics 선택 연결 |
 | 단계·필수 확인 | 선택 요약, 기반/완료 단계 선택, 사전검사·소유권·비용·bootstrap 범위 동의 |
 
 VNet을 새로 만드는 옵션은 없습니다. 선택한 subnet 이름은 배포 매개변수로 전달되고 CIDR은
@@ -165,11 +165,20 @@ IPv4 prefix, RFC1918 범위, 최소 크기, 위임 및 Container Apps 예약 범
 공식 `VirtualNetworkCombo`는 기존 VNet 안의 subnet 생성을 지원하지 않고 새 VNet도 제안하므로,
 이 UI는 existing-resource selector와 read-only API control을 사용합니다.
 
-DNS 재사용 모드는 기존 중앙 DNS **리소스 그룹 ARM ID 하나**로 일곱 zone ID를 구성합니다.
-Foundry용 세 zone, blob/documents/search zone, 선택한 지역의 ACA zone이 그 RG에 모두 있어야
-하며 기존 VNet 링크·권한은 별도로 확인합니다. 일부 zone만 재사용하거나 여러 RG에 분산된
-구성은 CLI의 `existingPrivateDnsZoneIds` 개별 매핑을 사용하십시오. 로그 옵션은 기존 workspace만
-연결하며 Application Insights나 오류 커스텀 테이블을 만들지 않습니다.
+기본 DNS 모드는 선택한 구독에서 Resource Graph로 VNet의 기존 `virtualNetworkLinks`를 조회합니다.
+필수 namespace와 일치하는 zone은 RG와 이름에 관계없이 자동 재사용하고, 연결되지 않은
+namespace만 배포 RG에 생성합니다. 이 방식은 같은 VNet에 동일하거나 겹치는 namespace의
+zone을 두 번 연결하는 Azure 오류를 방지하며 기존 zone의 레코드를 복사하지 않습니다. 새
+Private Endpoint의 zone group이 기존 zone을 참조하므로 Azure가 필요한 A 레코드를 그 zone에
+추가합니다.
+
+다른 구독이거나 배포 사용자에게 읽기 권한이 없어 자동 조회 범위 밖인 중앙 DNS는 기존
+**리소스 그룹 ARM ID 하나**를 명시합니다. Foundry용 세 zone, blob/documents/search zone,
+선택한 지역의 ACA zone이 그 RG에
+모두 있어야 하며 기존 VNet 링크·권한을 별도로 확인합니다. CLI도 subscription의 기존 link를
+자동 발견하며, 명시적 cross-subscription 또는 분산 구성은 `existingPrivateDnsZoneIds` 개별
+매핑으로 override합니다. 로그 옵션은 기존 workspace만 연결하며 Application Insights나 오류
+커스텀 테이블을 만들지 않습니다.
 로그 연결을 선택하지 않으면 Container Apps Environment의 `appLogsConfiguration`을
 `null`로 생략합니다. AVM `0.16.0`의 판별형은 `azure-monitor`와 `log-analytics`만
 허용하므로 `destination: none`을 전달하지 않습니다.

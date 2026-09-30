@@ -31,6 +31,10 @@ Private Endpoint·Foundry·Container Apps 역할에 매핑합니다. CIDR은 ARM
 지원되지 않는 `destination: none`을 보내지 않고 nullable Container Apps 로그 설정을 생략합니다.
 KT Container Apps Environment는 최초 생성 요청부터 `publicNetworkAccess: Disabled`를 포함하여
 Public Network Access가 켜졌거나 미지정된 중간 상태를 deny Policy가 보지 않도록 합니다.
+안내형 화면은 선택한 VNet에 이미 연결된 필수 Private DNS zone도 자동 발견해 ID를 재사용하고
+없는 namespace만 생성합니다. 따라서 겹치는 두 번째 VNet link를 만들거나 Private Endpoint
+레코드를 zone 사이에서 복사하지 않습니다. 자동 조회는 선택한 구독에서 읽을 수 있는 link를
+대상으로 하며 cross-subscription 중앙 DNS는 명시적으로 지정합니다.
 
 </div>
 

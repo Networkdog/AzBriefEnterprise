@@ -270,6 +270,18 @@ def test_wizard_only_selects_existing_same_region_network_and_reads_subnets(wiza
         "method": "GET",
         "path": "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]",
     }
+    dns_api = controls["linkedPrivateDnsZonesApi"]["request"]
+    assert dns_api["method"] == "POST"
+    assert dns_api["path"] == (
+        "/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
+    )
+    assert dns_api["body"]["subscriptions"] == ["[subscription().subscriptionId]"]
+    assert dns_api["body"]["options"] == {"resultFormat": "objectArray"}
+    dns_query = dns_api["body"]["query"]
+    assert "microsoft.network/privatednszones/virtualnetworklinks" in dns_query
+    assert "steps('network').virtualNetwork.id" in dns_query
+    assert "privatelink.search.windows.net" in dns_query
+    assert "zoneName, zoneId, registrationEnabled" in dns_query
     for name_control, flag, maximum_prefix in (
         ("peSubnetName", "createPESubnet", 28),
         ("foundrySubnetName", "createFoundrySubnet", 27),
@@ -361,6 +373,13 @@ def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
         "basic",
         "standard",
     }
+    assert options["dnsMode"]["defaultValue"].startswith("자동 감지")
+    assert {item["value"] for item in options["dnsMode"]["constraints"]["allowedValues"]} == {
+        "auto",
+        "existing",
+    }
+    assert options["dnsDiscovery"]["visible"] == "[equals(steps('options').dnsMode, 'auto')]"
+    assert "linkedPrivateDnsZonesApi.data" in options["dnsDiscovery"]["options"]["text"]
     assert review["deploymentStage"]["defaultValue"] == "1단계 — 기반·연결·권한만 배포"
     assert (
         outputs["deployCapabilityHost"] == "[equals(steps('review').deploymentStage, 'complete')]"
@@ -371,6 +390,10 @@ def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
     assert options["workspaceId"]["visible"] == "[steps('options').collectLogs]"
     assert outputs["logAnalyticsWorkspaceResourceId"] == (
         "[if(steps('options').collectLogs, steps('options').workspaceId, '')]"
+    )
+    assert outputs["linkedPrivateDnsZones"] == (
+        "[if(equals(steps('options').dnsMode, 'auto'), "
+        "coalesce(steps('network').linkedPrivateDnsZonesApi.data, parse('[]')), parse('[]'))]"
     )
     dns = outputs["existingPrivateDnsZoneIds"]
     for zone in (
@@ -556,7 +579,11 @@ def test_all_endpoint_groups_and_dns_cover_the_minimum_ip_budget(template: dict,
     assert _params(template, "privateEndpoints")["subnetResourceId"] == "[variables('peSubnetId')]"
     assert len(template["variables"]["dnsZoneNames"]) == 7
     assert template["resources"]["privateEndpoints"]["copy"]["batchSize"] == 1
-    assert "existingPrivateDnsZoneIds" in template["resources"]["dnsZones"]["condition"]
+    assert "linkedPrivateDnsZones" in template["variables"]["discoveredPrivateDnsZoneIds"]
+    assert "discoveredPrivateDnsZoneIds" in template["variables"]["effectivePrivateDnsZoneIds"]
+    assert "existingPrivateDnsZoneIds" in template["variables"]["effectivePrivateDnsZoneIds"]
+    assert "effectivePrivateDnsZoneIds" in template["resources"]["dnsZones"]["condition"]
+    assert "effectivePrivateDnsZoneIds" in json.dumps(_params(template, "privateEndpoints"))
 
 
 def test_new_subnets_use_exact_example_minima(values: dict, vnet: dict):
@@ -656,6 +683,8 @@ class FakeAzure(kt.AzureCli):
         self.account_subscription = SUBSCRIPTION
         self.host_state = "Succeeded"
         self.dns_linked = True
+        self.dns_registration_enabled = False
+        self.linked_dns_zones: dict[str, str] = {}
         self.host_target_override = ""
 
     def json(self, *args: str) -> Any:
@@ -715,9 +744,22 @@ class FakeAzure(kt.AzureCli):
 
     def collection(self, resource_id: str, api_version: str) -> list[dict]:
         self.calls.append(("collection", resource_id, api_version))
+        if resource_id == (
+            f"/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Network/privateDnsZones"
+        ):
+            return [
+                {"name": zone, "id": zone_id} for zone, zone_id in self.linked_dns_zones.items()
+            ]
         if resource_id.endswith("/virtualNetworkLinks"):
             return (
-                [{"properties": {"virtualNetwork": {"id": VNET}, "registrationEnabled": False}}]
+                [
+                    {
+                        "properties": {
+                            "virtualNetwork": {"id": VNET},
+                            "registrationEnabled": self.dns_registration_enabled,
+                        }
+                    }
+                ]
                 if self.dns_linked
                 else []
             )
@@ -889,6 +931,46 @@ def test_existing_dns_is_reused_without_relinking(values: dict, vnet: dict):
     assert not cli.deployments
 
 
+def test_vnet_linked_dns_is_discovered_and_reused(values: dict, vnet: dict):
+    zone = "privatelink.search.windows.net"
+    zone_id = (
+        f"/subscriptions/{SUBSCRIPTION}/resourceGroups/central-dns/"
+        f"providers/Microsoft.Network/privateDnsZones/{zone}"
+    )
+    cli = FakeAzure(values, vnet)
+    cli.linked_dns_zones[zone] = zone_id
+    prepared = kt.prepare(cli, values)
+    assert prepared["existingPrivateDnsZoneIds"] == {zone: zone_id}
+    assert values["existingPrivateDnsZoneIds"] == {}
+
+
+def test_explicit_dns_cannot_override_vnet_linked_zone(values: dict, vnet: dict):
+    zone = "privatelink.search.windows.net"
+    linked_id = (
+        f"/subscriptions/{SUBSCRIPTION}/resourceGroups/central-dns/"
+        f"providers/Microsoft.Network/privateDnsZones/{zone}"
+    )
+    values["existingPrivateDnsZoneIds"] = {
+        zone: f"{GROUP}/providers/Microsoft.Network/privateDnsZones/{zone}"
+    }
+    cli = FakeAzure(values, vnet)
+    cli.linked_dns_zones[zone] = linked_id
+    with pytest.raises(ValueError, match="conflicts with the VNet-linked zone"):
+        kt.prepare(cli, values)
+
+
+def test_discovered_private_endpoint_zone_requires_non_registration_link(values: dict, vnet: dict):
+    zone = "privatelink.search.windows.net"
+    cli = FakeAzure(values, vnet)
+    cli.linked_dns_zones[zone] = (
+        f"/subscriptions/{SUBSCRIPTION}/resourceGroups/central-dns/"
+        f"providers/Microsoft.Network/privateDnsZones/{zone}"
+    )
+    cli.dns_registration_enabled = True
+    with pytest.raises(ValueError, match="must use a non-registration link"):
+        kt.prepare(cli, values)
+
+
 @pytest.mark.parametrize("case_changed", [False, True])
 def test_existing_host_is_not_redirected(values: dict, vnet: dict, case_changed: bool):
     cli = FakeAzure(values, vnet)
@@ -940,6 +1022,11 @@ def test_load_parameters_rejects_internal_flags_and_shared_storage(tmp_path: Pat
     with pytest.raises(ValueError, match="reserved"):
         kt.load_parameters(path)
     del supplied["createPESubnet"]
+    supplied["linkedPrivateDnsZones"] = {"value": []}
+    path.write_text(json.dumps({"parameters": supplied}), encoding="utf-8")
+    with pytest.raises(ValueError, match="reserved"):
+        kt.load_parameters(path)
+    del supplied["linkedPrivateDnsZones"]
     supplied["stateStorageAccountName"] = supplied["agentStorageAccountName"]
     path.write_text(json.dumps({"parameters": supplied}), encoding="utf-8")
     with pytest.raises(ValueError, match="separate accounts"):

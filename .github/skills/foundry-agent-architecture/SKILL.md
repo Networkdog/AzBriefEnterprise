@@ -55,6 +55,10 @@ DNS and provisioning roles, then grant generated-container data roles. Network i
 already creates the account host; do not create a second one or auto-delete a conflicting host.
 The Container Apps Environment must include `publicNetworkAccess: Disabled` in its initial PUT
 because KT deny policy blocks a public or unspecified create request; a later patch is not valid.
+Portal Resource Graph discovery and CLI preflight reuse any required Private DNS zone already linked
+to the selected VNet, while Bicep creates only missing namespaces. Explicit cross-subscription IDs
+may override matching discovery but conflicts fail closed. Never create another overlapping VNet
+link or manually merge Private Endpoint-managed records.
 No Application Insights is created, and the standard customerSetup/MCP workflow is not
 compatible without KT adaptation. Preserve the six-role Hosted architecture during the
 subsequent application handoff. Bootstrap scale-to-zero is not safe for long in-process

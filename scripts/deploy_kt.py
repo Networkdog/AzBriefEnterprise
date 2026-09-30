@@ -51,7 +51,10 @@ SUBNETS = (
         27,
     ),
 )
-INTERNAL_PARAMETERS = {row[3] for row in SUBNETS} | {"deployCapabilityHost"}
+INTERNAL_PARAMETERS = {row[3] for row in SUBNETS} | {
+    "deployCapabilityHost",
+    "linkedPrivateDnsZones",
+}
 
 
 @dataclass(frozen=True)
@@ -485,6 +488,35 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
     reuse = dict(values["existingPrivateDnsZoneIds"])
     if set(reuse) - set(zones):
         raise ValueError("Unexpected private DNS zone name")
+    linked_zone_ids: dict[str, str] = {}
+    subscription_zones = cli.collection(
+        f"/subscriptions/{cli.subscription}/providers/Microsoft.Network/privateDnsZones",
+        "2024-06-01",
+    )
+    for candidate in subscription_zones:
+        zone = str(candidate.get("name", "")).casefold()
+        zone_id = str(candidate.get("id", ""))
+        if zone not in zones or not zone_id:
+            continue
+        links = cli.collection(f"{zone_id}/virtualNetworkLinks", "2024-06-01")
+        matching = [
+            link for link in links if _same_id(link["properties"]["virtualNetwork"]["id"], vnet_id)
+        ]
+        if not matching:
+            continue
+        if len(matching) != 1:
+            raise ValueError(f"Unexpected multiple VNet links in Private DNS zone: {zone}")
+        if matching[0]["properties"].get("registrationEnabled") is not False:
+            raise ValueError(f"Private Endpoint DNS zone must use a non-registration link: {zone}")
+        previous = linked_zone_ids.get(zone)
+        if previous and not _same_id(previous, zone_id):
+            raise ValueError(f"VNet is linked to multiple Private DNS zones for namespace: {zone}")
+        linked_zone_ids[zone] = zone_id
+    for zone, zone_id in linked_zone_ids.items():
+        explicit = reuse.get(zone)
+        if explicit and not _same_id(explicit, zone_id):
+            raise ValueError(f"Explicit DNS zone conflicts with the VNet-linked zone: {zone}")
+        reuse[zone] = zone_id
     for zone in zones:
         local_id = f"{cli.group_id}/providers/Microsoft.Network/privateDnsZones/{zone}"
         if zone not in reuse and local_id.casefold() in by_id:

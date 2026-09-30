@@ -30,6 +30,10 @@ DNS/logging and the deployment stage. The form defaults to
 foundation-only provisioning; it does not replace CLI preflight or automatically complete the application setup.
 The KT Container Apps Environment includes `publicNetworkAccess: Disabled` in its initial create
 request so a deny policy never observes a public or unspecified intermediate state.
+The guided form also discovers required Private DNS zones already linked to the selected VNet,
+reuses their resource IDs, and creates only missing namespaces; it never attempts a second
+overlapping VNet link or copies Private Endpoint records between zones. Discovery covers readable
+links in the selected subscription; cross-subscription central DNS remains an explicit override.
 When optional Log Analytics collection is off, the KT template omits the nullable Container Apps
 log configuration instead of sending an unsupported `destination: none` discriminator.
 

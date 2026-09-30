@@ -56,6 +56,9 @@ param createContainerAppsSubnet bool = false
 @description('Zone-name to existing private-DNS-zone ARM ID. Existing zones and links are NOT modified.')
 param existingPrivateDnsZoneIds object = {}
 
+@description('VNet-linked private DNS zones discovered by the Portal form. Do not set manually.')
+param linkedPrivateDnsZones array = []
+
 @description('Optional existing Log Analytics workspace for ACA console logs. No workspace is created.')
 param logAnalyticsWorkspaceResourceId string = ''
 
@@ -104,6 +107,12 @@ var dnsZoneNames = [
   'privatelink.search.windows.net'
   'privatelink.${location}.azurecontainerapps.io'
 ]
+var discoveredPrivateDnsZoneIds = toObject(
+  linkedPrivateDnsZones,
+  zone => zone.zoneName,
+  zone => zone.zoneId
+)
+var effectivePrivateDnsZoneIds = union(discoveredPrivateDnsZoneIds, existingPrivateDnsZoneIds)
 
 module peSubnet 'br/public:avm/res/network/virtual-network/subnet:0.2.0' = if (createPESubnet) {
   name: 'kt-pe-subnet'
@@ -149,7 +158,7 @@ module containerAppsSubnet 'br/public:avm/res/network/virtual-network/subnet:0.2
 }
 
 module dnsZones 'br/public:avm/res/network/private-dns-zone:0.8.1' = [
-  for (zoneName, index) in dnsZoneNames: if (!contains(existingPrivateDnsZoneIds, zoneName)) {
+  for (zoneName, index) in dnsZoneNames: if (!contains(effectivePrivateDnsZoneIds, zoneName)) {
     name: 'kt-dns-${index}'
     params: {
       name: zoneName
@@ -393,7 +402,7 @@ module privateEndpoints 'br/public:avm/res/network/private-endpoint:0.12.1' = [
         name: 'default'
         privateDnsZoneGroupConfigs: [
           for zoneName in endpoint.zones: {
-            privateDnsZoneResourceId: existingPrivateDnsZoneIds[?zoneName] ?? resourceId('Microsoft.Network/privateDnsZones', zoneName)
+            privateDnsZoneResourceId: effectivePrivateDnsZoneIds[?zoneName] ?? resourceId('Microsoft.Network/privateDnsZones', zoneName)
           }
         ]
       }
