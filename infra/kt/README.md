@@ -131,7 +131,9 @@ VPN, ExpressRoute, peering, NSG/UDR, outbound 방화벽을 변경하지 않습�
 
 Container Apps의 `internal=false`, App의 `ingressExternal=true`는 **공용 인터넷 허용이
 아닙니다**. Environment의 Public Network Access는 `Disabled`이며 PE로 들어온 요청을
-App ingress까지 전달하는 구성입니다. bootstrap URL은 VNet/승인된 사설 경로에서 접근합니다.
+App ingress까지 전달하는 구성입니다. KT Policy가 생성 요청을 검사하므로 이 값은 Environment
+최초 `PUT`에 포함되며 사후 PATCH로 전환하지 않습니다. bootstrap URL은 VNet/승인된 사설
+경로에서 접근합니다.
 
 VNet injection만으로 모든 인터넷 egress가 차단되지는 않습니다. Foundry 플랫폼, Entra,
 ARM, 이미지 다운로드, 패키지 빌드, Microsoft Learn/RSS 등의 필요한 outbound 경로와 DNS를

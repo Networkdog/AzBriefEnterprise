@@ -28,6 +28,8 @@ to the private-endpoint, Foundry, and Container Apps roles, and review the ARM-r
 with each choice without re-entering an address. Review the prefilled resource names, then choose
 DNS/logging and the deployment stage. The form defaults to
 foundation-only provisioning; it does not replace CLI preflight or automatically complete the application setup.
+The KT Container Apps Environment includes `publicNetworkAccess: Disabled` in its initial create
+request so a deny policy never observes a public or unspecified intermediate state.
 When optional Log Analytics collection is off, the KT template omits the nullable Container Apps
 log configuration instead of sending an unsupported `destination: none` discriminator.
 

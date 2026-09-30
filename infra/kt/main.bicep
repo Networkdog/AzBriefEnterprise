@@ -310,6 +310,7 @@ module containerEnvironment 'br/public:avm/res/app/managed-environment:0.16.0' =
     location: location
     infrastructureSubnetResourceId: containerAppsSubnetId
     internal: false
+    // KT Policy evaluates the initial managed-environment PUT; this cannot be a later patch.
     publicNetworkAccess: 'Disabled'
     zoneRedundant: false
     workloadProfiles: [

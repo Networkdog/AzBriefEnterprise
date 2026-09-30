@@ -53,6 +53,8 @@ operator-selected rather than fixed. Distinct Foundry and Container Apps subnets
 service delegation. Use a project Capability Host with AAD Blob/Cosmos/Search bindings after private
 DNS and provisioning roles, then grant generated-container data roles. Network injection
 already creates the account host; do not create a second one or auto-delete a conflicting host.
+The Container Apps Environment must include `publicNetworkAccess: Disabled` in its initial PUT
+because KT deny policy blocks a public or unspecified create request; a later patch is not valid.
 No Application Insights is created, and the standard customerSetup/MCP workflow is not
 compatible without KT adaptation. Preserve the six-role Hosted architecture during the
 subsequent application handoff. Bootstrap scale-to-zero is not safe for long in-process

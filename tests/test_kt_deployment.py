@@ -516,6 +516,13 @@ def test_backing_stores_are_private_low_cost_and_isolated(template: dict):
 def test_container_app_is_private_minimum_scale_to_zero_bootstrap(template: dict):
     environment = _params(template, "containerEnvironment")
     assert environment["publicNetworkAccess"] == "Disabled"
+    environment_template = template["resources"]["containerEnvironment"]["properties"]["template"]
+    managed_environment = environment_template["resources"]["managedEnvironment"]
+    assert managed_environment["type"] == "Microsoft.App/managedEnvironments"
+    assert (
+        managed_environment["properties"]["publicNetworkAccess"]
+        == "[parameters('publicNetworkAccess')]"
+    )
     assert environment["infrastructureSubnetResourceId"] == "[variables('containerAppsSubnetId')]"
     assert environment["workloadProfiles"] == [
         {"name": "Consumption", "workloadProfileType": "Consumption"}

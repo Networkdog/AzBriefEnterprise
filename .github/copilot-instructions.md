@@ -287,6 +287,8 @@ reads CIDR/delegation from the selected VNet, filters invalid candidates, and sh
 description rather than a second user input. It always reuses prepared subnets and defaults to
 foundation-only provisioning. Keep the README button
 paired with that UI and retain the CLI/preflight and explicit completion-stage caveats in its guide.
+The Container Apps Environment must carry `publicNetworkAccess: Disabled` on its initial resource
+PUT because KT deny policy evaluates creation; never implement this as a post-deployment patch.
 When no existing Log Analytics workspace is selected, pass `null` for the managed-environment
 `appLogsConfiguration`; AVM 0.16.0 accepts only the `azure-monitor` and `log-analytics`
 discriminators, so never restore `destination: none`.
