@@ -26,6 +26,8 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 [KT setup guide](infra/kt/README.md): select an existing VNet, review subnet readback and prefilled
 names, then choose DNS/logging and the deployment stage. The form defaults to foundation-only
 provisioning; it does not replace CLI preflight or automatically complete the application setup.
+When optional Log Analytics collection is off, the KT template omits the nullable Container Apps
+log configuration instead of sending an unsupported `destination: none` discriminator.
 
 </div>
 

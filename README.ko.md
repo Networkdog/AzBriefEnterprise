@@ -25,7 +25,8 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [KT 설정 가이드](infra/kt/README.md): 기존 VNet 선택, 서브넷 조회·기본 이름 검토, DNS/로그·배포
 단계 선택을 제공합니다. 기본값은 기반만 배포하는 1단계이며, CLI 사전검사를 대체하거나
-애플리케이션 설정까지 자동 완료하지 않습니다.
+애플리케이션 설정까지 자동 완료하지 않습니다. 선택형 Log Analytics 수집을 끄면 KT 템플릿은
+지원되지 않는 `destination: none`을 보내지 않고 nullable Container Apps 로그 설정을 생략합니다.
 
 </div>
 

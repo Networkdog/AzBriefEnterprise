@@ -283,6 +283,9 @@ KT's separate `infra/kt` ARM/UI pair uses editable profile naming defaults (not 
 corporate naming standard), existing-VNet selection and read-only subnet checks. The UI always
 reuses prepared subnets and defaults to foundation-only provisioning. Keep the README button
 paired with that UI and retain the CLI/preflight and explicit completion-stage caveats in its guide.
+When no existing Log Analytics workspace is selected, pass `null` for the managed-environment
+`appLogsConfiguration`; AVM 0.16.0 accepts only the `azure-monitor` and `log-analytics`
+discriminators, so never restore `destination: none`.
 
 New customer installations start from the paired README ARM/UI button
 (`infra/azbrief-enterprise-deploy.json` + `infra/createUiDefinition.json`) and follow

@@ -339,6 +339,13 @@ def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
     assert outputs["searchSku"] == "[steps('options').searchSku]"
 
 
+def test_managed_environment_omits_app_logs_when_workspace_is_not_selected(template: dict):
+    app_logs = _params(template, "containerEnvironment")["appLogsConfiguration"]
+    assert "createObject('value', null())" in app_logs
+    assert "'log-analytics'" in app_logs
+    assert "'none'" not in app_logs
+
+
 def test_wizard_step_references_resolve_and_hidden_fields_do_not_escape(wizard: dict):
     steps = {
         step["name"]: {control["name"] for control in step["elements"]} for step in wizard["steps"]

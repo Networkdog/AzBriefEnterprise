@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "2777295987859680001"
+      "templateHash": "8284356509290910416"
     }
   },
   "parameters": {
@@ -33737,7 +33737,7 @@
               }
             ]
           },
-          "appLogsConfiguration": "[if(empty(parameters('logAnalyticsWorkspaceResourceId')), createObject('value', createObject('destination', 'none')), createObject('value', createObject('destination', 'log-analytics', 'logAnalyticsWorkspaceResourceId', parameters('logAnalyticsWorkspaceResourceId'))))]",
+          "appLogsConfiguration": "[if(empty(parameters('logAnalyticsWorkspaceResourceId')), createObject('value', null()), createObject('value', createObject('destination', 'log-analytics', 'logAnalyticsWorkspaceResourceId', parameters('logAnalyticsWorkspaceResourceId'))))]",
           "tags": {
             "value": "[parameters('tags')]"
           },

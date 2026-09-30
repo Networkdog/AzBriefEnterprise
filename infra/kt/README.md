@@ -161,6 +161,9 @@ Foundry용 세 zone, blob/documents/search zone, 선택한 지역의 ACA zone이
 하며 기존 VNet 링크·권한은 별도로 확인합니다. 일부 zone만 재사용하거나 여러 RG에 분산된
 구성은 CLI의 `existingPrivateDnsZoneIds` 개별 매핑을 사용하십시오. 로그 옵션은 기존 workspace만
 연결하며 Application Insights나 오류 커스텀 테이블을 만들지 않습니다.
+로그 연결을 선택하지 않으면 Container Apps Environment의 `appLogsConfiguration`을
+`null`로 생략합니다. AVM `0.16.0`의 판별형은 `azure-monitor`와 `log-analytics`만
+허용하므로 `destination: none`을 전달하지 않습니다.
 
 처음에는 기본 선택인 **1단계 — 기반·연결·권한만 배포**로 실행합니다
 (`deployCapabilityHost=false`). 성공 후 account Capability Host의 `Succeeded` 상태와 RBAC 전파를

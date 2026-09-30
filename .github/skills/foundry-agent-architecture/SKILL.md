@@ -55,7 +55,9 @@ already creates the account host; do not create a second one or auto-delete a co
 No Application Insights is created, and the standard customerSetup/MCP workflow is not
 compatible without KT adaptation. Preserve the six-role Hosted architecture during the
 subsequent application handoff. Bootstrap scale-to-zero is not safe for long in-process
-Manual Runs. These are developer deployment rules, not model-facing instructions.
+Manual Runs. Optional Log Analytics omission must pass `null` to the managed-environment AVM;
+its 0.16.0 discriminator accepts only `azure-monitor` and `log-analytics`, never `none`.
+These are developer deployment rules, not model-facing instructions.
 New resource names use editable literal KT-profile defaults, not a verified customer corporate
 standard. Keep the existing network inputs explicit and the compiled ARM, parameter example and
 CLI-resolved names aligned; preserve operator overrides and check global name availability.

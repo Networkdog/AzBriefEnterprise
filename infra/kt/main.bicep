@@ -310,7 +310,7 @@ module containerEnvironment 'br/public:avm/res/app/managed-environment:0.16.0' =
       }
     ]
     appLogsConfiguration: empty(logAnalyticsWorkspaceResourceId)
-      ? { destination: 'none' }
+      ? null
       : {
           destination: 'log-analytics'
           logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceResourceId
