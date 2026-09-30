@@ -2,12 +2,17 @@
 
 [인프라 색인](../README.md) · [Bicep 원본](main.bicep) · [배포용 ARM](azuredeploy.json) ·
 [Portal UI](createUiDefinition.json) · [입력 예시](main.parameters.example.json) ·
-[사전검사·배포 CLI](../../scripts/deploy_kt.py)
+[사전검사·배포 CLI](../../scripts/deploy_kt.py) ·
+[다른 Agent에도 적용하는 KT 배포 Skill](../../.github/skills/kt-private-deployment/SKILL.md)
 
 기존 VNet을 사용하는 **별도 인프라 초기 배포(bootstrap) 프로필**입니다.
 일반 Enterprise 템플릿, 개발 환경, 기존 VNet을 교체하지 않습니다.
 요청의 “Capacity Host”는 Foundry **Capability Host**로 구현했습니다. 모델의 PTU/예약 용량을
 구매하는 설정이 아닙니다.
+
+이 배포에서 확인된 subnet 선택, Container Apps deny Policy, AVM 로그 판별형, 중복 Private
+DNS link, bootstrap 및 격리망 업데이트 교훈은 위 KT 배포 Skill의 범용 체크리스트에 기록합니다.
+KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오.
 
 > **범위:** 프라이빗 Foundry Standard Agent Setup과 최소 크기의 준비용 Container App을
 > 배포합니다. 실제 AzBrief 애플리케이션 설치 완료를 의미하지 않습니다. 모델 배포,

@@ -281,6 +281,8 @@ AzBriefEnterprise/
 
 KT's separate `infra/kt` ARM/UI pair uses editable profile naming defaults (not a verified
 corporate naming standard), existing-VNet selection and role-based read-only subnet checks.
+Read [the KT private-deployment skill](skills/kt-private-deployment/SKILL.md) before changing or
+troubleshooting any KT Agent, Container Apps, network, Policy, Private DNS, or isolated-release path.
 Subnet names are operator-selected and never fixed; the private-endpoint subnet has no delegation,
 while distinct Foundry and Container Apps subnets require `Microsoft.App/environments`. The UI
 reads CIDR/delegation from the selected VNet, filters invalid candidates, and shows CIDR as dropdown

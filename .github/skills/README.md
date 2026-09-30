@@ -27,6 +27,7 @@ Agent 지침을 바꾸지 않으며, Foundry 지침을 바꾼 경우에만 별�
 | [`email-template/`](email-template/) | HTML 이메일 렌더링, 라벨, ACS 전송 변경 |
 | [`foundry-agent-architecture/`](foundry-agent-architecture/) | Hosted/Prompt Agent, roster, identity, 도구 경계 검토 |
 | [`kql-resource-graph/`](kql-resource-graph/) | Azure Resource Graph KQL 작성과 복구 |
+| [`kt-private-deployment/`](kt-private-deployment/) | KT 프라이빗 VNet·Policy·Private DNS·Container Apps 배포와 장애 예방 |
 | [`language-naturalness/`](language-naturalness/) | ko/en/ja 문장 자연스러움과 corpus 기반 규칙 개선 |
 | [`report-evaluation/`](report-evaluation/) | G-Eval LLM-as-a-Judge 평가와 개선 루프 |
 | [`report-quality/`](report-quality/) | 결정론적 보고서 구조·완결성 평가 |

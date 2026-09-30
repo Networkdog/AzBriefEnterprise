@@ -29,6 +29,8 @@ Private Endpoint·Foundry·Container Apps 역할에 매핑합니다. CIDR은 ARM
 검토합니다. 기본값은 기반만 배포하는 1단계이며, CLI 사전검사를
 대체하거나 애플리케이션 설정까지 자동 완료하지 않습니다. 선택형 Log Analytics 수집을 끄면 KT 템플릿은
 지원되지 않는 `destination: none`을 보내지 않고 nullable Container Apps 로그 설정을 생략합니다.
+[KT 프라이빗 배포 Skill](.github/skills/kt-private-deployment/SKILL.md)은 다른 Agent에도 적용할
+네트워크·Policy·DNS·로그·bootstrap·격리망 릴리스 교훈을 범용 체크리스트로 기록합니다.
 KT Container Apps Environment는 최초 생성 요청부터 `publicNetworkAccess: Disabled`를 포함하여
 Public Network Access가 켜졌거나 미지정된 중간 상태를 deny Policy가 보지 않도록 합니다.
 안내형 화면은 선택한 VNet에 이미 연결된 필수 Private DNS zone도 자동 발견해 ID를 재사용하고

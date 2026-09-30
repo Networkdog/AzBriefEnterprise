@@ -28,6 +28,8 @@ to the private-endpoint, Foundry, and Container Apps roles, and review the ARM-r
 with each choice without re-entering an address. Review the prefilled resource names, then choose
 DNS/logging and the deployment stage. The form defaults to
 foundation-only provisioning; it does not replace CLI preflight or automatically complete the application setup.
+[KT private-deployment skill](.github/skills/kt-private-deployment/SKILL.md) records the reusable
+network, Policy, DNS, logging, bootstrap, and isolated-release lessons for other agents.
 The KT Container Apps Environment includes `publicNetworkAccess: Disabled` in its initial create
 request so a deny policy never observes a public or unspecified intermediate state.
 The guided form also discovers required Private DNS zones already linked to the selected VNet,

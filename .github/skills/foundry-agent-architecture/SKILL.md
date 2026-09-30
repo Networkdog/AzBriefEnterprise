@@ -47,7 +47,10 @@ The two runtimes have separate identities. The Container Apps UAMI owns Key Vaul
 ## Procedure
 
 For the separate [KT infrastructure profile](../../../infra/kt/README.md), distinguish platform
-bootstrap from application readiness. The existing VNet is never recreated; subnet names are
+bootstrap from application readiness and read the
+[KT private-deployment skill](../kt-private-deployment/SKILL.md) first. That skill owns the reusable
+network, Policy, DNS, logging, bootstrap, and isolated-release rules for other KT agents too.
+The existing VNet is never recreated; subnet names are
 operator-selected rather than fixed. Distinct Foundry and Container Apps subnets are /27-minimum
 `Microsoft.App/environments` delegations, while the /28-minimum private-endpoint subnet has no
 service delegation. Use a project Capability Host with AAD Blob/Cosmos/Search bindings after private
