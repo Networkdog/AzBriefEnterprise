@@ -24,8 +24,9 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 [![Deploy KT to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2FcreateUiDefinition.json)
 
 [KT setup guide](infra/kt/README.md): select an existing VNet, map its arbitrarily named subnets
-to the private-endpoint, Foundry, and Container Apps roles, review the readback and prefilled
-resource names, then choose DNS/logging and the deployment stage. The form defaults to
+to the private-endpoint, Foundry, and Container Apps roles, and review the ARM-read CIDR shown
+with each choice without re-entering an address. Review the prefilled resource names, then choose
+DNS/logging and the deployment stage. The form defaults to
 foundation-only provisioning; it does not replace CLI preflight or automatically complete the application setup.
 When optional Log Analytics collection is off, the KT template omits the nullable Container Apps
 log configuration instead of sending an unsupported `destination: none` discriminator.

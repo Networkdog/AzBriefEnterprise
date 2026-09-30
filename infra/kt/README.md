@@ -148,16 +148,18 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
 | 화면 | 제공 기능 |
 |---|---|
 | 기본 사항 | 배포 구독·RG·지역 선택, 프라이빗 bootstrap 범위 안내 |
-| 기존 네트워크 | 같은 구독·지역의 기존 VNet 선택. 이름과 무관하게 역할별 기존 subnet을 선택하고 ARM GET으로 CIDR·위임 확인 |
+| 기존 네트워크 | 같은 구독·지역의 기존 VNet 선택. 이름과 무관하게 역할별 기존 subnet을 선택하고 ARM 조회 CIDR·위임으로 후보 제한 |
 | 리소스 이름 | 여덟 기본 이름 편집, Azure 문자·길이 검사, Storage 분리 및 여섯 PE 대상 이름 충돌 차단 |
 | 비용·DNS·로그 | Search Basic/S1 선택, DNS zone 생성 또는 중앙 RG의 일곱 zone 재사용, 기존 Log Analytics 선택 연결 |
 | 단계·필수 확인 | 선택 요약, 기반/완료 단계 선택, 사전검사·소유권·비용·bootstrap 범위 동의 |
 
-VNet을 새로 만드는 옵션은 없습니다. 선택한 subnet 이름은 배포 매개변수로 전달되며 조회된
-주소 필드는 표시·검증용입니다. 조회 실패·없는 subnet·너무 작은 CIDR·다른 위임은 진행 조건을
-충족하지 못합니다. `createPESubnet`, `createFoundrySubnet`, `createContainerAppsSubnet`은 항상
-`false`를 전달하므로 **Portal에서는 준비된 서브넷만 재사용**합니다. 새 subnet이 필요하면
-CLI에서 같은 역할별 이름과 CIDR을 명시합니다.
+VNet을 새로 만드는 옵션은 없습니다. 선택한 subnet 이름은 배포 매개변수로 전달되고 CIDR은
+드롭다운 설명으로만 표시되므로 사용자가 주소를 다시 입력하지 않습니다. ARM에서 읽은 단일
+IPv4 prefix, RFC1918 범위, 최소 크기, 위임 및 Container Apps 예약 범위를 충족하는 subnet만
+역할별 후보에 포함됩니다. 조회 실패·후보 없음은 진행 조건을 충족하지 못합니다.
+`createPESubnet`, `createFoundrySubnet`, `createContainerAppsSubnet`은 항상 `false`를 전달하므로
+**Portal에서는 준비된 서브넷만 재사용**합니다. 새 subnet이 필요하면 CLI에서 같은 역할별
+이름과 CIDR을 명시합니다.
 공식 `VirtualNetworkCombo`는 기존 VNet 안의 subnet 생성을 지원하지 않고 새 VNet도 제안하므로,
 이 UI는 existing-resource selector와 read-only API control을 사용합니다.
 

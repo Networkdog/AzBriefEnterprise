@@ -64,7 +64,8 @@ standard. Keep the existing network inputs explicit and the compiled ARM, parame
 CLI-resolved names aligned; preserve operator overrides and check global name availability.
 The KT README button pairs its own ARM and CreateUIDefinition, never the standard UI.
 The guided form reads the selected VNet's subnet inventory, maps arbitrary existing names to the
-three roles, preserves editable resource defaults, and emits false subnet-create flags. Its foundation-only default and explicit
+three roles, derives and displays CIDR without a separate address input, preserves editable resource
+defaults, and emits false subnet-create flags. Its foundation-only default and explicit
 completion-stage acknowledgement do not replace CLI ownership/IP checks or host readiness waits.
 Keep the prerequisites and actual validation limits visible in both language READMEs.
 

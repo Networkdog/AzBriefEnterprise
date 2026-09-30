@@ -24,8 +24,9 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 [![Deploy KT to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2FcreateUiDefinition.json)
 
 [KT 설정 가이드](infra/kt/README.md): 기존 VNet을 선택한 뒤 이름이 자유로운 기존 subnet을
-Private Endpoint·Foundry·Container Apps 역할에 매핑하고, 조회값·기본 리소스 이름과
-DNS/로그·배포 단계를 검토합니다. 기본값은 기반만 배포하는 1단계이며, CLI 사전검사를
+Private Endpoint·Foundry·Container Apps 역할에 매핑합니다. CIDR은 ARM 조회값을 각 선택지의
+설명으로 표시하므로 주소를 다시 입력하지 않습니다. 기본 리소스 이름과 DNS/로그·배포 단계를
+검토합니다. 기본값은 기반만 배포하는 1단계이며, CLI 사전검사를
 대체하거나 애플리케이션 설정까지 자동 완료하지 않습니다. 선택형 Log Analytics 수집을 끄면 KT 템플릿은
 지원되지 않는 `destination: none`을 보내지 않고 nullable Container Apps 로그 설정을 생략합니다.
 

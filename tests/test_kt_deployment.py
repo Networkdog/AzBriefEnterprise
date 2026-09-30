@@ -270,83 +270,62 @@ def test_wizard_only_selects_existing_same_region_network_and_reads_subnets(wiza
         "method": "GET",
         "path": "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]",
     }
-    for name_control, api, field, flag in (
-        ("peSubnetName", "peSubnetApi", "pePrefix", "createPESubnet"),
-        (
-            "foundrySubnetName",
-            "foundrySubnetApi",
-            "foundryPrefix",
-            "createFoundrySubnet",
-        ),
-        (
-            "containerAppsSubnetName",
-            "containerAppsSubnetApi",
-            "containerAppsPrefix",
-            "createContainerAppsSubnet",
-        ),
+    for name_control, flag, maximum_prefix in (
+        ("peSubnetName", "createPESubnet", 28),
+        ("foundrySubnetName", "createFoundrySubnet", 27),
+        ("containerAppsSubnetName", "createContainerAppsSubnet", 27),
     ):
         subnet_selector = controls[name_control]
         assert subnet_selector["type"] == "Microsoft.Common.DropDown"
         assert subnet_selector["constraints"]["required"] is True
+        assert subnet_selector["multiLine"] is True
         allowed = subnet_selector["constraints"]["allowedValues"]
         assert "virtualNetworkApi.properties.subnets" in allowed
         assert "s.name" in allowed
-        assert controls[api]["type"] == "Microsoft.Solutions.ArmApiControl"
-        assert controls[api]["request"] == {
-            "method": "GET",
-            "path": (
-                "[concat(steps('network').virtualNetwork.id, "
-                f"'/subnets/', steps('network').{name_control}, '?api-version=2024-05-01')]"
-            ),
-        }
-        assert controls[field]["constraints"]["required"] is True
-        rules = controls[field]["constraints"]["validations"]
-        assert any(
-            rule.get("isValid", "").startswith(f"[equals(steps('network').{field},")
-            and f"{api}.properties.addressPrefix" in rule["isValid"]
-            for rule in rules
-        )
-        assert any("delegations" in rule.get("isValid", "") for rule in rules)
+        assert '"description":"' in allowed
+        assert f"lessOrEquals(int(last(split(s.prefix, '/'))), {maximum_prefix})" in allowed
+        assert "startsWith(s.prefix, '10.')" in allowed
+        assert "startsWith(s.prefix, '172.')" in allowed
+        assert "startsWith(s.prefix, '192.168.')" in allowed
+        assert allowed.count("(") == allowed.count(")")
+        assert allowed.startswith("[map(") and allowed.endswith(")]")
         assert wizard["outputs"][name_control] == f"[steps('network').{name_control}]"
         assert wizard["outputs"][flag] is False
-        assert order.index(name_control) < order.index(api) < order.index(field)
+        assert order.index("virtualNetworkApi") < order.index(name_control)
+    assert (
+        "equals(s.delegationCount, 0)" in controls["peSubnetName"]["constraints"]["allowedValues"]
+    )
+    for name_control in ("foundrySubnetName", "containerAppsSubnetName"):
+        assert (
+            "equals(s.appDelegationCount, 1)"
+            in controls[name_control]["constraints"]["allowedValues"]
+        )
     assert (
         "not(equals(s.name, steps('network').foundrySubnetName))"
         in controls["containerAppsSubnetName"]["constraints"]["allowedValues"]
     )
+    assert (
+        "lessOrEquals(int(first(skip("
+        in controls["containerAppsSubnetName"]["constraints"]["allowedValues"]
+    )
+    container_candidates = controls["containerAppsSubnetName"]["constraints"]["allowedValues"]
+    for upper_octet, minimum_prefix in ((23, 13), (27, 14), (29, 15)):
+        assert f"), {upper_octet})" in container_candidates
+        assert f"), {minimum_prefix})" in container_candidates
+    for removed in (
+        "peSubnetApi",
+        "pePrefix",
+        "foundrySubnetApi",
+        "foundryPrefix",
+        "containerAppsSubnetApi",
+        "containerAppsPrefix",
+    ):
+        assert removed not in controls
     serialized = json.dumps(wizard)
     for fixed_name in ("PESubnet", "FoundrySubnet", "ContainerAppsSubnet"):
         assert f"/subnets/{fixed_name}?api-version" not in serialized
     assert "Microsoft.Network.VirtualNetworkCombo" not in serialized
     assert "Microsoft.Common.PasswordBox" not in serialized
-
-
-@pytest.mark.parametrize(
-    ("field", "prefix", "valid"),
-    [
-        ("pePrefix", "10.70.0.0/28", True),
-        ("pePrefix", "10.70.0.0/29", False),
-        ("foundryPrefix", "10.70.0.32/27", True),
-        ("foundryPrefix", "10.70.0.32/28", False),
-        ("foundryPrefix", "172.16.0.0/12", True),
-        ("foundryPrefix", "172.16.0.0/11", False),
-        ("containerAppsPrefix", "192.168.0.0/24", True),
-        ("containerAppsPrefix", "10.70.0.64/28", False),
-        ("containerAppsPrefix", "172.30.0.0/16", False),
-        ("containerAppsPrefix", "172.31.0.0/16", False),
-        ("containerAppsPrefix", "172.16.0.0/12", False),
-        ("containerAppsPrefix", "172.24.0.0/13", False),
-        ("containerAppsPrefix", "172.28.0.0/14", False),
-        ("containerAppsPrefix", "172.16.0.0/13", True),
-        ("containerAppsPrefix", "172.24.0.0/14", True),
-        ("containerAppsPrefix", "172.28.0.0/15", True),
-        ("containerAppsPrefix", "8.8.8.0/24", False),
-        ("containerAppsPrefix", "fd00::/64", False),
-        ("containerAppsPrefix", "", False),
-    ],
-)
-def test_wizard_subnet_regex_limits(wizard: dict, field: str, prefix: str, valid: bool):
-    assert bool(re.fullmatch(_ui_regex(_ui_controls(wizard, "network")[field]), prefix)) is valid
 
 
 def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, template: dict):
