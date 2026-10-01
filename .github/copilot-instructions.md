@@ -298,6 +298,12 @@ AzBriefEnterprise/
 
 ## Deployment Topology
 
+The separate KT profile ships as the paired top-level README button
+(`infra/kt/azuredeploy.json` + `infra/kt/createUiDefinition.json`). Keep exactly one KT Portal
+link in each top-level README in addition to the two standard Enterprise links. Storage or topology
+refactors must not remove the button while the KT profile remains supported. Follow
+`infra/kt/README.md` and the `kt-private-deployment` skill for that profile.
+
 New customer installations start from the paired README ARM/UI button
 (`infra/azbrief-enterprise-deploy.json` + `infra/createUiDefinition.json`) and follow
 `infra/CUSTOMER_DEPLOYMENT.md`. Bootstrap hello-world uses port 80 and `/`; real AzBrief uses

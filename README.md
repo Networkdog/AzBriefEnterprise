@@ -19,6 +19,15 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [Customer deployment guide](infra/CUSTOMER_DEPLOYMENT.md): foundation first, then guided setup and acceptance.
 
+**KT private infrastructure — guided deployment**
+
+[![Deploy KT to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2FcreateUiDefinition.json)
+
+[KT setup guide](infra/kt/README.md): deploy the existing-VNet private foundation, then complete
+the separate application handoff and acceptance. See the
+[KT private-deployment skill](.github/skills/kt-private-deployment/SKILL.md) for reusable
+network, Policy, DNS, logging, bootstrap, and isolated-release guidance.
+
 </div>
 
 ---

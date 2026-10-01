@@ -19,6 +19,15 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md): 기반 배포 후 고객별 설정과 인수 검증을 진행합니다.
 
+**KT 전용 프라이빗 인프라 — 안내형 배포**
+
+[![Deploy KT to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2FcreateUiDefinition.json)
+
+[KT 설정 가이드](infra/kt/README.md): 기존 VNet 기반의 프라이빗 foundation을 배포한 뒤
+별도의 애플리케이션 전환과 인수 검증을 진행합니다. 다른 Agent에도 적용할 네트워크·Policy·
+DNS·로그·bootstrap·격리망 릴리스 지침은
+[KT 프라이빗 배포 Skill](.github/skills/kt-private-deployment/SKILL.md)을 참고하십시오.
+
 </div>
 
 ---
