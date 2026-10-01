@@ -35,6 +35,8 @@ KT Container Apps Environment는 최초 생성 요청부터 `vnetConfiguration.i
 `publicNetworkAccess: Disabled`를 함께 포함합니다. built-in Policy
 `d074ddf8-01a5-4b5e-a2b8-964aed452c0a`는 이름과 달리 실제로 `internal` 누락/`false`를
 거부하므로 두 값이 모두 필요하며, 이미 만든 외부 Environment는 계획된 재생성이 필요합니다.
+Portal은 새 배포 양식과 실제 리소스 부재를 구분합니다. 같은 이름의 잔여 리소스에는 경고하지만,
+사용하지 않은 새 이름은 빈 Resource Graph 결과에 `first()`를 평가하지 않고 통과합니다.
 안내형 화면은 선택한 VNet에 이미 연결된 필수 Private DNS zone도 자동 발견해 ID를 재사용하고
 없는 namespace만 생성합니다. 따라서 겹치는 두 번째 VNet link를 만들거나 Private Endpoint
 레코드를 zone 사이에서 복사하지 않습니다. 자동 조회는 선택한 구독에서 읽을 수 있는 link를

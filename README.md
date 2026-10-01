@@ -34,6 +34,9 @@ The KT Container Apps Environment is created with both `vnetConfiguration.intern
 `publicNetworkAccess: Disabled`. Built-in policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` has a
 public-network title but actually denies a missing or false `internal` flag. Both values therefore
 belong in the initial create request; an existing external environment requires planned recreation.
+The Portal distinguishes a newly opened deployment flow from actual resource absence. It warns on a
+same-name leftover, but a genuinely unused name passes without evaluating `first()` on an empty
+Resource Graph result.
 The guided form also discovers required Private DNS zones already linked to the selected VNet,
 reuses their resource IDs, and creates only missing namespaces; it never attempts a second
 overlapping VNet link or copies Private Endpoint records between zones. Discovery covers readable

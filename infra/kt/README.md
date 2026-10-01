@@ -148,7 +148,10 @@ level을 제자리에서 전환하지 말고, 앱·Private Endpoint·DNS·이미
 유지보수 창에서 기존 foundation을 명시적으로 제거한 뒤 내부 Environment로 다시 생성합니다.
 삭제는 자동화하지 않습니다. Portal 이름 단계는 같은 RG·이름의 기존 Environment를 Resource
 Graph로 조회하고 `internal=true`, PNA `Disabled`, KT 소유권 태그가 아니면 ARM validation 전에
-진행을 막습니다.
+진행을 막습니다. 여기서 “신규 배포”는 새 Portal 실행을 뜻할 뿐 같은 이름의 Azure 리소스가
+없다는 뜻은 아닙니다. 이전 실패에서 `Succeeded` Environment가 남아 있으면 기존 리소스로
+감지하며, 화면에 별도 경고 상자를 표시합니다. 이름을 변경해 일치 항목이 없으면 validation은
+통과해야 하므로, 빈 결과에 `first()`를 적용하지 않고 비준수 일치 항목만 필터링합니다.
 
 VNet injection만으로 모든 인터넷 egress가 차단되지는 않습니다. Foundry 플랫폼, Entra,
 ARM, 이미지 다운로드, 패키지 빌드, Microsoft Learn/RSS 등의 필요한 outbound 경로와 DNS를

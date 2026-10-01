@@ -295,6 +295,8 @@ The Container Apps Environment must carry both `vnetConfiguration.internal: true
 false `internal` alias. Never implement either value as a post-deployment patch, and fail preflight
 for an existing external environment rather than attempting an in-place conversion. Read back the
 environment with the `2026-01-01` API used by the pinned AVM; older API projections can omit PNA.
+CreateUiDefinition validation must not call `first()` on a potentially empty Resource Graph result;
+filter for same-name noncompliant rows and require that filtered array to be empty.
 The Portal form and CLI preflight must discover required Private DNS zones already linked to the
 selected VNet, reuse those exact IDs, and create only missing namespaces. Explicit zone IDs override
 same-ID discovery but must fail on conflicts; never create a second overlapping VNet link or copy

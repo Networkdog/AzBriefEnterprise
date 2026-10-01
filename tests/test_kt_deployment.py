@@ -376,10 +376,19 @@ def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, templ
     assert uniqueness.startswith("[not(or(")
     existing_environment = controls["containerAppsEnvironmentName"]["constraints"]["validations"][2]
     assert "containerAppsEnvironmentApi.data" in existing_environment["isValid"]
-    assert ".internal, true" in existing_environment["isValid"]
-    assert ".publicNetworkAccess, 'Disabled'" in existing_environment["isValid"]
-    assert ".deploymentProfile, 'kt-private-foundation'" in existing_environment["isValid"]
-    assert "제자리 전환하지 말고" in existing_environment["message"]
+    assert "first(" not in existing_environment["isValid"]
+    assert existing_environment["isValid"].startswith("[empty(filter(")
+    assert "not(equals(e.internal, true))" in existing_environment["isValid"]
+    assert "not(equals(e.publicNetworkAccess, 'Disabled'))" in existing_environment["isValid"]
+    assert (
+        "not(equals(e.deploymentProfile, 'kt-private-foundation'))"
+        in existing_environment["isValid"]
+    )
+    assert "Azure에 같은 이름의 Environment가 이미 남아" in existing_environment["message"]
+    notice = controls["existingContainerAppsEnvironmentNotice"]
+    assert notice["type"] == "Microsoft.Common.InfoBox"
+    assert "containerAppsEnvironmentApi.data" in notice["visible"]
+    assert "신규 배포 양식을 열었지만" in notice["options"]["text"]
 
 
 def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):

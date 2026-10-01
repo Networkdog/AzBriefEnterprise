@@ -230,8 +230,9 @@
           {
             "name": "containerAppsEnvironmentName",
             "type": "Microsoft.Common.TextBox",
-            "label": "Container Apps Environment",
+            "label": "Container Apps Environment 이름",
             "defaultValue": "cae-azbrief-kt",
+            "toolTip": "신규 배포 화면이어도 같은 리소스 그룹에 이 이름의 Environment가 남아 있으면 기존 리소스로 판정합니다.",
             "constraints": {
               "required": true,
               "validations": [
@@ -244,10 +245,19 @@
                   "message": "Private Endpoint 이름(pe-대상명)이 겹치지 않도록 Foundry·Storage 두 개·Cosmos·Search·Environment 이름을 모두 다르게 입력하십시오."
                 },
                 {
-                  "isValid": "[or(empty(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))), and(equals(length(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))), 1), equals(first(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))).internal, true), equals(first(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))).publicNetworkAccess, 'Disabled'), equals(first(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))).deploymentProfile, 'kt-private-foundation')))]",
-                  "message": "같은 이름의 기존 Environment가 KT 내부 환경(internal=true, Public Network Access Disabled)이 아닙니다. 제자리 전환하지 말고 소유권과 롤백 정보를 확인한 유지보수 창에서 기존 foundation을 승인 후 제거·재생성하십시오."
+                  "isValid": "[empty(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => and(equals(e.name, steps('names').containerAppsEnvironmentName), or(not(equals(e.internal, true)), not(equals(e.publicNetworkAccess, 'Disabled')), not(equals(e.deploymentProfile, 'kt-private-foundation'))))))]",
+                  "message": "Azure에 같은 이름의 Environment가 이미 남아 있으며 KT 내부 환경(internal=true, Public Network Access Disabled)이 아닙니다. 신규 배포 화면 여부와 무관하게 제자리 전환할 수 없으므로, 소유권과 롤백 정보를 확인한 유지보수 창에서 기존 foundation을 승인 후 제거·재생성하십시오."
                 }
               ]
+            }
+          },
+          {
+            "name": "existingContainerAppsEnvironmentNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": "[not(empty(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))))]",
+            "options": {
+              "icon": "Warning",
+              "text": "신규 배포 양식을 열었지만 Azure에는 같은 리소스 그룹과 이름의 Container Apps Environment가 이미 존재합니다. 이 양식은 기존 리소스의 internal/PNA/소유권을 검사하며, 외부 Environment를 내부 Environment로 제자리 전환하지 않습니다."
             }
           },
           {

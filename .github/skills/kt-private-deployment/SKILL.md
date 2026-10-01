@@ -76,7 +76,9 @@ private/VNet paths.
    `Microsoft.Solutions` control.
 8. Query the deployment resource group for an existing Environment with the requested name. Reuse
    it only when `internal=true`, PNA is `Disabled`, and the KT ownership tag matches; otherwise block
-   the form before ARM validation and require a reviewed recreation.
+   the form before ARM validation and require a reviewed recreation. Do not combine
+   `or(empty(matches), first(matches)...)`: CreateUiDefinition may evaluate `first()` for an empty
+   result. Filter same-name **noncompliant** rows and validate that the filtered array is empty.
 
 Portal discovery depends on the deploying principal having read access to the VNet links and zones.
 If a linked central zone is in another subscription or outside that read scope, require its explicit
@@ -121,6 +123,7 @@ Compare full ARM IDs.
 | `appLogsConfiguration` discriminator rejected `destination: none` | The managed-environment AVM union allows only `azure-monitor` and `log-analytics`. | Pass `null` when logging is disabled. Test the compiled module parameter, not only Bicep source text. |
 | KT Policy denied Container Apps Environment even with `publicNetworkAccess: Disabled` | Policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` checks `vnetConfiguration.internal`, not the PNA field named in its title. | Set both `internal: true` and PNA `Disabled` at creation; assert both compiled leaf mappings. |
 | Older API readback showed PNA as `null` while `2026-01-01` showed `Disabled` | The older response projection omits the newer property; `null` was not proof that Azure enabled it. | Verify with the deployment API contract and inspect the actual Policy aliases before changing the template. |
+| Existing-Environment warning remained after entering a new name | Validation used `or(empty(matches), first(matches)...)`; `first()` on the empty result still invalidated the control. | Avoid relying on logical short-circuiting. Filter only same-name noncompliant rows and assert that result is empty. |
 | `A virtual network cannot be linked to multiple zones with overlapping namespaces` | A different zone with the same namespace was already linked to the VNet. | Discover and reuse the linked zone ID; create only missing namespaces. |
 | Portal validation passed but deployment failed | CreateUiDefinition validates input shape, not every nested AVM discriminator, Policy rule, live link, quota, or permission. | Pair UI checks with compiled-template tests, CLI preflight, ARM validate/what-if, and live acceptance. |
 | GitHub source changed but deployed runtime did not | Git is source control, not a deployment trigger in the isolated environment. | Transfer reviewed immutable artifacts and deploy manually from an approved private-network host. |
