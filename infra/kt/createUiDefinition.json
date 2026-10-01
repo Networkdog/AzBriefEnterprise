@@ -211,6 +211,23 @@
             }
           },
           {
+            "name": "containerAppsEnvironmentApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "POST",
+              "path": "/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
+              "body": {
+                "subscriptions": [
+                  "[subscription().subscriptionId]"
+                ],
+                "query": "[concat('Resources | where type =~ \"microsoft.app/managedenvironments\" | where resourceGroup =~ \"', resourceGroup().name, '\" | project name, internal=tobool(properties.vnetConfiguration.internal), publicNetworkAccess=tostring(properties.publicNetworkAccess), deploymentProfile=tostring(tags.deploymentProfile)')]",
+                "options": {
+                  "resultFormat": "objectArray"
+                }
+              }
+            }
+          },
+          {
             "name": "containerAppsEnvironmentName",
             "type": "Microsoft.Common.TextBox",
             "label": "Container Apps Environment",
@@ -225,6 +242,10 @@
                 {
                   "isValid": "[not(or(equals(steps('names').foundryAccountName, steps('names').agentStorageAccountName), equals(steps('names').foundryAccountName, steps('names').stateStorageAccountName), equals(steps('names').foundryAccountName, steps('names').cosmosAccountName), equals(steps('names').foundryAccountName, steps('names').searchServiceName), equals(steps('names').foundryAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').agentStorageAccountName, steps('names').stateStorageAccountName), equals(steps('names').agentStorageAccountName, steps('names').cosmosAccountName), equals(steps('names').agentStorageAccountName, steps('names').searchServiceName), equals(steps('names').agentStorageAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').stateStorageAccountName, steps('names').cosmosAccountName), equals(steps('names').stateStorageAccountName, steps('names').searchServiceName), equals(steps('names').stateStorageAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').cosmosAccountName, steps('names').searchServiceName), equals(steps('names').cosmosAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').searchServiceName, steps('names').containerAppsEnvironmentName)))]",
                   "message": "Private Endpoint 이름(pe-대상명)이 겹치지 않도록 Foundry·Storage 두 개·Cosmos·Search·Environment 이름을 모두 다르게 입력하십시오."
+                },
+                {
+                  "isValid": "[or(empty(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))), and(equals(length(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))), 1), equals(first(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))).internal, true), equals(first(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))).publicNetworkAccess, 'Disabled'), equals(first(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(e.name, steps('names').containerAppsEnvironmentName))).deploymentProfile, 'kt-private-foundation')))]",
+                  "message": "같은 이름의 기존 Environment가 KT 내부 환경(internal=true, Public Network Access Disabled)이 아닙니다. 제자리 전환하지 말고 소유권과 롤백 정보를 확인한 유지보수 창에서 기존 foundation을 승인 후 제거·재생성하십시오."
                 }
               ]
             }

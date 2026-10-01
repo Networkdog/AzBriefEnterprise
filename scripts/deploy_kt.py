@@ -24,6 +24,7 @@ PROFILE = "kt-private-foundation"
 NETWORK_API = "2024-05-01"
 FOUNDRY_API = "2025-06-01"
 HOST_API = "2025-04-01-preview"
+CONTAINER_ENV_API = "2026-01-01"
 PRIVATE_RANGES = tuple(
     IPv4Network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
@@ -389,7 +390,7 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
     }
     for plan, spec, api in (
         (plans[1], specs[0], FOUNDRY_API),
-        (plans[2], specs[5], "2025-01-01"),
+        (plans[2], specs[5], CONTAINER_ENV_API),
     ):
         subnet = existing_subnets.get(plan.name.casefold())
         owner = None
@@ -404,9 +405,14 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                     for binding in bindings
                 )
             else:
-                matches = _same_id(
-                    owner.get("vnetConfiguration", {}).get("infrastructureSubnetId", ""), expected
-                )
+                vnet_configuration = owner.get("vnetConfiguration", {})
+                matches = _same_id(vnet_configuration.get("infrastructureSubnetId", ""), expected)
+                if vnet_configuration.get("internal") is not True:
+                    raise ValueError(
+                        "Existing Container Apps Environment is external. KT Policy requires "
+                        "vnetConfiguration.internal=true at creation; recreate the foundation "
+                        "instead of attempting an in-place conversion."
+                    )
             if not matches:
                 raise ValueError(
                     f"Existing {spec['name']} is not injected into the requested subnet"
@@ -579,7 +585,14 @@ def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
     prepared = prepare(cli, values)
     if any(prepared[row[3]] for row in SUBNETS):
         raise RuntimeError("A required subnet is absent after deployment")
-    versions = (FOUNDRY_API, "2023-05-01", "2023-05-01", "2024-11-15", "2023-11-01", "2025-01-01")
+    versions = (
+        FOUNDRY_API,
+        "2023-05-01",
+        "2023-05-01",
+        "2024-11-15",
+        "2023-11-01",
+        CONTAINER_ENV_API,
+    )
     for spec, api in zip(endpoint_specs(values, cli.group_id), versions):
         props = cli.get(spec["target"], api)["properties"]
         if str(props.get("publicNetworkAccess", "")).casefold() != "disabled":

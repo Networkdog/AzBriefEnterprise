@@ -30,8 +30,10 @@ DNS/logging and the deployment stage. The form defaults to
 foundation-only provisioning; it does not replace CLI preflight or automatically complete the application setup.
 [KT private-deployment skill](.github/skills/kt-private-deployment/SKILL.md) records the reusable
 network, Policy, DNS, logging, bootstrap, and isolated-release lessons for other agents.
-The KT Container Apps Environment includes `publicNetworkAccess: Disabled` in its initial create
-request so a deny policy never observes a public or unspecified intermediate state.
+The KT Container Apps Environment is created with both `vnetConfiguration.internal: true` and
+`publicNetworkAccess: Disabled`. Built-in policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` has a
+public-network title but actually denies a missing or false `internal` flag. Both values therefore
+belong in the initial create request; an existing external environment requires planned recreation.
 The guided form also discovers required Private DNS zones already linked to the selected VNet,
 reuses their resource IDs, and creates only missing namespaces; it never attempts a second
 overlapping VNet link or copies Private Endpoint records between zones. Discovery covers readable

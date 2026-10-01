@@ -289,8 +289,12 @@ reads CIDR/delegation from the selected VNet, filters invalid candidates, and sh
 description rather than a second user input. It always reuses prepared subnets and defaults to
 foundation-only provisioning. Keep the README button
 paired with that UI and retain the CLI/preflight and explicit completion-stage caveats in its guide.
-The Container Apps Environment must carry `publicNetworkAccess: Disabled` on its initial resource
-PUT because KT deny policy evaluates creation; never implement this as a post-deployment patch.
+The Container Apps Environment must carry both `vnetConfiguration.internal: true` and
+`publicNetworkAccess: Disabled` on its initial resource PUT. Built-in policy
+`d074ddf8-01a5-4b5e-a2b8-964aed452c0a` has a public-network title but actually denies a missing or
+false `internal` alias. Never implement either value as a post-deployment patch, and fail preflight
+for an existing external environment rather than attempting an in-place conversion. Read back the
+environment with the `2026-01-01` API used by the pinned AVM; older API projections can omit PNA.
 The Portal form and CLI preflight must discover required Private DNS zones already linked to the
 selected VNet, reuse those exact IDs, and create only missing namespaces. Explicit zone IDs override
 same-ID discovery but must fail on conflicts; never create a second overlapping VNet link or copy

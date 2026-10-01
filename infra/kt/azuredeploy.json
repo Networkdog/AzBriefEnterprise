@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "17073068547123097674"
+      "templateHash": "8720950485976534893"
     }
   },
   "parameters": {
@@ -33748,7 +33748,7 @@
             "value": "[variables('containerAppsSubnetId')]"
           },
           "internal": {
-            "value": false
+            "value": true
           },
           "publicNetworkAccess": {
             "value": "Disabled"

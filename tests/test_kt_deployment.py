@@ -342,6 +342,17 @@ def test_wizard_only_selects_existing_same_region_network_and_reads_subnets(wiza
 
 def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, template: dict):
     controls = _ui_controls(wizard, "names")
+    environment_api = controls["containerAppsEnvironmentApi"]["request"]
+    assert environment_api["method"] == "POST"
+    assert environment_api["path"] == (
+        "/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01"
+    )
+    assert environment_api["body"]["subscriptions"] == ["[subscription().subscriptionId]"]
+    assert environment_api["body"]["options"] == {"resultFormat": "objectArray"}
+    environment_query = environment_api["body"]["query"]
+    assert "microsoft.app/managedenvironments" in environment_query
+    assert "resourceGroup().name" in environment_query
+    assert "internal=tobool(properties.vnetConfiguration.internal)" in environment_query
     for name, expected in RESOURCE_NAME_DEFAULTS.items():
         control = controls[name]
         assert control["type"] == "Microsoft.Common.TextBox"
@@ -363,6 +374,12 @@ def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, templ
         frozenset(pair) for pair in combinations(expected_names, 2)
     }
     assert uniqueness.startswith("[not(or(")
+    existing_environment = controls["containerAppsEnvironmentName"]["constraints"]["validations"][2]
+    assert "containerAppsEnvironmentApi.data" in existing_environment["isValid"]
+    assert ".internal, true" in existing_environment["isValid"]
+    assert ".publicNetworkAccess, 'Disabled'" in existing_environment["isValid"]
+    assert ".deploymentProfile, 'kt-private-foundation'" in existing_environment["isValid"]
+    assert "제자리 전환하지 말고" in existing_environment["message"]
 
 
 def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
@@ -538,6 +555,7 @@ def test_backing_stores_are_private_low_cost_and_isolated(template: dict):
 
 def test_container_app_is_private_minimum_scale_to_zero_bootstrap(template: dict):
     environment = _params(template, "containerEnvironment")
+    assert environment["internal"] is True
     assert environment["publicNetworkAccess"] == "Disabled"
     environment_template = template["resources"]["containerEnvironment"]["properties"]["template"]
     managed_environment = environment_template["resources"]["managedEnvironment"]
@@ -545,6 +563,10 @@ def test_container_app_is_private_minimum_scale_to_zero_bootstrap(template: dict
     assert (
         managed_environment["properties"]["publicNetworkAccess"]
         == "[parameters('publicNetworkAccess')]"
+    )
+    assert (
+        managed_environment["properties"]["vnetConfiguration"]["internal"]
+        == "[parameters('internal')]"
     )
     assert environment["infrastructureSubnetResourceId"] == "[variables('containerAppsSubnetId')]"
     assert environment["workloadProfiles"] == [
@@ -721,7 +743,8 @@ class FakeAzure(kt.AzureCli):
                         "vnetConfiguration": {
                             "infrastructureSubnetId": (
                                 f"{VNET}/subnets/{self.values['containerAppsSubnetName']}"
-                            )
+                            ),
+                            "internal": True,
                         },
                     }
                 }
@@ -988,6 +1011,30 @@ def test_readback_rejects_public_network_access(values: dict, vnet: dict):
     cli.public_access = "Enabled"
     with pytest.raises(RuntimeError, match="not disabled"):
         kt.run(cli, values, "deploy")
+
+
+def test_existing_external_environment_is_not_adopted(
+    monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict
+):
+    cli = FakeAzure(values, vnet)
+    environment_id = kt.endpoint_specs(values, GROUP)[5]["target"]
+    cli.resources[environment_id] = {
+        "id": environment_id,
+        "tags": {"deploymentProfile": kt.PROFILE},
+    }
+    original_get = cli.get
+
+    def get(resource_id: str, api_version: str) -> dict:
+        result = original_get(resource_id, api_version)
+        if resource_id == environment_id:
+            result["properties"]["vnetConfiguration"]["internal"] = False
+        return result
+
+    monkeypatch.setattr(cli, "get", get)
+    with pytest.raises(ValueError, match="Existing Container Apps Environment is external"):
+        kt.prepare(cli, values)
+    assert ("get", environment_id, kt.CONTAINER_ENV_API) in cli.calls
+    assert not cli.deployments
 
 
 def test_failed_account_host_stops_before_project_host(values: dict, vnet: dict):

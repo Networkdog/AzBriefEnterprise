@@ -39,7 +39,7 @@ the ARM/UI pair from the same source revision.
 | Private Endpoint subnet | RFC1918 IPv4, `/28` or larger, no service delegation, enough verified free IPs. |
 | Foundry subnet | Separate `/27` or larger subnet delegated to `Microsoft.App/environments`; one Foundry account only. |
 | Container Apps subnet | Separate `/27` or larger subnet delegated to `Microsoft.App/environments`; never share it with Foundry. |
-| Container Apps Environment | `publicNetworkAccess: Disabled` must be in the initial `Microsoft.App/managedEnvironments` PUT. A later PATCH is invalid under KT deny Policy. |
+| Container Apps Environment | `vnetConfiguration.internal: true` and `publicNetworkAccess: Disabled` must both be in the initial `Microsoft.App/managedEnvironments` PUT. |
 | Private DNS | Reuse a required zone already linked to the VNet. Create only missing namespaces. Never link a second overlapping zone. |
 | Private Endpoint records | Point the new Private Endpoint DNS zone group at the canonical existing zone. Let Azure manage its A record; do not copy managed records between zones. |
 | Optional ACA logs | Pass `null` when no Log Analytics workspace is selected. AVM `0.16.0` accepts only `azure-monitor` or `log-analytics`, not `none`. |
@@ -48,9 +48,13 @@ the ARM/UI pair from the same source revision.
 | Application image | Use an approved immutable digest and matching registry authentication. Do not deploy `latest`. |
 | Identities | Keep Container Apps control-plane, Foundry project, Hosted Agent, and Azure MCP identities distinct. |
 
-`internal: false` and `ingressExternal: true` do not mean that the Container Apps Environment has
-public network access. The environment remains private when `publicNetworkAccess` is `Disabled`
-and its ingress is reached through the environment Private Endpoint.
+Built-in policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` is named “Container Apps environment should
+disable public network access,” but its actual rule denies a missing or false
+`Microsoft.App/managedEnvironments/vnetConfiguration.internal` alias. Do not treat the display name
+as proof that setting only `publicNetworkAccess` is sufficient. KT requires an internal load
+balancer environment **and** disabled public network access. `ingressExternal: true` on an app means
+environment-level ingress; in this internal environment it remains reachable only through approved
+private/VNet paths.
 
 ## Portal Form Design
 
@@ -70,6 +74,9 @@ and its ingress is reached through the environment Private Endpoint.
 7. Treat CreateUiDefinition schema checks as structural only. Preview the published ARM/UI pair in
    the Portal Sandbox and perform a customer-like validation; the legacy schema does not model every
    `Microsoft.Solutions` control.
+8. Query the deployment resource group for an existing Environment with the requested name. Reuse
+   it only when `internal=true`, PNA is `Disabled`, and the KT ownership tag matches; otherwise block
+   the form before ARM validation and require a reviewed recreation.
 
 Portal discovery depends on the deploying principal having read access to the VNet links and zones.
 If a linked central zone is in another subscription or outside that read scope, require its explicit
@@ -84,8 +91,8 @@ resource ID rather than silently creating a competing zone.
 - Point each Private Endpoint `privateDnsZoneGroupConfigs` entry to the effective ID.
 - Keep the deployment `Incremental`. It preserves existing resources but does **not** delete
   orphaned resources from a failed deployment.
-- Include `publicNetworkAccess: Disabled` in the initial managed-environment leaf resource request,
-  not merely in a later update command.
+- Include `internal: true` and `publicNetworkAccess: Disabled` in the initial managed-environment
+  leaf resource request, not merely in a later update command.
 
 ## CLI Preflight Pattern
 
@@ -112,7 +119,8 @@ Compare full ARM IDs.
 |---|---|---|
 | Subnet field showed `/subscriptions/.../subnets/...` and CIDR warnings | The form queried fixed child names and reused an ARM result as an address input. | Select arbitrary existing subnets by role; derive CIDR from the selected VNet and do not expose duplicate address inputs. |
 | `appLogsConfiguration` discriminator rejected `destination: none` | The managed-environment AVM union allows only `azure-monitor` and `log-analytics`. | Pass `null` when logging is disabled. Test the compiled module parameter, not only Bicep source text. |
-| KT Policy denied Container Apps Environment because PNA was enabled or omitted | Public access was not guaranteed on the initial leaf resource PUT. | Set `publicNetworkAccess: Disabled` at creation and assert the compiled leaf mapping. |
+| KT Policy denied Container Apps Environment even with `publicNetworkAccess: Disabled` | Policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` checks `vnetConfiguration.internal`, not the PNA field named in its title. | Set both `internal: true` and PNA `Disabled` at creation; assert both compiled leaf mappings. |
+| Older API readback showed PNA as `null` while `2026-01-01` showed `Disabled` | The older response projection omits the newer property; `null` was not proof that Azure enabled it. | Verify with the deployment API contract and inspect the actual Policy aliases before changing the template. |
 | `A virtual network cannot be linked to multiple zones with overlapping namespaces` | A different zone with the same namespace was already linked to the VNet. | Discover and reuse the linked zone ID; create only missing namespaces. |
 | Portal validation passed but deployment failed | CreateUiDefinition validates input shape, not every nested AVM discriminator, Policy rule, live link, quota, or permission. | Pair UI checks with compiled-template tests, CLI preflight, ARM validate/what-if, and live acceptance. |
 | GitHub source changed but deployed runtime did not | Git is source control, not a deployment trigger in the isolated environment. | Transfer reviewed immutable artifacts and deploy manually from an approved private-network host. |

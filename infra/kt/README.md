@@ -134,11 +134,21 @@ KT DNS 담당자가 Azure Private DNS로의 전달·해석을 구성해야 합�
 VPN, ExpressRoute, peering, NSG/UDR, outbound 방화벽을 변경하지 않습니다.
 신규 subnet에도 NSG/UDR를 자동 생성하지 않으므로 KT 정책에 따른 검토·연결이 필요합니다.
 
-Container Apps의 `internal=false`, App의 `ingressExternal=true`는 **공용 인터넷 허용이
-아닙니다**. Environment의 Public Network Access는 `Disabled`이며 PE로 들어온 요청을
-App ingress까지 전달하는 구성입니다. KT Policy가 생성 요청을 검사하므로 이 값은 Environment
-최초 `PUT`에 포함되며 사후 PATCH로 전환하지 않습니다. bootstrap URL은 VNet/승인된 사설
-경로에서 접근합니다.
+Container Apps Environment는 `internal=true`인 내부 load balancer 환경이며 Public Network
+Access도 `Disabled`입니다. App의 `ingressExternal=true`는 이 환경 안에서 ingress를
+VNet/Private Endpoint 경로에 노출한다는 뜻이지 공용 인터넷 허용이 아닙니다. KT에 적용된
+built-in Policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a`의 표시 이름은 Public Network Access를
+언급하지만 실제 deny 조건은 `vnetConfiguration.internal`이 없거나 `false`인 경우입니다.
+따라서 `internal=true`와 `publicNetworkAccess=Disabled`를 Environment 최초 `PUT`에 함께
+포함하며 사후 PATCH로 전환하지 않습니다. bootstrap URL은 VNet/승인된 사설 경로에서
+접근합니다.
+
+이미 `internal=false`로 생성된 Environment는 이 프로필에서 인수하지 않습니다. accessibility
+level을 제자리에서 전환하지 말고, 앱·Private Endpoint·DNS·이미지의 롤백 정보를 기록한
+유지보수 창에서 기존 foundation을 명시적으로 제거한 뒤 내부 Environment로 다시 생성합니다.
+삭제는 자동화하지 않습니다. Portal 이름 단계는 같은 RG·이름의 기존 Environment를 Resource
+Graph로 조회하고 `internal=true`, PNA `Disabled`, KT 소유권 태그가 아니면 ARM validation 전에
+진행을 막습니다.
 
 VNet injection만으로 모든 인터넷 egress가 차단되지는 않습니다. Foundry 플랫폼, Entra,
 ARM, 이미지 다운로드, 패키지 빌드, Microsoft Learn/RSS 등의 필요한 outbound 경로와 DNS를

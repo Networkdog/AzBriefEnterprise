@@ -56,8 +56,11 @@ operator-selected rather than fixed. Distinct Foundry and Container Apps subnets
 service delegation. Use a project Capability Host with AAD Blob/Cosmos/Search bindings after private
 DNS and provisioning roles, then grant generated-container data roles. Network injection
 already creates the account host; do not create a second one or auto-delete a conflicting host.
-The Container Apps Environment must include `publicNetworkAccess: Disabled` in its initial PUT
-because KT deny policy blocks a public or unspecified create request; a later patch is not valid.
+The Container Apps Environment must include `vnetConfiguration.internal: true` and
+`publicNetworkAccess: Disabled` in its initial PUT. Built-in policy
+`d074ddf8-01a5-4b5e-a2b8-964aed452c0a` is titled as a public-network control but actually denies
+missing/false `internal`. A later patch is not valid; an existing external environment requires a
+planned recreation and must not be adopted by preflight.
 Portal Resource Graph discovery and CLI preflight reuse any required Private DNS zone already linked
 to the selected VNet, while Bicep creates only missing namespaces. Explicit cross-subscription IDs
 may override matching discovery but conflicts fail closed. Never create another overlapping VNet
