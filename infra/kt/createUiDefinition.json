@@ -147,34 +147,15 @@
             }
           },
           {
-            "name": "agentStorageAccountName",
+            "name": "storageAccountName",
             "type": "Microsoft.Common.TextBox",
-            "label": "Agent backing Storage",
-            "defaultValue": "stazbriefktagent",
+            "label": "공유 Storage Account",
+            "defaultValue": "stazbriefkt",
+            "toolTip": "계정 하나에 azbrief-state, azbrief-archive와 Foundry 관리 컨테이너를 분리합니다. Foundry의 계정 범위 권한 때문에 완전한 권한 격리는 아니며, 기존 2계정 환경의 데이터는 자동 이전하지 않습니다.",
             "constraints": {
               "required": true,
               "regex": "^[a-z0-9]{3,24}$",
               "validationMessage": "3~24자의 소문자·숫자만 사용할 수 있습니다. 전역 이름 가용성을 확인하십시오."
-            }
-          },
-          {
-            "name": "stateStorageAccountName",
-            "type": "Microsoft.Common.TextBox",
-            "label": "상태·아카이브 Storage",
-            "defaultValue": "stazbriefktstate",
-            "toolTip": "프로젝트 ID가 canonical archive를 변경하지 못하도록 Agent storage와 분리합니다.",
-            "constraints": {
-              "required": true,
-              "validations": [
-                {
-                  "regex": "^[a-z0-9]{3,24}$",
-                  "message": "3~24자의 소문자·숫자만 사용할 수 있습니다."
-                },
-                {
-                  "isValid": "[not(equals(steps('names').agentStorageAccountName, steps('names').stateStorageAccountName))]",
-                  "message": "Agent backing Storage와 다른 이름을 사용하십시오."
-                }
-              ]
             }
           },
           {
@@ -241,8 +222,8 @@
                   "message": "2~60자, 소문자로 시작하고 소문자나 숫자로 끝나야 합니다."
                 },
                 {
-                  "isValid": "[not(or(equals(steps('names').foundryAccountName, steps('names').agentStorageAccountName), equals(steps('names').foundryAccountName, steps('names').stateStorageAccountName), equals(steps('names').foundryAccountName, steps('names').cosmosAccountName), equals(steps('names').foundryAccountName, steps('names').searchServiceName), equals(steps('names').foundryAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').agentStorageAccountName, steps('names').stateStorageAccountName), equals(steps('names').agentStorageAccountName, steps('names').cosmosAccountName), equals(steps('names').agentStorageAccountName, steps('names').searchServiceName), equals(steps('names').agentStorageAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').stateStorageAccountName, steps('names').cosmosAccountName), equals(steps('names').stateStorageAccountName, steps('names').searchServiceName), equals(steps('names').stateStorageAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').cosmosAccountName, steps('names').searchServiceName), equals(steps('names').cosmosAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').searchServiceName, steps('names').containerAppsEnvironmentName)))]",
-                  "message": "Private Endpoint 이름(pe-대상명)이 겹치지 않도록 Foundry·Storage 두 개·Cosmos·Search·Environment 이름을 모두 다르게 입력하십시오."
+                  "isValid": "[not(or(equals(steps('names').foundryAccountName, steps('names').storageAccountName), equals(steps('names').foundryAccountName, steps('names').cosmosAccountName), equals(steps('names').foundryAccountName, steps('names').searchServiceName), equals(steps('names').foundryAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').storageAccountName, steps('names').cosmosAccountName), equals(steps('names').storageAccountName, steps('names').searchServiceName), equals(steps('names').storageAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').cosmosAccountName, steps('names').searchServiceName), equals(steps('names').cosmosAccountName, steps('names').containerAppsEnvironmentName), equals(steps('names').searchServiceName, steps('names').containerAppsEnvironmentName)))]",
+                  "message": "Private Endpoint 이름(pe-대상명)이 겹치지 않도록 Foundry·Storage·Cosmos·Search·Environment 이름을 모두 다르게 입력하십시오."
                 },
                 {
                   "isValid": "[empty(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => and(equals(e.name, steps('names').containerAppsEnvironmentName), or(not(equals(e.internal, true)), not(equals(e.publicNetworkAccess, 'Disabled')), not(equals(e.deploymentProfile, 'kt-private-foundation'))))))]",
@@ -282,7 +263,7 @@
             "type": "Microsoft.Common.InfoBox",
             "options": {
               "icon": "Info",
-              "text": "Consumption 0.25 vCPU / 0.5 GiB, replica 0~1, 단일 리전 Cosmos Serverless, Storage LRS를 유지합니다. 앱이 0 replica여도 Search·Private Endpoint 여섯 개·DNS·storage 비용은 남습니다. Application Insights는 생성하지 않습니다."
+              "text": "Consumption 0.25 vCPU / 0.5 GiB, replica 0~1, 단일 리전 Cosmos Serverless, Storage LRS 계정 하나를 유지합니다. 앱이 0 replica여도 Search·Private Endpoint 다섯 개·DNS·storage 비용은 남습니다. Application Insights는 생성하지 않습니다."
             }
           },
           {
@@ -402,7 +383,7 @@
           {
             "name": "scopeAccepted",
             "type": "Microsoft.Common.CheckBox",
-            "label": "유휴 비용이 남으며, 이번 배포에 모델·Agent 게시·운영 App/Job·인증·메일·스케줄 설정이 포함되지 않음을 확인했습니다.",
+            "label": "유휴 비용과 공유 Storage의 계정 범위 Foundry 권한을 확인했으며, 이번 배포에 모델·Agent 게시·운영 App/Job·인증·메일·스케줄 설정이 포함되지 않음을 확인했습니다.",
             "constraints": { "required": true, "validationMessage": "비용과 인프라 초기 배포 범위를 확인하십시오." }
           }
         ]
@@ -416,8 +397,7 @@
       "foundrySubnetName": "[steps('network').foundrySubnetName]",
       "containerAppsSubnetName": "[steps('network').containerAppsSubnetName]",
       "foundryAccountName": "[steps('names').foundryAccountName]",
-      "agentStorageAccountName": "[steps('names').agentStorageAccountName]",
-      "stateStorageAccountName": "[steps('names').stateStorageAccountName]",
+      "storageAccountName": "[steps('names').storageAccountName]",
       "cosmosAccountName": "[steps('names').cosmosAccountName]",
       "searchServiceName": "[steps('names').searchServiceName]",
       "projectName": "[steps('names').projectName]",

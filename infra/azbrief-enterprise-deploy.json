@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "13397089222641302886"
+      "templateHash": "6072131329285648325"
     },
     "description": "AzBrief Enterprise — Microsoft Foundry Hosted Agent analysis runtime + Container Apps control plane and scheduler + Communication Services, with Key Vault backed secrets and Entra-only Foundry auth."
   },
@@ -523,7 +523,7 @@
     "emailServiceName": "[format('acs-email-{0}-{1}', parameters('baseName'), variables('shortSuffix'))]",
     "schedulerJobName": "[format('caj-{0}', parameters('baseName'))]",
     "storageAccountName": "[take(format('st{0}{1}', toLower(replace(parameters('baseName'), '-', '')), variables('shortSuffix')), 24)]",
-    "evaluationStorageAccountName": "[take(format('steval{0}{1}', toLower(replace(parameters('baseName'), '-', '')), variables('shortSuffix')), 24)]",
+    "evaluationStorageConnectionName": "[take(format('steval{0}{1}', toLower(replace(parameters('baseName'), '-', '')), variables('shortSuffix')), 24)]",
     "vnetName": "[format('vnet-{0}-{1}', parameters('baseName'), variables('shortSuffix'))]",
     "perimeterName": "[format('nsp-{0}-{1}', parameters('baseName'), variables('shortSuffix'))]",
     "perimeterProfileName": "azbrief",
@@ -712,15 +712,8 @@
       },
       {
         "id": "state_storage",
-        "label": "State Storage",
+        "label": "Shared Storage (State, Archive, Foundry)",
         "name": "[variables('storageAccountName')]",
-        "resource_type": "Microsoft.Storage/storageAccounts",
-        "api_version": "2023-05-01"
-      },
-      {
-        "id": "evaluation_storage",
-        "label": "Evaluation Storage",
-        "name": "[variables('evaluationStorageAccountName')]",
         "resource_type": "Microsoft.Storage/storageAccounts",
         "api_version": "2023-05-01"
       },
@@ -1016,54 +1009,6 @@
       "dependsOn": [
         "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[4])]",
         "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', variables('storageAccountName')))]"
-      ]
-    },
-    {
-      "condition": "[variables('vnetMode')]",
-      "type": "Microsoft.Network/privateEndpoints",
-      "apiVersion": "2024-05-01",
-      "name": "[format('pe-{0}', variables('evaluationStorageAccountName'))]",
-      "location": "[parameters('location')]",
-      "tags": "[parameters('tags')]",
-      "properties": {
-        "subnet": {
-          "id": "[variables('privateEndpointSubnetId')]"
-        },
-        "privateLinkServiceConnections": [
-          {
-            "name": "blob",
-            "properties": {
-              "privateLinkServiceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
-              "groupIds": [
-                "blob"
-              ]
-            }
-          }
-        ]
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
-        "[resourceId('Microsoft.Network/virtualNetworks', variables('vnetName'))]"
-      ]
-    },
-    {
-      "condition": "[variables('vnetMode')]",
-      "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
-      "apiVersion": "2024-05-01",
-      "name": "[format('{0}/{1}', format('pe-{0}', variables('evaluationStorageAccountName')), 'default')]",
-      "properties": {
-        "privateDnsZoneConfigs": [
-          {
-            "name": "blob",
-            "properties": {
-              "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[4])]"
-            }
-          }
-        ]
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Network/privateEndpoints', format('pe-{0}', variables('evaluationStorageAccountName')))]",
-        "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneNames')[4])]"
       ]
     },
     {
@@ -1444,49 +1389,27 @@
       ]
     },
     {
-      "type": "Microsoft.Storage/storageAccounts",
-      "apiVersion": "2023-05-01",
-      "name": "[variables('evaluationStorageAccountName')]",
-      "location": "[parameters('location')]",
-      "tags": "[parameters('tags')]",
-      "sku": {
-        "name": "Standard_LRS"
-      },
-      "kind": "StorageV2",
-      "properties": {
-        "minimumTlsVersion": "TLS1_2",
-        "supportsHttpsTrafficOnly": true,
-        "allowBlobPublicAccess": false,
-        "allowSharedKeyAccess": false,
-        "publicNetworkAccess": "[if(variables('vnetMode'), 'Disabled', 'Enabled')]",
-        "networkAcls": {
-          "defaultAction": "[if(variables('vnetMode'), 'Deny', 'Allow')]",
-          "bypass": "AzureServices"
-        }
-      }
-    },
-    {
       "type": "Microsoft.CognitiveServices/accounts/projects/connections",
       "apiVersion": "2025-06-01",
-      "name": "[format('{0}/{1}/{2}', variables('foundryAccountName'), variables('foundryProjectName'), variables('evaluationStorageAccountName'))]",
+      "name": "[format('{0}/{1}/{2}', variables('foundryAccountName'), variables('foundryProjectName'), variables('evaluationStorageConnectionName'))]",
       "properties": {
         "category": "AzureStorageAccount",
-        "target": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName')), '2023-05-01').primaryEndpoints.blob]",
+        "target": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-05-01').primaryEndpoints.blob]",
         "authType": "AAD",
         "isSharedToAll": true,
         "metadata": {
           "ApiType": "Azure",
-          "ResourceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
-          "location": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName')), '2023-05-01', 'full').location]"
+          "ResourceId": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+          "location": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), '2023-05-01', 'full').location]"
         }
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
-        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', format('pe-{0}', variables('evaluationStorageAccountName')), 'default')]",
         "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]",
         "[resourceId('Microsoft.CognitiveServices/accounts/projects/capabilityHosts', variables('foundryAccountName'), variables('foundryProjectName'), 'caphostproj')]",
-        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), variables('roleIds').storageBlobDataOwner))]",
-        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), variables('roleIds').foundryUser))]"
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), variables('roleIds').storageBlobDataOwner))]",
+        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryAccountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), variables('roleIds').foundryUser))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+        "[resourceId('Microsoft.Network/privateEndpoints/privateDnsZoneGroups', format('pe-{0}', variables('storageAccountName')), 'default')]"
       ]
     },
     {
@@ -1766,6 +1689,7 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('archiveContainerName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('archiveContainerName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor))]",
         "[resourceId('Microsoft.Communication/communicationServices', variables('communicationServiceName'))]",
         "[resourceId('Microsoft.App/managedEnvironments', variables('containerEnvName'))]",
         "[resourceId('Microsoft.Communication/emailServices/domains', variables('emailServiceName'), 'AzureManagedDomain')]",
@@ -1777,7 +1701,7 @@
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'admin-entra-client-secret')]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'container-registry-password')]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'orchestrator-api-key')]",
-        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor))]"
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('stateContainerName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('stateContainerName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor))]"
       ]
     },
     {
@@ -2045,6 +1969,7 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Insights/components', variables('appInsightsName'))]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('archiveContainerName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('archiveContainerName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor))]",
         "[resourceId('Microsoft.Communication/communicationServices', variables('communicationServiceName'))]",
         "[resourceId('Microsoft.App/managedEnvironments', variables('containerEnvName'))]",
         "[resourceId('Microsoft.Communication/emailServices/domains', variables('emailServiceName'), 'AzureManagedDomain')]",
@@ -2055,7 +1980,7 @@
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'acs-connection-string')]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'container-registry-password')]",
         "[resourceId('Microsoft.KeyVault/vaults/secrets', variables('keyVaultName'), 'orchestrator-api-key')]",
-        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor))]"
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('stateContainerName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('stateContainerName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor))]"
       ]
     },
     {
@@ -2076,8 +2001,8 @@
     {
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
-      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor)]",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('stateContainerName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('stateContainerName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor)]",
       "properties": {
         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roleIds').storageBlobDataContributor)]",
         "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
@@ -2085,7 +2010,22 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]",
-        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('stateContainerName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('archiveContainerName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('archiveContainerName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), variables('roleIds').storageBlobDataContributor)]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roleIds').storageBlobDataContributor)]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageAccountName'), 'default', variables('archiveContainerName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('managedIdentityName'))]"
       ]
     },
     {
@@ -2123,16 +2063,16 @@
     {
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
-      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), variables('roleIds').storageBlobDataOwner)]",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName')), resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), variables('roleIds').storageBlobDataOwner)]",
       "properties": {
         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('roleIds').storageBlobDataOwner)]",
         "principalId": "[reference(resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName')), '2025-06-01', 'full').identity.principalId]",
         "principalType": "ServicePrincipal"
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
-        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]"
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', variables('foundryAccountName'), variables('foundryProjectName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
       ]
     },
     {
@@ -2337,26 +2277,6 @@
         "[resourceId('Microsoft.Network/networkSecurityPerimeters', variables('perimeterName'))]",
         "[resourceId('Microsoft.Network/networkSecurityPerimeters/profiles', variables('perimeterName'), variables('perimeterProfileName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
-      ]
-    },
-    {
-      "condition": "[variables('perimeterMode')]",
-      "type": "Microsoft.Network/networkSecurityPerimeters/resourceAssociations",
-      "apiVersion": "2024-07-01",
-      "name": "[format('{0}/{1}', variables('perimeterName'), 'assoc-evaluation-storage')]",
-      "properties": {
-        "privateLinkResource": {
-          "id": "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]"
-        },
-        "profile": {
-          "id": "[resourceId('Microsoft.Network/networkSecurityPerimeters/profiles', variables('perimeterName'), variables('perimeterProfileName'))]"
-        },
-        "accessMode": "[parameters('perimeterAccessMode')]"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Storage/storageAccounts', variables('evaluationStorageAccountName'))]",
-        "[resourceId('Microsoft.Network/networkSecurityPerimeters', variables('perimeterName'))]",
-        "[resourceId('Microsoft.Network/networkSecurityPerimeters/profiles', variables('perimeterName'), variables('perimeterProfileName'))]"
       ]
     },
     {

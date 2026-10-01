@@ -145,6 +145,12 @@ def load_parameters(path: Path) -> dict[str, Any]:
     template = json.loads(TEMPLATE.read_text(encoding="utf-8"))
     supplied = json.loads(path.read_text(encoding="utf-8-sig"))["parameters"]
     schema = template["parameters"]
+    if {"agentStorageAccountName", "stateStorageAccountName"}.intersection(supplied):
+        raise ValueError(
+            "Use storageAccountName with the single-account template. Legacy two-account "
+            "deployments require a separately approved data/RBAC migration; no account is "
+            "selected or removed automatically."
+        )
     unknown = set(supplied) - set(schema)
     if unknown or INTERNAL_PARAMETERS.intersection(supplied):
         raise ValueError(
@@ -170,10 +176,6 @@ def load_parameters(path: Path) -> dict[str, Any]:
         if "allowedValues" in definition and value not in definition["allowedValues"]:
             raise ValueError(f"Unsupported value for {name}")
         values[name] = value
-    if values["agentStorageAccountName"] == values["stateStorageAccountName"]:
-        raise ValueError(
-            "Agent backing storage and the canonical archive must be separate accounts"
-        )
     if not isinstance(values["existingPrivateDnsZoneIds"], dict):
         raise ValueError("existingPrivateDnsZoneIds must be an object")
     if not isinstance(values["tags"], dict) or values["tags"].get("deploymentProfile") != PROFILE:
@@ -282,7 +284,7 @@ def _same_id(left: str, right: str) -> bool:
 
 
 def endpoint_specs(values: dict[str, Any], group_id: str) -> list[dict[str, Any]]:
-    """Match the six private endpoints and conservative nine-IP budget in the template."""
+    """Match the five private endpoints and conservative eight-IP budget in the template."""
     return [
         {
             "name": f"pe-{values[key]}",
@@ -292,8 +294,7 @@ def endpoint_specs(values: dict[str, Any], group_id: str) -> list[dict[str, Any]
         }
         for key, resource_type, group, ips in (
             ("foundryAccountName", "Microsoft.CognitiveServices/accounts", "account", 3),
-            ("agentStorageAccountName", "Microsoft.Storage/storageAccounts", "blob", 1),
-            ("stateStorageAccountName", "Microsoft.Storage/storageAccounts", "blob", 1),
+            ("storageAccountName", "Microsoft.Storage/storageAccounts", "blob", 1),
             ("cosmosAccountName", "Microsoft.DocumentDB/databaseAccounts", "Sql", 2),
             ("searchServiceName", "Microsoft.Search/searchServices", "searchService", 1),
             (
@@ -336,8 +337,8 @@ def validate_existing_host(cli: AzureCli, account_id: str, values: dict[str, Any
     targets = endpoint_specs(values, cli.group_id)
     for name, target in (
         ("agent-storage", targets[1]["target"]),
-        ("agent-cosmos", targets[3]["target"]),
-        ("agent-search", targets[4]["target"]),
+        ("agent-cosmos", targets[2]["target"]),
+        ("agent-search", targets[3]["target"]),
     ):
         connection = connections.get(name, {})
         if connection.get("authType") != "AAD" or not _same_id(
@@ -360,6 +361,16 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
     )
     by_id = {resource["id"].casefold(): resource for resource in resources}
     specs = endpoint_specs(values, cli.group_id)
+    for resource in resources:
+        if (
+            "/providers/microsoft.storage/storageaccounts/" in resource["id"].casefold()
+            and (resource.get("tags") or {}).get("deploymentProfile") == PROFILE
+            and not _same_id(resource["id"], specs[1]["target"])
+        ):
+            raise ValueError(
+                "Another KT-profile Storage Account exists. Complete the separately approved "
+                "single-account migration before deploying; existing accounts are not deleted."
+            )
     if len({spec["name"].casefold() for spec in specs}) != len(specs):
         raise ValueError("Resource names must give each private endpoint a distinct name")
     planned_ids = [spec["target"] for spec in specs] + [
@@ -390,7 +401,7 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
     }
     for plan, spec, api in (
         (plans[1], specs[0], FOUNDRY_API),
-        (plans[2], specs[5], CONTAINER_ENV_API),
+        (plans[2], specs[4], CONTAINER_ENV_API),
     ):
         subnet = existing_subnets.get(plan.name.casefold())
         owner = None
@@ -587,7 +598,6 @@ def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
         raise RuntimeError("A required subnet is absent after deployment")
     versions = (
         FOUNDRY_API,
-        "2023-05-01",
         "2023-05-01",
         "2024-11-15",
         "2023-11-01",

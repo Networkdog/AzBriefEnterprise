@@ -59,6 +59,53 @@ or telemetry-publishing role is added. AzBrief uses its authenticated exporter f
 redacted application errors; this does not enable direct MCP telemetry.
 MCP trace/metric export would require a separately reviewed authenticated exporter or collector.
 
+## Single Storage Account
+
+New standard and KT deployments create **one dedicated StorageV2 / Standard_LRS account**.
+Application data and Foundry data use different private Blob containers:
+
+| Container | Owner and purpose |
+|---|---|
+| `azbrief-state` | App/Job checkpoint, Admin configuration, scheduler leases and feedback |
+| `azbrief-archive` | App/Job create-only canonical reports and search metadata |
+| Foundry-managed containers | Evaluation datasets/results in the standard profile; agent files and system data in KT. Foundry chooses the container names and lifecycle. |
+
+The standard account keeps its existing `st{baseName}{suffix}` name and application URLs.
+The `steval{baseName}{suffix}` **connection name** is retained but points to the shared account;
+it no longer creates an account. Admin readiness checks one storage resource. In VNet mode one
+Blob Private Endpoint serves all containers; in perimeter mode one storage association is used.
+No shared keys or public containers are enabled. This removes a redundant endpoint, not the
+capacity/transaction charges for the same stored data.
+
+App/Job Blob Data Contributor is assigned separately to the two application containers. Foundry
+keeps its required account-scoped Blob Data Owner for evaluation; KT also keeps the standard-setup
+account roles. Therefore **this is logical data separation, not a hard boundary against the
+Foundry project identity or storage administrators**. It shares account throughput, redundancy,
+networking and failure scope. Use it only when the workloads belong to the same approved trust
+boundary; do not apply it where policy requires independent account isolation.
+Blob-service retention is shared too: KT preserves seven-day blob/container soft delete, which
+also applies to Foundry-managed containers in the shared account.
+See [Blob RBAC scopes](https://learn.microsoft.com/azure/storage/blobs/assign-azure-role-data-access),
+[evaluation storage requirements](https://learn.microsoft.com/azure/foundry/concepts/evaluation-regions-limits-virtual-network#bring-your-own-storage)
+and [standard agent permissions](https://learn.microsoft.com/azure/foundry/agents/concepts/standard-agent-setup).
+
+**An existing two-account deployment is not automatically migrated.** Incremental ARM deployment
+does not delete the old account, Private Endpoint, connection data or account-scoped role grants.
+Before reapplying the new foundation, obtain a migration/rollback approval, stop new runs and
+drain writers, inventory all dataset/file references, and back up the existing data and metadata.
+Keep the standard state account; for KT, prefer the existing Foundry backing account because an
+active Capability Host cannot be silently redirected. Copy required application blobs without
+changing canonical bytes or metadata, and verify the checkpoint/configuration and archive listing.
+Copying Foundry blobs alone does not update existing dataset/result references: retain the source
+until a supported migration or deliberate retention plan has been verified.
+After cutover, re-read ETags, validate private DNS, App/Job storage access and a real Foundry
+evaluation or KT agent-file operation. Explicitly remove obsolete broad App/Job grants only after
+the container grants work. Delete old accounts/endpoints/roles only after dependency checks,
+retention requirements, rollback acceptance and separate approval. KT preflight rejects legacy
+two-name input files and additional KT-profile storage accounts rather than silently selecting,
+creating or deleting an account. Local compilation/tests do not perform this migration or prove
+live Foundry permissions and networking.
+
 ## Setup Stages
 
 Run every stage from the same reviewed customer checkout with explicit `SubscriptionId`,

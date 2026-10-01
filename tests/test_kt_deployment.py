@@ -18,8 +18,7 @@ GROUP = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-kt-test"
 VNET = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-network/providers/Microsoft.Network/virtualNetworks/vnet-kt"
 RESOURCE_NAME_DEFAULTS = {
     "foundryAccountName": "ai-azbrief-kt",
-    "agentStorageAccountName": "stazbriefktagent",
-    "stateStorageAccountName": "stazbriefktstate",
+    "storageAccountName": "stazbriefkt",
     "cosmosAccountName": "cosmos-azbrief-kt",
     "searchServiceName": "srch-azbrief-kt",
     "projectName": "azbrief-kt",
@@ -51,8 +50,7 @@ def values(template: dict) -> dict:
         virtualNetworkName="vnet-kt",
         **SUBNET_NAMES,
         foundryAccountName="ai-kt-test",
-        agentStorageAccountName="stktagenttest",
-        stateStorageAccountName="stktstatetest",
+        storageAccountName="stktsharedtest",
         cosmosAccountName="cosmos-kt-test",
         searchServiceName="search-kt-test",
         peSubnetAddressPrefix="10.70.0.0/28",
@@ -113,7 +111,7 @@ def test_new_resource_names_have_editable_literal_defaults(
     definition = template["parameters"][parameter]
     assert definition["defaultValue"] == expected
     assert "allowedValues" not in definition
-    if "StorageAccount" in parameter:
+    if "storageaccount" in parameter.casefold():
         assert re.fullmatch(r"[a-z0-9]{3,24}", expected)
     else:
         assert re.fullmatch(r"[a-z][a-z0-9]*(?:-[a-z0-9]+)*", expected)
@@ -159,8 +157,7 @@ def test_cli_resolves_prefilled_names_from_only_explicit_network_inputs(
         assert loaded[key] == values[key]
     assert [spec["name"] for spec in kt.endpoint_specs(loaded, GROUP)] == [
         "pe-ai-azbrief-kt",
-        "pe-stazbriefktagent",
-        "pe-stazbriefktstate",
+        "pe-stazbriefkt",
         "pe-cosmos-azbrief-kt",
         "pe-srch-azbrief-kt",
         "pe-cae-azbrief-kt",
@@ -361,7 +358,10 @@ def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, templ
         assert re.fullmatch(_ui_regex(control), expected)
         assert re.fullmatch(_ui_regex(control), expected + "01")
         assert not re.fullmatch(_ui_regex(control), "bad name!")
-    assert not re.fullmatch(_ui_regex(controls["agentStorageAccountName"]), "st-azbrief")
+    assert not re.fullmatch(_ui_regex(controls["storageAccountName"]), "st-azbrief")
+    assert "agentStorageAccountName" not in controls
+    assert "stateStorageAccountName" not in controls
+    assert "계정 범위 권한" in controls["storageAccountName"]["toolTip"]
     assert not re.fullmatch(_ui_regex(controls["containerAppName"]), "ca--bad")
     uniqueness = controls["containerAppsEnvironmentName"]["constraints"]["validations"][1][
         "isValid"
@@ -395,6 +395,8 @@ def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
     options = _ui_controls(wizard, "options")
     review = _ui_controls(wizard, "review")
     outputs = wizard["outputs"]
+    assert "Private Endpoint 다섯 개" in options["costNotice"]["options"]["text"]
+    assert "공유 Storage의 계정 범위 Foundry 권한" in review["scopeAccepted"]["label"]
     assert {v["value"] for v in options["searchSku"]["constraints"]["allowedValues"]} == {
         "basic",
         "standard",
@@ -541,14 +543,76 @@ def test_foundry_standard_setup_and_connection_roles(template: dict):
     )
 
 
-def test_backing_stores_are_private_low_cost_and_isolated(template: dict):
-    for name in ("agentStorage", "stateStorage"):
-        params = _params(template, name)
-        assert params["skuName"] == "Standard_LRS"
-        assert params["publicNetworkAccess"] == "Disabled"
-        assert params["networkAcls"] == {"defaultAction": "Deny", "bypass": "None"}
-        assert params["allowBlobPublicAccess"] is False
-        assert params["allowSharedKeyAccess"] is False
+def test_one_private_storage_account_uses_separate_application_containers(template: dict):
+    accounts = [
+        resource
+        for resource in _resources(template)
+        if resource["type"].casefold() == "microsoft.storage/storageaccounts"
+        and resource.get("existing") is not True
+    ]
+    assert len(accounts) == 1
+    params = _params(template, "storage")
+    assert params["name"] == "[parameters('storageAccountName')]"
+    assert params["skuName"] == "Standard_LRS"
+    assert params["publicNetworkAccess"] == "Disabled"
+    assert params["networkAcls"] == {"defaultAction": "Deny", "bypass": "None"}
+    assert params["allowBlobPublicAccess"] is False
+    assert params["allowSharedKeyAccess"] is False
+    assert params["minimumTlsVersion"] == "TLS1_2"
+    assert params["supportsHttpsTrafficOnly"] is True
+    assert params["blobServices"]["containers"] == [
+        {"name": "azbrief-state", "publicAccess": "None"},
+        {"name": "azbrief-archive", "publicAccess": "None"},
+    ]
+    assert params["blobServices"]["deleteRetentionPolicyDays"] == 7
+    assert params["blobServices"]["containerDeleteRetentionPolicyDays"] == 7
+    for module in ("agentBindings", "capabilityHost"):
+        assert _params(template, module)["agentStorageAccountName"] == (
+            "[parameters('storageAccountName')]"
+        )
+    output = template["outputs"]["ktFoundation"]["value"]
+    assert (
+        output["storageAccountResourceId"]
+        == output["agentStorageAccountResourceId"]
+        == output["stateStorageAccountResourceId"]
+        == "[variables('storageId')]"
+    )
+    for field, container in (
+        ("stateContainerUrl", "azbrief-state"),
+        ("archiveContainerUrl", "azbrief-archive"),
+    ):
+        assert "reference('storage')" in output[field]
+        assert container in output[field]
+
+
+def test_control_plane_storage_permissions_are_container_scoped(template: dict):
+    for role_name, container_name in (
+        ("controlPlaneStorageRole", "azbrief-state"),
+        ("controlPlaneArchiveRole", "azbrief-archive"),
+    ):
+        role = template["resources"][role_name]
+        assert "storageAccountName" in role["scope"]
+        assert role["scope"] == (
+            "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', "
+            f"parameters('storageAccountName'), 'default', '{container_name}')]"
+        )
+        assert "ba92f5b4-2d11-453d-a403-e96b0029c9fe" in role["properties"]["roleDefinitionId"]
+        assert "controlPlaneIdentity" in role["properties"]["principalId"]
+        assert "storage" in role["dependsOn"]
+    bindings = template["resources"]["agentBindings"]["properties"]["template"]
+    project_roles = [
+        resource
+        for resource in bindings["resources"]
+        if resource["type"] == "Microsoft.Authorization/roleAssignments"
+        and resource.get("copy", {}).get("name") == "storageRoles"
+    ]
+    assert len(project_roles) == 1
+    assert "agentStorageAccountName" in project_roles[0]["scope"]
+    assert "/blobServices/containers" not in project_roles[0]["scope"]
+    assert "projectPrincipalId" in project_roles[0]["properties"]["principalId"]
+
+
+def test_other_backing_stores_keep_private_low_cost_settings(template: dict):
     assert _params(template, "cosmos")["capacityMode"] == "Serverless"
     assert _params(template, "cosmos")["networkRestrictions"]["publicNetworkAccess"] == "Disabled"
     assert len(_params(template, "cosmos")["failoverLocations"]) == 1
@@ -556,10 +620,6 @@ def test_backing_stores_are_private_low_cost_and_isolated(template: dict):
     assert template["parameters"]["searchSku"]["defaultValue"] == "basic"
     assert search["replicaCount"] == search["partitionCount"] == 1
     assert search["publicNetworkAccess"] == "Disabled"
-    role = template["resources"]["controlPlaneStorageRole"]
-    assert "stateStorageAccountName" in role["scope"]
-    bindings = template["resources"]["agentBindings"]["properties"]["template"]
-    assert "stateStorageAccountName" not in json.dumps(bindings)
 
 
 def test_container_app_is_private_minimum_scale_to_zero_bootstrap(template: dict):
@@ -601,12 +661,17 @@ def test_all_endpoint_groups_and_dns_cover_the_minimum_ip_budget(template: dict,
     assert [spec["groupId"] for spec in specs] == [
         "account",
         "blob",
-        "blob",
         "Sql",
         "searchService",
         "managedEnvironments",
     ]
-    assert sum(spec["ips"] for spec in kt.endpoint_specs(values, GROUP)) == 9
+    cli_specs = kt.endpoint_specs(values, GROUP)
+    assert len(specs) == len(cli_specs) == 5
+    assert sum(spec["ips"] for spec in cli_specs) == 8
+    assert specs[1]["target"] == "[variables('storageId')]"
+    assert cli_specs[1]["target"].endswith(
+        f"/Microsoft.Storage/storageAccounts/{values['storageAccountName']}"
+    )
     assert _params(template, "privateEndpoints")["subnetResourceId"] == "[variables('peSubnetId')]"
     assert len(template["variables"]["dnsZoneNames"]) == 7
     assert template["resources"]["privateEndpoints"]["copy"]["batchSize"] == 1
@@ -823,7 +888,7 @@ class FakeAzure(kt.AzureCli):
                         },
                     },
                 }
-                for name, index in (("agent-storage", 1), ("agent-cosmos", 3), ("agent-search", 4))
+                for name, index in (("agent-storage", 1), ("agent-cosmos", 2), ("agent-search", 3))
             ]
         raise AssertionError(f"Unexpected collection read: {resource_id}")
 
@@ -888,6 +953,18 @@ def test_deploy_stages_reinventory_before_host_and_never_rewrite_subnets(values:
         "snet-container-apps",
     }
     assert values["existingPrivateDnsZoneIds"] == {}
+    for resource_type, name, api_version in (
+        ("Microsoft.CognitiveServices/accounts", values["foundryAccountName"], kt.FOUNDRY_API),
+        ("Microsoft.Storage/storageAccounts", values["storageAccountName"], "2023-05-01"),
+        ("Microsoft.DocumentDB/databaseAccounts", values["cosmosAccountName"], "2024-11-15"),
+        ("Microsoft.Search/searchServices", values["searchServiceName"], "2023-11-01"),
+        (
+            "Microsoft.App/managedEnvironments",
+            values["containerAppsEnvironmentName"],
+            kt.CONTAINER_ENV_API,
+        ),
+    ):
+        assert ("get", f"{GROUP}/providers/{resource_type}/{name}", api_version) in cli.calls
 
 
 def test_context_mismatch_fails_before_deployment(values: dict, vnet: dict):
@@ -896,6 +973,28 @@ def test_context_mismatch_fails_before_deployment(values: dict, vnet: dict):
     with pytest.raises(ValueError, match="explicit KT target"):
         kt.run(cli, values, "deploy")
     assert not cli.deployments
+
+
+def test_legacy_storage_accounts_block_a_silent_migration(values: dict, vnet: dict):
+    cli = FakeAzure(values, vnet)
+    old_account = f"{GROUP}/providers/Microsoft.Storage/storageAccounts/stktlegacy"
+    cli.resources[old_account] = {
+        "id": old_account,
+        "tags": {"deploymentProfile": kt.PROFILE},
+    }
+    with pytest.raises(ValueError, match="Another KT-profile Storage Account"):
+        kt.run(cli, values, "deploy")
+    assert not cli.deployments
+    assert old_account in cli.resources
+
+
+def test_unrelated_storage_account_does_not_block_new_foundation(values: dict, vnet: dict):
+    cli = FakeAzure(values, vnet)
+    unrelated = f"{GROUP}/providers/Microsoft.Storage/storageAccounts/customerdata"
+    cli.resources[unrelated] = {"id": unrelated, "tags": {"application": "customer-app"}}
+    kt.run(cli, values, "preflight")
+    assert not cli.deployments
+    assert unrelated in cli.resources
 
 
 def test_unowned_resource_and_busy_subnet_are_not_adopted(values: dict, vnet: dict):
@@ -920,7 +1019,7 @@ def test_existing_pe_subnet_requires_enough_actual_free_ips(values: dict, vnet: 
         _subnet(values["peSubnetName"], values["peSubnetAddressPrefix"])
     )
     cli.free_ips = False
-    with pytest.raises(ValueError, match="verify 9 free"):
+    with pytest.raises(ValueError, match="verify 8 free"):
         kt.run(cli, values, "deploy")
     assert not cli.deployments
     assert sum(call[:3] == ("network", "vnet", "check-ip-address") for call in cli.calls) == 11
@@ -1026,7 +1125,7 @@ def test_existing_external_environment_is_not_adopted(
     monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict
 ):
     cli = FakeAzure(values, vnet)
-    environment_id = kt.endpoint_specs(values, GROUP)[5]["target"]
+    environment_id = kt.endpoint_specs(values, GROUP)[4]["target"]
     cli.resources[environment_id] = {
         "id": environment_id,
         "tags": {"deploymentProfile": kt.PROFILE},
@@ -1064,7 +1163,7 @@ def test_host_wait_is_bounded(monkeypatch: pytest.MonkeyPatch, values: dict, vne
     assert sleeps == [10] * 30
 
 
-def test_load_parameters_rejects_internal_flags_and_shared_storage(tmp_path: Path, values: dict):
+def test_load_parameters_rejects_internal_flags(tmp_path: Path, values: dict):
     path = tmp_path / "parameters.json"
     supplied = {
         name: {"value": value}
@@ -1083,9 +1182,21 @@ def test_load_parameters_rejects_internal_flags_and_shared_storage(tmp_path: Pat
     with pytest.raises(ValueError, match="reserved"):
         kt.load_parameters(path)
     del supplied["linkedPrivateDnsZones"]
-    supplied["stateStorageAccountName"] = supplied["agentStorageAccountName"]
+
+
+@pytest.mark.parametrize("legacy_name", ["agentStorageAccountName", "stateStorageAccountName"])
+def test_load_parameters_rejects_legacy_account_selection(
+    tmp_path: Path, values: dict, legacy_name: str
+):
+    supplied = {
+        name: {"value": value}
+        for name, value in values.items()
+        if name not in kt.INTERNAL_PARAMETERS
+    }
+    supplied[legacy_name] = {"value": "stktlegacy"}
+    path = tmp_path / "parameters.json"
     path.write_text(json.dumps({"parameters": supplied}), encoding="utf-8")
-    with pytest.raises(ValueError, match="separate accounts"):
+    with pytest.raises(ValueError, match="Use storageAccountName"):
         kt.load_parameters(path)
 
 

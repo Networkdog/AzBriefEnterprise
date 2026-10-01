@@ -29,8 +29,8 @@ KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오
 | Foundry inbound | `account` Private Endpoint → 선택한 Private Endpoint subnet |
 | Foundry outbound | 계정 최초 생성 시 `scenario=agent`, 선택한 Foundry 전용 subnet으로 VNet Injection |
 | Capability Host | 자동 생성되는 account host 확인 후, project `agents` host 생성. account host 중복 생성 없음 |
-| Agent backing storage | 별도 StorageV2 / Standard_LRS / Blob PE / Public Network Access 비활성 / Entra 전용 |
-| 상태·아카이브 storage | 별도 StorageV2 / Standard_LRS / Blob PE. `azbrief-state`, `azbrief-archive` private container |
+| 공유 Storage Account | **StorageV2 / Standard_LRS 계정 하나**, Blob PE 하나, Public Network Access 비활성, Entra 전용 |
+| Blob 컨테이너 | 앱용 `azbrief-state`, `azbrief-archive`와 Foundry가 만드는 agent/system 컨테이너를 논리적으로 분리 |
 | Cosmos DB | NoSQL, 단일 리전 Serverless, `Sql` PE, Public Network Access·로컬 키 인증 비활성 |
 | AI Search | Basic, replica 1 / partition 1, `searchService` PE, Public Network Access·로컬 키 인증 비활성 |
 | Container Apps Environment | Workload Profiles 유형, **Consumption** 프로필, 전용 subnet 주입, Public Network Access 비활성 |
@@ -40,16 +40,27 @@ KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오
 | Log Analytics | 기존 workspace ID를 선택적으로 연결. 새 workspace·DCR·AMPLS는 생성하지 않음 |
 | 추가 비용 리소스 | 새 VNet, 전용 D4 노드, NAT Gateway, Firewall, ACR, 모델 배포, scheduler Job, 메일 서비스는 생성하지 않음 |
 
-Foundry 프로젝트 ID에는 agent backing storage의 Storage Account Contributor·Blob Data Contributor,
+Foundry 프로젝트 ID에는 공유 storage의 Storage Account Contributor·Blob Data Contributor,
 Cosmos DB Operator, Search Service Contributor·Index Data Contributor를 먼저 부여합니다.
 host가 컨테이너를 만든 뒤 `<workspaceId>-azureml-agent`에 Blob Data Owner를,
 Cosmos의 `enterprise_memory`에 Cosmos-native Data Contributor를 부여합니다. 현재 Responses의
 `agent-definitions-v1`·`run-state-v1`도 포함하는 DB 범위이며 Classic 컨테이너 세 개만 지정하지 않습니다.
 프로젝트 이름이 아닌 `project.properties.internalId`로 workspace GUID를 계산합니다.
 
-제어면 UAMI는 **상태 storage Blob Data Contributor + 프로젝트 Foundry User**만 받습니다.
-프로젝트 ID가 canonical archive를 변경할 수 없도록 agent storage와 분리합니다.
+제어면 UAMI는 **`azbrief-state`와 `azbrief-archive` 각각의 Blob Data Contributor + 프로젝트 Foundry User**를 받습니다.
+계정 전체의 Blob 권한은 받지 않습니다. 다만 Foundry의 필수 계정 권한 때문에 **프로젝트 ID가
+canonical archive를 변경할 수 없다는 격리는 더 이상 제공하지 않습니다**. AzBrief 전용 계정
+안의 동일한 신뢰 경계로 승인된 환경에 사용하며, 처리량·중복성·네트워크와 계정 장애 범위도 공유합니다.
+Blob·컨테이너 soft delete는 기존 7일 설정을 유지하며, 공유 계정의 Foundry 컨테이너에도 적용됩니다.
 Hosted 전용 ID의 구독/테넌트 근거 조회 권한은 게시 후 별도 부여합니다.
+
+기존 2계정 환경은 [저장소 통합 절차](../CUSTOMER_DEPLOYMENT.md#single-storage-account)를 먼저
+승인해야 합니다. CLI는 이전의 `agentStorageAccountName`/`stateStorageAccountName` 입력과
+선택 계정 외의 KT-profile 저장소가 남아 있는 경우를 차단합니다. 계정·데이터·역할을 자동으로
+삭제하거나 옮기지 않습니다. 활성 Capability Host가 있으면 기존 Foundry backing 계정을
+`storageAccountName`으로 유지하고 상태·archive 이전을 별도로 검증하십시오.
+`ktFoundation.storageAccountResourceId`와 호환용 `agentStorageAccountResourceId`/
+`stateStorageAccountResourceId`는 모두 같은 계정을 가리킵니다.
 
 ## 신규 리소스 기본 이름
 
@@ -61,8 +72,7 @@ Portal ARM 입력 화면과 CLI는 다음 이름을 미리 채웁니다. 기존 
 | 입력 | 기본값 |
 |---|---|
 | `foundryAccountName` | `ai-azbrief-kt` |
-| `agentStorageAccountName` | `stazbriefktagent` |
-| `stateStorageAccountName` | `stazbriefktstate` |
+| `storageAccountName` | `stazbriefkt` |
 | `cosmosAccountName` | `cosmos-azbrief-kt` |
 | `searchServiceName` | `srch-azbrief-kt` |
 | `projectName` | `azbrief-kt` |
@@ -84,7 +94,7 @@ CLI도 명시한 이름을 그대로 사용합니다. 기존 배포에 재적용
 
 | 역할(이름 제한 없음) | 새로 만들 때의 최소 크기 | 위임 | 용도 |
 |---|---|---|---|
-| Private Endpoint subnet | **/28** — 16개 주소 중 Azure 예약 5개 제외 11개 | 없음 | 여섯 PE의 보수적인 9개 IP 예산 |
+| Private Endpoint subnet | **/28** — 16개 주소 중 Azure 예약 5개 제외 11개 | 없음 | 다섯 PE의 보수적인 8개 IP 예산 |
 | Foundry 전용 subnet | **/27** | `Microsoft.App/environments` | 하나의 Foundry 계정 전용 |
 | Container Apps 전용 subnet | **/27** | `Microsoft.App/environments` | Container Apps Environment 전용 |
 
@@ -98,8 +108,8 @@ Foundry의 `/24`는 운영 확장 권장값이며 여기서는 요청한 최소 
 더 큰 기존 서브넷은 축소하지 않으며, 신규 서브넷에도 명시적으로 더 큰 CIDR을 줄 수 있습니다.
 이 프로필의 사전검사는 IPv4 단일-prefix 서브넷을 대상으로 합니다.
 
-IP 예산은 Foundry 최대 3개를 위한 여유, 단일 리전 Cosmos 2개, Blob 두 개·Search·ACA 각각
-1개로 9개입니다. `/29`의 3개 usable IP로는 부족합니다. 실제 NIC 할당은 배포 후 확인합니다.
+IP 예산은 Foundry 최대 3개를 위한 여유, 단일 리전 Cosmos 2개, 공유 Blob·Search·ACA 각각
+1개로 8개입니다. `/29`의 3개 usable IP로는 부족합니다. 실제 NIC 할당은 배포 후 확인합니다.
 Cosmos 리전이나 storage 서비스 PE를 추가하면 예산을 다시 계산해야 합니다.
 
 CLI는 매번 live inventory를 읽어 **없는 child subnet만** 생성하도록 플래그를 계산합니다.
@@ -169,7 +179,7 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
 |---|---|
 | 기본 사항 | 배포 구독·RG·지역 선택, 프라이빗 bootstrap 범위 안내 |
 | 기존 네트워크 | 같은 구독·지역의 기존 VNet 선택. 이름과 무관하게 역할별 기존 subnet을 선택하고 ARM 조회 CIDR·위임으로 후보 제한 |
-| 리소스 이름 | 여덟 기본 이름 편집, Azure 문자·길이 검사, Storage 분리 및 여섯 PE 대상 이름 충돌 차단 |
+| 리소스 이름 | 일곱 기본 이름 편집, Azure 문자·길이 검사, Storage 단일 입력 및 다섯 PE 대상 이름 충돌 차단 |
 | 비용·DNS·로그 | Search Basic/S1 선택, VNet 연결 DNS zone 자동 재사용 또는 중앙 RG 명시, 기존 Log Analytics 선택 연결 |
 | 단계·필수 확인 | 선택 요약, 기반/완료 단계 선택, 사전검사·소유권·비용·bootstrap 범위 동의 |
 
@@ -261,7 +271,7 @@ ARM subnet flag는 재실행마다 다시 계산합니다. 임시 parameter 파�
 
 - Workload Profiles는 Dedicated 노드 구매를 뜻하지 않습니다. Consumption 프로필을 사용해
   D4 노드 상시 요금을 피하고 준비용 App은 유휴 시 0 replica로 줄입니다.
-- **전체 유휴 비용이 0원인 것은 아닙니다.** Private Endpoint 여섯 개, Private DNS,
+- **전체 유휴 비용이 0원인 것은 아닙니다.** Private Endpoint 다섯 개, Private DNS,
   Search Basic 1 SU, storage, Container Apps 관리 네트워크 등에 비용이 발생할 수 있습니다.
   Cosmos Serverless는 작은 초기 사용량을 가정한 선택이며 지속적인 부하에서 항상 최저가는 아닙니다.
 - Search Free는 PE를 지원하지 않아 제외했습니다. Basic은 문서상 PE 지원 하한입니다.

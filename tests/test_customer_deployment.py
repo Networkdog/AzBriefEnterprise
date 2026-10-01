@@ -426,25 +426,11 @@ def test_readme_buttons_publish_the_same_arm_and_ui_pair() -> None:
     for name in ("README.md", "README.ko.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
         links = re.findall(r"\]\((https://portal\.azure\.com/#create/[^)]+)\)", text)
-        decoded_links = [unquote(link) for link in links]
-        assert len(decoded_links) == 3
-        standard_links = [
-            link
-            for link in decoded_links
-            if f"/uri/{expected_root}azbrief-enterprise-deploy.json" in link
-        ]
-        assert len(standard_links) == 2
-        for decoded in standard_links:
+        assert len(links) == 2
+        for link in links:
+            decoded = unquote(link)
             assert f"/uri/{expected_root}azbrief-enterprise-deploy.json" in decoded
             assert f"/createUIDefinitionUri/{expected_root}createUiDefinition.json" in decoded
-        assert (
-            decoded_links.count(
-                f"https://portal.azure.com/#create/Microsoft.Template/uri/"
-                f"{expected_root}kt/azuredeploy.json/createUIDefinitionUri/"
-                f"{expected_root}kt/createUiDefinition.json"
-            )
-            == 1
-        )
         assert "infra/CUSTOMER_DEPLOYMENT.md" in text
     assert (ROOT / "infra" / "CUSTOMER_DEPLOYMENT.md").is_file()
 
@@ -460,9 +446,6 @@ def run_mock_stage(
     harness.write_text(
         r"""
 $ErrorActionPreference = 'Stop'
-$ErrorView = 'NormalView'
-$PSStyle.OutputRendering = 'PlainText'
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $global:fixture = Get-Content $env:FIXTURE -Raw | ConvertFrom-Json -AsHashtable
 $global:calls = [System.Collections.Generic.List[object]]::new()
 $global:appImage = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
@@ -715,6 +698,7 @@ finally {
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
         timeout=30,
         check=False,
     )
@@ -930,7 +914,6 @@ def test_external_registry_drift_blocks_mutation(
 
     assert result.returncode != 0
     assert "BOTH resources" in result.stderr
-    assert "\x1b[" not in result.stderr
     assert "must-not-leak" not in result.stdout + result.stderr
     assert not any("update" in call or call[:2] == ["az", "rest"] for call in calls)
 

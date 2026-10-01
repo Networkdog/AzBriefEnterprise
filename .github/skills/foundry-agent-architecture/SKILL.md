@@ -46,41 +46,6 @@ The two runtimes have separate identities. The Container Apps UAMI owns Key Vaul
 
 ## Procedure
 
-For the separate [KT infrastructure profile](../../../infra/kt/README.md), distinguish platform
-bootstrap from application readiness and read the
-[KT private-deployment skill](../kt-private-deployment/SKILL.md) first. That skill owns the reusable
-network, Policy, DNS, logging, bootstrap, and isolated-release rules for other KT agents too.
-The existing VNet is never recreated; subnet names are
-operator-selected rather than fixed. Distinct Foundry and Container Apps subnets are /27-minimum
-`Microsoft.App/environments` delegations, while the /28-minimum private-endpoint subnet has no
-service delegation. Use a project Capability Host with AAD Blob/Cosmos/Search bindings after private
-DNS and provisioning roles, then grant generated-container data roles. Network injection
-already creates the account host; do not create a second one or auto-delete a conflicting host.
-The Container Apps Environment must include `vnetConfiguration.internal: true` and
-`publicNetworkAccess: Disabled` in its initial PUT. Built-in policy
-`d074ddf8-01a5-4b5e-a2b8-964aed452c0a` is titled as a public-network control but actually denies
-missing/false `internal`. A later patch is not valid; an existing external environment requires a
-planned recreation and must not be adopted by preflight.
-Portal Resource Graph discovery and CLI preflight reuse any required Private DNS zone already linked
-to the selected VNet, while Bicep creates only missing namespaces. Explicit cross-subscription IDs
-may override matching discovery but conflicts fail closed. Never create another overlapping VNet
-link or manually merge Private Endpoint-managed records.
-No Application Insights is created, and the standard customerSetup/MCP workflow is not
-compatible without KT adaptation. Preserve the six-role Hosted architecture during the
-subsequent application handoff. Bootstrap scale-to-zero is not safe for long in-process
-Manual Runs. Optional Log Analytics omission must pass `null` to the managed-environment AVM;
-its 0.16.0 discriminator accepts only `azure-monitor` and `log-analytics`, never `none`.
-These are developer deployment rules, not model-facing instructions.
-New resource names use editable literal KT-profile defaults, not a verified customer corporate
-standard. Keep the existing network inputs explicit and the compiled ARM, parameter example and
-CLI-resolved names aligned; preserve operator overrides and check global name availability.
-The KT README button pairs its own ARM and CreateUIDefinition, never the standard UI.
-The guided form reads the selected VNet's subnet inventory, maps arbitrary existing names to the
-three roles, derives and displays CIDR without a separate address input, preserves editable resource
-defaults, and emits false subnet-create flags. Its foundation-only default and explicit
-completion-stage acknowledgement do not replace CLI ownership/IP checks or host readiness waits.
-Keep the prerequisites and actual validation limits visible in both language READMEs.
-
 Provisioning uses two model tiers without changing the six distinct Agent identities. Core roles
 (coordinator, Resource Graph, Azure API, report writer and quality reviewer) default to `gpt-5-terra`
 with `medium` reasoning; Azure MCP defaults to `gpt-5-luna` with reasoning omitted. Subscriber
@@ -115,13 +80,17 @@ before/after provisioning; Verify/EnableSchedule repeat the checks. Legacy MCP a
 environment require an approved recreation and connection URL/Agent refresh, never automatic
 deletion. Preserve historical telemetry and verify private Foundry connectivity separately.
 
+Standard and KT foundations use one dedicated Entra-only Storage Account with separate application
+and Foundry-managed containers. App/Job grants cover only `azbrief-state` and `azbrief-archive`.
+Foundry retains required account-level storage roles, so this is logical separation within one
+trusted application, not a hard isolation boundary from the project identity. Share the Blob PE
+and storage readiness entry; never invent a container-only Foundry connection contract. Existing
+accounts, artifact references and broad grants need an approved migration, not an automatic
+Incremental-template cleanup. This infrastructure change does not alter Prompt Agent policy.
+
 Local preparation also checks the CI workflow schema, its self-change triggers, full-source
 Black/isort/Flake8, imports, and full pytest with the 40% coverage gate. Passing these checks does
 not prove the production-runtime build, hosted CI, or customer-specific operational acceptance.
-Do not bypass the paired App/Job deployment test gate for a missing synthetic-preview endpoint
-or terminal-formatted PowerShell error. Keep the preview's typed error-history API aligned with
-the Admin page and make the mocked CLI's output deterministic; production safety guards remain
-unchanged.
 
 1. Read the [current assessment](./references/assessment.md) and the current official Microsoft Foundry Agent documentation.
 2. Identify the controlling path, not only configuration wiring:

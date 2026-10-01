@@ -47,6 +47,7 @@ the ARM/UI pair from the same source revision.
 | Bootstrap | The hello-world Container App proves only foundation/network readiness. It is not application readiness. |
 | Application image | Use an approved immutable digest and matching registry authentication. Do not deploy `latest`. |
 | Identities | Keep Container Apps control-plane, Foundry project, Hosted Agent, and Azure MCP identities distinct. |
+| Storage | One `storageAccountName` and one Blob PE. Keep app state/archive in separate containers with container-scoped App/Job grants. Foundry's required account roles share the trust boundary; do not claim hard isolation. |
 
 Built-in policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` is named “Container Apps environment should
 disable public network access,” but its actual rule denies a missing or false
@@ -95,6 +96,12 @@ resource ID rather than silently creating a competing zone.
   orphaned resources from a failed deployment.
 - Include `internal: true` and `publicNetworkAccess: Disabled` in the initial managed-environment
   leaf resource request, not merely in a later update command.
+- Use one Storage Account AVM instance for Foundry and the two application containers. Keep five
+  private endpoints with an eight-IP preflight budget. Legacy storage output aliases point to the
+  same resource ID. Reject old two-name parameter files and additional KT-profile storage accounts
+  instead of selecting an account or deleting/moving data automatically. Active Capability Host
+  connections must still pass the no-redirect check. Existing two-account installations require the
+  documented, approved data/reference/RBAC migration before using the new template.
 
 ## CLI Preflight Pattern
 

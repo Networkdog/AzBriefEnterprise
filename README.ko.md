@@ -19,29 +19,6 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md): 기반 배포 후 고객별 설정과 인수 검증을 진행합니다.
 
-**KT 전용 프라이빗 인프라 — 안내형 배포**
-
-[![Deploy KT to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2FcreateUiDefinition.json)
-
-[KT 설정 가이드](infra/kt/README.md): 기존 VNet을 선택한 뒤 이름이 자유로운 기존 subnet을
-Private Endpoint·Foundry·Container Apps 역할에 매핑합니다. CIDR은 ARM 조회값을 각 선택지의
-설명으로 표시하므로 주소를 다시 입력하지 않습니다. 기본 리소스 이름과 DNS/로그·배포 단계를
-검토합니다. 기본값은 기반만 배포하는 1단계이며, CLI 사전검사를
-대체하거나 애플리케이션 설정까지 자동 완료하지 않습니다. 선택형 Log Analytics 수집을 끄면 KT 템플릿은
-지원되지 않는 `destination: none`을 보내지 않고 nullable Container Apps 로그 설정을 생략합니다.
-[KT 프라이빗 배포 Skill](.github/skills/kt-private-deployment/SKILL.md)은 다른 Agent에도 적용할
-네트워크·Policy·DNS·로그·bootstrap·격리망 릴리스 교훈을 범용 체크리스트로 기록합니다.
-KT Container Apps Environment는 최초 생성 요청부터 `vnetConfiguration.internal: true`와
-`publicNetworkAccess: Disabled`를 함께 포함합니다. built-in Policy
-`d074ddf8-01a5-4b5e-a2b8-964aed452c0a`는 이름과 달리 실제로 `internal` 누락/`false`를
-거부하므로 두 값이 모두 필요하며, 이미 만든 외부 Environment는 계획된 재생성이 필요합니다.
-Portal은 새 배포 양식과 실제 리소스 부재를 구분합니다. 같은 이름의 잔여 리소스에는 경고하지만,
-사용하지 않은 새 이름은 빈 Resource Graph 결과에 `first()`를 평가하지 않고 통과합니다.
-안내형 화면은 선택한 VNet에 이미 연결된 필수 Private DNS zone도 자동 발견해 ID를 재사용하고
-없는 namespace만 생성합니다. 따라서 겹치는 두 번째 VNet link를 만들거나 Private Endpoint
-레코드를 zone 사이에서 복사하지 않습니다. 자동 조회는 선택한 구독에서 읽을 수 있는 link를
-대상으로 하며 cross-subscription 중앙 DNS는 명시적으로 지정합니다.
-
 </div>
 
 ---
@@ -649,14 +626,14 @@ archive 저장까지 검증하지는 않습니다.
 ### 원클릭 배포
 
 Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + Admin + MCP), 예약 digest를
-실행하는 Container Apps Job, Key Vault, 상태·archive 저장소, 별도 평가 저장소, Communication Services로 구성된 Azure
+실행하는 Container Apps Job, Key Vault, 상태·archive·Foundry가 공유하는 Storage Account 하나, Communication Services로 구성된 Azure
 기반과 제어면을 배포합니다. Prompt Agent와 Hosted Agent는 Foundry 데이터 평면 객체이므로
 배포 후 단계에서 별도로 배포합니다.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
 
 **먼저 [고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md)를 확인하십시오.** 버튼은 승인된 모델과 버전,
-기존 고객 ACR, 이메일, Entra 접근을 입력하는 탭형 폼을 엽니다. VNet 격리를 유지하고 임시 공용
+고객 또는 개발자 소유 ACR, 이메일, Entra 접근을 입력하는 탭형 폼을 엽니다. VNet 격리를 유지하고 임시 공용
 접근과 정기 실행은 끄며 Key Vault purge protection을 켭니다. 준비용 앱은 80 포트와 `/`로
 응답하지만 아직 AzBrief 서비스는 아닙니다. 초기 동시 분석 수는 1입니다. 후속 설정은 VNet에
 연결된 배포 호스트에서 수행하며 고객별 소스 폴더와 azd 환경을 개발 환경과 분리합니다.
@@ -672,8 +649,8 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 | Foundry project | `{baseName}-agents` | Hosted Agent와 Prompt Agent의 데이터 평면 작업 공간 |
 | Model deployment | 고객이 승인한 모델과 버전 | 리전·SKU·capacity 단위·할당량 확인 필요. 원본 ARM 기본값이 호환성을 보장하지는 않음 |
 | Key Vault | `kv-{baseName}-{suffix}` | RBAC 전용, 모든 런타임 secret 보관 |
-| 상태·archive 저장소 | `st{baseName}{suffix}` | Private `azbrief-state`·`azbrief-archive` container, **`allowSharedKeyAccess: false`** |
-| 평가 저장소 + Foundry AAD connection | `steval{baseName}{suffix}` | 평가 산출물용 별도 Entra 전용 Blob 계정. 고객 archive와 분리 |
+| 공유 Storage Account | `st{baseName}{suffix}` | Entra 전용 계정 하나. Private `azbrief-state`, `azbrief-archive`, 별도의 Foundry 관리 컨테이너로 분리 |
+| Foundry 평가 AAD connection | `steval{baseName}{suffix}` | 기존 연결 이름을 유지하며 공유 계정을 가리킴. 두 번째 Storage Account가 아님 |
 | Container Apps Environment | `cae-{baseName}-{suffix}` | 제어면 App·Job과 Azure MCP App이 하나를 공유. 기본값에서 VNet 통합 |
 | Container App | `ca-{baseName}` | 제어면 API, `/admin`, `/archive`, `/feedback`, 인증된 `/mcp` |
 | Container Apps Job | `caj-{baseName}` | 인수 전에는 수동. 인수 후 cron, Hosted 호출, archive, checkpoint, email |
@@ -681,8 +658,8 @@ Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + A
 | Container App authConfig | `current` | 인증 설정을 제공했을 때 구성하는 Entra ID 로그인 |
 | Communication Services + Email | `acs-{baseName}-{suffix}` | Azure 관리 도메인 자동 연결 |
 | Log Analytics + Application Insights | `log-` / `appi-` | 공용 workspace 하나, Entra 인증 tracing, `AzBriefFailures_CL` 실패 이벤트 custom table |
-| 제어면 role assignment | 6개 | Key Vault Secrets User · Storage Blob Data Contributor · Foundry User · Application Insights와 실패 DCR의 Monitoring Metrics Publisher · RG Reader |
-| Foundry project role assignment | 2개 | Foundry 계정의 Foundry User, 평가 저장소에만 Storage Blob Data Owner |
+| 제어면 role assignment | 7개 | Key Vault Secrets User · 앱 컨테이너 두 개에 각각 Storage Blob Data Contributor · Foundry User · Application Insights와 실패 DCR의 Monitoring Metrics Publisher · RG Reader |
+| Foundry project role assignment | 2개 | Foundry 계정의 Foundry User, 공유 Storage Account에 필요한 Storage Blob Data Owner |
 | Azure MCP Server(후속 `Mcp` 단계) | `ca-{baseName}-mcp` | 별도 Entra 인증 읽기 전용 서버, identity, project connection |
 
 MCP 배포는 기반 Environment와 관측 리소스를 재사용하며 별도 Environment, Application Insights,
@@ -696,10 +673,15 @@ Log Analytics에서 앱 이름으로 구분해 조회합니다. Application Insi
 
 - **Foundry에는 로컬 키가 없습니다.** `disableLocalAuth: true`가 Entra ID token만 허용하므로
   유출되거나 교체할 모델 키가 없습니다.
-- **상태 저장소도 Entra 전용입니다.** Storage account는 `allowSharedKeyAccess: false`를 사용하며,
-  관리 ID의 쓰기 권한은 해당 계정 하나로 제한됩니다. Checkpoint는 secret이 아니므로 실제
-  secret을 보관하는 vault의 쓰기 권한을 부여하지 않습니다. `azbrief-archive` container도 public
-  access 없이 같은 identity만 사용합니다.
+- **공유 저장소도 Entra 전용입니다.** `allowSharedKeyAccess: false`를 유지하며, App/Job의 쓰기
+  권한은 계정 전체가 아니라 `azbrief-state`와 `azbrief-archive` 각각으로 제한합니다.
+  피드백은 상태 컨테이너에 그대로 보관합니다. 이 역할로 Foundry 데이터에 접근할 수는 없습니다.
+- **컨테이너 분리는 계정 격리와 같지 않습니다.** Foundry의 필수 계정 범위 권한은 유지되므로
+  프로젝트 ID를 이 AzBrief 전용 계정 전체에서 신뢰해야 합니다. 처리량·중복성·네트워크 정책과
+  계정 장애 범위도 공유합니다. Foundry 관리자와의 강한 격리가 필수인 환경에는 적합하지 않습니다.
+  새 배포는 계정 하나와 Blob Private Endpoint 하나를 만들지만, 기존 계정·데이터·광범위한 역할을
+  자동 제거하지는 않습니다. [저장소 통합 절차](infra/CUSTOMER_DEPLOYMENT.md#single-storage-account)를
+  따르십시오.
 - **런타임 secret은 Key Vault에만 보관합니다.** Container App과 scheduler Job은 managed
   identity로 값을 참조하며, template output이나 API response에 값이 나타나지 않습니다.
 - **관리자 콘솔은 두 조건을 모두 충족해야 열립니다.** Entra app registration
@@ -714,12 +696,26 @@ Log Analytics에서 앱 이름으로 구분해 조회합니다. Application Insi
   evidence를 조회합니다. 구독 Reader와 서비스별 data-plane 역할은 **Hosted Agent identity**에
   부여해야 하며 template은 광범위한 권한을 자동으로 부여하지 않습니다.
 
+### 외부 테넌트 레지스트리
+
+제어면 이미지를 보관하는 ACR은 개발자 테넌트에 둘 수 있습니다. 같은 테넌트의 기존 방식은
+`containerRegistryAuthMode=ManagedIdentity`를 유지합니다. 외부 ACR은 `Credentials`를 선택하고
+개발자 ACR 로그인 서버, 고객별 저장소 읽기 전용 토큰 이름과 보안 비밀번호를 입력합니다.
+비밀번호는 고객사 Key Vault에 저장하고 App과 Job이 같은 비밀 참조를 사용합니다. 고객사 ID에
+다른 테넌트의 권한을 부여하거나 애플리케이션의 테넌트 설정을 바꾸지 않습니다.
+
+이후 업그레이드는 [scripts/deploy_dev.ps1](scripts/deploy_dev.ps1)의
+`-PrebuiltImage <registry>/azbrief-enterprise@sha256:<digest>`로 개발자 ACR 조회·빌드 없이
+수행할 수 있습니다. 상태 확인, Job 스모크 검사와 롤백은 유지합니다. 로컬 테스트가 개발자
+이미지의 출처를 증명하지는 않습니다. 토큰 범위·만료·회전, 네트워크와 실제 pull 검증은
+[외부 레지스트리 가이드](infra/CUSTOMER_DEPLOYMENT.md#external-tenant-registry)를 따르십시오.
+
 ### 네트워크 격리 (`networkIsolationMode`)
 
 | 값 | 변경 내용 | 선택 기준 |
 |----|----------------|------------|
-| `vnetInjection` **(기본값)** | Foundry agent compute가 위임 subnet에 주입되고, Container Apps environment가 같은 VNet에 연결되며, Foundry·Key Vault·상태/archive 저장소·평가 저장소에 **Private Endpoint**를 사용합니다 | 엔터프라이즈 기본값. Foundry와 VNet은 같은 리전이어야 함 |
-| `perimeter` | Endpoint는 공개로 유지하되 Foundry·Key Vault·Log Analytics·상태/archive 저장소·평가 저장소를 **Network Security Perimeter**에 연결합니다 | 새 VNet을 만들 수 없거나 PaaS 경계만 필요할 때. 기본 Learning mode는 차단 없이 기록만 수행 |
+| `vnetInjection` **(기본값)** | Foundry agent compute가 위임 subnet에 주입되고, Container Apps environment가 같은 VNet에 연결되며, Foundry·Key Vault·공유 Storage Account에 **Private Endpoint**를 사용합니다 | 엔터프라이즈 기본값. Foundry와 VNet은 같은 리전이어야 함 |
+| `perimeter` | Endpoint는 공개로 유지하되 Foundry·Key Vault·Log Analytics·공유 Storage Account를 **Network Security Perimeter**에 연결합니다 | 새 VNet을 만들 수 없거나 PaaS 경계만 필요할 때. 기본 Learning mode는 차단 없이 기록만 수행 |
 | `public` | Endpoint를 공개하고 Entra token, API key, 허용 목록만 경계로 사용합니다 | 평가·데모 환경 전용 |
 
 > **`vnetInjection`이 기본값인 이유:** Foundry network injection은 **계정을 만들 때만** 구성할
@@ -734,13 +730,13 @@ Log Analytics에서 앱 이름으로 구분해 조회합니다. Application Insi
 | Foundry agent subnet | `snet-foundry-agent` (`/24`) | `Microsoft.App/environments`에 위임하며 Foundry 계정 하나가 독점 |
 | Container Apps subnet | `snet-container-apps` (`/24`) | Workload profiles environment용으로 `Microsoft.App/environments`에 위임 |
 | Private endpoint subnet | `snet-private-endpoints` (`/27`) | 위임 없음 |
-| Private DNS zone 5개 | `privatelink.services.ai.azure.com` · `privatelink.openai.azure.com` · `privatelink.cognitiveservices.azure.com` · `privatelink.vaultcore.azure.net` · `privatelink.blob.core.windows.net` | VNet에 연결. 상태·평가 저장소가 Blob zone을 공유 |
-| Private Endpoint 4개 | `pe-aif-…` · `pe-kv-…` · `pe-st…` · `pe-steval…` | Foundry(`account`) · Key Vault(`vault`) · 상태/archive 저장소(`blob`) · 평가 저장소(`blob`) |
+| Private DNS zone 5개 | `privatelink.services.ai.azure.com` · `privatelink.openai.azure.com` · `privatelink.cognitiveservices.azure.com` · `privatelink.vaultcore.azure.net` · `privatelink.blob.core.windows.net` | VNet에 연결. 모든 Blob 컨테이너가 같은 저장소 endpoint 사용 |
+| Private Endpoint 3개 | `pe-aif-…` · `pe-kv-…` · `pe-st…` | Foundry(`account`) · Key Vault(`vault`) · 공유 Storage Account(`blob`) |
 | Foundry project capability host | `caphostproj` | Network-injected account에 필요 |
 
 - **주소 공간은 RFC1918이어야 합니다.** Foundry agent subnet은 `10.0.0.0/8`,
   `172.16-31.0.0/12`, `192.168.0.0/16` 밖의 범위를 거부합니다.
-- **Key Vault·상태/archive 저장소·평가 저장소는 `publicNetworkAccess: Disabled`를 사용합니다.** Container App과
+- **Key Vault와 공유 Storage Account는 `publicNetworkAccess: Disabled`를 사용합니다.** Container App과
   scheduler Job은 managed identity로 Private Endpoint를 통해 secret과 checkpoint를 읽고
   씁니다. Template이 선언한 secret 쓰기는 trusted-service exception을 통해 계속 동작합니다.
 - **기존 VNet을 사용할 때는** 세 subnet이 모두 존재하고 필요한 위임이 설정돼 있어야 합니다.
@@ -764,7 +760,7 @@ Log Analytics에서 앱 이름으로 구분해 조회합니다. Application Insi
 | Inbound rule(subscription) | `inbound-subscriptions` | Container App이 Foundry를 호출할 수 있도록 기본값은 배포 subscription |
 | Inbound rule(IP) | `inbound-ip` | `perimeterInboundIpRanges`가 채워졌을 때만 생성 |
 | Outbound rule(FQDN) | `outbound-fqdn` | 기본값은 `azure.microsoft.com`, `learn.microsoft.com` |
-| Resource association 5개 | `assoc-foundry` · `assoc-keyvault` · `assoc-loganalytics` · `assoc-storage` · `assoc-evaluation-storage` | |
+| Resource association 4개 | `assoc-foundry` · `assoc-keyvault` · `assoc-loganalytics` · `assoc-storage` | |
 | Diagnostic setting | `nsp-access-logs` | `NSPAccessLogs`를 Log Analytics로 전송 |
 
 - **기본 mode는 `Learning`(Transition)** 으로 요청을 차단하지 않고 기록합니다.
@@ -809,8 +805,9 @@ $customer = @{
   Billing hierarchy와 다른 데이터 평면 권한은 고객의 별도 승인이 필요합니다.
   `managedIdentityPrincipalId`는 Container Apps UAMI이며 Hosted identity가 아닙니다.
   `grantReaderCommand`는 이제 Hosted principal을 명시적으로 입력하도록 요구합니다.
-2. 같은 검토된 소스로 immutable ACR digest를 빌드하고 App/Job identity에 올바른 RBAC/ABAC
-  pull-only 역할을 부여합니다. 해당 digest로 `Application` 단계를 실행합니다.
+2. 같은 검토된 소스로 immutable ACR digest를 빌드하고 같은 테넌트의 App/Job identity에
+  RBAC/ABAC pull-only 역할을 부여하거나, Credentials 설정과 승인된 개발자 digest를 사용합니다.
+  해당 digest로 `Application` 단계를 실행하며 테넌트 간 ID 권한 부여는 필요하지 않습니다.
 3. 브라우저 화면을 활성화했다면 Entra Web 콜백을 추가하고 허용 사용자와 거부 사용자를 검증합니다.
 4. `Verify` 후 이메일을 끈 단건 분석에서 archive 저장을 확인하고, 명시적으로 승인된 테스트
   이메일을 한 번 보냅니다. 단순 `completed`가 아니라 개별 처리 카운터를 확인합니다.
@@ -875,7 +872,7 @@ FOUNDRY_QUALITY_REVIEWER_AGENT_NAME=azbrief-quality-reviewer
 
 | 전문가 | 실행 지점 | 책임과 도구 경계 |
 |---|---|---|
-| `coordinator` | Planning 및 범위가 제한된 task 수정 | 업데이트와 Microsoft Learn을 먼저 읽고 전문가 결과를 조정하며 최소 근거 계획을 만듭니다. Learn MCP와 선택적 Web Search를 받지만 tenant 변경 도구는 받지 않습니다 |
+| `coordinator` | Planning 및 범위가 제한된 task 수정 | 업데이트와 Microsoft Learn을 먼저 읽고 전문가 결과를 조정하며 최소 근거 계획을 만듭니다. 설정에 따라 관리형 Learn MCP 또는 Hosted 문서 도구와 선택적 Web Search를 사용하며 tenant 변경 도구는 받지 않습니다 |
 | `resource_graph` | 병렬 근거 수집 pass, 실행 중 KQL 복구 | 제한된 dialect의 Resource Graph KQL을 작성하고 schema 및 빈 filter를 탐색하며, query를 실행하고 반환된 property 값을 해석합니다. Resource Graph/schema/result-retrieval FunctionTool만 받습니다 |
 | `azure_mcp` | 병렬 근거 수집 pass | Entra 인증 읽기 전용 Azure MCP Server에서 resource group, Resource Health, Advisor를 사용합니다. 해당 managed MCP connection만 받으며 local ARM fallback은 없습니다 |
 | `azure_api` | 병렬 근거 수집 pass | Resource Graph 또는 Azure MCP에서 얻을 수 없는 사실을 위해 읽기 전용 ARM, Policy, Health, Advisor, Activity Log, Cost Management, Billing 도구를 사용합니다 |
@@ -921,6 +918,34 @@ alias만 참여하며 누락되거나 알 수 없는 설정으로 gate를 충족
 아닙니다. 실제 모델 ID, 승인된 버전, Responses·도구·strict JSON·추론 지원, 리전별 할당량과
 비용을 확인하고 같은 사례로 비교한 뒤 운영에 적용하십시오. 요청한 Terra/Luna 기본값이
 카탈로그 가용성이나 성능을 보장하지는 않습니다.
+
+`FOUNDRY_COORDINATOR_LEARN_TRANSPORT`는 프로비저닝 시 Coordinator의 문서 조회 경로를 정합니다.
+기본값 `managed_mcp`는 기존 Microsoft Learn MCP를 연결하며, `hosted`는 이미 구현된 Hosted
+문서 도구를 `local_tool_calls`로 실행합니다. Foundry의 관리형 MCP 도구 검색 중계 경로에 장애가
+있고 Microsoft Learn 직접 조회는 가능할 때 사용합니다. 같은 설정으로 `--roles coordinator`를
+게시하고 `--check`를 실행해야 합니다. 환경변수 변경이나 `tool_choice=none`만으로 저장된 MCP
+연결이 제거되지는 않습니다. 같은 Coordinator·모델, Learn 우선 근거 수집, 출처 URL, 범위와
+검증을 유지하며 Azure MCP 전문가를 끄거나 실패를 숨기거나 새 권한을 부여하지 않습니다.
+
+공용 MCP 도구 목록 조회에는 횟수가 제한된 런타임 재시도 정책을 적용합니다. 현재 허용 목록은
+`https://learn.microsoft.com/api/mcp`뿐입니다. 구조화된 HTTP 400 `tool_user_error`가 이 주소의
+도구 목록 조회 실패와 상위 서비스 상태 408, 429, 500, 502, 503, 504 또는 529를 명시하면
+최초 요청 후 최대 3회 재시도합니다(총 4회 시도). 서버의 재시도 대기시간 안내를 우선하며,
+없으면 10/20/40초에 지터를 더합니다. 전체 시도와 대기는 기존 Agent 호출 제한시간을 넘지
+않습니다. 인증 실패, 잘못된 요청, 다른 MCP 주소와 네이티브 로컬 도구 호출에는 이 재시도를
+적용하지 않습니다. 횟수를 소진하면 추가 대기 없이 원래 오류를 전달하며, 취소 시 재시도를
+중단합니다. 이 코드 정책은 Hosted Agent에 배포해야 하며, 제어 평면 이미지 갱신만으로는
+적용되지 않습니다.
+
+대량 실행에서는 분석 동시성이나 HTTP 요청 수뿐 아니라 모델 배포의 실제 분당 토큰 한도도
+확인해야 합니다. 근거 전문가와 품질 평가의 다섯 차원이 같은 모델 할당량을 공유합니다.
+품질·안전 검증은 유지하고 승인된 리전 할당량 안에서 기존 배포의 처리 용량을 조정하거나
+처리 속도를 제한하십시오. 한 건 성공으로 일괄 실행의 안정성을 판단하지 말고 이메일 없이
+전체 선택 범위를 검증해야 합니다.
+Quality Reviewer에는 근거 평가·차원별 점수·조치 검토 계약에 맞는 JSON 객체 출력을 설정합니다.
+자유 텍스트의 JSON 문법 오류 때문에 조사가 중단되는 경로를 막되, 런타임 필드·근거 검증과
+평가 기준은 그대로 유지합니다. JSON 모드 자체가 판단의 정확성을 보장하지는 않습니다.
+`--check`는 Reviewer가 일반 텍스트 출력으로 돌아간 경우 이를 구성 불일치로 처리합니다.
 
 다음 명령으로 roster를 만들거나 갱신합니다.
 
@@ -1196,7 +1221,8 @@ Prompt 예산보다 큰 도구 결과도 버리지 않습니다. 전체 텍스�
 | `FOUNDRY_CORE_MODEL_DEPLOYMENT` | 코어 프로비저닝 배포명. 비어 있으면 기본값 사용 | | `gpt-5-terra` |
 | `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT` | Azure MCP 프로비저닝 배포명. 비어 있으면 기본값 사용 | | `gpt-5-luna` |
 | `FOUNDRY_CORE_REASONING_EFFORT` | 코어 추론 수준: `low`, `medium`, `high` | | `medium` |
-| `FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED` | Coordinator의 기본 Microsoft Learn MCP 출처 뒤에 Web Search 추가 | | `false` |
+| `FOUNDRY_COORDINATOR_LEARN_TRANSPORT` | Coordinator의 `managed_mcp` 또는 기존 `hosted` 공개 문서 도구 선택. 프로비저닝 설정 | | `managed_mcp` |
+| `FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED` | Coordinator의 Microsoft Learn 우선 출처 뒤에 Web Search 추가 | | `false` |
 | `AZURE_MCP_SERVER_URL` | 읽기 전용 Azure MCP Container App의 HTTPS endpoint | Azure MCP specialist용 | — |
 | `AZURE_MCP_PROJECT_CONNECTION_NAME` | Azure MCP 인증에 사용하는 Foundry project connection | Azure MCP specialist용 | — |
 | `FOUNDRY_AGENT_TIMEOUT_S` | Agent별 제한 시간 | | `180` |

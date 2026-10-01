@@ -485,7 +485,6 @@ class TestSpecialistDeploymentContract:
             "managed_identity",
             "key_vault",
             "state_storage",
-            "evaluation_storage",
             "log_analytics",
             "application_insights",
             "failure_log_dcr",

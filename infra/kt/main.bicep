@@ -21,13 +21,9 @@ param containerAppsSubnetName string
 @description('Globally unique name for a NEW network-injected Foundry account.')
 param foundryAccountName string = 'ai-azbrief-kt'
 
-@description('Globally unique name for the Foundry agent backing StorageV2 account.')
+@description('Globally unique name for one AzBrief StorageV2 account. App state/archive and Foundry use separate containers but share account-level Foundry permissions.')
 @maxLength(24)
-param agentStorageAccountName string = 'stazbriefktagent'
-
-@description('Separate StorageV2 account for AzBrief state/archive; never shared with project identity.')
-@maxLength(24)
-param stateStorageAccountName string = 'stazbriefktstate'
+param storageAccountName string = 'stazbriefkt'
 
 @description('Globally unique name for the single-region Cosmos DB for NoSQL account.')
 param cosmosAccountName string = 'cosmos-azbrief-kt'
@@ -93,8 +89,7 @@ var peSubnetId = '${vnetId}/subnets/${peSubnetName}'
 var foundrySubnetId = '${vnetId}/subnets/${foundrySubnetName}'
 var containerAppsSubnetId = '${vnetId}/subnets/${containerAppsSubnetName}'
 var foundryAccountId = resourceId('Microsoft.CognitiveServices/accounts', foundryAccountName)
-var agentStorageId = resourceId('Microsoft.Storage/storageAccounts', agentStorageAccountName)
-var stateStorageId = resourceId('Microsoft.Storage/storageAccounts', stateStorageAccountName)
+var storageId = resourceId('Microsoft.Storage/storageAccounts', storageAccountName)
 var cosmosId = resourceId('Microsoft.DocumentDB/databaseAccounts', cosmosAccountName)
 var searchId = resourceId('Microsoft.Search/searchServices', searchServiceName)
 var environmentId = resourceId('Microsoft.App/managedEnvironments', containerAppsEnvironmentName)
@@ -205,31 +200,10 @@ module foundry 'br/public:avm/res/cognitive-services/account:0.19.1' = {
   ]
 }
 
-module agentStorage 'br/public:avm/res/storage/storage-account:0.33.1' = {
-  name: 'kt-agent-storage'
+module storage 'br/public:avm/res/storage/storage-account:0.33.1' = {
+  name: 'kt-storage'
   params: {
-    name: agentStorageAccountName
-    location: location
-    kind: 'StorageV2'
-    skuName: 'Standard_LRS'
-    publicNetworkAccess: 'Disabled'
-    allowBlobPublicAccess: false
-    allowSharedKeyAccess: false
-    supportsHttpsTrafficOnly: true
-    minimumTlsVersion: 'TLS1_2'
-    networkAcls: {
-      defaultAction: 'Deny'
-      bypass: 'None'
-    }
-    tags: tags
-    enableTelemetry: false
-  }
-}
-
-module stateStorage 'br/public:avm/res/storage/storage-account:0.33.1' = {
-  name: 'kt-state-storage'
-  params: {
-    name: stateStorageAccountName
+    name: storageAccountName
     location: location
     kind: 'StorageV2'
     skuName: 'Standard_LRS'
@@ -350,14 +324,8 @@ var endpointSpecs = [
     zones: take(dnsZoneNames, 3)
   }
   {
-    name: 'pe-${agentStorageAccountName}'
-    target: agentStorageId
-    groupId: 'blob'
-    zones: [dnsZoneNames[3]]
-  }
-  {
-    name: 'pe-${stateStorageAccountName}'
-    target: stateStorageId
+    name: 'pe-${storageAccountName}'
+    target: storageId
     groupId: 'blob'
     zones: [dnsZoneNames[3]]
   }
@@ -413,8 +381,7 @@ module privateEndpoints 'br/public:avm/res/network/private-endpoint:0.12.1' = [
       peSubnet
       dnsZones
       foundry
-      agentStorage
-      stateStorage
+      storage
       cosmos
       search
       containerEnvironment
@@ -448,7 +415,7 @@ module agentBindings 'agent-bindings.bicep' = {
     foundryAccountName: foundryAccountName
     projectName: projectName
     projectPrincipalId: project.identity.principalId
-    agentStorageAccountName: agentStorageAccountName
+    agentStorageAccountName: storageAccountName
     cosmosAccountName: cosmosAccountName
     searchServiceName: searchServiceName
   }
@@ -463,7 +430,7 @@ module capabilityHost 'capability-host.bicep' = if (deployCapabilityHost) {
     // 공식 Standard Setup 샘플이 사용하는 내부 ID이며 생성된 Bicep 형식에는 빠져 있다.
     #disable-next-line BCP053
     projectInternalId: project.properties.internalId
-    agentStorageAccountName: agentStorageAccountName
+    agentStorageAccountName: storageAccountName
     cosmosAccountName: cosmosAccountName
   }
   dependsOn: [
@@ -518,13 +485,25 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
   ]
 }
 
-resource stateAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
-  name: stateStorageAccountName
+resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: storageAccountName
+}
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' existing = {
+  parent: storageAccount
+  name: 'default'
+}
+resource stateContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
+  parent: blobService
+  name: 'azbrief-state'
+}
+resource archiveContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
+  parent: blobService
+  name: 'azbrief-archive'
 }
 
 resource controlPlaneStorageRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: stateAccount
-  name: guid(stateStorageId, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-${containerAppName}'), 'blob-contributor')
+  scope: stateContainer
+  name: guid(stateContainer.id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-${containerAppName}'), 'blob-contributor')
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
@@ -534,7 +513,23 @@ resource controlPlaneStorageRole 'Microsoft.Authorization/roleAssignments@2022-0
     principalType: 'ServicePrincipal'
   }
   dependsOn: [
-    stateStorage
+    storage
+  ]
+}
+
+resource controlPlaneArchiveRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: archiveContainer
+  name: guid(archiveContainer.id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-${containerAppName}'), 'blob-contributor')
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+    )
+    principalId: controlPlaneIdentity.outputs.principalId
+    principalType: 'ServicePrincipal'
+  }
+  dependsOn: [
+    storage
   ]
 }
 
@@ -571,10 +566,11 @@ output ktFoundation object = {
   foundryProjectResourceId: project.id
   foundryProjectEndpoint: 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${projectName}'
   foundryProjectPrincipalId: project.identity.principalId
-  agentStorageAccountResourceId: agentStorageId
-  stateStorageAccountResourceId: stateStorageId
-  stateContainerUrl: '${stateStorage.outputs.primaryBlobEndpoint}azbrief-state'
-  archiveContainerUrl: '${stateStorage.outputs.primaryBlobEndpoint}azbrief-archive'
+  storageAccountResourceId: storageId
+  agentStorageAccountResourceId: storageId
+  stateStorageAccountResourceId: storageId
+  stateContainerUrl: '${storage.outputs.primaryBlobEndpoint}azbrief-state'
+  archiveContainerUrl: '${storage.outputs.primaryBlobEndpoint}azbrief-archive'
   containerAppsEnvironmentResourceId: environmentId
   containerAppResourceId: containerApp.outputs.resourceId
   bootstrapUrl: 'https://${containerApp.outputs.fqdn}'

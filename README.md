@@ -19,31 +19,6 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [Customer deployment guide](infra/CUSTOMER_DEPLOYMENT.md): foundation first, then guided setup and acceptance.
 
-**KT private infrastructure — guided deployment**
-
-[![Deploy KT to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2Fazuredeploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fkt%2FcreateUiDefinition.json)
-
-[KT setup guide](infra/kt/README.md): select an existing VNet, map its arbitrarily named subnets
-to the private-endpoint, Foundry, and Container Apps roles, and review the ARM-read CIDR shown
-with each choice without re-entering an address. Review the prefilled resource names, then choose
-DNS/logging and the deployment stage. The form defaults to
-foundation-only provisioning; it does not replace CLI preflight or automatically complete the application setup.
-[KT private-deployment skill](.github/skills/kt-private-deployment/SKILL.md) records the reusable
-network, Policy, DNS, logging, bootstrap, and isolated-release lessons for other agents.
-The KT Container Apps Environment is created with both `vnetConfiguration.internal: true` and
-`publicNetworkAccess: Disabled`. Built-in policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` has a
-public-network title but actually denies a missing or false `internal` flag. Both values therefore
-belong in the initial create request; an existing external environment requires planned recreation.
-The Portal distinguishes a newly opened deployment flow from actual resource absence. It warns on a
-same-name leftover, but a genuinely unused name passes without evaluating `first()` on an empty
-Resource Graph result.
-The guided form also discovers required Private DNS zones already linked to the selected VNet,
-reuses their resource IDs, and creates only missing namespaces; it never attempts a second
-overlapping VNet link or copies Private Endpoint records between zones. Discovery covers readable
-links in the selected subscription; cross-subscription central DNS remains an explicit override.
-When optional Log Analytics collection is off, the KT template omits the nullable Container Apps
-log configuration instead of sending an unsupported `destination: none` discriminator.
-
 </div>
 
 ---
@@ -680,14 +655,14 @@ email and does not test control-plane archive persistence.
 
 Deploys the Azure foundation and control plane: a Foundry account and project with a model
 deployment, the Container App (API + Admin + MCP), the Container Apps Job that drives the
-scheduled digest, Key Vault, state/archive storage, separate evaluation storage, and Communication
+scheduled digest, Key Vault, one shared state/archive/Foundry Storage Account, and Communication
 Services. Prompt Agents and the
 Hosted Agent are Foundry data-plane objects and are deployed in the post-deployment steps.
 
 [![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
 
 **Start with the [customer deployment guide](infra/CUSTOMER_DEPLOYMENT.md).** The button now opens
-a tabbed form for an approved model/version, existing customer registry, email and Entra access.
+a tabbed form for an approved model/version, customer- or publisher-owned registry, email and Entra access.
 It keeps VNet isolation, disables temporary public access and automatic runs, and enables Key
 Vault purge protection. The bootstrap application uses port 80 and `/`; it is not AzBrief yet.
 Initial analysis concurrency is 1. Use a VNet-connected deployment host for the follow-up steps,
@@ -704,8 +679,8 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 | Foundry project | `{baseName}-agents` | Data-plane workspace for the Hosted Agent and Prompt Agents |
 | Model deployment | Customer-approved model/version | Confirm region, SKU, capacity-unit mapping and quota; raw ARM defaults are not a compatibility guarantee |
 | Key Vault | `kv-{baseName}-{suffix}` | RBAC-only store for all runtime secrets |
-| State/archive storage | `st{baseName}{suffix}` | Private `azbrief-state` and `azbrief-archive` containers, **`allowSharedKeyAccess: false`** |
-| Evaluation storage + Foundry AAD connection | `steval{baseName}{suffix}` | Separate Entra-only Blob account for evaluation artifacts, not customer archives |
+| Shared Storage Account | `st{baseName}{suffix}` | One Entra-only account; private `azbrief-state`, `azbrief-archive`, and separate Foundry-managed containers |
+| Foundry evaluation AAD connection | `steval{baseName}{suffix}` | Preserved connection name pointing to the shared account; **not** a second Storage Account |
 | Container Apps Environment | `cae-{baseName}-{suffix}` | One environment shared by the control-plane App, Job, and Azure MCP App; VNet-integrated by default |
 | Container App | `ca-{baseName}` | Control-plane API, `/admin`, `/archive`, `/feedback`, and authenticated `/mcp` |
 | Container Apps Job | `caj-{baseName}` | Manual until acceptance; then cron, Hosted invocation, checkpoint, and email |
@@ -713,8 +688,8 @@ authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 | Container App authConfig | `current` | Entra ID sign-in when authentication is configured |
 | Communication Services + Email | `acs-{baseName}-{suffix}` | Azure-managed domain connected automatically |
 | Log Analytics + Application Insights | `log-` / `appi-` | One shared workspace, Entra-authenticated tracing, and the `AzBriefFailures_CL` custom failure-event table |
-| Control-plane role assignments | 6 assignments | Key Vault Secrets User · Storage Blob Data Contributor · Foundry User · Monitoring Metrics Publisher on Application Insights and the failure DCR · RG Reader |
-| Foundry project role assignments | 2 assignments | Foundry User on the account and Storage Blob Data Owner on evaluation storage only |
+| Control-plane role assignments | 7 assignments | Key Vault Secrets User · Storage Blob Data Contributor on each of the two application containers · Foundry User · Monitoring Metrics Publisher on Application Insights and the failure DCR · RG Reader |
+| Foundry project role assignments | 2 assignments | Foundry User on the account and the required Storage Blob Data Owner on the shared Storage Account |
 | Azure MCP Server (subsequent `Mcp` stage) | `ca-{baseName}-mcp` | Separate Entra-authenticated read-only server, identity, and project connection |
 
 The MCP deployment reuses the foundation environment and monitoring resources; it creates no
@@ -728,10 +703,16 @@ name. The existing Application Insights component remains Entra-only; no collect
 
 - **Foundry has no local key** — `disableLocalAuth: true` accepts only Entra ID tokens. There is
   no model key to leak or rotate.
-- **The state store is Entra-only too** — the Storage account uses
-  `allowSharedKeyAccess: false`, and the managed identity's write permission is scoped to that
-  account alone. A checkpoint is not a secret, so it does not earn write access to the vault that
-  holds real secrets.
+- **The shared store is Entra-only too** — `allowSharedKeyAccess: false`; App/Job write grants
+  are scoped separately to `azbrief-state` and `azbrief-archive`, not to the whole account.
+  Feedback remains under the state container. These grants do not allow access to Foundry data.
+- **Container separation is not account isolation.** Foundry retains required account-level
+  storage permissions, so the project identity is trusted across this dedicated AzBrief account.
+  All containers share throughput, redundancy, networking and the account's failure boundary.
+  Do not use this design where policy requires hard isolation from Foundry administrators.
+  New deployments create one account and one Blob Private Endpoint; existing accounts, data and
+  broad role assignments are not automatically removed. Follow the
+  [storage consolidation guide](infra/CUSTOMER_DEPLOYMENT.md#single-storage-account).
 - **Runtime secrets stay in Key Vault.** The Container App and scheduler Job reference them through
   managed identity, and values do not appear in template outputs or API responses.
 - **The admin console requires both conditions** — an Entra app registration
@@ -745,12 +726,26 @@ name. The existing Application Insights component remains Entra-only; no collect
   roles to the **Hosted Agent identity**; the template does not assign broad permissions
   automatically.
 
+### External-tenant registry
+
+The control-plane ACR may reside in the developer's tenant. Keep `containerRegistryAuthMode`
+at `ManagedIdentity` for the existing same-tenant flow, or select `Credentials` and supply the
+publisher login server, a customer-specific repository pull-token name and its secure password.
+The customer Key Vault stores that password; App and Job share its secret reference. No customer
+identity is granted access across tenants, and application tenant settings remain unchanged.
+
+For later upgrades, [scripts/deploy_dev.ps1](scripts/deploy_dev.ps1) accepts
+`-PrebuiltImage <registry>/azbrief-enterprise@sha256:<digest>` without publisher ACR lookup or build.
+Health, Job smoke and rollback gates remain. Local tests do not establish publisher-image
+provenance. Follow the [external-registry guide](infra/CUSTOMER_DEPLOYMENT.md#external-tenant-registry)
+for scoped tokens, expiry/rotation, network access and actual pull acceptance.
+
 ### Network isolation (`networkIsolationMode`)
 
 | Value | What changes | When to choose it |
 |----|----------------|------------|
-| `vnetInjection` **(default)** | Foundry agent compute is injected into a delegated subnet, the Container Apps environment joins the same VNet, and Foundry, Key Vault, state/archive storage, and evaluation storage use **private endpoints** | Enterprise default; Foundry and the VNet must share a region |
-| `perimeter` | Endpoints remain public, but Foundry, Key Vault, Log Analytics, state/archive storage, and evaluation storage join a **Network Security Perimeter** | When a new VNet is not possible or only a PaaS boundary is required; default Learning mode logs without blocking |
+| `vnetInjection` **(default)** | Foundry agent compute is injected into a delegated subnet, the Container Apps environment joins the same VNet, and Foundry, Key Vault and the shared Storage Account use **private endpoints** | Enterprise default; Foundry and the VNet must share a region |
+| `perimeter` | Endpoints remain public, but Foundry, Key Vault, Log Analytics and the shared Storage Account join a **Network Security Perimeter** | When a new VNet is not possible or only a PaaS boundary is required; default Learning mode logs without blocking |
 | `public` | Endpoints are public, with Entra tokens, the API key, and allow-lists as the only boundaries | Evaluation and demonstration environments only |
 
 > **Why `vnetInjection` is the default:** Foundry network injection can be configured **only when
@@ -765,13 +760,13 @@ name. The existing Application Insights component remains Entra-only; no collect
 | Foundry agent subnet | `snet-foundry-agent` (`/24`) | Delegated to `Microsoft.App/environments` and exclusive to one Foundry account |
 | Container Apps subnet | `snet-container-apps` (`/24`) | Delegated to `Microsoft.App/environments` for the workload-profiles environment |
 | Private endpoint subnet | `snet-private-endpoints` (`/27`) | No delegation |
-| Five Private DNS zones | `privatelink.services.ai.azure.com` · `privatelink.openai.azure.com` · `privatelink.cognitiveservices.azure.com` · `privatelink.vaultcore.azure.net` · `privatelink.blob.core.windows.net` | Linked to the VNet; state and evaluation storage share the Blob zone |
-| Four Private Endpoints | `pe-aif-…` · `pe-kv-…` · `pe-st…` · `pe-steval…` | Foundry (`account`) · Key Vault (`vault`) · state/archive storage (`blob`) · evaluation storage (`blob`) |
+| Five Private DNS zones | `privatelink.services.ai.azure.com` · `privatelink.openai.azure.com` · `privatelink.cognitiveservices.azure.com` · `privatelink.vaultcore.azure.net` · `privatelink.blob.core.windows.net` | Linked to the VNet; all Blob containers use the same storage endpoint |
+| Three Private Endpoints | `pe-aif-…` · `pe-kv-…` · `pe-st…` | Foundry (`account`) · Key Vault (`vault`) · shared Storage Account (`blob`) |
 | Foundry project capability host | `caphostproj` | Required for a network-injected account |
 
 - **The address space must be RFC1918.** The Foundry agent subnet rejects ranges outside
   `10.0.0.0/8`, `172.16-31.0.0/12`, and `192.168.0.0/16`.
-- **Key Vault, state/archive storage, and evaluation storage use `publicNetworkAccess: Disabled`.** The Container App and
+- **Key Vault and the shared Storage Account use `publicNetworkAccess: Disabled`.** The Container App and
   scheduler Job use managed identity to read and write secrets and checkpoints through private
   endpoints. Template-declared secret writes continue through the trusted-service exception.
 - **When using an existing VNet,** all three subnets must already exist with the required
@@ -795,7 +790,7 @@ name. The existing Application Insights component remains Entra-only; no collect
 | Inbound rule (subscription) | `inbound-subscriptions` | Defaults to the deployment subscription so the Container App can call Foundry |
 | Inbound rule (IP) | `inbound-ip` | Created only when `perimeterInboundIpRanges` is populated |
 | Outbound rule (FQDN) | `outbound-fqdn` | Defaults to `azure.microsoft.com` and `learn.microsoft.com` |
-| Five resource associations | `assoc-foundry` · `assoc-keyvault` · `assoc-loganalytics` · `assoc-storage` · `assoc-evaluation-storage` | |
+| Four resource associations | `assoc-foundry` · `assoc-keyvault` · `assoc-loganalytics` · `assoc-storage` | |
 | Diagnostic setting | `nsp-access-logs` | Sends `NSPAccessLogs` to Log Analytics |
 
 - **The default mode is `Learning` (Transition),** which records without blocking. Review calls
@@ -841,8 +836,9 @@ automatically. Follow the [consolidation procedure](infra/CUSTOMER_DEPLOYMENT.md
    Billing hierarchy and other data-plane rights remain separate customer-approved grants.
    `managedIdentityPrincipalId` is the Container Apps UAMI, not the Hosted identity;
    `grantReaderCommand` now requires an explicit Hosted principal placeholder.
-2. Build an immutable ACR digest from the same reviewed source and grant the App/Job identity
-   pull-only access using the correct RBAC/ABAC role. Run the `Application` stage with that digest.
+2. Build an immutable ACR digest from the same reviewed source and grant same-tenant App/Job
+  pull-only RBAC/ABAC access, or use an approved publisher digest with the Credentials binding.
+  Run the `Application` stage with that digest; no cross-tenant identity grant is needed.
 3. Add the Entra Web callback and verify allowed/denied users when browser surfaces are enabled.
 4. Run `Verify`, then a no-email one-update analysis with a confirmed archive write, and one
    explicitly approved email test. Require successful item counters, not merely `completed`.
@@ -909,7 +905,7 @@ FOUNDRY_QUALITY_REVIEWER_AGENT_NAME=azbrief-quality-reviewer
 
 | Specialist | Execution point | Responsibility and tool boundary |
 |---|---|---|
-| `coordinator` | Planning and bounded task revision | Reads the update and Microsoft Learn first, reconciles specialist findings, and creates the minimum evidence plan. It receives Learn MCP and optional Web Search but no tenant mutation tools |
+| `coordinator` | Planning and bounded task revision | Reads the update and Microsoft Learn first, reconciles specialist findings, and creates the minimum evidence plan. Uses managed Learn MCP or the configured Hosted documentation tools, plus optional Web Search; no tenant mutation tools |
 | `resource_graph` | Parallel evidence pass; KQL repair throughout execution | Writes restricted-dialect Resource Graph KQL, probes schemas and empty filters, executes queries, and interprets returned property values. It receives only Resource Graph/schema/result-retrieval FunctionTools |
 | `azure_mcp` | Parallel evidence pass | Uses the Entra-authenticated, read-only Azure MCP Server for resource groups, Resource Health, and Advisor. It receives that managed MCP connection and no local ARM fallback |
 | `azure_api` | Parallel evidence pass | Uses read-only ARM, Policy, Health, Advisor, Activity Log, Cost Management, and Billing tools for facts unavailable through Resource Graph or Azure MCP |
@@ -955,6 +951,35 @@ managed core reasoning must match, simple reasoning is omitted, and managed tier
 quality. Verify the actual model IDs, approved versions, Responses/tool/strict-JSON support,
 reasoning support, regional quota and cost, then compare the same cases before production use.
 The requested Terra/Luna defaults are not a verified catalog or performance guarantee.
+
+`FOUNDRY_COORDINATOR_LEARN_TRANSPORT` selects the coordinator's documentation route at provisioning:
+`managed_mcp` (unchanged default) attaches Microsoft Learn MCP; `hosted` instead uses the existing
+allow-listed Hosted documentation tools through `local_tool_calls`. Use the latter when Foundry's
+managed MCP discovery proxy is unavailable but direct Microsoft Learn lookup is reachable. Publish
+the coordinator with `--roles coordinator` and run `--check` under the same setting; merely changing
+an environment variable or sending `tool_choice=none` does not remove a persisted MCP attachment.
+This keeps the same coordinator/model, Microsoft Learn-first evidence, source URLs, scope and
+validation. It does not disable the Azure MCP specialist, hide failures, or grant new permissions.
+
+Public MCP discovery has a bounded runtime retry policy: the current endpoint allow-list contains
+only `https://learn.microsoft.com/api/mcp`. A structured HTTP 400 `tool_user_error` that identifies
+this endpoint's discovery failure with upstream 408, 429, 500, 502, 503, 504 or 529 gets up to
+three retries after the initial request (four attempts total). Honor server retry hints; otherwise
+wait 10/20/40 seconds plus jitter, within the original per-agent timeout. Authentication, invalid
+requests, other MCP endpoints and native local-tool invocations do not enter this retry path.
+Exhaustion preserves the original failure without another sleep; cancellation stops retries.
+This code policy requires a Hosted Agent deployment, not only a control-plane image update.
+
+For large runs, also check the deployment's actual token-per-minute limit, not only analysis
+concurrency or HTTP request count: evidence specialists and five quality dimensions share the same
+model allocation. Keep quality/safety checks enabled and size the existing deployment within the
+approved regional quota, or pace the workload. Validate the full selection without email; one
+successful update cannot establish batch reliability.
+The Quality Reviewer is provisioned with JSON-object output for its evidence-verdict,
+dimension-score and action-review contracts. This prevents free-text JSON syntax errors from
+aborting otherwise completed investigations. Runtime field/evidence validation and all rubrics
+remain unchanged; JSON mode is not proof that a verdict is correct. `--check` rejects a reviewer
+that has reverted to plain-text output.
 
 Create or update the roster with:
 
@@ -1254,7 +1279,8 @@ reports what is still untranslated.
 | `FOUNDRY_CORE_MODEL_DEPLOYMENT` | Core provisioning deployment; empty uses the default | | `gpt-5-terra` |
 | `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT` | Azure MCP provisioning deployment; empty uses the default | | `gpt-5-luna` |
 | `FOUNDRY_CORE_REASONING_EFFORT` | Required core reasoning: `low`, `medium`, or `high` | | `medium` |
-| `FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED` | Add Web Search after the coordinator's primary Microsoft Learn MCP source | | `false` |
+| `FOUNDRY_COORDINATOR_LEARN_TRANSPORT` | Provision `managed_mcp` or the existing `hosted` public-document tools for the coordinator | | `managed_mcp` |
+| `FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED` | Add Web Search after the coordinator's primary Microsoft Learn source | | `false` |
 | `AZURE_MCP_SERVER_URL` | HTTPS endpoint of the read-only Azure MCP Container App | For Azure MCP specialist | — |
 | `AZURE_MCP_PROJECT_CONNECTION_NAME` | Foundry project connection used to authenticate to Azure MCP | For Azure MCP specialist | — |
 | `FOUNDRY_AGENT_TIMEOUT_S` | Per-agent timeout | | `180` |

@@ -161,21 +161,97 @@ def test_safety_only_criteria_do_not_require_judge_deployment():
     ]
 
 
-def test_enterprise_bicep_isolates_foundry_evaluation_storage():
-    bicep = (Path(__file__).parents[1] / "infra" / "enterprise" / "main.bicep").read_text(
-        encoding="utf-8"
+def test_enterprise_uses_one_storage_account_for_app_and_foundry():
+    template = json.loads(
+        (Path(__file__).parents[1] / "infra" / "azbrief-enterprise-deploy.json").read_text(
+            encoding="utf-8"
+        )
     )
+    resources = template["resources"]
+    accounts = [r for r in resources if r["type"] == "Microsoft.Storage/storageAccounts"]
+    assert len(accounts) == 1
+    assert accounts[0]["name"] == "[variables('storageAccountName')]"
+    assert accounts[0]["sku"]["name"] == "Standard_LRS"
+    assert accounts[0]["properties"]["allowSharedKeyAccess"] is False
+    assert accounts[0]["properties"]["allowBlobPublicAccess"] is False
+    assert accounts[0]["properties"]["publicNetworkAccess"] == (
+        "[if(variables('vnetMode'), 'Disabled', 'Enabled')]"
+    )
+    storage_id = (
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageAccountName'))]"
+    )
+    connection = next(
+        r
+        for r in resources
+        if r["type"] == "Microsoft.CognitiveServices/accounts/projects/connections"
+        and r["properties"]["category"] == "AzureStorageAccount"
+    )
+    assert connection["properties"]["authType"] == "AAD"
+    assert connection["properties"]["metadata"]["ResourceId"] == storage_id
+    assert "variables('storageAccountName')" in connection["properties"]["target"]
+    assert "variables('evaluationStorageConnectionName')" in connection["name"]
+    assert "evaluationStorageAccountName" not in template["variables"]
+    assert template["variables"]["stateContainerName"] == "azbrief-state"
+    assert template["variables"]["archiveContainerName"] == "azbrief-archive"
+    readiness = template["variables"]["adminReadinessSupportResources"]
+    assert [
+        r["name"] for r in readiness if r["resource_type"] == "Microsoft.Storage/storageAccounts"
+    ] == ["[variables('storageAccountName')]"]
 
-    assert "resource evaluationStorageAccount 'Microsoft.Storage/storageAccounts@" in bicep
-    assert "resource foundryEvaluationStorageConnection " in bicep
-    assert "category: 'AzureStorageAccount'" in bicep
-    assert "authType: 'AAD'" in bicep
-    assert "foundryProjectStorageBlobDataOwnerAssignment" in bicep
-    assert "roleIds.storageBlobDataOwner" in bicep
-    assert "scope: evaluationStorageAccount" in bicep
-    assert "principalId: foundryProject.identity.principalId" in bicep
-    assert "resource evaluationStoragePrivateEndpoint " in bicep
-    assert "resource evaluationStoragePerimeterAssociation " in bicep
+    endpoints = [
+        r
+        for r in resources
+        if r["type"] == "Microsoft.Network/privateEndpoints"
+        and r["properties"]["privateLinkServiceConnections"][0]["properties"]["groupIds"]
+        == ["blob"]
+    ]
+    assert len(endpoints) == 1
+    assert (
+        endpoints[0]["properties"]["privateLinkServiceConnections"][0]["properties"][
+            "privateLinkServiceId"
+        ]
+        == storage_id
+    )
+    assert endpoints[0]["condition"] == "[variables('vnetMode')]"
+    associations = [
+        r
+        for r in resources
+        if r["type"] == "Microsoft.Network/networkSecurityPerimeters/resourceAssociations"
+        and "Microsoft.Storage/storageAccounts" in r["properties"]["privateLinkResource"]["id"]
+    ]
+    assert len(associations) == 1
+    assert associations[0]["properties"]["privateLinkResource"]["id"] == storage_id
+    assert associations[0]["condition"] == "[variables('perimeterMode')]"
+
+
+def test_enterprise_container_grants_do_not_expand_the_control_plane_to_foundry_data():
+    template = json.loads(
+        (Path(__file__).parents[1] / "infra" / "azbrief-enterprise-deploy.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    roles = [
+        r for r in template["resources"] if r["type"] == "Microsoft.Authorization/roleAssignments"
+    ]
+    app_roles = [
+        r for r in roles if "storageBlobDataContributor" in r["properties"]["roleDefinitionId"]
+    ]
+    assert len(app_roles) == 2
+    assert {r["scope"] for r in app_roles} == {
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', "
+        f"variables('storageAccountName'), 'default', variables('{container}'))]"
+        for container in ("stateContainerName", "archiveContainerName")
+    }
+    assert all("managedIdentityName" in r["properties"]["principalId"] for r in app_roles)
+    assert any("stateContainerName" in r["scope"] for r in app_roles)
+    assert any("archiveContainerName" in r["scope"] for r in app_roles)
+    owner_roles = [
+        r for r in roles if "storageBlobDataOwner" in r["properties"]["roleDefinitionId"]
+    ]
+    assert len(owner_roles) == 1
+    assert "/blobServices/containers" not in owner_roles[0]["scope"]
+    assert "storageAccountName" in owner_roles[0]["scope"]
+    assert "foundryProjectName" in owner_roles[0]["properties"]["principalId"]
 
 
 def test_submit_uses_inline_file_content_and_collects_output_items():

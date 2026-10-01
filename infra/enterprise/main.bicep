@@ -356,7 +356,8 @@ var communicationServiceName = 'acs-${baseName}-${shortSuffix}'
 var emailServiceName = 'acs-email-${baseName}-${shortSuffix}'
 var schedulerJobName = 'caj-${baseName}'
 var storageAccountName = take('st${toLower(replace(baseName, '-', ''))}${shortSuffix}', 24)
-var evaluationStorageAccountName = take('steval${toLower(replace(baseName, '-', ''))}${shortSuffix}', 24)
+// 기존 Foundry 연결 이름만 유지하며 별도 평가 계정은 만들지 않는다.
+var evaluationStorageConnectionName = take('steval${toLower(replace(baseName, '-', ''))}${shortSuffix}', 24)
 var vnetName = 'vnet-${baseName}-${shortSuffix}'
 var perimeterName = 'nsp-${baseName}-${shortSuffix}'
 var perimeterProfileName = 'azbrief'
@@ -487,15 +488,8 @@ var adminReadinessSupportResources = [
   }
   {
     id: 'state_storage'
-    label: 'State Storage'
+    label: 'Shared Storage (State, Archive, Foundry)'
     name: storageAccountName
-    resource_type: 'Microsoft.Storage/storageAccounts'
-    api_version: '2023-05-01'
-  }
-  {
-    id: 'evaluation_storage'
-    label: 'Evaluation Storage'
-    name: evaluationStorageAccountName
     resource_type: 'Microsoft.Storage/storageAccounts'
     api_version: '2023-05-01'
   }
@@ -863,46 +857,6 @@ resource storagePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateD
   }
 }
 
-resource evaluationStoragePrivateEndpoint 'Microsoft.Network/privateEndpoints@2024-05-01' = if (vnetMode) {
-  name: 'pe-${evaluationStorageAccountName}'
-  location: location
-  tags: tags
-  properties: {
-    subnet: {
-      id: privateEndpointSubnetId
-    }
-    privateLinkServiceConnections: [
-      {
-        name: 'blob'
-        properties: {
-          privateLinkServiceId: evaluationStorageAccount.id
-          groupIds: [
-            'blob'
-          ]
-        }
-      }
-    ]
-  }
-  dependsOn: [
-    vnet
-  ]
-}
-
-resource evaluationStoragePrivateDnsZoneGroup 'Microsoft.Network/privateEndpoints/privateDnsZoneGroups@2024-05-01' = if (vnetMode) {
-  parent: evaluationStoragePrivateEndpoint
-  name: 'default'
-  properties: {
-    privateDnsZoneConfigs: [
-      {
-        name: 'blob'
-        properties: {
-          privateDnsZoneId: privateDnsZones[4].id
-        }
-      }
-    ]
-  }
-}
-
 // ============================================================================
 // Observability
 // ============================================================================
@@ -1227,12 +1181,9 @@ resource communicationService 'Microsoft.Communication/communicationServices@202
 }
 
 // ============================================================================
-// State store — durable digest checkpoint
+// Shared storage — separate application and Foundry-managed containers
 // ============================================================================
 
-// The digest checkpoint lives here. It is the only state that has to survive a
-// restart: the run registry may be lost, because a stale checkpoint costs
-// duplicate analysis rather than a skipped update.
 resource storageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   name: storageAccountName
   location: location
@@ -1276,45 +1227,22 @@ resource archiveContainer 'Microsoft.Storage/storageAccounts/blobServices/contai
   }
 }
 
-// Foundry cloud evaluation uses a separate store so its project identity cannot
-// mutate the digest checkpoint or canonical report archive.
-resource evaluationStorageAccount 'Microsoft.Storage/storageAccounts@2023-05-01' = {
-  name: evaluationStorageAccountName
-  location: location
-  tags: tags
-  sku: {
-    name: 'Standard_LRS'
-  }
-  kind: 'StorageV2'
-  properties: {
-    minimumTlsVersion: 'TLS1_2'
-    supportsHttpsTrafficOnly: true
-    allowBlobPublicAccess: false
-    allowSharedKeyAccess: false
-    publicNetworkAccess: vnetMode ? 'Disabled' : 'Enabled'
-    networkAcls: {
-      defaultAction: vnetMode ? 'Deny' : 'Allow'
-      bypass: 'AzureServices'
-    }
-  }
-}
-
 resource foundryEvaluationStorageConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = {
   parent: foundryProject
-  name: evaluationStorageAccountName
+  name: evaluationStorageConnectionName
   properties: {
     category: 'AzureStorageAccount'
-    target: evaluationStorageAccount.properties.primaryEndpoints.blob
+    target: storageAccount.properties.primaryEndpoints.blob
     authType: 'AAD'
     isSharedToAll: true
     metadata: {
       ApiType: 'Azure'
-      ResourceId: evaluationStorageAccount.id
-      location: evaluationStorageAccount.location
+      ResourceId: storageAccount.id
+      location: storageAccount.location
     }
   }
   dependsOn: [
-    evaluationStoragePrivateDnsZoneGroup
+    storagePrivateDnsZoneGroup
     foundryProjectStorageBlobDataOwnerAssignment
     foundryProjectUserAssignment
     foundryProjectCapabilityHost
@@ -1456,6 +1384,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   dependsOn: [
     keyVaultSecretsUserAssignment
     storageBlobDataContributorAssignment
+    archiveStorageBlobDataContributorAssignment
   ]
 }
 
@@ -1565,6 +1494,7 @@ resource schedulerJob 'Microsoft.App/jobs@2024-03-01' = {
   dependsOn: [
     keyVaultSecretsUserAssignment
     storageBlobDataContributorAssignment
+    archiveStorageBlobDataContributorAssignment
   ]
 }
 
@@ -1582,11 +1512,22 @@ resource keyVaultSecretsUserAssignment 'Microsoft.Authorization/roleAssignments@
   }
 }
 
-// Scoped to the state account only. The checkpoint is not a secret, so it does
-// not earn write access to the vault that holds the real ones.
 resource storageBlobDataContributorAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: storageAccount
-  name: guid(storageAccount.id, managedIdentity.id, roleIds.storageBlobDataContributor)
+  scope: stateContainer
+  name: guid(stateContainer.id, managedIdentity.id, roleIds.storageBlobDataContributor)
+  properties: {
+    roleDefinitionId: subscriptionResourceId(
+      'Microsoft.Authorization/roleDefinitions',
+      roleIds.storageBlobDataContributor
+    )
+    principalId: managedIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
+resource archiveStorageBlobDataContributorAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  scope: archiveContainer
+  name: guid(archiveContainer.id, managedIdentity.id, roleIds.storageBlobDataContributor)
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
@@ -1628,8 +1569,9 @@ resource foundryProjectUserAssignment 'Microsoft.Authorization/roleAssignments@2
 }
 
 resource foundryProjectStorageBlobDataOwnerAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: evaluationStorageAccount
-  name: guid(evaluationStorageAccount.id, foundryProject.id, roleIds.storageBlobDataOwner)
+  // Foundry가 컨테이너를 관리하므로 계정 권한은 유지한다. 앱 데이터와 강한 격리 경계는 아니다.
+  scope: storageAccount
+  name: guid(storageAccount.id, foundryProject.id, roleIds.storageBlobDataOwner)
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
@@ -1793,20 +1735,6 @@ resource storagePerimeterAssociation 'Microsoft.Network/networkSecurityPerimeter
   properties: {
     privateLinkResource: {
       id: storageAccount.id
-    }
-    profile: {
-      id: perimeterProfile.id
-    }
-    accessMode: perimeterAccessMode
-  }
-}
-
-resource evaluationStoragePerimeterAssociation 'Microsoft.Network/networkSecurityPerimeters/resourceAssociations@2024-07-01' = if (perimeterMode) {
-  parent: networkPerimeter
-  name: 'assoc-evaluation-storage'
-  properties: {
-    privateLinkResource: {
-      id: evaluationStorageAccount.id
     }
     profile: {
       id: perimeterProfile.id

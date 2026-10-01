@@ -91,8 +91,14 @@ safety evaluation region. Korea Central supports batch evaluation but is not cur
 evaluator region. Do not silently skip it: either omit it explicitly or use a dedicated supported-region
 evaluation project. The project's system-assigned identity needs account-scoped Foundry User; the
 control-plane UAMI's assignment is a different principal and is not sufficient. The enterprise Bicep
-also connects a dedicated Entra-only evaluation storage account and grants the project identity Blob
-Data Owner there; never reuse or expose the checkpoint/archive account for evaluator artifacts.
+connects the single dedicated AzBrief Entra-only Storage Account and grants the project identity
+the required account-scoped Blob Data Owner. Foundry uses its own managed containers, separate from
+`azbrief-state` and `azbrief-archive`; App/Job grants cover only those application containers.
+Container separation is not a hard security boundary against the Foundry project identity.
+Keep the account private in the private-network profile, and do not invent an arbitrary container
+name or change the connection to a container-only contract. Existing evaluation artifacts and
+references require a separately approved migration; switching the connection alone does not move
+them.
 
 Cloud groundedness is intentionally absent because the privacy boundary withholds the tenant evidence
 that grounded the report. A cloud faithfulness judgment without that evidence would create false

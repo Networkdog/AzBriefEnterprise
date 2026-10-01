@@ -5,7 +5,7 @@
   "parameters": {
     "config": {
       "basics": {
-        "description": "AzBrief Enterprise foundation. Complete the customer setup guide after this deployment; automatic analysis remains disabled until acceptance. Use a deployment host connected to the private network.",
+        "description": "AzBrief Enterprise foundation with one dedicated Storage Account and separate application/Foundry containers. Foundry retains account-level storage permissions; containers are not a hard isolation boundary. Existing two-account installations require a reviewed migration. Complete the customer setup guide after deployment; automatic analysis remains disabled until acceptance. Use a deployment host connected to the private network.",
         "location": {
           "resourceTypes": [
             "Microsoft.App/managedEnvironments",

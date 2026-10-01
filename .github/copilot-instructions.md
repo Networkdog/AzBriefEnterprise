@@ -92,6 +92,25 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 - **Model fallback**: After `MAX_CONSECUTIVE_OVERLOAD_ERRORS` (3) consecutive 529 errors, raise `ModelFallbackError` to trigger model switch. Cleanly separates retry exhaustion from model switching logic
 - **Stale connection detection**: Detect ECONNRESET/EPIPE for targeted recovery (disable keep-alive pooling + reconnect) instead of generic retry
 - **LLM-assisted tool repair**: On tool failure, the Resource Graph specialist repairs KQL and the coordinator repairs other tool arguments, with bounded retries and a circuit breaker. Never fall back across specialist roles; use meaning-preserving lexical repair or preserve a gap, never replace a failed question with a generic builder/count
+- **Learn transport recovery**: `FOUNDRY_COORDINATOR_LEARN_TRANSPORT=hosted` is an explicit
+  provisioning alternative to the default `managed_mcp`. It removes only the coordinator's
+  managed Learn MCP attachment and uses the existing allow-listed public-document tools through
+  `local_tool_calls`. Keep Learn-first evidence, the same Agent/model and all scope/URL/validation
+  guards. A managed discovery 504 may surface as 400 `tool_user_error` even with `tool_choice=none`;
+  do not broadly retry 400s or infer an Azure MCP permission problem. Publish the coordinator and
+  run `--check` with the same setting; never edit developer `.env` implicitly.
+- **Reviewer output integrity**: Persist Quality Reviewer JSON-object mode for evidence verdicts,
+  dimension scores and action reviews. Keep their distinct runtime schemas, rubrics and fail-closed
+  parsing; valid JSON is not a sufficient verdict. `--check` must reject missing output mode.
+  Foundry logprob normalization stays disabled, so no plain single-digit response is required.
+- **Public MCP discovery retry**: `foundry_backend.py` allows three retries after the initial
+  request for structured 400 `tool_user_error` discovery failures at the explicit public endpoint
+  allow-list (currently only HTTPS `learn.microsoft.com/api/mcp`), with upstream
+  408/429/500/502/503/504/529. Honor server retry hints or 10/20/40 seconds plus jitter within one
+  existing Agent timeout. Never retry auth/invalid requests, unknown or tenant MCP endpoints, or
+  replay native local-tool invocations. Cancellation stops retries; exhaustion propagates the
+  original failure without another sleep. Log trace/task and attempt metadata, not error bodies.
+  This is Hosted runtime policy; a control-plane deployment alone does not activate it.
 - **Multi-turn output recovery**: If LLM hits output token limit, inject meta-message ("Resume directly — no apology, no recap") and retry up to 3 times
 - **Error withholding**: Recoverable errors (prompt-too-long, max-output-tokens) are not surfaced to callers until recovery is attempted. Surface only if recovery fails
 - **Graceful degradation**: If Resource Graph, Azure MCP, or Azure API evidence fails, preserve an explicit `partial` gap and reduce confidence. Missing specialist evidence never becomes confirmed absence and never falls back to a general-purpose Prompt Agent
@@ -279,32 +298,6 @@ AzBriefEnterprise/
 
 ## Deployment Topology
 
-KT's separate `infra/kt` ARM/UI pair uses editable profile naming defaults (not a verified
-corporate naming standard), existing-VNet selection and role-based read-only subnet checks.
-Read [the KT private-deployment skill](skills/kt-private-deployment/SKILL.md) before changing or
-troubleshooting any KT Agent, Container Apps, network, Policy, Private DNS, or isolated-release path.
-Subnet names are operator-selected and never fixed; the private-endpoint subnet has no delegation,
-while distinct Foundry and Container Apps subnets require `Microsoft.App/environments`. The UI
-reads CIDR/delegation from the selected VNet, filters invalid candidates, and shows CIDR as dropdown
-description rather than a second user input. It always reuses prepared subnets and defaults to
-foundation-only provisioning. Keep the README button
-paired with that UI and retain the CLI/preflight and explicit completion-stage caveats in its guide.
-The Container Apps Environment must carry both `vnetConfiguration.internal: true` and
-`publicNetworkAccess: Disabled` on its initial resource PUT. Built-in policy
-`d074ddf8-01a5-4b5e-a2b8-964aed452c0a` has a public-network title but actually denies a missing or
-false `internal` alias. Never implement either value as a post-deployment patch, and fail preflight
-for an existing external environment rather than attempting an in-place conversion. Read back the
-environment with the `2026-01-01` API used by the pinned AVM; older API projections can omit PNA.
-CreateUiDefinition validation must not call `first()` on a potentially empty Resource Graph result;
-filter for same-name noncompliant rows and require that filtered array to be empty.
-The Portal form and CLI preflight must discover required Private DNS zones already linked to the
-selected VNet, reuse those exact IDs, and create only missing namespaces. Explicit zone IDs override
-same-ID discovery but must fail on conflicts; never create a second overlapping VNet link or copy
-Private Endpoint-managed records between zones.
-When no existing Log Analytics workspace is selected, pass `null` for the managed-environment
-`appLogsConfiguration`; AVM 0.16.0 accepts only the `azure-monitor` and `log-analytics`
-discriminators, so never restore `destination: none`.
-
 New customer installations start from the paired README ARM/UI button
 (`infra/azbrief-enterprise-deploy.json` + `infra/createUiDefinition.json`) and follow
 `infra/CUSTOMER_DEPLOYMENT.md`. Bootstrap hello-world uses port 80 and `/`; real AzBrief uses
@@ -327,6 +320,18 @@ The guided VNet profile must bind Foundry and the VNet to the same deployment re
 Keep CI `contents: read` permissions at the workflow root, never inside an event. Include the CI
 file itself in both push/PR path filters and retain its deployment-contract regression assertions.
 
+Control-plane images may reside in a publisher/developer tenant. Keep
+`containerRegistryAuthMode=ManagedIdentity` as the same-tenant default; `Credentials` uses a
+customer-specific repository pull token stored in the customer Key Vault and referenced by both
+App and Job. Never enable the ACR administrator, grant customer Managed Identity across tenants,
+copy registry credentials into application settings/setup outputs, or switch the deployment
+tenant implicitly. Setup outputs carry only the mode and ordinary Key Vault base URI; validate
+the fixed secret path locally. Initial Application/Verify/EnableSchedule check both bindings.
+`deploy_dev.ps1 -PrebuiltImage` accepts an approved immutable digest without ACR lookup/build;
+preserve health, import-only Job smoke, unchanged authentication and rollback gates. Its local
+checkout fingerprint is not publisher-image provenance. Network access, fresh pulls and token
+rotation require separate customer acceptance. Do not change Hosted/Prompt Agent policy for this.
+
 Customer setup v3 binds one shared Container Apps environment, workload profile, Application
 Insights component and its Log Analytics workspace. New v3 outputs may additionally carry the
 Direct DCR endpoint/immutable ID/stream/resource ID for the `AzBriefFailures_CL` custom table;
@@ -342,6 +347,17 @@ and preserve Entra-only Insights; do not add ineffective auth environment variab
 Do not auto-delete or move a legacy MCP app. Follow the customer consolidation procedure, update
 the changed MCP URL/project connection and Agent definitions, and retain historical logs until
 approved retirement. Internal environments require verified Foundry-to-MCP routing and DNS.
+
+New standard and KT deployments create one dedicated Entra-only StorageV2 account. Keep
+`azbrief-state` (including feedback) and `azbrief-archive` separate from Foundry-managed containers.
+App/Job Blob Data Contributor grants are container-scoped; retain Foundry's required account-level
+roles and state honestly that this shares the trust, throughput and failure boundary, not hard
+account isolation. Standard evaluation keeps its existing connection name as an alias to the shared
+account. Use one Blob Private Endpoint/NSP association and one readiness storage entry. KT exposes
+only `storageAccountName`, keeps five PEs/eight-IP budget, and rejects legacy two-name inputs or
+additional KT-profile storage accounts. Preserve Capability Host no-redirect checks. Incremental
+ARM does not remove old accounts, PEs or broad role grants; migrations and retirement require
+separate approval and verified data/reference/RBAC cutover. Never silently copy or delete data.
 
 This repository ships **one** topology. There is no Automation Account, no Function App and
 no fat wheel. Analysis runs in a Foundry Hosted Agent; Container Apps hosts only control-plane
@@ -488,8 +504,8 @@ screenshots in `out/` and do not substitute Python renderer tests for browser in
 
 | Mode | What it does |
 |------|--------------|
-| `vnetInjection` (**default**) | Foundry `networkInjections` (`scenario: 'agent'`) into a `/24` subnet delegated to `Microsoft.App/environments`, Container Apps workload-profile environment on a second delegated subnet, and four private endpoints with private DNS for Foundry, Key Vault, state/archive storage and evaluation storage. Their public network access is disabled by default; Foundry and the VNet share a region |
-| `perimeter` | Five associations for the Foundry account, Key Vault, Log Analytics, state/archive storage and evaluation storage, plus an `NSPAccessLogs` diagnostic setting. Defaults to `Learning` (Transition), which logs without blocking |
+| `vnetInjection` (**default**) | Foundry `networkInjections` (`scenario: 'agent'`) into a `/24` subnet delegated to `Microsoft.App/environments`, Container Apps workload-profile environment on a second delegated subnet, and three private endpoints with private DNS for Foundry, Key Vault and the shared Storage Account. Their public network access is disabled by default; Foundry and the VNet share a region |
+| `perimeter` | Four associations for the Foundry account, Key Vault, Log Analytics and the shared Storage Account, plus an `NSPAccessLogs` diagnostic setting. Defaults to `Learning` (Transition), which logs without blocking |
 | `public` | Public endpoints; Entra auth, the API key and `allowedIpRanges` are the only boundary. Evaluation use only |
 
 Constraints that are easy to get wrong:
@@ -1180,7 +1196,7 @@ Past mistakes and workarounds discovered during development.
   - The `RunStore` stays deliberately non-durable. Losing it now only means a poller stops seeing a run; the checkpoint is elsewhere.
   - `replicaRetryLimit: 0` on the job is deliberate — a failed execution did not advance the checkpoint, so the *next schedule* re-covers the window rather than paying twice in one night.
   - Blob access uses the **REST API over httpx** with an Entra token, not `azure-storage-blob`: the fat wheel that ships to the Automation sandbox stays unchanged, and the store touches the blob twice per run.
-  - The identity gets `Storage Blob Data Contributor` **scoped to the state account only**. A checkpoint is not a secret and must not earn write access to the vault that holds the real ones.
+  - The identity gets `Storage Blob Data Contributor` **scoped to the application containers** in the current single-account topology. A checkpoint is not a secret and must not earn write access to the vault that holds the real ones.
   - `automation/runbook_python.py` keeps its `enterprise` branch (stdlib-only, `https`-only base URL) for driving the topology from an existing Automation Account, but the template no longer creates one.
 - **Bicep catches what hand-written ARM JSON cannot, but only for what it type-checks (2026-08).** `infra/enterprise/main.bicep` compiles to `infra/azbrief-enterprise-deploy.json`; **never hand-edit the JSON**. Two errors surfaced only at compile time and would have failed a live deployment: `BCP178` twice, because a `for` loop's source array cannot reference a runtime value (`containerApp.properties…fqdn`, `managedIdentity.properties.clientId`) — copy loops over Automation Variables had to be unrolled into individual resources; and `BCP318` on `secretAdminClientSecret.properties.secretUri`, since a conditional resource is null-typed (fixed with the `!` null-forgiving operator inside the branch that already guarantees it exists). Two things Bicep does **not** check: built-in role GUIDs (verified against the Learn built-in-roles page — note *Foundry User* is the renamed *Azure AI User*, ID `53ca6127-db72-4b80-b1b0-d745d6d5456d`, unchanged by the rename) and `enablePurgeProtection: false`, which ARM rejects outright — the property must be `true` or absent, hence `enableKeyVaultPurgeProtection ? true : null`.
   - Honest limit: `az deployment group validate` could not be run in this environment (the subscription requires interactive MFA), so the template is **statically** validated only. Run a preflight before the first real deployment.

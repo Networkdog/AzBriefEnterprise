@@ -24,6 +24,7 @@ resource search 'Microsoft.Search/searchServices@2023-11-01' existing = {
   name: searchServiceName
 }
 
+// Foundry 필수 계정 권한은 유지한다. 공유 계정의 앱 컨테이너와 강한 권한 격리를 제공하지 않는다.
 resource storageRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
   for role in [
     'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
