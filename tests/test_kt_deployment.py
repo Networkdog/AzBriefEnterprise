@@ -206,6 +206,7 @@ def test_example_prefills_the_same_resource_names():
     assert example["peSubnetName"]["value"] == "<existing-private-endpoint-subnet-name>"
     assert example["foundrySubnetName"]["value"] == "<existing-foundry-subnet-name>"
     assert example["containerAppsSubnetName"]["value"] == "<existing-container-apps-subnet-name>"
+    assert example["deployContainerAppsPrivateEndpoint"]["value"] is False
 
 
 @pytest.fixture(scope="module")
@@ -395,7 +396,16 @@ def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
     options = _ui_controls(wizard, "options")
     review = _ui_controls(wizard, "review")
     outputs = wizard["outputs"]
-    assert "Private Endpoint 다섯 개" in options["costNotice"]["options"]["text"]
+    assert "Private Endpoint 네 개" in options["costNotice"]["options"]["text"]
+    assert "선택 시 다섯 개" in options["costNotice"]["options"]["text"]
+    assert options["deployContainerAppsPrivateEndpoint"]["type"] == "Microsoft.Common.CheckBox"
+    assert options["deployContainerAppsPrivateEndpoint"]["defaultValue"] is False
+    assert outputs["deployContainerAppsPrivateEndpoint"] == (
+        "[steps('options').deployContainerAppsPrivateEndpoint]"
+    )
+    assert options["manualContainerAppsPrivateEndpointNotice"]["visible"] == (
+        "[not(steps('options').deployContainerAppsPrivateEndpoint)]"
+    )
     assert "공유 Storage의 계정 범위 Foundry 권한" in review["scopeAccepted"]["label"]
     assert {v["value"] for v in options["searchSku"]["constraints"]["allowedValues"]} == {
         "basic",
@@ -656,7 +666,11 @@ def test_container_app_is_private_minimum_scale_to_zero_bootstrap(template: dict
             assert parameters["enableTelemetry"]["value"] is False
 
 
-def test_all_endpoint_groups_and_dns_cover_the_minimum_ip_budget(template: dict, values: dict):
+@pytest.mark.parametrize(("deploy_aca_pe", "ip_budget"), [(False, 7), (True, 8)])
+def test_all_endpoint_groups_and_dns_cover_the_minimum_ip_budget(
+    template: dict, values: dict, deploy_aca_pe: bool, ip_budget: int
+):
+    values["deployContainerAppsPrivateEndpoint"] = deploy_aca_pe
     specs = template["variables"]["endpointSpecs"]
     assert [spec["groupId"] for spec in specs] == [
         "account",
@@ -667,7 +681,8 @@ def test_all_endpoint_groups_and_dns_cover_the_minimum_ip_budget(template: dict,
     ]
     cli_specs = kt.endpoint_specs(values, GROUP)
     assert len(specs) == len(cli_specs) == 5
-    assert sum(spec["ips"] for spec in cli_specs) == 8
+    assert [spec["deploy"] for spec in cli_specs] == [True, True, True, True, deploy_aca_pe]
+    assert sum(spec["ips"] for spec in cli_specs if spec["deploy"]) == ip_budget
     assert specs[1]["target"] == "[variables('storageId')]"
     assert cli_specs[1]["target"].endswith(
         f"/Microsoft.Storage/storageAccounts/{values['storageAccountName']}"
@@ -683,6 +698,11 @@ def test_all_endpoint_groups_and_dns_cover_the_minimum_ip_budget(template: dict,
 
 
 def test_container_environment_endpoint_targets_the_ready_environment(template: dict):
+    assert template["parameters"]["deployContainerAppsPrivateEndpoint"]["defaultValue"] is False
+    assert template["outputs"]["ktFoundation"]["value"][
+        "containerAppsPrivateEndpointRequested"
+    ] == ("[parameters('deployContainerAppsPrivateEndpoint')]")
+    assert template["outputs"]["ktFoundation"]["value"]["applicationReady"] is False
     endpoint = template["variables"]["endpointSpecs"][4]
     assert endpoint == {
         "name": "[format('pe-{0}', parameters('containerAppsEnvironmentName'))]",
@@ -691,6 +711,10 @@ def test_container_environment_endpoint_targets_the_ready_environment(template: 
         "zones": ["[variables('dnsZoneNames')[6]]"],
     }
     deployment = template["resources"]["privateEndpoints"]
+    assert deployment["condition"] == (
+        "[or(not(equals(variables('endpointSpecs')[copyIndex()].groupId, 'managedEnvironments')), "
+        "parameters('deployContainerAppsPrivateEndpoint'))]"
+    )
     assert "containerEnvironment" in deployment["dependsOn"]
     assert "containerApp" not in deployment["dependsOn"]
     assert deployment["copy"]["mode"] == "serial"
@@ -935,10 +959,12 @@ class FakeAzure(kt.AzureCli):
                         )
                     )
             for spec in kt.endpoint_specs(values, GROUP):
-                for resource_id in (
-                    spec["target"],
-                    f"{GROUP}/providers/Microsoft.Network/privateEndpoints/{spec['name']}",
-                ):
+                resource_ids = [spec["target"]]
+                if spec["deploy"]:
+                    resource_ids.append(
+                        f"{GROUP}/providers/Microsoft.Network/privateEndpoints/{spec['name']}"
+                    )
+                for resource_id in resource_ids:
                     self.resources[resource_id] = {
                         "id": resource_id,
                         "tags": {"deploymentProfile": kt.PROFILE},
@@ -966,7 +992,11 @@ def test_unknown_mode_never_falls_through_to_deploy(values: dict, vnet: dict):
     assert not cli.deployments
 
 
-def test_deploy_stages_reinventory_before_host_and_never_rewrite_subnets(values: dict, vnet: dict):
+@pytest.mark.parametrize("deploy_aca_pe", [False, True])
+def test_deploy_stages_reinventory_before_host_and_never_rewrite_subnets(
+    values: dict, vnet: dict, deploy_aca_pe: bool
+):
+    values["deployContainerAppsPrivateEndpoint"] = deploy_aca_pe
     cli = FakeAzure(values, vnet)
     kt.run(cli, values, "deploy")
     assert len(cli.deployments) == 2
@@ -981,6 +1011,16 @@ def test_deploy_stages_reinventory_before_host_and_never_rewrite_subnets(values:
         "snet-container-apps",
     }
     assert values["existingPrivateDnsZoneIds"] == {}
+    specs = kt.endpoint_specs(values, GROUP)
+    assert {
+        resource_id
+        for resource_id in cli.resources
+        if "/Microsoft.Network/privateEndpoints/" in resource_id
+    } == {
+        f"{GROUP}/providers/Microsoft.Network/privateEndpoints/{spec['name']}"
+        for spec in specs
+        if spec["deploy"]
+    }
     for resource_type, name, api_version in (
         ("Microsoft.CognitiveServices/accounts", values["foundryAccountName"], kt.FOUNDRY_API),
         ("Microsoft.Storage/storageAccounts", values["storageAccountName"], "2023-05-01"),
@@ -1047,7 +1087,7 @@ def test_existing_pe_subnet_requires_enough_actual_free_ips(values: dict, vnet: 
         _subnet(values["peSubnetName"], values["peSubnetAddressPrefix"])
     )
     cli.free_ips = False
-    with pytest.raises(ValueError, match="verify 8 free"):
+    with pytest.raises(ValueError, match="verify 7 free"):
         kt.run(cli, values, "deploy")
     assert not cli.deployments
     assert sum(call[:3] == ("network", "vnet", "check-ip-address") for call in cli.calls) == 11
@@ -1160,6 +1200,7 @@ def test_readback_does_not_confuse_endpoint_approval_with_provisioning(
     endpoint_index: int,
     provisioning_state: str | None,
 ):
+    values["deployContainerAppsPrivateEndpoint"] = True
     cli = FakeAzure(values, vnet)
     kt.run(cli, values, "deploy")
     endpoint_name = kt.endpoint_specs(values, GROUP)[endpoint_index]["name"]
@@ -1183,6 +1224,68 @@ def test_readback_does_not_confuse_endpoint_approval_with_provisioning(
         with pytest.raises(RuntimeError, match=f"Private endpoint is not ready: {endpoint_name}"):
             kt.verify_foundation(cli, values)
     assert cli.deployments == deployments_before
+
+
+def test_manual_aca_endpoint_is_not_created_read_or_overwritten(
+    monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict
+):
+    assert values["deployContainerAppsPrivateEndpoint"] is False
+    cli = FakeAzure(values, vnet)
+    aca = kt.endpoint_specs(values, GROUP)[4]
+    endpoint_id = f"{GROUP}/providers/Microsoft.Network/privateEndpoints/{aca['name']}"
+    manual_endpoint = {
+        "id": endpoint_id,
+        "tags": {"owner": "operator"},
+        "properties": {"provisioningState": "Failed"},
+    }
+    cli.resources[endpoint_id] = copy.deepcopy(manual_endpoint)
+    original_get = cli.get
+
+    def get(resource_id: str, api_version: str) -> dict:
+        assert resource_id != endpoint_id, "Manual ACA PE must remain outside template management"
+        return original_get(resource_id, api_version)
+
+    monkeypatch.setattr(cli, "get", get)
+    kt.run(cli, values, "deploy")
+    assert cli.resources[endpoint_id] == manual_endpoint
+    assert ("get", aca["target"], kt.CONTAINER_ENV_API) in cli.calls
+    assert all(d["deployContainerAppsPrivateEndpoint"] is False for d in cli.deployments)
+
+
+def test_manual_aca_endpoint_does_not_skip_environment_pna_check(
+    monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict
+):
+    assert values["deployContainerAppsPrivateEndpoint"] is False
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    environment_id = kt.endpoint_specs(values, GROUP)[4]["target"]
+    original_get = cli.get
+
+    def get(resource_id: str, api_version: str) -> dict:
+        result = original_get(resource_id, api_version)
+        if resource_id == environment_id:
+            result["properties"]["publicNetworkAccess"] = "Enabled"
+        return result
+
+    monkeypatch.setattr(cli, "get", get)
+    with pytest.raises(RuntimeError, match="Public network access is not disabled"):
+        kt.verify_foundation(cli, values)
+
+
+@pytest.mark.parametrize("invalid_flag", ["false", "true", 0, None])
+def test_aca_endpoint_flag_rejects_non_boolean_inputs(
+    tmp_path: Path, values: dict, invalid_flag: str | int | None
+):
+    supplied = {
+        name: {"value": value}
+        for name, value in values.items()
+        if name not in kt.INTERNAL_PARAMETERS
+    }
+    supplied["deployContainerAppsPrivateEndpoint"] = {"value": invalid_flag}
+    path = tmp_path / "parameters.json"
+    path.write_text(json.dumps({"parameters": supplied}), encoding="utf-8")
+    with pytest.raises(ValueError, match="deployContainerAppsPrivateEndpoint must be a boolean"):
+        kt.load_parameters(path)
 
 
 def test_existing_external_environment_is_not_adopted(

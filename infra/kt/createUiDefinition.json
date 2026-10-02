@@ -24,7 +24,7 @@
         "type": "Microsoft.Common.InfoBox",
         "options": {
           "icon": "Info",
-          "text": "전용 배포 리소스 그룹을 사용하십시오. Foundry·Storage·Cosmos DB·Search·Container Apps는 Private Endpoint로 연결됩니다. Container App은 0.25 vCPU / 0.5 GiB의 준비용 이미지이며 운영 애플리케이션이 아닙니다.",
+          "text": "전용 배포 리소스 그룹을 사용하십시오. Foundry·Storage·Cosmos DB·Search의 Private Endpoint를 생성합니다. Container Apps Environment의 PE는 현재 수동 진단을 위해 자동 생성하지 않는 것이 기본값입니다. Container App은 0.25 vCPU / 0.5 GiB의 준비용 이미지이며 운영 애플리케이션이 아닙니다.",
           "uri": "https://github.com/Networkdog/AzBriefEnterprise/blob/main/infra/kt/README.md"
         }
       }
@@ -263,7 +263,7 @@
             "type": "Microsoft.Common.InfoBox",
             "options": {
               "icon": "Info",
-              "text": "Consumption 0.25 vCPU / 0.5 GiB, replica 0~1, 단일 리전 Cosmos Serverless, Storage LRS 계정 하나를 유지합니다. 앱이 0 replica여도 Search·Private Endpoint 다섯 개·DNS·storage 비용은 남습니다. Application Insights는 생성하지 않습니다."
+              "text": "Consumption 0.25 vCPU / 0.5 GiB, replica 0~1, 단일 리전 Cosmos Serverless, Storage LRS 계정 하나를 유지합니다. 기본 Private Endpoint 네 개(ACA PE 자동 생성 선택 시 다섯 개)·Search·DNS·storage 비용은 앱이 0 replica여도 남습니다. Application Insights는 생성하지 않습니다."
             }
           },
           {
@@ -279,6 +279,21 @@
               ]
             },
             "toolTip": "둘 다 replica 1 / partition 1입니다. Basic의 Capability Host·파일 검색·용량 적합성은 고객 환경에서 별도 검증해야 합니다."
+          },
+          {
+            "name": "deployContainerAppsPrivateEndpoint",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "Container Apps Environment PE 자동 생성 (현재 수동 진단 시 선택하지 않음)",
+            "defaultValue": false
+          },
+          {
+            "name": "manualContainerAppsPrivateEndpointNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": "[not(steps('options').deployContainerAppsPrivateEndpoint)]",
+            "options": {
+              "icon": "Warning",
+              "text": "Environment와 앱은 생성하지만 ACA 전용 PE 및 그 DNS zone group은 생성·갱신하지 않습니다. internal=true와 Public Network Access Disabled는 유지합니다. 기존 PE는 삭제되지 않으며, 수동 PE 생성 후 연결 승인·DNS·HTTPS 접근을 별도로 검증해야 합니다. DNS zone 준비는 기존 방식으로 유지됩니다."
+            }
           },
           {
             "name": "dnsMode",
@@ -406,6 +421,7 @@
       "createPESubnet": false,
       "createFoundrySubnet": false,
       "createContainerAppsSubnet": false,
+      "deployContainerAppsPrivateEndpoint": "[steps('options').deployContainerAppsPrivateEndpoint]",
       "linkedPrivateDnsZones": "[if(equals(steps('options').dnsMode, 'auto'), coalesce(steps('network').linkedPrivateDnsZonesApi.data, parse('[]')), parse('[]'))]",
       "searchSku": "[steps('options').searchSku]",
       "deployCapabilityHost": "[equals(steps('review').deploymentStage, 'complete')]",

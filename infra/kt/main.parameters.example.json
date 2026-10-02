@@ -15,6 +15,7 @@
     "projectName": { "value": "azbrief-kt" },
     "containerAppsEnvironmentName": { "value": "cae-azbrief-kt" },
     "containerAppName": { "value": "ca-azbrief-kt" },
+    "deployContainerAppsPrivateEndpoint": { "value": false },
     "peSubnetAddressPrefix": { "value": "10.70.0.0/28" },
     "foundrySubnetAddressPrefix": { "value": "10.70.0.32/27" },
     "containerAppsSubnetAddressPrefix": { "value": "10.70.0.64/27" }

@@ -35,6 +35,9 @@ param projectName string = 'azbrief-kt'
 param containerAppsEnvironmentName string = 'cae-azbrief-kt'
 param containerAppName string = 'ca-azbrief-kt'
 
+@description('Temporarily false for manual Container Apps Environment PE diagnosis. Skips only its PE and DNS zone group, not the Environment or other endpoints. Incremental deployment does not delete an existing PE.')
+param deployContainerAppsPrivateEndpoint bool = false
+
 @description('Used ONLY when the selected private-endpoint subnet is missing. Minimum is /28.')
 param peSubnetAddressPrefix string = ''
 
@@ -351,7 +354,7 @@ var endpointSpecs = [
 
 @batchSize(1)
 module privateEndpoints 'br/public:avm/res/network/private-endpoint:0.12.1' = [
-  for (endpoint, index) in endpointSpecs: {
+  for (endpoint, index) in endpointSpecs: if (endpoint.groupId != 'managedEnvironments' || deployContainerAppsPrivateEndpoint) {
     name: 'kt-private-endpoint-${index}'
     params: {
       name: endpoint.name
@@ -554,6 +557,7 @@ output ktFoundation object = {
   profile: 'kt-private-foundation'
   applicationReady: false
   capabilityHostRequested: deployCapabilityHost
+  containerAppsPrivateEndpointRequested: deployContainerAppsPrivateEndpoint
   tenantId: tenant().tenantId
   subscriptionId: subscription().subscriptionId
   resourceGroup: resourceGroup().name

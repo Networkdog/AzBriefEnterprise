@@ -20,6 +20,12 @@ KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오
 > [애플리케이션 전환](#애플리케이션-전환) 단계입니다. `ktFoundation.applicationReady`는
 > 의도적으로 `false`이며 일반 `customerSetup` 출력과 호환되지 않습니다.
 
+> **임시 수동 PE 진단:** `deployContainerAppsPrivateEndpoint=false`가 기본값입니다.
+> Container Apps Environment와 앱은 생성하지만 그 Environment용 PE 및 DNS zone group
+> (`kt-private-endpoint-4`)은 생성·갱신하지 않습니다. Foundry·Storage·Cosmos DB·Search의
+> 네 PE는 그대로 생성합니다. 자동 생성을 재개하려면 명시적으로 `true`를 지정하거나 Portal
+> 옵션을 선택하십시오. Incremental 배포는 이전에 만든 PE를 삭제하지 않습니다.
+
 ## 배포 구성
 
 | 항목 | KT 설정 |
@@ -34,7 +40,7 @@ KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오
 | Cosmos DB | NoSQL, 단일 리전 Serverless, `Sql` PE, Public Network Access·로컬 키 인증 비활성 |
 | AI Search | Basic, replica 1 / partition 1, `searchService` PE, Public Network Access·로컬 키 인증 비활성 |
 | Container Apps Environment | Workload Profiles 유형, **Consumption** 프로필, 전용 subnet 주입, Public Network Access 비활성 |
-| Container Apps inbound | Environment의 `managedEnvironments` PE → 선택한 Private Endpoint subnet |
+| Container Apps inbound | 내부 Environment 유지. `managedEnvironments` PE는 기본 수동 생성, 옵션으로 자동 생성 재개 |
 | 준비용 Container App | **0.25 vCPU / 0.5 GiB**, 최소 replica 0 / 최대 1, HTTPS, 포트 80의 hello-world 이미지 |
 | Application Insights | **배포하지 않음**. Foundry 연결, 계측 설정, publishing 역할도 생성하지 않음 |
 | Log Analytics | 기존 workspace ID를 선택적으로 연결. 새 workspace·DCR·AMPLS는 생성하지 않음 |
@@ -94,7 +100,7 @@ CLI도 명시한 이름을 그대로 사용합니다. 기존 배포에 재적용
 
 | 역할(이름 제한 없음) | 새로 만들 때의 최소 크기 | 위임 | 용도 |
 |---|---|---|---|
-| Private Endpoint subnet | **/28** — 16개 주소 중 Azure 예약 5개 제외 11개 | 없음 | 다섯 PE의 보수적인 8개 IP 예산 |
+| Private Endpoint subnet | **/28** — 16개 주소 중 Azure 예약 5개 제외 11개 | 없음 | 기본 네 PE 7개 IP, ACA PE 자동 생성 시 8개 IP 예산 |
 | Foundry 전용 subnet | **/27** | `Microsoft.App/environments` | 하나의 Foundry 계정 전용 |
 | Container Apps 전용 subnet | **/27** | `Microsoft.App/environments` | Container Apps Environment 전용 |
 
@@ -108,8 +114,9 @@ Foundry의 `/24`는 운영 확장 권장값이며 여기서는 요청한 최소 
 더 큰 기존 서브넷은 축소하지 않으며, 신규 서브넷에도 명시적으로 더 큰 CIDR을 줄 수 있습니다.
 이 프로필의 사전검사는 IPv4 단일-prefix 서브넷을 대상으로 합니다.
 
-IP 예산은 Foundry 최대 3개를 위한 여유, 단일 리전 Cosmos 2개, 공유 Blob·Search·ACA 각각
-1개로 8개입니다. `/29`의 3개 usable IP로는 부족합니다. 실제 NIC 할당은 배포 후 확인합니다.
+자동 배포 IP 예산은 Foundry 최대 3개를 위한 여유, 단일 리전 Cosmos 2개, 공유 Blob·Search 각각
+1개로 7개입니다. ACA PE 자동 생성 시 1개를 더해 8개이며, 수동 생성 시에도 해당 IP 여유를
+별도로 확보하십시오. `/29`의 3개 usable IP로는 부족합니다. 실제 NIC 할당은 배포 후 확인합니다.
 Cosmos 리전이나 storage 서비스 PE를 추가하면 예산을 다시 계산해야 합니다.
 
 CLI는 매번 live inventory를 읽어 **없는 child subnet만** 생성하도록 플래그를 계산합니다.
@@ -139,7 +146,10 @@ CLI는 매번 live inventory를 읽어 **없는 child subnet만** 생성하도�
 - `privatelink.search.windows.net`
 - `privatelink.<region>.azurecontainerapps.io`
 
-각 PE의 zone group이 서비스 레코드를 연결합니다. 중앙 DNS/온프레미스 DNS를 사용하면
+자동 생성하는 각 PE의 zone group이 서비스 레코드를 연결합니다. ACA PE 자동 생성을 꺼도
+위 zone 준비·재사용은 유지하므로 수동 PE의 DNS 연결에 사용할 수 있습니다. 수동 ACA PE의
+생성·승인·레코드 연결과 실제 HTTPS 접근은 운영자가 별도로 확인해야 합니다.
+중앙 DNS/온프레미스 DNS를 사용하면
 KT DNS 담당자가 Azure Private DNS로의 전달·해석을 구성해야 합니다. 이 템플릿은 DNS 서버,
 VPN, ExpressRoute, peering, NSG/UDR, outbound 방화벽을 변경하지 않습니다.
 신규 subnet에도 NSG/UDR를 자동 생성하지 않으므로 KT 정책에 따른 검토·연결이 필요합니다.
@@ -180,7 +190,7 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
 | 기본 사항 | 배포 구독·RG·지역 선택, 프라이빗 bootstrap 범위 안내 |
 | 기존 네트워크 | 같은 구독·지역의 기존 VNet 선택. 이름과 무관하게 역할별 기존 subnet을 선택하고 ARM 조회 CIDR·위임으로 후보 제한 |
 | 리소스 이름 | 일곱 기본 이름 편집, Azure 문자·길이 검사, Storage 단일 입력 및 다섯 PE 대상 이름 충돌 차단 |
-| 비용·DNS·로그 | Search Basic/S1 선택, VNet 연결 DNS zone 자동 재사용 또는 중앙 RG 명시, 기존 Log Analytics 선택 연결 |
+| 비용·DNS·로그 | ACA PE 자동 생성 선택(기본 해제), Search Basic/S1, DNS 재사용 또는 중앙 RG, 기존 Log Analytics 선택 |
 | 단계·필수 확인 | 선택 요약, 기반/완료 단계 선택, 사전검사·소유권·비용·bootstrap 범위 동의 |
 
 VNet을 새로 만드는 옵션은 없습니다. 선택한 subnet 이름은 배포 매개변수로 전달되고 CIDR은
@@ -210,6 +220,12 @@ Private Endpoint의 zone group이 기존 zone을 참조하므로 Azure가 필요
 로그 연결을 선택하지 않으면 Container Apps Environment의 `appLogsConfiguration`을
 `null`로 생략합니다. AVM `0.16.0`의 판별형은 `azure-monitor`와 `log-analytics`만
 허용하므로 `destination: none`을 전달하지 않습니다.
+
+수동 ACA PE 진단 중에는 **Container Apps Environment PE 자동 생성**을 선택하지 않습니다.
+`ktFoundation.containerAppsPrivateEndpointRequested`는 자동 생성 선택값을 표시할 뿐 수동 PE의
+존재나 정상 동작을 보증하지 않습니다. CLI는 수동 ACA PE가 없어도 계속 진행하며, 이미 존재하는
+수동/실패 ACA PE의 상태를 읽거나 수정하지 않습니다. Environment 자체의 소유권·전용 subnet·
+`internal=true`·PNA 비활성 검사는 그대로 유지됩니다. 기존 실패 PE 정리는 자동 실행하지 않습니다.
 
 처음에는 기본 선택인 **1단계 — 기반·연결·권한만 배포**로 실행합니다
 (`deployCapabilityHost=false`). 성공 후 account Capability Host의 `Succeeded` 상태와 RBAC 전파를
@@ -258,7 +274,7 @@ python -m scripts.deploy_kt `
 1. 네트워크·서비스·PE/DNS·프로젝트·AAD 연결·사전 RBAC와 bootstrap App을 생성.
 2. 자동 account Capability Host를 10초 간격으로 최대 31회 확인. 다시 live inventory를 읽어 신규 subnet
    플래그를 해제한 뒤 project Capability Host와 생성된 컨테이너의 data 역할을 구성.
-3. host 상태, 필수 subnet/PE의 존재·승인·binding, DNS 링크, 각 서비스의 Public Network Access
+3. host 상태, 필수 subnet/자동 관리 PE의 존재·승인·binding, DNS 링크, 각 서비스의 Public Network Access
    비활성 설정과 각 PE의 `provisioningState=Succeeded`를 읽어 확인. 연결의 `Approved`만으로
    PE 생성 성공을 판단하지 않음. 비공개 데이터 경로의 실제 연결 검사는 아래 인수 단계에서 수행.
 
@@ -271,7 +287,9 @@ ARM subnet flag는 재실행마다 다시 계산합니다. 임시 parameter 파�
 ## Private Endpoint 생성 실패 진단
 
 `kt-private-endpoint-4`는 현재 단일 저장소 프로필에서 Container Apps Environment에 연결하는
-PE입니다. `Microsoft.Network/privateEndpoints/pe-<Environment 이름>`이 `Failed`이고 내부
+PE입니다. 수동 진단 기본값에서는 이 중첩 배포를 건너뛰므로 아래 배포 조회는 **기존 실패 기록
+또는 자동 생성을 켠 실행**에 사용합니다. 이번 변경은 500 원인 해결이 아니라 수동 비교를 위한
+배포 경계 분리입니다. `Microsoft.Network/privateEndpoints/pe-<Environment 이름>`이 `Failed`이고 내부
 오류가 `InternalServerError`라면 **일시 장애인지 구성 문제인지 그 오류만으로는 확정할 수
 없습니다**. `RequestDisallowedByPolicy`나 DNS zone link 충돌과도 구분하십시오.
 
@@ -334,7 +352,7 @@ Environment가 정상이고 PE만 실패했다면 전체 RG, Foundry/Capability 
 
 - Workload Profiles는 Dedicated 노드 구매를 뜻하지 않습니다. Consumption 프로필을 사용해
   D4 노드 상시 요금을 피하고 준비용 App은 유휴 시 0 replica로 줄입니다.
-- **전체 유휴 비용이 0원인 것은 아닙니다.** Private Endpoint 다섯 개, Private DNS,
+- **전체 유휴 비용이 0원인 것은 아닙니다.** 자동 Private Endpoint 네 개(ACA 자동 선택 시 다섯 개), Private DNS,
   Search Basic 1 SU, storage, Container Apps 관리 네트워크 등에 비용이 발생할 수 있습니다.
   Cosmos Serverless는 작은 초기 사용량을 가정한 선택이며 지속적인 부하에서 항상 최저가는 아닙니다.
 - Search Free는 PE를 지원하지 않아 제외했습니다. Basic은 문서상 PE 지원 하한입니다.

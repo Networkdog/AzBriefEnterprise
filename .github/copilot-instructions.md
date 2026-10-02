@@ -308,6 +308,12 @@ states before attributing a generic InternalServerError to Azure or changing the
 An Approved connection is not provisioning success: final KT readback requires every PE to be
 Succeeded. Preserve internal/PNA restrictions, correlate service request IDs, and never use a
 different subscription's validation or a static dependency test as proof of customer recovery.
+KT temporarily defaults `deployContainerAppsPrivateEndpoint=false` for operator-led diagnosis.
+Skip only the ACA PE module at index 4 and its child DNS zone group, preserving stable indices
+0–3, the Environment/App, DNS zone preparation, internal=true and Disabled PNA. CLI ownership and
+network-isolation checks must still cover the Environment, while manual/failed ACA PEs remain
+outside managed-endpoint reads, writes and readiness checks. Incremental omission never deletes
+an existing endpoint; applicationReady remains false until manual DNS/HTTPS acceptance.
 
 New customer installations start from the paired README ARM/UI button
 (`infra/azbrief-enterprise-deploy.json` + `infra/createUiDefinition.json`) and follow
@@ -365,7 +371,8 @@ App/Job Blob Data Contributor grants are container-scoped; retain Foundry's requ
 roles and state honestly that this shares the trust, throughput and failure boundary, not hard
 account isolation. Standard evaluation keeps its existing connection name as an alias to the shared
 account. Use one Blob Private Endpoint/NSP association and one readiness storage entry. KT exposes
-only `storageAccountName`, keeps five PEs/eight-IP budget, and rejects legacy two-name inputs or
+only `storageAccountName`, uses four managed PEs/seven-IP budget by default (five/eight when ACA PE
+automation is explicitly enabled), and rejects legacy two-name inputs or
 additional KT-profile storage accounts. Preserve Capability Host no-redirect checks. Incremental
 ARM does not remove old accounts, PEs or broad role grants; migrations and retirement require
 separate approval and verified data/reference/RBAC cutover. Never silently copy or delete data.

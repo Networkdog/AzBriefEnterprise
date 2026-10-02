@@ -42,9 +42,10 @@ contract expects two standard Enterprise Portal links and one KT Portal link in 
 | Foundry subnet | Separate `/27` or larger subnet delegated to `Microsoft.App/environments`; one Foundry account only. |
 | Container Apps subnet | Separate `/27` or larger subnet delegated to `Microsoft.App/environments`; never share it with Foundry. |
 | Container Apps Environment | `vnetConfiguration.internal: true` and `publicNetworkAccess: Disabled` must both be in the initial `Microsoft.App/managedEnvironments` PUT. |
+| Container Apps PE | Temporarily manual by default (`deployContainerAppsPrivateEndpoint=false`). Keep the Environment/App and four other PEs. Explicit true restores only the ACA PE and its DNS zone group. |
 | Private DNS | Reuse a required zone already linked to the VNet. Create only missing namespaces. Never link a second overlapping zone. |
 | Private Endpoint records | Point the new Private Endpoint DNS zone group at the canonical existing zone. Let Azure manage its A record; do not copy managed records between zones. |
-| Private Endpoint readiness | Final readback requires the PE resource's `provisioningState=Succeeded` as well as an `Approved` connection and the expected target/subnet. Failed, Creating, or missing state is not ready. |
+| Private Endpoint readiness | Final readback requires every automatically managed PE to be `Succeeded` and `Approved` with the expected target/subnet. Manual ACA PE acceptance is separate; never label an ignored endpoint healthy. |
 | Optional ACA logs | Pass `null` when no Log Analytics workspace is selected. AVM `0.16.0` accepts only `azure-monitor` or `log-analytics`, not `none`. |
 | Resource exposure | Disable public network access on Foundry, storage, Cosmos DB, Search, and the Container Apps Environment at creation. |
 | Bootstrap | The hello-world Container App proves only foundation/network readiness. It is not application readiness. |
@@ -99,8 +100,10 @@ resource ID rather than silently creating a competing zone.
   orphaned resources from a failed deployment.
 - Include `internal: true` and `publicNetworkAccess: Disabled` in the initial managed-environment
   leaf resource request, not merely in a later update command.
-- Use one Storage Account AVM instance for Foundry and the two application containers. Keep five
-  private endpoints with an eight-IP preflight budget. Legacy storage output aliases point to the
+- Use one Storage Account AVM instance for Foundry and the two application containers. Default to
+  four automatically managed PEs and a seven-IP preflight budget; explicit ACA PE opt-in restores
+  five/eight. Retain the /28 PE subnet minimum and capacity for the operator's manual PE.
+  Legacy storage output aliases point to the
   same resource ID. Reject old two-name parameter files and additional KT-profile storage accounts
   instead of selecting an account or deleting/moving data automatically. Active Capability Host
   connections must still pass the no-redirect check. Existing two-account installations require the
@@ -159,8 +162,17 @@ namespace for a VNet.
 
 Use the [KT diagnostic procedure](../../../infra/kt/README.md#private-endpoint-생성-실패-진단).
 In the current single-account profile, `kt-private-endpoint-4` targets the Container Apps
-Environment with group `managedEnvironments`. The explicit dependency waits for the Environment
-deployment; the DNS zone group depends on the PE. Do not assert that a DNS link caused a PE resource
+Environment with group `managedEnvironments` when `deployContainerAppsPrivateEndpoint=true`.
+The temporary default false skips that module and its DNS zone group without renumbering other
+PE deployments. Keep DNS zones prepared for manual integration. Do not read or adopt an existing
+manual/failed ACA PE when disabled, but continue checking the Environment's ownership, subnet,
+internal flag and PNA. The output `containerAppsPrivateEndpointRequested` discloses the selection;
+it is not proof that a manual PE exists or is ready. Incremental deployment does not delete it.
+The operator must separately verify manual PE approval, DNS and HTTPS before application acceptance.
+This switch isolates diagnosis; it does not claim to fix the PE service failure.
+
+When enabled, the explicit dependency waits for the Environment deployment; the DNS zone group
+depends on the PE. Do not assert that a DNS link caused a PE resource
 500 without the corresponding operation evidence, or claim that a fixed delay will repair it.
 Resource-provider asynchronous readiness may need investigation even after ARM reports Succeeded.
 

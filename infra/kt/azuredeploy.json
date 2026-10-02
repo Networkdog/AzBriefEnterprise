@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "15345050645830587247"
+      "templateHash": "7602721184217297468"
     }
   },
   "parameters": {
@@ -86,6 +86,13 @@
     "containerAppName": {
       "type": "string",
       "defaultValue": "ca-azbrief-kt"
+    },
+    "deployContainerAppsPrivateEndpoint": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Temporarily false for manual Container Apps Environment PE diagnosis. Skips only its PE and DNS zone group, not the Environment or other endpoints. Incremental deployment does not delete an existing PE."
+      }
     },
     "peSubnetAddressPrefix": {
       "type": "string",
@@ -27677,6 +27684,7 @@
         "mode": "serial",
         "batchSize": 1
       },
+      "condition": "[or(not(equals(variables('endpointSpecs')[copyIndex()].groupId, 'managedEnvironments')), parameters('deployContainerAppsPrivateEndpoint'))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "[format('kt-private-endpoint-{0}', copyIndex())]",
@@ -30314,6 +30322,7 @@
         "profile": "kt-private-foundation",
         "applicationReady": false,
         "capabilityHostRequested": "[parameters('deployCapabilityHost')]",
+        "containerAppsPrivateEndpointRequested": "[parameters('deployContainerAppsPrivateEndpoint')]",
         "tenantId": "[tenant().tenantId]",
         "subscriptionId": "[subscription().subscriptionId]",
         "resourceGroup": "[resourceGroup().name]",

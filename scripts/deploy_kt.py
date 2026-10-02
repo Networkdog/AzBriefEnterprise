@@ -171,6 +171,8 @@ def load_parameters(path: Path) -> dict[str, Any]:
             raise ValueError(f"Replace the example placeholder for {name}")
         if definition["type"] == "string" and not isinstance(value, str):
             raise ValueError(f"{name} must be a string")
+        if definition["type"] == "bool" and not isinstance(value, bool):
+            raise ValueError(f"{name} must be a boolean")
         if "defaultValue" not in definition and not value:
             raise ValueError(f"Required parameter cannot be empty: {name}")
         if "allowedValues" in definition and value not in definition["allowedValues"]:
@@ -284,13 +286,15 @@ def _same_id(left: str, right: str) -> bool:
 
 
 def endpoint_specs(values: dict[str, Any], group_id: str) -> list[dict[str, Any]]:
-    """Match the five private endpoints and conservative eight-IP budget in the template."""
+    """Describe all five targets and which private endpoints the template manages."""
     return [
         {
             "name": f"pe-{values[key]}",
             "target": f"{group_id}/providers/{resource_type}/{values[key]}",
             "group": group,
             "ips": ips,
+            "deploy": group != "managedEnvironments"
+            or values["deployContainerAppsPrivateEndpoint"],
         }
         for key, resource_type, group, ips in (
             ("foundryAccountName", "Microsoft.CognitiveServices/accounts", "account", 3),
@@ -445,6 +449,8 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
 
     required_ips = 0
     for spec in specs:
+        if not spec["deploy"]:
+            continue
         endpoint_id = f"{cli.group_id}/providers/Microsoft.Network/privateEndpoints/{spec['name']}"
         if endpoint_id.casefold() not in by_id:
             required_ips += spec["ips"]
@@ -562,7 +568,12 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
             cidr=str(plan.network),
             action="create" if plan.create else "reuse_unchanged",
         )
-    logger.info("kt_private_endpoint_plan", new_ip_budget=required_ips, reused_dns_zones=len(reuse))
+    logger.info(
+        "kt_private_endpoint_plan",
+        new_ip_budget=required_ips,
+        reused_dns_zones=len(reuse),
+        container_apps_private_endpoint_managed=values["deployContainerAppsPrivateEndpoint"],
+    )
     return prepared
 
 
@@ -612,6 +623,8 @@ def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
     )
     ids = {resource["id"].casefold() for resource in resources}
     for spec in endpoint_specs(values, cli.group_id):
+        if not spec["deploy"]:
+            continue
         endpoint_id = f"{cli.group_id}/providers/Microsoft.Network/privateEndpoints/{spec['name']}"
         if endpoint_id.casefold() not in ids:
             raise RuntimeError(f"Required private endpoint is absent: {spec['name']}")
@@ -652,6 +665,7 @@ def run(cli: AzureCli, values: dict[str, Any], mode: str) -> None:
     logger.info(
         "kt_foundation_deployed",
         application_ready=False,
+        container_apps_private_endpoint_managed=values["deployContainerAppsPrivateEndpoint"],
         outputs=result["properties"]["outputs"]["ktFoundation"]["value"],
         next_step="Verify private DNS/connectivity and complete the KT application handoff in infra/kt/README.md",
     )
