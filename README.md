@@ -27,6 +27,9 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 the separate application handoff and acceptance. See the
 [KT private-deployment skill](.github/skills/kt-private-deployment/SKILL.md) for reusable
 network, Policy, DNS, logging, bootstrap, and isolated-release guidance.
+For a failed Private Endpoint, preserve the deployment diagnostics before deleting resources;
+[KT failure triage](infra/kt/README.md#private-endpoint-생성-실패-진단) distinguishes connection
+approval from provisioning success. CLI readback requires each endpoint to be `Succeeded`.
 
 </div>
 

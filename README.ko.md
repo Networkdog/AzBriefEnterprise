@@ -27,6 +27,9 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 별도의 애플리케이션 전환과 인수 검증을 진행합니다. 다른 Agent에도 적용할 네트워크·Policy·
 DNS·로그·bootstrap·격리망 릴리스 지침은
 [KT 프라이빗 배포 Skill](.github/skills/kt-private-deployment/SKILL.md)을 참고하십시오.
+Private Endpoint가 실패하면 삭제 전에 배포 진단 정보를 보존하고
+[KT 실패 진단 절차](infra/kt/README.md#private-endpoint-생성-실패-진단)를 따르십시오. CLI 최종
+검증은 연결 승인과 별도로 각 PE의 `Succeeded` 상태를 요구합니다.
 
 </div>
 

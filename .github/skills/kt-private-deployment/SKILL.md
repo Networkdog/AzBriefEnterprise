@@ -44,6 +44,7 @@ contract expects two standard Enterprise Portal links and one KT Portal link in 
 | Container Apps Environment | `vnetConfiguration.internal: true` and `publicNetworkAccess: Disabled` must both be in the initial `Microsoft.App/managedEnvironments` PUT. |
 | Private DNS | Reuse a required zone already linked to the VNet. Create only missing namespaces. Never link a second overlapping zone. |
 | Private Endpoint records | Point the new Private Endpoint DNS zone group at the canonical existing zone. Let Azure manage its A record; do not copy managed records between zones. |
+| Private Endpoint readiness | Final readback requires the PE resource's `provisioningState=Succeeded` as well as an `Approved` connection and the expected target/subnet. Failed, Creating, or missing state is not ready. |
 | Optional ACA logs | Pass `null` when no Log Analytics workspace is selected. AVM `0.16.0` accepts only `azure-monitor` or `log-analytics`, not `none`. |
 | Resource exposure | Disable public network access on Foundry, storage, Cosmos DB, Search, and the Container Apps Environment at creation. |
 | Bootstrap | The hello-world Container App proves only foundation/network readiness. It is not application readiness. |
@@ -135,6 +136,7 @@ Compare full ARM IDs.
 | Existing-Environment warning remained after entering a new name | Validation used `or(empty(matches), first(matches)...)`; `first()` on the empty result still invalidated the control. | Avoid relying on logical short-circuiting. Filter only same-name noncompliant rows and assert that result is empty. |
 | `A virtual network cannot be linked to multiple zones with overlapping namespaces` | A different zone with the same namespace was already linked to the VNet. | Discover and reuse the linked zone ID; create only missing namespaces. |
 | Portal validation passed but deployment failed | CreateUiDefinition validates input shape, not every nested AVM discriminator, Policy rule, live link, quota, or permission. | Pair UI checks with compiled-template tests, CLI preflight, ARM validate/what-if, and live acceptance. |
+| Container Apps PE failed with generic `InternalServerError` | The error alone does not distinguish a transient provider failure from an unsupported or incomplete configuration. | Preserve exact customer operations, Correlation ID, Environment/PE states and `privateLinkResources`; do not weaken PNA/internal settings or delete the whole foundation as a first response. |
 | GitHub source changed but deployed runtime did not | Git is source control, not a deployment trigger in the isolated environment. | Transfer reviewed immutable artifacts and deploy manually from an approved private-network host. |
 
 ## DNS Consolidation and Recovery
@@ -152,6 +154,26 @@ namespace for a VNet.
   when it is confirmed unused.
 - If two Private Endpoints would own the same record label, do not assume a multi-value A record is
   safe. Review the service-specific DNS lifecycle and choose an explicit design.
+
+### Container Apps Private Endpoint failures
+
+Use the [KT diagnostic procedure](../../../infra/kt/README.md#private-endpoint-생성-실패-진단).
+In the current single-account profile, `kt-private-endpoint-4` targets the Container Apps
+Environment with group `managedEnvironments`. The explicit dependency waits for the Environment
+deployment; the DNS zone group depends on the PE. Do not assert that a DNS link caused a PE resource
+500 without the corresponding operation evidence, or claim that a fixed delay will repair it.
+Resource-provider asynchronous readiness may need investigation even after ARM reports Succeeded.
+
+An offline regression reproduced the old final verifier accepting an Approved connection whose PE
+was Failed. The verifier now checks provisioning state separately; this fixes a readiness gap,
+not an Azure provisioning failure. No live recovery is established by mocked tests.
+
+Read only the user's actual target subscription; an inaccessible customer scope must remain an
+explicit evidence gap, not a reason to substitute a developer subscription. Before any deletion,
+preserve the failure and check the Environment, PE/connection, subnet capacity and service health.
+If only the PE failed, prefer an approved focused recovery over deleting Foundry, the Capability
+Host or shared storage. Repeated minimal PE failures need provider-side investigation with request
+IDs. Never add a broad 500 retry or silent success fallback.
 
 ## Isolated Release and Update
 

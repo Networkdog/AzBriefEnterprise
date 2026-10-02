@@ -615,6 +615,13 @@ def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
         endpoint_id = f"{cli.group_id}/providers/Microsoft.Network/privateEndpoints/{spec['name']}"
         if endpoint_id.casefold() not in ids:
             raise RuntimeError(f"Required private endpoint is absent: {spec['name']}")
+        endpoint_state = cli.get(endpoint_id, NETWORK_API)["properties"].get("provisioningState")
+        if endpoint_state != "Succeeded":
+            raise RuntimeError(
+                f"Private endpoint is not ready: {spec['name']} "
+                f"(provisioningState={endpoint_state!r}); Approved alone is not readiness. "
+                "Inspect deployment operations before retrying or deleting resources."
+            )
 
 
 def run(cli: AzureCli, values: dict[str, Any], mode: str) -> None:

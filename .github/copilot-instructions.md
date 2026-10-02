@@ -303,6 +303,11 @@ The separate KT profile ships as the paired top-level README button
 link in each top-level README in addition to the two standard Enterprise links. Storage or topology
 refactors must not remove the button while the KT profile remains supported. Follow
 `infra/kt/README.md` and the `kt-private-deployment` skill for that profile.
+For Private Endpoint failures, compare the exact customer deployment operations and resource
+states before attributing a generic InternalServerError to Azure or changing the topology.
+An Approved connection is not provisioning success: final KT readback requires every PE to be
+Succeeded. Preserve internal/PNA restrictions, correlate service request IDs, and never use a
+different subscription's validation or a static dependency test as proof of customer recovery.
 
 New customer installations start from the paired README ARM/UI button
 (`infra/azbrief-enterprise-deploy.json` + `infra/createUiDefinition.json`) and follow

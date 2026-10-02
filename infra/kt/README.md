@@ -259,13 +259,76 @@ python -m scripts.deploy_kt `
 2. 자동 account Capability Host를 10초 간격으로 최대 31회 확인. 다시 live inventory를 읽어 신규 subnet
    플래그를 해제한 뒤 project Capability Host와 생성된 컨테이너의 data 역할을 구성.
 3. host 상태, 필수 subnet/PE의 존재·승인·binding, DNS 링크, 각 서비스의 Public Network Access
-   비활성 설정을 읽어 확인. 비공개 데이터 경로의 실제 연결 검사는 아래 인수 단계에서 수행.
+   비활성 설정과 각 PE의 `provisioningState=Succeeded`를 읽어 확인. 연결의 `Approved`만으로
+   PE 생성 성공을 판단하지 않음. 비공개 데이터 경로의 실제 연결 검사는 아래 인수 단계에서 수행.
 
 실패하면 비정상 종료하며 원래 오류를 출력합니다. RBAC 전파 지연은 권한과 기존 host 상태를
 먼저 확인한 후 같은 입력으로 재실행합니다. host 연결을 다른 데이터 저장소로 변경하거나
 host를 삭제·재생성하지 않습니다. 생성된 서비스를 자동 삭제하는 롤백도 없습니다.
 ARM subnet flag는 재실행마다 다시 계산합니다. 임시 parameter 파일은 성공/실패 후 삭제합니다.
 실제 App 이미지로 전환한 뒤에는 bootstrap을 재적용하지 않도록 CLI가 차단합니다.
+
+## Private Endpoint 생성 실패 진단
+
+`kt-private-endpoint-4`는 현재 단일 저장소 프로필에서 Container Apps Environment에 연결하는
+PE입니다. `Microsoft.Network/privateEndpoints/pe-<Environment 이름>`이 `Failed`이고 내부
+오류가 `InternalServerError`라면 **일시 장애인지 구성 문제인지 그 오류만으로는 확정할 수
+없습니다**. `RequestDisallowedByPolicy`나 DNS zone link 충돌과도 구분하십시오.
+
+현재 생성 계약은 다음과 같습니다.
+
+- Environment 최초 요청: `internal=true`, `publicNetworkAccess=Disabled`, Consumption workload
+  profile, 선택한 전용 subnet. legacy Consumption-only Environment가 아닙니다.
+- PE 대상: 같은 배포 RG의 `Microsoft.App/managedEnvironments/<선택한 이름>`.
+- PE group ID: 공식 [생성 예제](https://learn.microsoft.com/azure/container-apps/how-to-use-private-endpoint#create-a-private-endpoint)의
+  `managedEnvironments`. 실제 대상의 `privateLinkResources` 응답과도 대조하십시오.
+- `dependsOn`은 Environment 배포 완료를 기다리며 PE 루프는 직렬입니다. DNS zone group은
+  PE 생성 후에 연결됩니다. `dependsOn`은 추가적인 서비스 내부 준비 시간을 보장하지 않습니다.
+
+삭제하기 전에 **실제로 실패한 고객 구독**의 배포 시간, Correlation ID, service request ID와
+leaf 오류를 보존합니다. 다른 개발 구독에서 통과한 validate/what-if는 해당 고객의 재현이
+아닙니다. 아래 명령은 읽기 전용이며 기본 계정이나 Azure 리소스를 변경하지 않습니다.
+승인된 고객 배포 호스트에서 실행하고 결과는 고객이 승인한 위치에 보관하십시오.
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+$subscriptionId = '<customer-subscription-id>'
+$resourceGroup = '<deployment-resource-group>'
+$environmentName = '<actual-environment-name>'
+$environmentId = "/subscriptions/$subscriptionId/resourceGroups/$resourceGroup/providers/Microsoft.App/managedEnvironments/$environmentName"
+
+az deployment group show --subscription $subscriptionId --resource-group $resourceGroup `
+  --name kt-private-endpoint-4 --only-show-errors `
+  --query "{state:properties.provisioningState,time:properties.timestamp,correlationId:properties.correlationId,error:properties.error}" --output json
+
+az deployment operation group list --subscription $subscriptionId --resource-group $resourceGroup `
+  --name kt-private-endpoint-4 --only-show-errors `
+  --query "[].{time:properties.timestamp,state:properties.provisioningState,requestId:properties.serviceRequestId,target:properties.targetResource.id,error:properties.statusMessage}" --output json
+
+az rest --method get --url "https://management.azure.com${environmentId}?api-version=2026-01-01" `
+  --only-show-errors `
+  --query "{state:properties.provisioningState,internal:properties.vnetConfiguration.internal,publicNetworkAccess:properties.publicNetworkAccess,subnet:properties.vnetConfiguration.infrastructureSubnetId,profiles:properties.workloadProfiles}" --output json
+
+az network private-link-resource list --subscription $subscriptionId --id $environmentId `
+  --only-show-errors --output json
+
+az network private-endpoint show --subscription $subscriptionId --resource-group $resourceGroup `
+  --name "pe-$environmentName" --only-show-errors `
+  --query "{state:provisioningState,subnet:subnet.id,connections:privateLinkServiceConnections,nics:networkInterfaces}" --output json
+```
+
+확인 순서는 Environment `Succeeded` → PNA/internal/workload profile → 실제 PE 대상·group·subnet
+→ 양쪽 private-endpoint connection 상태 → subnet IP 여유·NSG/UDR·DNS·필수 egress입니다.
+해당 구독·리전의 Service Health와 Activity Log도 같은 시간/Correlation ID로 확인합니다.
+오래된 API에서 PNA가 누락됐다는 이유로 `Enabled`라고 추정하지 마십시오.
+
+Environment가 정상이고 PE만 실패했다면 전체 RG, Foundry/Capability Host, 공유 저장소부터
+삭제하지 않습니다. 승인된 동일 설정으로 실패 단계의 재시도를 검토하고, 삭제가 필요한 경우
+실패한 PE와 연결의 의존성·DNS 레코드 소유권부터 확인합니다. 같은 최소 PE 생성이 반복해
+500으로 실패하면 Correlation ID와 요청 정보를 Azure 지원에 전달해 서비스 측 조사를 요청합니다.
+고정 sleep 추가, 무한 재시도, PNA 활성화 또는 `internal=false` 전환을 검증 없는 해결책으로
+사용하지 않습니다. PE의 `Succeeded`와 연결의 `Approved`를 모두 확인한 뒤 DNS와 HTTPS를
+실제로 점검해야 합니다.
 
 ## 비용과 용량의 한계
 

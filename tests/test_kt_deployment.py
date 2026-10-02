@@ -682,6 +682,33 @@ def test_all_endpoint_groups_and_dns_cover_the_minimum_ip_budget(template: dict,
     assert "effectivePrivateDnsZoneIds" in json.dumps(_params(template, "privateEndpoints"))
 
 
+def test_container_environment_endpoint_targets_the_ready_environment(template: dict):
+    endpoint = template["variables"]["endpointSpecs"][4]
+    assert endpoint == {
+        "name": "[format('pe-{0}', parameters('containerAppsEnvironmentName'))]",
+        "target": "[variables('environmentId')]",
+        "groupId": "managedEnvironments",
+        "zones": ["[variables('dnsZoneNames')[6]]"],
+    }
+    deployment = template["resources"]["privateEndpoints"]
+    assert "containerEnvironment" in deployment["dependsOn"]
+    assert "containerApp" not in deployment["dependsOn"]
+    assert deployment["copy"]["mode"] == "serial"
+    assert deployment["copy"]["batchSize"] == 1
+    connection = _params(template, "privateEndpoints")["privateLinkServiceConnections"][0]
+    assert connection["properties"] == {
+        "privateLinkServiceId": "[variables('endpointSpecs')[copyIndex()].target]",
+        "groupIds": ["[variables('endpointSpecs')[copyIndex()].groupId]"],
+    }
+    resources = deployment["properties"]["template"]["resources"]
+    endpoint_resource = resources["privateEndpoint"]
+    assert endpoint_resource["properties"]["subnet"]["id"] == "[parameters('subnetResourceId')]"
+    zone_group_module = resources["privateEndpoint_privateDnsZoneGroup"]
+    assert "privateEndpoint" in zone_group_module["dependsOn"]
+    zone_group = zone_group_module["properties"]["template"]["resources"]["privateDnsZoneGroup"]
+    assert zone_group["type"] == "Microsoft.Network/privateEndpoints/privateDnsZoneGroups"
+
+
 def test_new_subnets_use_exact_example_minima(values: dict, vnet: dict):
     original = copy.deepcopy(vnet)
     plans = kt.plan_subnets(values, vnet)
@@ -825,6 +852,7 @@ class FakeAzure(kt.AzureCli):
             if resource_id.endswith(f"/privateEndpoints/{spec['name']}"):
                 return {
                     "properties": {
+                        "provisioningState": "Succeeded",
                         "subnet": {"id": f"{VNET}/subnets/{self.values['peSubnetName']}"},
                         "privateLinkServiceConnections": [
                             {
@@ -1119,6 +1147,42 @@ def test_readback_rejects_public_network_access(values: dict, vnet: dict):
     cli.public_access = "Enabled"
     with pytest.raises(RuntimeError, match="not disabled"):
         kt.run(cli, values, "deploy")
+
+
+@pytest.mark.parametrize(
+    ("endpoint_index", "provisioning_state"),
+    [(0, "Failed"), (4, "Failed"), (4, "Creating"), (4, None), (4, "Succeeded")],
+)
+def test_readback_does_not_confuse_endpoint_approval_with_provisioning(
+    monkeypatch: pytest.MonkeyPatch,
+    values: dict,
+    vnet: dict,
+    endpoint_index: int,
+    provisioning_state: str | None,
+):
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    endpoint_name = kt.endpoint_specs(values, GROUP)[endpoint_index]["name"]
+    endpoint_id = f"{GROUP}/providers/Microsoft.Network/privateEndpoints/{endpoint_name}"
+    original_get = cli.get
+
+    def get(resource_id: str, api_version: str) -> dict:
+        result = original_get(resource_id, api_version)
+        if resource_id == endpoint_id:
+            if provisioning_state is None:
+                result["properties"].pop("provisioningState")
+            else:
+                result["properties"]["provisioningState"] = provisioning_state
+        return result
+
+    monkeypatch.setattr(cli, "get", get)
+    deployments_before = copy.deepcopy(cli.deployments)
+    if provisioning_state == "Succeeded":
+        kt.verify_foundation(cli, values)
+    else:
+        with pytest.raises(RuntimeError, match=f"Private endpoint is not ready: {endpoint_name}"):
+            kt.verify_foundation(cli, values)
+    assert cli.deployments == deployments_before
 
 
 def test_existing_external_environment_is_not_adopted(
