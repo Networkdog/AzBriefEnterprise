@@ -27,6 +27,8 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 별도의 애플리케이션 전환과 인수 검증을 진행합니다. 다른 Agent에도 적용할 네트워크·Policy·
 DNS·로그·bootstrap·격리망 릴리스 지침은
 [KT 프라이빗 배포 Skill](.github/skills/kt-private-deployment/SKILL.md)을 참고하십시오.
+2단계는 1단계와 같은 RG·Environment 이름을 재사용합니다. Portal은 ARG 내부 환경 값을
+정규화해 internal/PNA/KT 소유권을 검사하며, 조건을 충족하는 기존 환경은 이름 충돌이 아닙니다.
 KT는 수동 진단을 위해 `deployContainerAppsPrivateEndpoint=false`를 임시 기본값으로 사용합니다.
 Environment와 나머지 네 PE는 생성하고 ACA PE 및 그 DNS zone group만 건너뜁니다. 기존 PE를
 삭제하지 않으며 내부 환경·PNA 차단과 수동 DNS/HTTPS 인수 검증은 유지합니다.

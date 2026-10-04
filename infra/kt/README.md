@@ -168,10 +168,18 @@ level을 제자리에서 전환하지 말고, 앱·Private Endpoint·DNS·이미
 유지보수 창에서 기존 foundation을 명시적으로 제거한 뒤 내부 Environment로 다시 생성합니다.
 삭제는 자동화하지 않습니다. Portal 이름 단계는 같은 RG·이름의 기존 Environment를 Resource
 Graph로 조회하고 `internal=true`, PNA `Disabled`, KT 소유권 태그가 아니면 ARM validation 전에
-진행을 막습니다. 여기서 “신규 배포”는 새 Portal 실행을 뜻할 뿐 같은 이름의 Azure 리소스가
-없다는 뜻은 아닙니다. 이전 실패에서 `Succeeded` Environment가 남아 있으면 기존 리소스로
-감지하며, 화면에 별도 경고 상자를 표시합니다. 이름을 변경해 일치 항목이 없으면 validation은
-통과해야 하므로, 빈 결과에 `first()`를 적용하지 않고 비준수 일치 항목만 필터링합니다.
+진행을 막습니다. **2단계에서 같은 RG·이름의 1단계 Environment를 재사용하는 것은 정상**이며,
+세 조건을 만족하면 그대로 진행합니다. 기존 환경 감지는 오류가 아니라 안내로 표시하고,
+이름이 같다는 이유만으로 삭제·재생성을 요구하지 않습니다. 이름을 변경해 일치 항목이 없으면
+빈 결과에 `first()`를 적용하지 않고 비준수 일치 항목만 필터링합니다.
+
+ARM에서 `internal=true`인 정상 환경도 Resource Graph `objectArray`의 `tobool(...)` 결과는
+숫자 `1`로 반환될 수 있습니다. CreateUiDefinition의 `equals()`는 타입도 비교하므로
+`equals(1, true)`는 `false`입니다. 조회 쿼리는 `tostring(tobool(...))`로 `"true"`/`"false"`를
+반환하고 폼도 문자열 `'true'`와 비교합니다. 알 수 없거나 누락된 값은 내부 환경으로 간주하지
+않습니다. 이전 폼에서 정상 환경이 차단됐다면 수정된 ARM/UI 페어를 게시한 뒤 배포 화면을
+새로 열고 1단계와 같은 값을 입력합니다. 이 수정은 입력 검증만 바꾸며 기존 Azure 리소스를
+변경하거나 실제 2단계 배포 성공을 보장하지 않습니다.
 
 VNet injection만으로 모든 인터넷 egress가 차단되지는 않습니다. Foundry 플랫폼, Entra,
 ARM, 이미지 다운로드, 패키지 빌드, Microsoft Learn/RSS 등의 필요한 outbound 경로와 DNS를
@@ -283,6 +291,35 @@ python -m scripts.deploy_kt `
 host를 삭제·재생성하지 않습니다. 생성된 서비스를 자동 삭제하는 롤백도 없습니다.
 ARM subnet flag는 재실행마다 다시 계산합니다. 임시 parameter 파일은 성공/실패 후 삭제합니다.
 실제 App 이미지로 전환한 뒤에는 bootstrap을 재적용하지 않도록 CLI가 차단합니다.
+
+## Bootstrap 이미지 다운로드 실패
+
+`kt-container-app`이 `template.containers.bootstrap.image`를 invalid로 표시하면서
+`Get "https://mcr.microsoft.com/v2/": EOF`를 반환하면, 우선 **레지스트리 접속·이미지 pull
+경로의 실패**로 분류합니다. 이 메시지만으로 이미지 이름이 틀렸다거나 PE 오류가 원인이라고
+판단하지 않습니다. `EOF`는 응답을 정상적으로 읽기 전에 연결이 끝났다는 뜻이며 방화벽,
+TLS 검사/프록시, DNS·라우팅 또는 일시적인 서비스 연결 문제가 원인인지 따로 확인해야 합니다.
+
+- Container Apps Environment의 실제 아웃바운드 경로에서 DNS, NSG, UDR, 방화벽 로그를
+  배포 시각과 대조합니다. 다른 VNet의 개발 PC나 일반 Cloud Shell에서 접속되는 것은
+  해당 Environment의 통신 성공을 증명하지 않습니다.
+- MCR HTTPS 다운로드에는 `mcr.microsoft.com`과 `*.data.mcr.microsoft.com`이 필요합니다.
+  NSG의 `MicrosoftContainerRegistry` 및 `AzureFrontDoor.FirstParty` TCP 443 요구사항도
+  확인하십시오. 나머지 플랫폼 의존성은
+  [공식 방화벽 가이드](https://learn.microsoft.com/azure/container-apps/use-azure-firewall)와
+  [NSG 가이드](https://learn.microsoft.com/azure/container-apps/firewall-integration)를 따릅니다.
+- Registry `/v2/`에서 HTTP 응답을 받는지 확인하는 것은 연결 진단일 뿐 전체 이미지 layer
+  다운로드 성공이 아닙니다. Portal의 **Diagnose and solve problems → Image Pull Failures**와
+  새 revision의 실제 pull/기동 결과로 검증합니다. 인증서 검사를 끄는 우회는 사용하지 않습니다.
+- PNA `Disabled`와 Environment PE는 **인바운드** 경계입니다. 이 설정을 완화하거나 PE를
+  추가한다고 MCR **아웃바운드** 접속 문제가 해결되는 것은 아닙니다.
+
+공개 MCR 접근을 허용할 수 없다면 승인된 Registry에 Bootstrap 이미지를 반입하고 연결·pull
+인증을 별도로 구성해야 합니다. 현재 KT 템플릿은 공개 MCR 이미지로 고정되어 있으며 임의의
+내부 Registry로 자동 전환하지 않습니다. 이 변경은 별도 배포 구성 작업이고, 앱 이미지를
+미러링해도 플랫폼 자체의 필수 egress까지 없어지는 것은 아닙니다.
+Environment가 `Succeeded`라면 앱의 image-pull 실패와 Environment용 수동 PE 진단은 분리할 수
+있습니다. 이미지 다운로드 실패만으로 정상 Environment·Foundry·저장소를 삭제하지 마십시오.
 
 ## Private Endpoint 생성 실패 진단
 

@@ -27,6 +27,8 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 the separate application handoff and acceptance. See the
 [KT private-deployment skill](.github/skills/kt-private-deployment/SKILL.md) for reusable
 network, Policy, DNS, logging, bootstrap, and isolated-release guidance.
+Stage two reuses the stage-one Environment's RG/name. The Portal normalizes the ARG internal flag
+before checking internal/PNA/KT ownership; a matching compliant Environment is not a name conflict.
 KT temporarily defaults `deployContainerAppsPrivateEndpoint=false` for manual diagnosis: the
 Environment and four other PEs still deploy, while the ACA PE and its DNS zone group are skipped.
 Existing PEs are not deleted; internal/PNA restrictions and manual DNS/HTTPS acceptance still apply.

@@ -303,6 +303,10 @@ The separate KT profile ships as the paired top-level README button
 link in each top-level README in addition to the two standard Enterprise links. Storage or topology
 refactors must not remove the button while the KT profile remains supported. Follow
 `infra/kt/README.md` and the `kt-private-deployment` skill for that profile.
+KT stage two reuses the stage-one Environment's RG/name. ARG can serialize boolean projections as
+numbers, so the Portal query emits `internal=tostring(tobool(...))` and validation compares to the
+string `'true'`, not Boolean `true`. Preserve PNA/ownership checks and reject unknown field values;
+do not bypass validation for stage two or recommend deletion solely because the name exists.
 For Private Endpoint failures, compare the exact customer deployment operations and resource
 states before attributing a generic InternalServerError to Azure or changing the topology.
 An Approved connection is not provisioning success: final KT readback requires every PE to be

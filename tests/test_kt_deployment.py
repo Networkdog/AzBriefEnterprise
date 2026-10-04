@@ -1,5 +1,6 @@
 """Offline contracts for the KT private infrastructure and existing-network preflight."""
 
+import ast
 import copy
 import json
 import re
@@ -232,6 +233,61 @@ def _ui_regex(control: dict) -> str:
     )
 
 
+def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
+    """Evaluate the pure CAE guard subset with CreateUiDefinition's strict equality."""
+    source = re.sub(r"\((\w+)\)\s*=>", r"lambda \1:", expression[1:-1])
+    source = re.sub(r"\b(and|or|not)\(", r"ui_\1(", source)
+
+    def evaluate(node: ast.expr, bindings: dict[str, object]) -> object:
+        if isinstance(node, ast.Constant):
+            return node.value
+        if isinstance(node, ast.Name):
+            return {"true": True, "false": False, **bindings}[node.id]
+        if isinstance(node, ast.Attribute):
+            value = evaluate(node.value, bindings)
+            assert isinstance(value, dict)
+            return value.get(node.attr)
+        assert isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        function = node.func.id
+        if function == "filter":
+            rows = evaluate(node.args[0], bindings)
+            predicate = node.args[1]
+            assert isinstance(rows, list) and isinstance(predicate, ast.Lambda)
+            assert len(predicate.args.args) == 1
+            return [
+                row
+                for row in rows
+                if evaluate(predicate.body, {**bindings, predicate.args.args[0].arg: row}) is True
+            ]
+        arguments = [evaluate(argument, bindings) for argument in node.args]
+        if function == "steps":
+            assert arguments == ["names"]
+            return names
+        if function == "parse":
+            assert arguments == ["[]"]
+            return []
+        if function == "coalesce":
+            return next(value for value in arguments if value is not None)
+        if function == "empty":
+            assert len(arguments) == 1 and isinstance(arguments[0], list)
+            return len(arguments[0]) == 0
+        if function == "equals":
+            assert len(arguments) == 2
+            return type(arguments[0]) is type(arguments[1]) and arguments[0] == arguments[1]
+        assert all(isinstance(value, bool) for value in arguments)
+        if function == "ui_not":
+            assert len(arguments) == 1
+            return not arguments[0]
+        if function in {"ui_and", "ui_or"}:
+            assert len(arguments) >= 2
+            return all(arguments) if function == "ui_and" else any(arguments)
+        raise AssertionError(f"Unsupported UI guard function: {function}")
+
+    result = evaluate(ast.parse(source, mode="eval").body, {})
+    assert isinstance(result, bool)
+    return result
+
+
 def test_kt_wizard_has_distinct_steps_and_matching_outputs(wizard: dict, template: dict):
     assert [step["name"] for step in wizard["steps"]] == ["network", "names", "options", "review"]
     outputs = wizard["outputs"]
@@ -350,7 +406,7 @@ def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, templ
     environment_query = environment_api["body"]["query"]
     assert "microsoft.app/managedenvironments" in environment_query
     assert "resourceGroup().name" in environment_query
-    assert "internal=tobool(properties.vnetConfiguration.internal)" in environment_query
+    assert "internal=tostring(tobool(properties.vnetConfiguration.internal))" in environment_query
     for name, expected in RESOURCE_NAME_DEFAULTS.items():
         control = controls[name]
         assert control["type"] == "Microsoft.Common.TextBox"
@@ -379,17 +435,87 @@ def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, templ
     assert "containerAppsEnvironmentApi.data" in existing_environment["isValid"]
     assert "first(" not in existing_environment["isValid"]
     assert existing_environment["isValid"].startswith("[empty(filter(")
-    assert "not(equals(e.internal, true))" in existing_environment["isValid"]
+    assert "not(equals(e.internal, 'true'))" in existing_environment["isValid"]
     assert "not(equals(e.publicNetworkAccess, 'Disabled'))" in existing_environment["isValid"]
     assert (
         "not(equals(e.deploymentProfile, 'kt-private-foundation'))"
         in existing_environment["isValid"]
     )
-    assert "Azure에 같은 이름의 Environment가 이미 남아" in existing_environment["message"]
+    assert "기존 Environment의 재사용 조건" in existing_environment["message"]
+    assert (
+        "이름이 같다는 이유만으로 삭제하거나 재생성하지 마십시오."
+        in existing_environment["message"]
+    )
     notice = controls["existingContainerAppsEnvironmentNotice"]
     assert notice["type"] == "Microsoft.Common.InfoBox"
+    assert notice["options"]["icon"] == "Info"
     assert "containerAppsEnvironmentApi.data" in notice["visible"]
-    assert "신규 배포 양식을 열었지만" in notice["options"]["text"]
+    assert "2단계에서 1단계 환경을 재사용하는 것은 정상입니다." in notice["options"]["text"]
+
+
+@pytest.mark.parametrize(
+    ("overrides", "expected"),
+    [
+        pytest.param({}, True, id="same-stage-one-environment"),
+        pytest.param({"internal": "false"}, False, id="external"),
+        pytest.param({"internal": ""}, False, id="unknown-internal"),
+        pytest.param({"internal": None}, False, id="null-internal"),
+        pytest.param({"internal": 1}, False, id="raw-arg-number"),
+        pytest.param({"internal": True}, False, id="raw-boolean"),
+        pytest.param({"publicNetworkAccess": "Enabled"}, False, id="public-access"),
+        pytest.param({"publicNetworkAccess": ""}, False, id="unknown-pna"),
+        pytest.param({"deploymentProfile": "another-profile"}, False, id="other-owner"),
+        pytest.param({"deploymentProfile": ""}, False, id="unknown-owner"),
+    ],
+)
+def test_wizard_stage_two_environment_reuse(
+    wizard: dict, overrides: dict[str, object], expected: bool
+):
+    name = RESOURCE_NAME_DEFAULTS["containerAppsEnvironmentName"]
+    row: dict[str, object] = {
+        "name": name,
+        "internal": "true",
+        "publicNetworkAccess": "Disabled",
+        "deploymentProfile": "kt-private-foundation",
+        **overrides,
+    }
+    controls = _ui_controls(wizard, "names")
+    guard = controls["containerAppsEnvironmentName"]["constraints"]["validations"][2]["isValid"]
+    names: dict[str, object] = {
+        "containerAppsEnvironmentName": name,
+        "containerAppsEnvironmentApi": {"data": [{"name": "cae-unrelated"}, row]},
+    }
+    assert "deploymentStage" not in guard
+    assert _evaluate_ui_guard(guard, names) is expected
+    assert (
+        _evaluate_ui_guard(controls["existingContainerAppsEnvironmentNotice"]["visible"], names)
+        is True
+    )
+    for field in ("internal", "publicNetworkAccess", "deploymentProfile"):
+        incomplete = {key: value for key, value in row.items() if key != field}
+        names["containerAppsEnvironmentApi"] = {"data": [incomplete]}
+        assert _evaluate_ui_guard(guard, names) is False
+
+
+@pytest.mark.parametrize("rows", [[], [{"name": "cae-unrelated", "internal": "false"}]])
+def test_wizard_new_environment_name_is_not_blocked(wizard: dict, rows: list[dict[str, str]]):
+    controls = _ui_controls(wizard, "names")
+    names: dict[str, object] = {
+        "containerAppsEnvironmentName": RESOURCE_NAME_DEFAULTS["containerAppsEnvironmentName"],
+        "containerAppsEnvironmentApi": {"data": rows},
+    }
+    guard = controls["containerAppsEnvironmentName"]["constraints"]["validations"][2]["isValid"]
+    assert _evaluate_ui_guard(guard, names) is True
+    assert (
+        _evaluate_ui_guard(controls["existingContainerAppsEnvironmentNotice"]["visible"], names)
+        is False
+    )
+
+
+def test_ui_guard_equality_does_not_confuse_arg_numbers_with_booleans():
+    assert _evaluate_ui_guard("[equals(1, true)]", {}) is False
+    assert _evaluate_ui_guard("[equals('true', true)]", {}) is False
+    assert _evaluate_ui_guard("[equals('true', 'true')]", {}) is True
 
 
 def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):

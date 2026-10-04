@@ -81,9 +81,16 @@ private/VNet paths.
    `Microsoft.Solutions` control.
 8. Query the deployment resource group for an existing Environment with the requested name. Reuse
    it only when `internal=true`, PNA is `Disabled`, and the KT ownership tag matches; otherwise block
-   the form before ARM validation and require a reviewed recreation. Do not combine
+   the form before ARM validation and inspect the actual ARM values before planning recovery. Do not combine
    `or(empty(matches), first(matches)...)`: CreateUiDefinition may evaluate `first()` for an empty
    result. Filter same-name **noncompliant** rows and validate that the filtered array is empty.
+   A compliant stage-one Environment must pass with the same name in stage two. ARG `objectArray`
+   can serialize `tobool(...)` as numeric `1`/`0`; CreateUiDefinition `equals(1, true)` is false.
+   Project `internal=tostring(tobool(properties.vnetConfiguration.internal))` and compare to the
+   string `'true'`. Missing/unknown values are not proof of an internal environment. Keep PNA and
+   ownership checks; never bypass them based on the selected stage or recommend deletion solely
+   because a name exists. Evaluate the serialized predicate against typed fixtures, not only
+   substring assertions, and distinguish live query verification from a full Portal deployment.
 
 Portal discovery depends on the deploying principal having read access to the VNet links and zones.
 If a linked central zone is in another subscription or outside that read scope, require its explicit
@@ -136,10 +143,12 @@ Compare full ARM IDs.
 | `appLogsConfiguration` discriminator rejected `destination: none` | The managed-environment AVM union allows only `azure-monitor` and `log-analytics`. | Pass `null` when logging is disabled. Test the compiled module parameter, not only Bicep source text. |
 | KT Policy denied Container Apps Environment even with `publicNetworkAccess: Disabled` | Policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` checks `vnetConfiguration.internal`, not the PNA field named in its title. | Set both `internal: true` and PNA `Disabled` at creation; assert both compiled leaf mappings. |
 | Older API readback showed PNA as `null` while `2026-01-01` showed `Disabled` | The older response projection omits the newer property; `null` was not proof that Azure enabled it. | Verify with the deployment API contract and inspect the actual Policy aliases before changing the template. |
+| Stage two rejected a compliant stage-one CAE | ARM returned `internal: true`, but the same Portal ARG query returned numeric `internal: 1`; type-strict `equals(1, true)` failed. | Normalize the ARG projection to a string and compare with `'true'`; preserve PNA/ownership guards and reuse the same Environment. |
 | Existing-Environment warning remained after entering a new name | Validation used `or(empty(matches), first(matches)...)`; `first()` on the empty result still invalidated the control. | Avoid relying on logical short-circuiting. Filter only same-name noncompliant rows and assert that result is empty. |
 | `A virtual network cannot be linked to multiple zones with overlapping namespaces` | A different zone with the same namespace was already linked to the VNet. | Discover and reuse the linked zone ID; create only missing namespaces. |
 | Portal validation passed but deployment failed | CreateUiDefinition validates input shape, not every nested AVM discriminator, Policy rule, live link, quota, or permission. | Pair UI checks with compiled-template tests, CLI preflight, ARM validate/what-if, and live acceptance. |
 | Container Apps PE failed with generic `InternalServerError` | The error alone does not distinguish a transient provider failure from an unsupported or incomplete configuration. | Preserve exact customer operations, Correlation ID, Environment/PE states and `privateLinkResources`; do not weaken PNA/internal settings or delete the whole foundation as a first response. |
+| Bootstrap image reported invalid with `Get https://mcr.microsoft.com/v2/: EOF` | The registry connection ended before a usable response, not proof of an invalid image name or an inbound PE failure. | Check actual Environment DNS/egress/TLS and MCR data endpoints; preserve PNA/internal settings and verify a real image pull. |
 | GitHub source changed but deployed runtime did not | Git is source control, not a deployment trigger in the isolated environment. | Transfer reviewed immutable artifacts and deploy manually from an approved private-network host. |
 
 ## DNS Consolidation and Recovery
@@ -190,6 +199,14 @@ IDs. Never add a broad 500 retry or silent success fallback.
 ## Isolated Release and Update
 
 GitHub Actions is not required, but a controlled deployment path is.
+
+The current Bootstrap image requires approved HTTPS egress to `mcr.microsoft.com` and
+`*.data.mcr.microsoft.com`; consult the Container Apps firewall/NSG requirements for the full
+platform dependency set. A private Environment is not an offline environment. Diagnose image-pull
+EOF on the actual Environment route, not a developer PC or unrelated Cloud Shell. Inbound PNA/PE
+settings do not grant outbound registry access. Do not disable TLS checks, add registry credentials
+to fix a public-endpoint EOF, or silently replace the pinned Bootstrap source. A private mirror
+requires explicit image/authentication configuration and does not remove platform egress needs.
 
 1. Freeze and review a source revision outside or inside the approved build boundary.
 2. Produce:
