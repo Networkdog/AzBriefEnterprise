@@ -27,6 +27,13 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 별도의 애플리케이션 전환과 인수 검증을 진행합니다. 다른 Agent에도 적용할 네트워크·Policy·
 DNS·로그·bootstrap·격리망 릴리스 지침은
 [KT 프라이빗 배포 Skill](.github/skills/kt-private-deployment/SKILL.md)을 참고하십시오.
+고객사 방화벽·DNS 요청 목록, 출발지별 배포·운영 규칙과 인수 체크리스트는
+[Network Requirements](infra/NETWORK_REQUIREMENTS.md)에 정리했습니다(KT 기준).
+KT ACA 이미지는
+`ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3`
+으로 고정합니다(포트 8000, `/health`). 최초 비공개 패키지이므로 기본값은 GHCR 읽기 전용
+인증이며, Public 익명 다운로드 검증 후에만 `Anonymous`를 선택합니다. 별도 API 키가 필요합니다.
+Entra 설정 전 Admin/Archive는 비활성이고, 이미지 게시만으로 기존 앱이 업데이트되지는 않습니다.
 2단계는 1단계와 같은 RG·Environment 이름을 재사용합니다. Portal은 ARG 내부 환경 값을
 정규화해 internal/PNA/KT 소유권을 검사하며, 조건을 충족하는 기존 환경은 이름 충돌이 아닙니다.
 KT는 수동 진단을 위해 `deployContainerAppsPrivateEndpoint=false`를 임시 기본값으로 사용합니다.

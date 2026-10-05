@@ -1,6 +1,7 @@
 # KT 전용 프라이빗 인프라 템플릿
 
-[인프라 색인](../README.md) · [Bicep 원본](main.bicep) · [배포용 ARM](azuredeploy.json) ·
+[인프라 색인](../README.md) · [Network Requirements](../NETWORK_REQUIREMENTS.md) ·
+[Bicep 원본](main.bicep) · [배포용 ARM](azuredeploy.json) ·
 [Portal UI](createUiDefinition.json) · [입력 예시](main.parameters.example.json) ·
 [사전검사·배포 CLI](../../scripts/deploy_kt.py) ·
 [다른 Agent에도 적용하는 KT 배포 Skill](../../.github/skills/kt-private-deployment/SKILL.md)
@@ -14,11 +15,12 @@
 DNS link, bootstrap 및 격리망 업데이트 교훈은 위 KT 배포 Skill의 범용 체크리스트에 기록합니다.
 KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오.
 
-> **범위:** 프라이빗 Foundry Standard Agent Setup과 최소 크기의 준비용 Container App을
-> 배포합니다. 실제 AzBrief 애플리케이션 설치 완료를 의미하지 않습니다. 모델 배포,
-> 여섯 Prompt Agent 및 Hosted Agent 게시, 실제 App/Job 이미지·인증·메일·스케줄 설정은
+> **범위:** 프라이빗 Foundry Standard Agent Setup과 GHCR의 실제 AzBrief 제어면 이미지를
+> 배포합니다. 운영 설치 완료를 의미하지 않습니다. 모델 배포,
+> 여섯 Prompt Agent 및 Hosted Agent 게시, Job·Entra 인증·메일·스케줄 설정은
 > [애플리케이션 전환](#애플리케이션-전환) 단계입니다. `ktFoundation.applicationReady`는
 > 의도적으로 `false`이며 일반 `customerSetup` 출력과 호환되지 않습니다.
+> 초기 API 키는 필수이며, Entra 설정 전 Admin/Archive/Feedback은 비활성 상태로 유지합니다.
 
 > **임시 수동 PE 진단:** `deployContainerAppsPrivateEndpoint=false`가 기본값입니다.
 > Container Apps Environment와 앱은 생성하지만 그 Environment용 PE 및 DNS zone group
@@ -41,7 +43,8 @@ KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오
 | AI Search | Basic, replica 1 / partition 1, `searchService` PE, Public Network Access·로컬 키 인증 비활성 |
 | Container Apps Environment | Workload Profiles 유형, **Consumption** 프로필, 전용 subnet 주입, Public Network Access 비활성 |
 | Container Apps inbound | 내부 Environment 유지. `managedEnvironments` PE는 기본 수동 생성, 옵션으로 자동 생성 재개 |
-| 준비용 Container App | **0.25 vCPU / 0.5 GiB**, 최소 replica 0 / 최대 1, HTTPS, 포트 80의 hello-world 이미지 |
+| Container App | **0.25 vCPU / 0.5 GiB**, 최소 replica 0 / 최대 1, HTTPS, GHCR AzBrief 고정 digest, 내부 포트 **8000**, readiness **`/health`** |
+| 초기 인증 | 별도 API 키 필수. 비공개 GHCR은 읽기 전용 PAT을 Container App secret으로 전달. Entra 설정 전 Admin/Archive는 비활성 |
 | Application Insights | **배포하지 않음**. Foundry 연결, 계측 설정, publishing 역할도 생성하지 않음 |
 | Log Analytics | 기존 workspace ID를 선택적으로 연결. 새 workspace·DCR·AMPLS는 생성하지 않음 |
 | 추가 비용 리소스 | 새 VNet, 전용 D4 노드, NAT Gateway, Firewall, ACR, 모델 배포, scheduler Job, 메일 서비스는 생성하지 않음 |
@@ -59,6 +62,48 @@ canonical archive를 변경할 수 없다는 격리는 더 이상 제공하지 �
 안의 동일한 신뢰 경계로 승인된 환경에 사용하며, 처리량·중복성·네트워크와 계정 장애 범위도 공유합니다.
 Blob·컨테이너 soft delete는 기존 7일 설정을 유지하며, 공유 계정의 Foundry 컨테이너에도 적용됩니다.
 Hosted 전용 ID의 구독/테넌트 근거 조회 권한은 게시 후 별도 부여합니다.
+
+## GHCR 이미지와 초기 인증
+
+README의 KT 배포 버튼은 다음 이미지를 사용하는 ARM/UI 페어를 엽니다.
+
+```text
+ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3
+```
+
+- [GitHub 패키지](https://github.com/users/Networkdog/packages/container/package/azbriefenterprise)
+  · 소스 revision `7bf1983b4d4c8558c3105342206b86757d367558`
+  · 태그 `sha-7bf1983b4d4c8558c3105342206b86757d367558`.
+- `linux/amd64`, 비-root `appuser`, `uvicorn src.main:app`, 포트 8000입니다.
+  호환을 위해 매개변수 이름 `bootstrapImage`는 유지하지만 값은 더 이상 hello-world가 아닙니다.
+- 패키지는 최초 게시 시 **Private**입니다. 기본 `containerRegistryAuthMode=Credentials`에서는
+  패키지 읽기 권한이 있는 사용자의 이름과 별도 **PAT(classic), `read:packages`**를 입력합니다.
+  게시용 `write:packages` 토큰을 배포하지 마십시오. 토큰은 `ghcr-pull-token` App secret으로
+  전달하며 환경 변수·배포 출력에는 넣지 않습니다. 이 프로필은 Key Vault를 생성하지 않습니다.
+- 패키지 관리자가 Public으로 변경하고 **익명 다운로드를 검증한 뒤에만** `Anonymous`를
+  선택합니다. 이때 registry 자격 증명과 pull-token secret을 만들지 않습니다.
+  Azure 관리 ID는 GHCR의 로그인 수단이 아닙니다.
+- `apiKey`는 **공백 없는 32~256자의 별도 무작위 키**이며 두 단계에서 같은 값을 사용합니다.
+  GHCR PAT을 API 키로 재사용하지 마십시오. `orchestrator-api-key` App secret을
+  `API_KEY`의 `secretRef`로 연결해 분석 API를 무인증으로 열지 않습니다.
+- `foundryHostedAgentName`과 배포 프로젝트 endpoint, 제어면 UAMI, archive/checkpoint 경로를
+  앱에 연결합니다. 이름을 설정하는 것은 Hosted Agent를 게시하거나 검증하는 작업이 아닙니다.
+  `/`는 AzBrief JSON을 반환하지만 `/admin`, `/archive`는 후속 Entra/허용 목록 설정 전까지
+  404입니다. `/health` 응답만으로 전체 운영 준비가 완료됐다고 판단하지 마십시오.
+- 기존 순정 hello-world 앱은 같은 RG·이름으로 전환할 수 있습니다. CLI는 이미지가 같더라도
+  UI 활성화, 추가 환경 변수·secret, 실행 명령 또는 운영용 replica/리소스 설정이 있는 앱에
+  초기 비활성 설정을 덮어쓰지 않습니다. 운영 전환 이후에는 foundation 재배포를 사용하지 않습니다.
+
+GHCR도 외부 레지스트리입니다. 격리망에서는 `ghcr.io`와 이미지 다운로드 시 사용하는 GitHub
+Packages 저장소 엔드포인트의 HTTPS/DNS 경로를 별도로 승인해야 합니다. GHCR 선택만으로
+인터넷 차단을 우회하지 못하며 ACA 플랫폼의 필수 egress도 그대로 필요합니다.
+출발지별 목적지·포트·적용 조건, 사설 DNS 및 미확정 사항과 인수 절차는
+[Network Requirements](../NETWORK_REQUIREMENTS.md)를 기준으로 고객사에 요청하십시오.
+고객 구독에 ACR을 만들지는 않습니다. 이번 이미지는 개발 ACR의 원격 빌더에서 만들고
+GitHub Actions 없이 GHCR로 복사했습니다. 빌드 컨텍스트에는 공개 revision의
+Dockerfile·requirements·src만 넣었으며 로컬 비밀·로그·데이터는 포함하지 않았습니다.
+후속 릴리스도 새 소스 태그로 게시하고 실제 확인한 digest로 Bicep을 갱신·컴파일하십시오.
+GitHub 코드 변경이나 이미지 게시만으로 기존 Container App이 자동 업데이트되지는 않습니다.
 
 기존 2계정 환경은 [저장소 통합 절차](../CUSTOMER_DEPLOYMENT.md#single-storage-account)를 먼저
 승인해야 합니다. CLI는 이전의 `agentStorageAccountName`/`stateStorageAccountName` 입력과
@@ -161,7 +206,7 @@ built-in Policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a`의 표시 이름은 Publi
 언급하지만 실제 deny 조건은 `vnetConfiguration.internal`이 없거나 `false`인 경우입니다.
 따라서 `internal=true`와 `publicNetworkAccess=Disabled`를 Environment 최초 `PUT`에 함께
 포함하며 사후 PATCH로 전환하지 않습니다. bootstrap URL은 VNet/승인된 사설 경로에서
-접근합니다.
+접근합니다. `applicationUrl`과 호환용 `bootstrapUrl`은 같은 App 주소입니다.
 
 이미 `internal=false`로 생성된 Environment는 이 프로필에서 인수하지 않습니다. accessibility
 level을 제자리에서 전환하지 말고, 앱·Private Endpoint·DNS·이미지의 롤백 정보를 기록한
@@ -197,8 +242,8 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
 |---|---|
 | 기본 사항 | 배포 구독·RG·지역 선택, 프라이빗 bootstrap 범위 안내 |
 | 기존 네트워크 | 같은 구독·지역의 기존 VNet 선택. 이름과 무관하게 역할별 기존 subnet을 선택하고 ARM 조회 CIDR·위임으로 후보 제한 |
-| 리소스 이름 | 일곱 기본 이름 편집, Azure 문자·길이 검사, Storage 단일 입력 및 다섯 PE 대상 이름 충돌 차단 |
-| 비용·DNS·로그 | ACA PE 자동 생성 선택(기본 해제), Search Basic/S1, DNS 재사용 또는 중앙 RG, 기존 Log Analytics 선택 |
+| 리소스 이름 | 일곱 기본 이름과 호출할 Hosted Agent 이름 편집, Storage 단일 입력 및 다섯 PE 대상 이름 충돌 차단 |
+| 이미지·API·DNS·로그 | GHCR 인증 방식·읽기 토큰, 별도 API 키, ACA PE 자동 생성 선택(기본 해제), Search/DNS/기존 Log Analytics 선택 |
 | 단계·필수 확인 | 선택 요약, 기반/완료 단계 선택, 사전검사·소유권·비용·bootstrap 범위 동의 |
 
 VNet을 새로 만드는 옵션은 없습니다. 선택한 subnet 이름은 배포 매개변수로 전달되고 CIDR은
@@ -237,10 +282,10 @@ Private Endpoint의 zone group이 기존 zone을 참조하므로 Azure가 필요
 
 처음에는 기본 선택인 **1단계 — 기반·연결·권한만 배포**로 실행합니다
 (`deployCapabilityHost=false`). 성공 후 account Capability Host의 `Succeeded` 상태와 RBAC 전파를
-확인하고, **같은 RG·이름·네트워크·DNS 입력**으로 다시 열어 **2단계 — project Capability Host 구성**을
+확인하고, **같은 RG·이름·네트워크·DNS·API 키·이미지 인증 입력**으로 다시 열어 **2단계 — project Capability Host 구성**을
 선택합니다. UI는 두 배포를 자동 실행하거나 account host 준비를 기다리지 않습니다.
 단계를 자동 처리하고 점유자·실제 IP 여유·이름 소유권을 검사하려면 CLI를 사용하십시오.
-운영 이미지로 전환한 환경에 bootstrap을 다시 적용하지 마십시오.
+운영 설정을 마친 환경에 초기 비활성 설정을 다시 적용하지 마십시오.
 
 ### CLI 사전검사와 배포
 
@@ -254,11 +299,16 @@ Private Endpoint의 zone group이 기존 zone을 참조하므로 Azure가 필요
 4. 배포/네트워크 작업과 RBAC 할당 권한. 예: 해당 범위 Contributor + Role Based Access Control
    Administrator. 기존 VNet과 중앙 DNS에 대해서도 필요한 join/link 권한을 별도로 확인합니다.
 5. Azure CLI와 이 저장소의 Python 가상 환경. 읽기·빌드 작업도 가상 환경을 활성화합니다.
+6. 별도 API 키와, 비공개 GHCR일 때 패키지 읽기 전용 토큰. 예시의 placeholder를 반드시 교체합니다.
 
 입력 예시를 Git 제외 폴더에 복사해 기존 네트워크 placeholder와 CIDR을 실제 승인값으로 바꿉니다.
 신규 리소스 이름은 위 기본값이 채워져 있으므로 KT 표준·전역 가용성을 확인한 뒤 필요하면 변경합니다.
 기존 subnet을 그대로 재사용한다면 해당 CIDR 값을 비워도 됩니다. 값이 있으면 기존 prefix와
 정확히 일치해야 합니다. 예시에는 실제 고객 ID, 비밀, 개발 환경 기본값이 없습니다.
+실제 parameter 파일에는 비밀이 들어가므로 Git 제외·접근 제한된 위치에서만 보관하고
+채팅·로그에 붙여 넣지 마십시오. CLI는 secure-string 타입과 길이, 인증 모드, API 키와 토큰의
+분리를 검사하고 오류/what-if 로그의 비밀을 마스킹합니다. 임시 ARM parameter 파일은 실패 시에도
+삭제됩니다. 이 검사는 실제 GHCR 권한이나 격리망 연결성 검증을 대신하지 않습니다.
 
 ```powershell
 & .\.venv\Scripts\Activate.ps1
@@ -279,7 +329,7 @@ python -m scripts.deploy_kt `
 
 `deploy`는 두 번의 Incremental 배포를 수행합니다.
 
-1. 네트워크·서비스·PE/DNS·프로젝트·AAD 연결·사전 RBAC와 bootstrap App을 생성.
+1. 네트워크·서비스·PE/DNS·프로젝트·AAD 연결·사전 RBAC와 초기 비활성 상태의 AzBrief App을 생성.
 2. 자동 account Capability Host를 10초 간격으로 최대 31회 확인. 다시 live inventory를 읽어 신규 subnet
    플래그를 해제한 뒤 project Capability Host와 생성된 컨테이너의 data 역할을 구성.
 3. host 상태, 필수 subnet/자동 관리 PE의 존재·승인·binding, DNS 링크, 각 서비스의 Public Network Access
@@ -290,9 +340,12 @@ python -m scripts.deploy_kt `
 먼저 확인한 후 같은 입력으로 재실행합니다. host 연결을 다른 데이터 저장소로 변경하거나
 host를 삭제·재생성하지 않습니다. 생성된 서비스를 자동 삭제하는 롤백도 없습니다.
 ARM subnet flag는 재실행마다 다시 계산합니다. 임시 parameter 파일은 성공/실패 후 삭제합니다.
-실제 App 이미지로 전환한 뒤에는 bootstrap을 재적용하지 않도록 CLI가 차단합니다.
+운영 설정을 마친 App에는 초기 비활성 설정을 재적용하지 않도록 CLI가 차단합니다.
 
 ## Bootstrap 이미지 다운로드 실패
+
+아래는 **이전 MCR hello-world 기반 배포**의 오류 진단입니다. 현재 GHCR 이미지의
+401/403은 패키지 공개 여부와 읽기 토큰을, 연결 오류는 GHCR egress를 먼저 확인합니다.
 
 `kt-container-app`이 `template.containers.bootstrap.image`를 invalid로 표시하면서
 `Get "https://mcr.microsoft.com/v2/": EOF`를 반환하면, 우선 **레지스트리 접속·이미지 pull
@@ -416,9 +469,10 @@ Environment가 정상이고 PE만 실패했다면 전체 RG, Foundry/Capability 
    수동 선언하지 않으며 KT용 runtime은 Insights exporter를 사용하지 않도록 설정합니다.
 3. Hosted Agent를 게시하고 **그 ID**에 evidence 및 프로젝트 데이터 역할을 부여합니다.
    제어면/프로젝트 ID에 tenant evidence Reader를 대신 부여하지 않습니다.
-4. 실제 App과 scheduler Job에 같은 승인 digest·레지스트리 인증을 적용하고 8000 `/health`로
-   전환합니다. API key, Entra/allow-list, secrets, private archive/checkpoint와 이메일을 연결합니다.
-   bootstrap만 바꾸면 AzBrief 설치가 완료되는 것이 아닙니다.
+4. App에 배포된 GHCR digest와 8000 `/health` 설정을 확인하고, 후속 scheduler Job에도 같은
+   승인 digest·레지스트리 인증을 적용합니다. Entra/allow-list를 설정한 뒤 Admin/Archive를
+   활성화하고, 초기 API 키·private archive/checkpoint·이메일을 인수합니다.
+   이미지가 배포됐다는 사실만으로 AzBrief 운영 설치가 완료되는 것은 아닙니다.
 5. 현재 Admin Manual Run은 App 내 background 작업입니다. 실제 운영 전 **최소 replica 1**과
    검증된 CPU/메모리로 전환하십시오. scale-to-zero는 긴 분석 도중 App을 종료할 수 있습니다.
    scheduler는 인수 전 Manual 상태로 두고 분석 동시성은 1에서 시작합니다.

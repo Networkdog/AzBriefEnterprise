@@ -17,6 +17,7 @@
 | [`azbrief-enterprise-deploy.json`](azbrief-enterprise-deploy.json) | Deploy to Azure 버튼이 사용하는 compiled ARM template |
 | [createUiDefinition.json](createUiDefinition.json) | 같은 버튼의 모델·레지스트리·메일·Entra 입력 폼 |
 | [CUSTOMER_DEPLOYMENT.md](CUSTOMER_DEPLOYMENT.md) | 고객 사전 조건, 단계별 설정, 인수·정기 실행·복구 절차 |
+| [NETWORK_REQUIREMENTS.md](NETWORK_REQUIREMENTS.md) | KT 기준 고객 방화벽·DNS 요청 목록. 출발지·기능별 인터넷/사설 통신, 포트, 출처와 인수 체크리스트 |
 | [kt/](kt/README.md) | KT 전용 기존-VNet 프라이빗 인프라 bootstrap. Capability Host, 최소 subnet/Consumption, Application Insights 제외. 일반 고객 설정과 별도 |
 | [`azbrief-enterprise.parameters.example.json`](azbrief-enterprise.parameters.example.json) | 비밀값 없는 deployment parameter 예시 |
 | [`azure-mcp-server/`](azure-mcp-server/README.md) | Azure MCP specialist가 호출하는 별도 Entra 인증 read-only Container App |

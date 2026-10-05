@@ -21,6 +21,7 @@ Private Endpoints, or supporting data services into the KT environment.
 ## Sources of Truth
 
 - Operator guide: [`infra/kt/README.md`](../../../infra/kt/README.md)
+- Customer firewall/DNS matrix: [`infra/NETWORK_REQUIREMENTS.md`](../../../infra/NETWORK_REQUIREMENTS.md)
 - Bicep source: [`infra/kt/main.bicep`](../../../infra/kt/main.bicep)
 - Compiled Portal artifact: [`infra/kt/azuredeploy.json`](../../../infra/kt/azuredeploy.json)
 - Portal UI: [`infra/kt/createUiDefinition.json`](../../../infra/kt/createUiDefinition.json)
@@ -48,8 +49,9 @@ contract expects two standard Enterprise Portal links and one KT Portal link in 
 | Private Endpoint readiness | Final readback requires every automatically managed PE to be `Succeeded` and `Approved` with the expected target/subnet. Manual ACA PE acceptance is separate; never label an ignored endpoint healthy. |
 | Optional ACA logs | Pass `null` when no Log Analytics workspace is selected. AVM `0.16.0` accepts only `azure-monitor` or `log-analytics`, not `none`. |
 | Resource exposure | Disable public network access on Foundry, storage, Cosmos DB, Search, and the Container Apps Environment at creation. |
-| Bootstrap | The hello-world Container App proves only foundation/network readiness. It is not application readiness. |
+| Initial application | Use the pinned GHCR AzBrief image on 8000 `/health`, not hello-world. Keep API protection and disabled Admin/Archive until Entra setup. Image startup is not operational readiness. |
 | Application image | Use an approved immutable digest and matching registry authentication. Do not deploy `latest`. |
+| GHCR credentials | Packages start private. Use an explicit read-only PAT via App secret; Anonymous requires verified public pulls. Never grant GHCR an Azure identity role or deploy the publisher token. |
 | Identities | Keep Container Apps control-plane, Foundry project, Hosted Agent, and Azure MCP identities distinct. |
 | Storage | One `storageAccountName` and one Blob PE. Keep app state/archive in separate containers with container-scoped App/Job grants. Foundry's required account roles share the trust boundary; do not claim hard isolation. |
 
@@ -130,7 +132,12 @@ The preflight must remain read-only and rerun immediately before validate, what-
    - reject multiple linked resources for the same namespace;
    - reject a conflicting explicit zone ID.
 6. Verify existing resource ownership before any write.
-7. Prevent a foundation rerun from replacing a promoted application image with bootstrap.
+7. Permit the uncustomized legacy hello-world to move to GHCR. Reject foundation reruns that would
+   overwrite a promoted image or operational settings even when the digest is unchanged.
+8. Require a separate API key (32–256 non-whitespace characters), validate secure-string types
+   case-insensitively, and require private-registry credentials only in Credentials mode. Never
+   reuse the registry PAT as the API key or leave an unused password in Anonymous mode. Redact
+   errors and what-if diagnostics with the shared `src/error_logging.py` helpers.
 
 Never infer that a same-name zone in the deployment resource group is the linked canonical zone.
 Compare full ARM IDs.
@@ -150,6 +157,8 @@ Compare full ARM IDs.
 | Container Apps PE failed with generic `InternalServerError` | The error alone does not distinguish a transient provider failure from an unsupported or incomplete configuration. | Preserve exact customer operations, Correlation ID, Environment/PE states and `privateLinkResources`; do not weaken PNA/internal settings or delete the whole foundation as a first response. |
 | Bootstrap image reported invalid with `Get https://mcr.microsoft.com/v2/: EOF` | The registry connection ended before a usable response, not proof of an invalid image name or an inbound PE failure. | Check actual Environment DNS/egress/TLS and MCR data endpoints; preserve PNA/internal settings and verify a real image pull. |
 | GitHub source changed but deployed runtime did not | Git is source control, not a deployment trigger in the isolated environment. | Transfer reviewed immutable artifacts and deploy manually from an approved private-network host. |
+| `/admin` displayed the Container Apps welcome page after stage two | Both infrastructure stages still used the hello-world image; a Capability Host is not application code. | Deploy the real image together with 8000 `/health`, tenant/UAMI/Hosted configuration and API protection. Do not enable Admin/Archive without Entra and an allow-list. |
+| ACR task built and tested the image but push returned unauthorized | The development registry used ABAC repository permissions and the quick task lacked source-registry authentication. | Use documented `--source-acr-auth-id '[caller]'` with the existing authorized identity. Do not enable the ACR admin or broaden roles. |
 
 ## DNS Consolidation and Recovery
 
@@ -199,14 +208,26 @@ IDs. Never add a broad 500 retry or silent success fallback.
 ## Isolated Release and Update
 
 GitHub Actions is not required, but a controlled deployment path is.
+Maintain source/phase-specific destinations and evidence in `infra/NETWORK_REQUIREMENTS.md`.
+Separate Internet egress, private endpoints, DNS/platform-local traffic, builders and browsers.
+Preserve the Workload Profiles versus Consumption-only distinction and explicit remote-build,
+Cosmos-mode, A365 and TLS-inspection acceptance gaps; do not turn observed redirects into a
+permanent fixed-IP guarantee or treat VNet injection alone as proof of NVA traversal.
 
-The current Bootstrap image requires approved HTTPS egress to `mcr.microsoft.com` and
-`*.data.mcr.microsoft.com`; consult the Container Apps firewall/NSG requirements for the full
-platform dependency set. A private Environment is not an offline environment. Diagnose image-pull
-EOF on the actual Environment route, not a developer PC or unrelated Cloud Shell. Inbound PNA/PE
-settings do not grant outbound registry access. Do not disable TLS checks, add registry credentials
-to fix a public-endpoint EOF, or silently replace the pinned Bootstrap source. A private mirror
-requires explicit image/authentication configuration and does not remove platform egress needs.
+The current image is `ghcr.io/networkdog/azbriefenterprise`, pinned by digest under the compatibility
+parameter `bootstrapImage`. It was built from tracked public source only and verified as linux/amd64,
+non-root, with live container HTTP checks before publication. The registry transfer must preserve
+the tested manifest digest. A private GHCR package requires a separate read-only PAT; the publishing
+PAT stays in the developer's credential store and temporary authentication files must be removed.
+Keep `applicationReady=false`: model/Agent publication, Entra, scheduler and email remain separate.
+Initial image HTTP/health checks do not prove Hosted or customer network readiness.
+
+Approve HTTPS/DNS to `ghcr.io` and GitHub Packages download endpoints before a KT pull. GHCR is not
+an offline registry. The previous hello-world image required `mcr.microsoft.com` and
+`*.data.mcr.microsoft.com`; ACA platform dependencies remain even after changing the app image.
+Diagnose egress on the actual Environment route, not a developer PC or unrelated Cloud Shell.
+Inbound PNA/PE settings do not grant outbound access. Do not disable TLS checks or add credentials
+to fix a connection EOF. Runtime secrets are inputs, never deployment outputs or image layers.
 
 1. Freeze and review a source revision outside or inside the approved build boundary.
 2. Produce:

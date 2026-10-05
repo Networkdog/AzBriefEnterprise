@@ -16,6 +16,8 @@ from uuid import UUID
 
 import structlog
 
+from src.error_logging import configure_redaction, redact_fields, redact_text
+
 logger = structlog.get_logger(__name__)
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "infra" / "kt" / "azuredeploy.json"
@@ -25,6 +27,25 @@ NETWORK_API = "2024-05-01"
 FOUNDRY_API = "2025-06-01"
 HOST_API = "2025-04-01-preview"
 CONTAINER_ENV_API = "2026-01-01"
+LEGACY_BOOTSTRAP_IMAGE = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+FOUNDATION_ENV_NAMES = frozenset(
+    {
+        "AZURE_TENANT_ID",
+        "AZURE_SUBSCRIPTION_ID",
+        "AZURE_CLIENT_ID",
+        "FOUNDRY_PROJECT_ENDPOINT",
+        "FOUNDRY_HOSTED_AGENT_NAME",
+        "API_KEY",
+        "ARCHIVE_BLOB_CONTAINER_URL",
+        "CHECKPOINT_BLOB_URL",
+        "ADMIN_UI_ENABLED",
+        "ADMIN_REQUIRE_AUTH",
+        "ARCHIVE_UI_ENABLED",
+        "ARCHIVE_REQUIRE_AUTH",
+        "FEEDBACK_UI_ENABLED",
+        "MAX_CONCURRENT_ANALYSES",
+    }
+)
 PRIVATE_RANGES = tuple(
     IPv4Network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
@@ -161,7 +182,7 @@ def load_parameters(path: Path) -> dict[str, Any]:
         if name in supplied:
             entry = supplied[name]
             if set(entry) != {"value"}:
-                raise ValueError(f"{name} requires a literal non-secret value")
+                raise ValueError(f"{name} requires a literal value in the protected parameter file")
             value = entry["value"]
         elif "defaultValue" in definition:
             value = definition["defaultValue"]
@@ -169,8 +190,15 @@ def load_parameters(path: Path) -> dict[str, Any]:
             raise ValueError(f"Missing required parameter: {name}")
         if isinstance(value, str) and ("<" in value or ">" in value):
             raise ValueError(f"Replace the example placeholder for {name}")
-        if definition["type"] == "string" and not isinstance(value, str):
+        if definition["type"].casefold() in {"string", "securestring"} and not isinstance(
+            value, str
+        ):
             raise ValueError(f"{name} must be a string")
+        if isinstance(value, str):
+            if len(value) < definition.get("minLength", 0):
+                raise ValueError(f"{name} is shorter than its required minimum length")
+            if "maxLength" in definition and len(value) > definition["maxLength"]:
+                raise ValueError(f"{name} exceeds its maximum length")
         if definition["type"] == "bool" and not isinstance(value, bool):
             raise ValueError(f"{name} must be a boolean")
         if "defaultValue" not in definition and not value:
@@ -182,6 +210,18 @@ def load_parameters(path: Path) -> dict[str, Any]:
         raise ValueError("existingPrivateDnsZoneIds must be an object")
     if not isinstance(values["tags"], dict) or values["tags"].get("deploymentProfile") != PROFILE:
         raise ValueError(f"Preserve the deploymentProfile={PROFILE} ownership tag")
+    if not values["apiKey"].strip() or any(character.isspace() for character in values["apiKey"]):
+        raise ValueError("apiKey must be a separate random key without whitespace")
+    if values["containerRegistryAuthMode"] == "Credentials":
+        if (
+            not values["containerRegistryUsername"].strip()
+            or len(values["containerRegistryPassword"].strip()) < 8
+        ):
+            raise ValueError("Private GHCR requires a username and a read:packages token")
+        if values["apiKey"] == values["containerRegistryPassword"]:
+            raise ValueError("apiKey and the GHCR pull token must be different")
+    elif values["containerRegistryPassword"]:
+        raise ValueError("Anonymous registry mode must not carry an unused pull token")
     return values
 
 
@@ -207,7 +247,7 @@ class AzureCli:
             timeout=7200 if args[:3] == ("deployment", "group", "create") else 180,
         )
         if result.returncode:
-            raise RuntimeError(f"Azure CLI {args[0]} failed: {result.stderr.strip()}")
+            raise RuntimeError(f"Azure CLI {args[0]} failed: {redact_text(result.stderr.strip())}")
         return json.loads(result.stdout)
 
     def get(self, resource_id: str, api_version: str) -> dict[str, Any]:
@@ -253,6 +293,7 @@ class AzureCli:
     def deploy(self, values: dict[str, Any], mode: str, name: str) -> dict[str, Any]:
         if mode not in {"validate", "what-if", "create"}:
             raise ValueError(f"Unsupported ARM deployment operation: {mode}")
+        configure_redaction(values)
         with tempfile.TemporaryDirectory(prefix="azbrief-kt-") as temporary:
             path = Path(temporary) / "parameters.json"
             payload = {"parameters": {key: {"value": value} for key, value in values.items()}}
@@ -394,10 +435,58 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
     if app_id.casefold() in by_id:
         app = cli.get(app_id, "2025-01-01")["properties"]
         containers = app.get("template", {}).get("containers", [])
-        if len(containers) != 1 or containers[0].get("image") != values["bootstrapImage"]:
+        if len(containers) != 1 or containers[0].get("image") not in {
+            values["bootstrapImage"],
+            LEGACY_BOOTSTRAP_IMAGE,
+        }:
             raise ValueError(
                 "Container App is already promoted; foundation cannot downgrade it to bootstrap"
             )
+        container = containers[0]
+        configuration = app.get("configuration", {})
+        if container.get("command") or container.get("args"):
+            raise ValueError("Foundation cannot overwrite a customized Container App entry point")
+        if container["image"] == LEGACY_BOOTSTRAP_IMAGE:
+            if (
+                container.get("name") != "bootstrap"
+                or container.get("env")
+                or configuration.get("secrets")
+                or configuration.get("registries")
+            ):
+                raise ValueError("Foundation can replace only an uncustomized legacy bootstrap")
+        else:
+            entries = container.get("env", [])
+            env = {entry["name"]: entry for entry in entries}
+            flags = {
+                "ADMIN_UI_ENABLED": "false",
+                "ADMIN_REQUIRE_AUTH": "true",
+                "ARCHIVE_UI_ENABLED": "false",
+                "ARCHIVE_REQUIRE_AUTH": "true",
+                "FEEDBACK_UI_ENABLED": "false",
+                "MAX_CONCURRENT_ANALYSES": "1",
+            }
+            if (
+                container.get("name") != "azbrief"
+                or set(env) != FOUNDATION_ENV_NAMES
+                or len(entries) != len(env)
+                or any(env[name].get("value") != value for name, value in flags.items())
+                or env["API_KEY"].get("secretRef") != "orchestrator-api-key"
+                or env["API_KEY"].get("value")
+                or app.get("template", {}).get("scale", {}).get("minReplicas") != 0
+                or app.get("template", {}).get("scale", {}).get("maxReplicas") != 1
+                or container.get("resources") != {"cpu": 0.25, "memory": "0.5Gi"}
+                or configuration.get("activeRevisionsMode") != "Single"
+                or configuration.get("ingress", {}).get("targetPort") != 8000
+                or any(
+                    registry.get("server") != "ghcr.io"
+                    or registry.get("passwordSecretRef") != "ghcr-pull-token"
+                    or registry.get("identity")
+                    for registry in configuration.get("registries", [])
+                )
+                or {secret["name"] for secret in configuration.get("secrets", [])}
+                - {"orchestrator-api-key", "ghcr-pull-token"}
+            ):
+                raise ValueError("Foundation cannot overwrite a promoted or customized AzBrief app")
     if specs[0]["target"].casefold() in by_id:
         validate_existing_host(cli, specs[0]["target"], values)
     existing_subnets = {
@@ -639,6 +728,7 @@ def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
 
 def run(cli: AzureCli, values: dict[str, Any], mode: str) -> None:
     """Require fresh preflight for every operation, including the second deployment stage."""
+    configure_redaction(values)
     if mode not in {"preflight", "validate", "what-if", "deploy"}:
         raise ValueError(f"Unsupported KT operation: {mode}")
     prepared = prepare(cli, values)
@@ -647,7 +737,7 @@ def run(cli: AzureCli, values: dict[str, Any], mode: str) -> None:
         return
     if mode in {"validate", "what-if"}:
         result = cli.deploy(prepared, mode, "kt-private-validation")
-        logger.info("kt_validation_result", mode=mode, result=result)
+        logger.info("kt_validation_result", mode=mode, result=redact_fields(result))
         return
     prepared["deployCapabilityHost"] = False
     result = cli.deploy(prepared, "create", "kt-private-foundation")
@@ -696,7 +786,9 @@ def main() -> int:
         RuntimeError,
         subprocess.SubprocessError,
     ) as exc:
-        logger.error("kt_deployment_failed", error_type=type(exc).__name__, error=str(exc))
+        logger.error(
+            "kt_deployment_failed", error_type=type(exc).__name__, error=redact_text(str(exc))
+        )
         return 1
     return 0
 

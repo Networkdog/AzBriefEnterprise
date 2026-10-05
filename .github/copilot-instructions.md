@@ -303,6 +303,19 @@ The separate KT profile ships as the paired top-level README button
 link in each top-level README in addition to the two standard Enterprise links. Storage or topology
 refactors must not remove the button while the KT profile remains supported. Follow
 `infra/kt/README.md` and the `kt-private-deployment` skill for that profile.
+`infra/NETWORK_REQUIREMENTS.md` is the customer-facing KT firewall/DNS reference. Keep requirements
+scoped by source, phase and enabled feature; distinguish Internet, private and platform-local paths.
+Retain citations, the research date and unresolved acceptance gates. Neither VNet injection nor a
+successful developer-network download proves customer NVA traversal or customer connectivity.
+KT now uses the actual GHCR control-plane image, pinned by digest in the compatibility parameter
+`bootstrapImage`, with port 8000 and `/health`. GHCR packages start private: default to explicit
+read-only registry credentials, and allow Anonymous only after public-pull verification. Never
+put the publisher PAT in Azure. Require a separate 32–256-character API key; use App secret refs,
+not literal environment values or outputs. Bind tenant/UAMI/project/Hosted name and durable
+archive/checkpoint paths, but keep Admin/Archive/Feedback disabled and auth required until setup.
+CLI may replace an uncustomized legacy hello-world app; the same pinned image must not permit
+overwriting promoted settings. Reuse the shared redactor for parameter/CLI diagnostics. These
+image changes do not create models, Agent versions, Entra apps, Jobs or email configuration.
 KT stage two reuses the stage-one Environment's RG/name. ARG can serialize boolean projections as
 numbers, so the Portal query emits `internal=tostring(tobool(...))` and validation compares to the
 string `'true'`, not Boolean `true`. Preserve PNA/ownership checks and reject unknown field values;

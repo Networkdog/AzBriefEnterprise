@@ -24,7 +24,7 @@
         "type": "Microsoft.Common.InfoBox",
         "options": {
           "icon": "Info",
-          "text": "전용 배포 리소스 그룹을 사용하십시오. Foundry·Storage·Cosmos DB·Search의 Private Endpoint를 생성합니다. Container Apps Environment의 PE는 현재 수동 진단을 위해 자동 생성하지 않는 것이 기본값입니다. Container App은 0.25 vCPU / 0.5 GiB의 준비용 이미지이며 운영 애플리케이션이 아닙니다.",
+          "text": "전용 배포 리소스 그룹을 사용하십시오. Foundry·Storage·Cosmos DB·Search의 Private Endpoint를 생성합니다. Container Apps Environment PE는 기본 수동입니다. Container App에는 GHCR의 실제 AzBrief 이미지를 배포하지만 모델·Agent 게시와 Entra 설정은 별도이며 Admin/Archive는 아직 비활성입니다. 비공개 이미지에는 읽기 토큰이 필요하고 GHCR 아웃바운드도 허용해야 합니다.",
           "uri": "https://github.com/Networkdog/AzBriefEnterprise/blob/main/infra/kt/README.md"
         }
       }
@@ -244,19 +244,31 @@
           {
             "name": "containerAppName",
             "type": "Microsoft.Common.TextBox",
-            "label": "준비용 Container App",
+            "label": "AzBrief Container App",
             "defaultValue": "ca-azbrief-kt",
             "constraints": {
               "required": true,
               "regex": "^(?!.*--)[a-z][a-z0-9-]{0,30}[a-z0-9]$",
               "validationMessage": "2~32자, 소문자로 시작하고 소문자나 숫자로 끝나야 합니다. 연속 하이픈은 사용할 수 없습니다."
             }
+          },
+          {
+            "name": "foundryHostedAgentName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "게시할 Hosted Agent 이름",
+            "defaultValue": "azbrief-analysis-hosted",
+            "toolTip": "앱이 호출할 이름입니다. 이 템플릿은 Hosted Agent 코드를 게시하지 않습니다. 후속 게시 시 같은 이름을 사용하십시오.",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}[a-zA-Z0-9]$",
+              "validationMessage": "영문·숫자·하이픈·밑줄로 된 2~64자 Agent 이름을 입력하십시오."
+            }
           }
         ]
       },
       {
         "name": "options",
-        "label": "비용·DNS·로그",
+        "label": "이미지·API·DNS·로그",
         "elements": [
           {
             "name": "costNotice",
@@ -264,6 +276,54 @@
             "options": {
               "icon": "Info",
               "text": "Consumption 0.25 vCPU / 0.5 GiB, replica 0~1, 단일 리전 Cosmos Serverless, Storage LRS 계정 하나를 유지합니다. 기본 Private Endpoint 네 개(ACA PE 자동 생성 선택 시 다섯 개)·Search·DNS·storage 비용은 앱이 0 replica여도 남습니다. Application Insights는 생성하지 않습니다."
+            }
+          },
+          {
+            "name": "registryAuthMode",
+            "type": "Microsoft.Common.DropDown",
+            "label": "GHCR 이미지 인증",
+            "defaultValue": "비공개 패키지 — 읽기 토큰 사용",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                { "label": "비공개 패키지 — 읽기 토큰 사용", "value": "Credentials" },
+                { "label": "Public 전환과 익명 다운로드를 확인한 패키지", "value": "Anonymous" }
+              ]
+            },
+            "toolTip": "게시된 패키지는 처음에는 비공개입니다. Public으로 변경하고 익명 다운로드를 검증하기 전에는 Anonymous를 선택하지 마십시오. Azure 관리 ID로 GHCR에 인증할 수 없습니다."
+          },
+          {
+            "name": "registryUsername",
+            "type": "Microsoft.Common.TextBox",
+            "label": "GHCR 읽기 토큰의 GitHub 사용자",
+            "defaultValue": "Networkdog",
+            "visible": "[equals(steps('options').registryAuthMode, 'Credentials')]",
+            "constraints": { "required": true }
+          },
+          {
+            "name": "registryPassword",
+            "type": "Microsoft.Common.PasswordBox",
+            "label": {
+              "password": "GHCR 읽기 전용 PAT(classic)",
+              "confirmPassword": "GHCR 읽기 토큰 확인"
+            },
+            "toolTip": "패키지 읽기 권한과 read:packages만 부여한 별도 토큰을 입력하십시오. 게시용 write:packages 토큰을 사용하지 마십시오. 값은 Container App secret으로 전달되며 배포 출력에 포함하지 않습니다.",
+            "visible": "[equals(steps('options').registryAuthMode, 'Credentials')]",
+            "constraints": { "required": true },
+            "options": { "hideConfirmation": true }
+          },
+          {
+            "name": "apiKey",
+            "type": "Microsoft.Common.PasswordBox",
+            "label": {
+              "password": "AzBrief API 인증 키",
+              "confirmPassword": "API 인증 키 확인"
+            },
+            "toolTip": "32~256자의 별도 무작위 키를 입력하고 두 단계에서 같은 키를 유지하십시오. GitHub PAT과 다른 값이어야 합니다. Entra 설정 전에도 분석 API를 무인증으로 노출하지 않기 위한 키입니다.",
+            "constraints": {
+              "required": true,
+              "regex": "^\\S{32,256}$",
+              "validationMessage": "공백 없는 32~256자의 별도 무작위 API 키가 필요합니다."
             }
           },
           {
@@ -392,13 +452,13 @@
           {
             "name": "ownershipReady",
             "type": "Microsoft.Common.CheckBox",
-            "label": "리소스 이름의 가용성과 소유권을 확인했으며, 다른 서비스나 이미 운영 이미지로 전환한 앱에 bootstrap을 덮어쓰지 않습니다.",
+            "label": "리소스 이름·소유권과 이미지 접근을 확인했으며, 이미 운영 설정을 마친 앱에 초기 비활성 설정을 덮어쓰지 않습니다.",
             "constraints": { "required": true, "validationMessage": "기존 리소스 보호와 이름 가용성을 확인하십시오." }
           },
           {
             "name": "scopeAccepted",
             "type": "Microsoft.Common.CheckBox",
-            "label": "유휴 비용과 공유 Storage의 계정 범위 Foundry 권한을 확인했으며, 이번 배포에 모델·Agent 게시·운영 App/Job·인증·메일·스케줄 설정이 포함되지 않음을 확인했습니다.",
+            "label": "유휴 비용과 공유 Storage의 계정 범위 Foundry 권한을 확인했으며, 실제 앱 이미지 배포와 별개로 모델·Agent 게시·운영 Job·Entra·메일·스케줄 설정이 필요함을 확인했습니다.",
             "constraints": { "required": true, "validationMessage": "비용과 인프라 초기 배포 범위를 확인하십시오." }
           }
         ]
@@ -418,6 +478,11 @@
       "projectName": "[steps('names').projectName]",
       "containerAppsEnvironmentName": "[steps('names').containerAppsEnvironmentName]",
       "containerAppName": "[steps('names').containerAppName]",
+      "foundryHostedAgentName": "[steps('names').foundryHostedAgentName]",
+      "apiKey": "[steps('options').apiKey]",
+      "containerRegistryAuthMode": "[steps('options').registryAuthMode]",
+      "containerRegistryUsername": "[if(equals(steps('options').registryAuthMode, 'Credentials'), steps('options').registryUsername, '')]",
+      "containerRegistryPassword": "[if(equals(steps('options').registryAuthMode, 'Credentials'), steps('options').registryPassword, '')]",
       "createPESubnet": false,
       "createFoundrySubnet": false,
       "createContainerAppsSubnet": false,

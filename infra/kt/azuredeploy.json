@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "7602721184217297468"
+      "templateHash": "2194624537227359148"
     }
   },
   "parameters": {
@@ -171,12 +171,53 @@
     },
     "bootstrapImage": {
       "type": "string",
-      "defaultValue": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
+      "defaultValue": "ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3",
       "allowedValues": [
-        "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
+        "ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3"
       ],
       "metadata": {
-        "description": "Infrastructure bootstrap only: no customer secrets, analysis, email, or scheduler."
+        "description": "Compatibility parameter name for the pinned AzBrief control-plane image. Agent publication and authenticated Admin/Archive setup remain separate."
+      }
+    },
+    "foundryHostedAgentName": {
+      "type": "string",
+      "defaultValue": "azbrief-analysis-hosted",
+      "minLength": 1,
+      "metadata": {
+        "description": "Expected Hosted Agent name. This template configures its endpoint but does not publish it."
+      }
+    },
+    "apiKey": {
+      "type": "securestring",
+      "minLength": 32,
+      "maxLength": 256,
+      "metadata": {
+        "description": "Independent random API key, at least 32 characters. Reuse the same key in both stages. Never use a GitHub PAT as the application API key."
+      }
+    },
+    "containerRegistryAuthMode": {
+      "type": "string",
+      "defaultValue": "Credentials",
+      "allowedValues": [
+        "Credentials",
+        "Anonymous"
+      ],
+      "metadata": {
+        "description": "Credentials is required for the initially private GHCR package. Choose Anonymous only after verifying public anonymous pulls."
+      }
+    },
+    "containerRegistryUsername": {
+      "type": "string",
+      "defaultValue": "Networkdog",
+      "metadata": {
+        "description": "GitHub user that owns the read:packages token. This is not an Azure managed identity."
+      }
+    },
+    "containerRegistryPassword": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "GHCR PAT classic with read:packages only, required in Credentials mode. Never deploy the publisher write token."
       }
     },
     "tags": {
@@ -198,6 +239,8 @@
     "cosmosId": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
     "searchId": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
     "environmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
+    "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('foundryAccountName'), parameters('projectName'))]",
+    "credentialRegistry": "[equals(parameters('containerRegistryAuthMode'), 'Credentials')]",
     "dnsZoneNames": [
       "privatelink.cognitiveservices.azure.com",
       "privatelink.openai.azure.com",
@@ -28701,10 +28744,14 @@
             "value": false
           },
           "ingressTargetPort": {
-            "value": 80
+            "value": 8000
           },
           "activeRevisionsMode": {
             "value": "Single"
+          },
+          "registries": "[if(variables('credentialRegistry'), createObject('value', createArray(createObject('server', 'ghcr.io', 'username', parameters('containerRegistryUsername'), 'passwordSecretRef', 'ghcr-pull-token'))), createObject('value', createArray()))]",
+          "secrets": {
+            "value": "[concat(createArray(createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey'))), if(variables('credentialRegistry'), createArray(createObject('name', 'ghcr-pull-token', 'value', parameters('containerRegistryPassword'))), createArray()))]"
           },
           "scaleSettings": {
             "value": {
@@ -28715,18 +28762,76 @@
           "containers": {
             "value": [
               {
-                "name": "bootstrap",
+                "name": "azbrief",
                 "image": "[parameters('bootstrapImage')]",
                 "resources": {
                   "cpu": "[json('0.25')]",
                   "memory": "0.5Gi"
                 },
+                "env": [
+                  {
+                    "name": "AZURE_TENANT_ID",
+                    "value": "[tenant().tenantId]"
+                  },
+                  {
+                    "name": "AZURE_SUBSCRIPTION_ID",
+                    "value": "[subscription().subscriptionId]"
+                  },
+                  {
+                    "name": "AZURE_CLIENT_ID",
+                    "value": "[reference('controlPlaneIdentity').outputs.clientId.value]"
+                  },
+                  {
+                    "name": "FOUNDRY_PROJECT_ENDPOINT",
+                    "value": "[variables('foundryProjectEndpoint')]"
+                  },
+                  {
+                    "name": "FOUNDRY_HOSTED_AGENT_NAME",
+                    "value": "[parameters('foundryHostedAgentName')]"
+                  },
+                  {
+                    "name": "API_KEY",
+                    "secretRef": "orchestrator-api-key"
+                  },
+                  {
+                    "name": "ARCHIVE_BLOB_CONTAINER_URL",
+                    "value": "[format('{0}azbrief-archive', reference('storage').outputs.primaryBlobEndpoint.value)]"
+                  },
+                  {
+                    "name": "CHECKPOINT_BLOB_URL",
+                    "value": "[format('{0}azbrief-state/checkpoint.json', reference('storage').outputs.primaryBlobEndpoint.value)]"
+                  },
+                  {
+                    "name": "ADMIN_UI_ENABLED",
+                    "value": "false"
+                  },
+                  {
+                    "name": "ADMIN_REQUIRE_AUTH",
+                    "value": "true"
+                  },
+                  {
+                    "name": "ARCHIVE_UI_ENABLED",
+                    "value": "false"
+                  },
+                  {
+                    "name": "ARCHIVE_REQUIRE_AUTH",
+                    "value": "true"
+                  },
+                  {
+                    "name": "FEEDBACK_UI_ENABLED",
+                    "value": "false"
+                  },
+                  {
+                    "name": "MAX_CONCURRENT_ANALYSES",
+                    "value": "1"
+                  }
+                ],
                 "probes": [
                   {
                     "type": "Readiness",
                     "httpGet": {
-                      "path": "/",
-                      "port": 80
+                      "path": "/health",
+                      "port": 8000
                     },
                     "initialDelaySeconds": 5,
                     "periodSeconds": 10
@@ -30310,7 +30415,8 @@
       "dependsOn": [
         "containerEnvironment",
         "controlPlaneIdentity",
-        "privateEndpoints"
+        "privateEndpoints",
+        "storage"
       ]
     }
   },
@@ -30333,7 +30439,8 @@
         "containerAppsSubnetId": "[variables('containerAppsSubnetId')]",
         "foundryAccountResourceId": "[variables('foundryAccountId')]",
         "foundryProjectResourceId": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
-        "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('foundryAccountName'), parameters('projectName'))]",
+        "foundryProjectEndpoint": "[variables('foundryProjectEndpoint')]",
+        "foundryHostedAgentName": "[parameters('foundryHostedAgentName')]",
         "foundryProjectPrincipalId": "[reference('project', '2025-06-01', 'full').identity.principalId]",
         "storageAccountResourceId": "[variables('storageId')]",
         "agentStorageAccountResourceId": "[variables('storageId')]",
@@ -30342,6 +30449,9 @@
         "archiveContainerUrl": "[format('{0}azbrief-archive', reference('storage').outputs.primaryBlobEndpoint.value)]",
         "containerAppsEnvironmentResourceId": "[variables('environmentId')]",
         "containerAppResourceId": "[reference('containerApp').outputs.resourceId.value]",
+        "containerImage": "[parameters('bootstrapImage')]",
+        "containerRegistryAuthMode": "[parameters('containerRegistryAuthMode')]",
+        "applicationUrl": "[format('https://{0}', reference('containerApp').outputs.fqdn.value)]",
         "bootstrapUrl": "[format('https://{0}', reference('containerApp').outputs.fqdn.value)]",
         "controlPlaneIdentityResourceId": "[reference('controlPlaneIdentity').outputs.resourceId.value]",
         "controlPlanePrincipalId": "[reference('controlPlaneIdentity').outputs.principalId.value]",

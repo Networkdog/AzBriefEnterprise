@@ -71,11 +71,35 @@ param searchSku string = 'basic'
 @description('False is a foundation-only staging operation, not a completed installation.')
 param deployCapabilityHost bool = true
 
-@description('Infrastructure bootstrap only: no customer secrets, analysis, email, or scheduler.')
+@description('Compatibility parameter name for the pinned AzBrief control-plane image. Agent publication and authenticated Admin/Archive setup remain separate.')
 @allowed([
-  'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+  'ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3'
 ])
-param bootstrapImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
+param bootstrapImage string = 'ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3'
+
+@description('Expected Hosted Agent name. This template configures its endpoint but does not publish it.')
+@minLength(1)
+param foundryHostedAgentName string = 'azbrief-analysis-hosted'
+
+@description('Independent random API key, at least 32 characters. Reuse the same key in both stages. Never use a GitHub PAT as the application API key.')
+@secure()
+@minLength(32)
+@maxLength(256)
+param apiKey string
+
+@description('Credentials is required for the initially private GHCR package. Choose Anonymous only after verifying public anonymous pulls.')
+@allowed([
+  'Credentials'
+  'Anonymous'
+])
+param containerRegistryAuthMode string = 'Credentials'
+
+@description('GitHub user that owns the read:packages token. This is not an Azure managed identity.')
+param containerRegistryUsername string = 'Networkdog'
+
+@description('GHCR PAT classic with read:packages only, required in Credentials mode. Never deploy the publisher write token.')
+@secure()
+param containerRegistryPassword string = ''
 
 param tags object = {
   application: 'AzBrief'
@@ -96,6 +120,8 @@ var storageId = resourceId('Microsoft.Storage/storageAccounts', storageAccountNa
 var cosmosId = resourceId('Microsoft.DocumentDB/databaseAccounts', cosmosAccountName)
 var searchId = resourceId('Microsoft.Search/searchServices', searchServiceName)
 var environmentId = resourceId('Microsoft.App/managedEnvironments', containerAppsEnvironmentName)
+var foundryProjectEndpoint = 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${projectName}'
+var credentialRegistry = containerRegistryAuthMode == 'Credentials'
 var dnsZoneNames = [
   'privatelink.cognitiveservices.azure.com'
   'privatelink.openai.azure.com'
@@ -453,26 +479,63 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
     }
     ingressExternal: true
     ingressAllowInsecure: false
-    ingressTargetPort: 80
+    ingressTargetPort: 8000
     activeRevisionsMode: 'Single'
+    registries: credentialRegistry ? [
+      {
+        server: 'ghcr.io'
+        username: containerRegistryUsername
+        passwordSecretRef: 'ghcr-pull-token'
+      }
+    ] : []
+    secrets: concat(
+      [
+        {
+          name: 'orchestrator-api-key'
+          value: apiKey
+        }
+      ],
+      credentialRegistry ? [
+        {
+          name: 'ghcr-pull-token'
+          value: containerRegistryPassword
+        }
+      ] : []
+    )
     scaleSettings: {
       minReplicas: 0
       maxReplicas: 1
     }
     containers: [
       {
-        name: 'bootstrap'
+        name: 'azbrief'
         image: bootstrapImage
         resources: {
           cpu: json('0.25')
           memory: '0.5Gi'
         }
+        env: [
+          { name: 'AZURE_TENANT_ID', value: tenant().tenantId }
+          { name: 'AZURE_SUBSCRIPTION_ID', value: subscription().subscriptionId }
+          { name: 'AZURE_CLIENT_ID', value: controlPlaneIdentity.outputs.clientId }
+          { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
+          { name: 'FOUNDRY_HOSTED_AGENT_NAME', value: foundryHostedAgentName }
+          { name: 'API_KEY', secretRef: 'orchestrator-api-key' }
+          { name: 'ARCHIVE_BLOB_CONTAINER_URL', value: '${storage.outputs.primaryBlobEndpoint}azbrief-archive' }
+          { name: 'CHECKPOINT_BLOB_URL', value: '${storage.outputs.primaryBlobEndpoint}azbrief-state/checkpoint.json' }
+          { name: 'ADMIN_UI_ENABLED', value: 'false' }
+          { name: 'ADMIN_REQUIRE_AUTH', value: 'true' }
+          { name: 'ARCHIVE_UI_ENABLED', value: 'false' }
+          { name: 'ARCHIVE_REQUIRE_AUTH', value: 'true' }
+          { name: 'FEEDBACK_UI_ENABLED', value: 'false' }
+          { name: 'MAX_CONCURRENT_ANALYSES', value: '1' }
+        ]
         probes: [
           {
             type: 'Readiness'
             httpGet: {
-              path: '/'
-              port: 80
+              path: '/health'
+              port: 8000
             }
             initialDelaySeconds: 5
             periodSeconds: 10
@@ -568,7 +631,8 @@ output ktFoundation object = {
   containerAppsSubnetId: containerAppsSubnetId
   foundryAccountResourceId: foundryAccountId
   foundryProjectResourceId: project.id
-  foundryProjectEndpoint: 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${projectName}'
+  foundryProjectEndpoint: foundryProjectEndpoint
+  foundryHostedAgentName: foundryHostedAgentName
   foundryProjectPrincipalId: project.identity.principalId
   storageAccountResourceId: storageId
   agentStorageAccountResourceId: storageId
@@ -577,6 +641,9 @@ output ktFoundation object = {
   archiveContainerUrl: '${storage.outputs.primaryBlobEndpoint}azbrief-archive'
   containerAppsEnvironmentResourceId: environmentId
   containerAppResourceId: containerApp.outputs.resourceId
+  containerImage: bootstrapImage
+  containerRegistryAuthMode: containerRegistryAuthMode
+  applicationUrl: 'https://${containerApp.outputs.fqdn}'
   bootstrapUrl: 'https://${containerApp.outputs.fqdn}'
   controlPlaneIdentityResourceId: controlPlaneIdentity.outputs.resourceId
   controlPlanePrincipalId: controlPlaneIdentity.outputs.principalId

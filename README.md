@@ -27,6 +27,13 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 the separate application handoff and acceptance. See the
 [KT private-deployment skill](.github/skills/kt-private-deployment/SKILL.md) for reusable
 network, Policy, DNS, logging, bootstrap, and isolated-release guidance.
+See [Network Requirements](infra/NETWORK_REQUIREMENTS.md) for the customer firewall/DNS
+request matrix, source-specific deployment/runtime rules, and acceptance checklist (KT baseline; Korean).
+The KT ACA image is pinned to
+`ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3`
+(port 8000, `/health`). The initially private package defaults to explicit read-only GHCR
+credentials; use `Anonymous` only after public-pull verification. A separate API key is required.
+Admin/Archive stay disabled until Entra setup; image publication does not update existing apps.
 Stage two reuses the stage-one Environment's RG/name. The Portal normalizes the ARG internal flag
 before checking internal/PNA/KT ownership; a matching compliant Environment is not a name conflict.
 KT temporarily defaults `deployContainerAppsPrivateEndpoint=false` for manual diagnosis: the
