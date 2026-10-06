@@ -76,6 +76,7 @@ SUBNETS = (
 INTERNAL_PARAMETERS = {row[3] for row in SUBNETS} | {
     "deployCapabilityHost",
     "linkedPrivateDnsZones",
+    "reuseExistingApiKey",
 }
 
 
@@ -184,6 +185,8 @@ def load_parameters(path: Path) -> dict[str, Any]:
             if set(entry) != {"value"}:
                 raise ValueError(f"{name} requires a literal value in the protected parameter file")
             value = entry["value"]
+        elif name == "apiKey" or (name in INTERNAL_PARAMETERS and "defaultValue" not in definition):
+            continue
         elif "defaultValue" in definition:
             value = definition["defaultValue"]
         else:
@@ -210,7 +213,10 @@ def load_parameters(path: Path) -> dict[str, Any]:
         raise ValueError("existingPrivateDnsZoneIds must be an object")
     if not isinstance(values["tags"], dict) or values["tags"].get("deploymentProfile") != PROFILE:
         raise ValueError(f"Preserve the deploymentProfile={PROFILE} ownership tag")
-    if not values["apiKey"].strip() or any(character.isspace() for character in values["apiKey"]):
+    api_key = values.get("apiKey")
+    if api_key is not None and (
+        not api_key.strip() or any(character.isspace() for character in api_key)
+    ):
         raise ValueError("apiKey must be a separate random key without whitespace")
     if values["containerRegistryAuthMode"] == "Credentials":
         if (
@@ -218,7 +224,7 @@ def load_parameters(path: Path) -> dict[str, Any]:
             or len(values["containerRegistryPassword"].strip()) < 8
         ):
             raise ValueError("Private GHCR requires a username and a read:packages token")
-        if values["apiKey"] == values["containerRegistryPassword"]:
+        if api_key == values["containerRegistryPassword"]:
             raise ValueError("apiKey and the GHCR pull token must be different")
     elif values["containerRegistryPassword"]:
         raise ValueError("Anonymous registry mode must not carry an unused pull token")
@@ -432,6 +438,7 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                 f"Refusing to modify a resource not owned by the KT profile: {resource_id}"
             )
     app_id = planned_ids[-2]
+    reuse_existing_api_key = False
     if app_id.casefold() in by_id:
         app = cli.get(app_id, "2025-01-01")["properties"]
         containers = app.get("template", {}).get("containers", [])
@@ -487,6 +494,16 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                 - {"orchestrator-api-key", "ghcr-pull-token"}
             ):
                 raise ValueError("Foundation cannot overwrite a promoted or customized AzBrief app")
+            api_secrets = [
+                secret
+                for secret in configuration.get("secrets", [])
+                if secret.get("name") == "orchestrator-api-key"
+            ]
+            if len(api_secrets) != 1:
+                raise ValueError(
+                    "Existing AzBrief API key is missing or ambiguous; refusing automatic rotation"
+                )
+            reuse_existing_api_key = True
     if specs[0]["target"].casefold() in by_id:
         validate_existing_host(cli, specs[0]["target"], values)
     existing_subnets = {
@@ -647,7 +664,11 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
             for link in links
         ):
             raise ValueError(f"Existing DNS zone needs a non-registration link to the VNet: {zone}")
-    prepared = dict(values, existingPrivateDnsZoneIds=reuse)
+    prepared = dict(
+        values,
+        existingPrivateDnsZoneIds=reuse,
+        reuseExistingApiKey=reuse_existing_api_key,
+    )
     for plan in plans:
         prepared[plan.create_parameter] = plan.create
         logger.info(

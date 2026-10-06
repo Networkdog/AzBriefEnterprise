@@ -307,11 +307,20 @@ refactors must not remove the button while the KT profile remains supported. Fol
 scoped by source, phase and enabled feature; distinguish Internet, private and platform-local paths.
 Retain citations, the research date and unresolved acceptance gates. Neither VNet injection nor a
 successful developer-network download proves customer NVA traversal or customer connectivity.
+Section 3.1 is an initial platform/core-analysis request, not the union of every allowed URL.
+Extra document sources and telemetry need feature-specific approval. Excluding default-on community
+egress requires verifying `COMMUNITY_INSIGHTS_ENABLED=false` in the Hosted runtime; documentation
+edits do not change live settings or guarantee equal evidence coverage with fewer sources.
 KT now uses the actual GHCR control-plane image, pinned by digest in the compatibility parameter
-`bootstrapImage`, with port 8000 and `/health`. GHCR packages start private: default to explicit
-read-only registry credentials, and allow Anonymous only after public-pull verification. Never
-put the publisher PAT in Azure. Require a separate 32–256-character API key; use App secret refs,
-not literal environment values or outputs. Bind tenant/UAMI/project/Hosted name and durable
+`bootstrapImage`, with port 8000 and `/health`. Anonymous is the template default; verify package
+Public visibility and anonymous layer downloads before deployment. Credentials remains explicit
+and read-only; never put the publisher PAT in Azure. ARM generates the initial 64-character API
+key through a secure random default. Portal/CLI derive `reuseExistingApiKey` from complete owned
+ARM inventory; reuse the existing App secret with `listSecrets`, never rotate on read failure.
+Do not pass ARM default expressions as literal CLI secrets or expose keys in UI/outputs. Direct
+ARM callers must explicitly choose reuse from fresh inventory; serialize deployments to one app.
+Retain validation for optional 32–256-character initial keys and App secret refs, not literal
+environment values. Bind tenant/UAMI/project/Hosted name and durable
 archive/checkpoint paths, but keep Admin/Archive/Feedback disabled and auth required until setup.
 CLI may replace an uncustomized legacy hello-world app; the same pinned image must not permit
 overwriting promoted settings. Reuse the shared redactor for parameter/CLI diagnostics. These

@@ -81,18 +81,21 @@ param bootstrapImage string = 'ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe
 @minLength(1)
 param foundryHostedAgentName string = 'azbrief-analysis-hosted'
 
-@description('Independent random API key, at least 32 characters. Reuse the same key in both stages. Never use a GitHub PAT as the application API key.')
+@description('Initial application API key. ARM generates a random secure value when omitted; existing installations always retain their stored key. Never use a GitHub PAT.')
 @secure()
 @minLength(32)
 @maxLength(256)
-param apiKey string
+param apiKey string = replace('${newGuid()}${newGuid()}', '-', '')
 
-@description('Credentials is required for the initially private GHCR package. Choose Anonymous only after verifying public anonymous pulls.')
+@description('Derived from live ARM inventory by the Portal or CLI. Required explicitly for direct ARM deployments: true reuses the existing app secret and fails if it cannot be read.')
+param reuseExistingApiKey bool
+
+@description('Anonymous downloads the public GHCR image without a PAT. Credentials is retained for explicitly approved private registry access.')
 @allowed([
   'Credentials'
   'Anonymous'
 ])
-param containerRegistryAuthMode string = 'Credentials'
+param containerRegistryAuthMode string = 'Anonymous'
 
 @description('GitHub user that owns the read:packages token. This is not an Azure managed identity.')
 param containerRegistryUsername string = 'Networkdog'
@@ -467,6 +470,17 @@ module capabilityHost 'capability-host.bicep' = if (deployCapabilityHost) {
   ]
 }
 
+resource existingContainerApp 'Microsoft.App/containerApps@2026-01-01' existing = {
+  name: containerAppName
+}
+
+var applicationApiSecret = reuseExistingApiKey
+  ? filter(existingContainerApp.listSecrets().value, secret => secret.name == 'orchestrator-api-key')[0]
+  : {
+      name: 'orchestrator-api-key'
+      value: apiKey
+    }
+
 module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
   name: 'kt-container-app'
   params: {
@@ -489,12 +503,7 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
       }
     ] : []
     secrets: concat(
-      [
-        {
-          name: 'orchestrator-api-key'
-          value: apiKey
-        }
-      ],
+      [applicationApiSecret],
       credentialRegistry ? [
         {
           name: 'ghcr-pull-token'

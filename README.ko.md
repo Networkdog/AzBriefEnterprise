@@ -28,11 +28,14 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 DNS·로그·bootstrap·격리망 릴리스 지침은
 [KT 프라이빗 배포 Skill](.github/skills/kt-private-deployment/SKILL.md)을 참고하십시오.
 고객사 방화벽·DNS 요청 목록, 출발지별 배포·운영 규칙과 인수 체크리스트는
-[Network Requirements](infra/NETWORK_REQUIREMENTS.md)에 정리했습니다(KT 기준).
+[Network Requirements](infra/NETWORK_REQUIREMENTS.md)에 정리했습니다(KT 기준). 3.1절은
+플랫폼·핵심 분석의 최초 요청안이며, 추가 출처·관측 기능은 사용 여부에 따라 별도 승인합니다.
 KT ACA 이미지는
 `ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3`
-으로 고정합니다(포트 8000, `/health`). 최초 비공개 패키지이므로 기본값은 GHCR 읽기 전용
-인증이며, Public 익명 다운로드 검증 후에만 `Anonymous`를 선택합니다. 별도 API 키가 필요합니다.
+으로 고정합니다(포트 8000, `/health`). 템플릿 기본값은 `Anonymous`이며 배포 전에 GHCR 패키지
+공개와 익명 다운로드를 확인해야 합니다. 기본 경로에서는 PAT과 API 키를 입력하지 않습니다.
+ARM이 초기 API 키를 Container App Secret으로 생성하고, Portal/CLI 조회로 후속 단계의 키
+재사용을 선택합니다. 비밀 값 조회 실패 시 키를 바꾸지 않고 배포를 중단합니다.
 Entra 설정 전 Admin/Archive는 비활성이고, 이미지 게시만으로 기존 앱이 업데이트되지는 않습니다.
 2단계는 1단계와 같은 RG·Environment 이름을 재사용합니다. Portal은 ARG 내부 환경 값을
 정규화해 internal/PNA/KT 소유권을 검사하며, 조건을 충족하는 기존 환경은 이름 충돌이 아닙니다.

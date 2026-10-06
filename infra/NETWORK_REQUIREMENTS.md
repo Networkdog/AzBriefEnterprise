@@ -105,7 +105,31 @@ A/B는 단일 replica IP가 아니라 필요한 subnet/플랫폼 경로를 기�
 
 ## 3. 인터넷 아웃바운드
 
-### 3.1 플랫폼·이미지·인증
+**이 절 전체를 일괄 허용 요청서로 제출하지 않는다.** 최초 요청은 **3.1**을 기준으로 하고,
+3.2와 3.3은 실제 사용하는 기능·출처가 확인될 때만 추가한다. 코드의
+`ALLOWED_FETCH_DOMAINS`는 **접근할 수 있는 최대 범위**이지, 모든 호스트가 매번 필요하다는
+뜻이 아니다. 기존 표는 가능한 의존성의 합집합이었으며 모두가 상시 필수는 아니다.
+
+최소안의 범위는 **현재 GHCR 이미지·관리 ID·ARM 근거 조회·RSS 수집·Learn 기반 핵심 분석**이다.
+이것은 현행 모든 선택 기능과 동등한 운영을 보장하는 검증 결과가 아니라 **최초 승인안**이다.
+다음 조건을 함께 확인한다.
+
+- 커뮤니티 보강을 제외하려면 **Hosted runtime**에 `COMMUNITY_INSIGHTS_ENABLED=false`를
+  적용·확인한다. 현재 소스 기본값은 true이므로 목록에서 `azureweekly.info`만 지워서는
+  호출이 멈추지 않는다. Container App에만 설정하거나 이 문서를 수정하는 것으로는 바뀌지 않는다.
+- Learn 밖의 문서·단축 URL은 최초 요청에서 제외한다. 현재 코드는 추가 호스트를 허용하고
+  있어 실제 호출이 발생할 수 있다. **Learn 전용 조회를 강제하는 별도 설정은 없으며**,
+  차단된 출처가 특정 업데이트의 필수 근거라면 gap을 보존하고 해당 호스트만 별도 승인한다.
+  모든 업데이트의 조사 범위·완전성이 동일하게 유지된다고 주장하지 않는다.
+- 메일·로그·A365·cloud evaluation은 실제 사용 여부로 판정한다. **메일 전달까지 인수 범위에
+  포함되면 N16의 실제 ACS endpoint도 최소 필수**다. 이미 사용하는 로그 수집을 승인 없이
+  끄거나 필요한 규칙을 제거하지 않는다.
+- DNS·PE 사설 연결은 4절, 설치·빌드는 5절에서 따로 요청한다. `remote_build` 등 9절의
+  미확정 조건은 이 최소안만으로 해결됐다고 보지 않는다.
+
+이 문서 개정은 위 설정이나 Agent 버전, 방화벽을 변경하지 않는다.
+
+### 3.1 최초 요청안 — 플랫폼과 핵심 분석
 
 | 규칙 | 출발지 | 목적지 FQDN | 포트 | 적용 조건·목적 | 근거 |
 |---|---|---|---|---|---|
@@ -118,9 +142,24 @@ A/B는 단일 replica IP가 아니라 필요한 subnet/플랫폼 경로를 기�
 | N07 | A, B | `*.identity.azure.net` | TCP 443 | 관리 ID 및 Foundry Agent Service ACA 위임 | [S03], [S07] |
 | N08 | A, B | `login.microsoftonline.com`, `*.login.microsoftonline.com`, `*.login.microsoft.com` | TCP 443 | Entra 인증·토큰·플랫폼 위임. wildcard가 apex를 포함한다고 가정하지 않음 | [S03], [S07], [S08] |
 | N09 | A, B | `management.azure.com` | TCP 443 | AzBrief ARM·Resource Graph·Policy·Health·Advisor·Cost·Billing 조회, App 상태/준비 확인 | [C04] |
+| N10 | A의 App/Job | `www.microsoft.com` | TCP 443 | 핵심 수집. `/releasecommunications/api/v2/azure/...` RSS·상세·과거 기간 조회 | [C01], [V02] |
+| N11 | B | `learn.microsoft.com` | TCP 443 | 핵심 문서 근거. 문서 검색·본문과 Learn MCP `/api/mcp` | [C02], [C05] |
+
+FQDN 방식이면 위 표는 **중복 제거한 13개 호스트/패턴**이다. 각 출발지에는 해당 행만
+적용하고 A/B 전체에 같은 목록을 복사하지 않는다. B의 MCR 데이터 하위 경로는 N04의
+확인 조건을 유지한다. GHCR을 승인된 사설 mirror로 대체하면 N01/N02를 재검토할 수 있지만,
+**현재 템플릿은 GHCR을 직접 사용하므로 사설 mirror가 구성됐다고 가정하지 않는다.**
+
+N03–N08은 단순히 “코드에서 문자열을 찾았다”는 이유로 남긴 항목이 아니다.
+ACA 문서는 MCR·Kubernetes/CNI 다운로드를 **All scenarios**, 네 개 인증 패턴을
+**Managed identity** 요구사항으로 명시하고, Foundry도 같은 인증 범위를 요구한다.
+한 번의 기동에서 호출이 관측되지 않아도 신규 replica·업데이트 때 필요할 수 있으므로,
+지원되는 대체 경로나 서비스 확인 없이 더 삭제하지 않는다. [S03], [S07]
 
 Service Tag 방식의 대안은 아래와 같다. FQDN 규칙과 태그 규칙을 모두 중복 허용해야
-한다는 뜻은 아니다. NSG가 별도로 제한되어 있다면 그 계층에서도 통신이 허용되어야 한다.
+한다는 뜻은 아니다. 같은 방화벽에서 두 방식을 중복 신청하지 않는다. NSG가 별도로
+제한되어 있다면 그 계층에서도 통신이 허용되어야 한다. **태그로 신청 행 수가 줄어도
+실제 허용 IP 범위가 더 작아지는 것은 아니다.**
 
 | 목적 | Service Tag | 목적지 포트·주의 |
 |---|---|---|
@@ -133,17 +172,19 @@ Service Tag 방식의 대안은 아래와 같다. FQDN 규칙과 태그 규칙�
 허용하는 규칙이 아니다.** GitHub 공식 Packages 목록의 `*.pkg.github.com`은 다른 패키지
 형식까지 사용할 때 검토한다. 조사한 GHCR image pull에서는 해당 wildcard를 사용하지 않았다.
 
-### 3.2 AzBrief 업무 기능
+### 3.2 추가 문서·커뮤니티·메일 — 기능별 별도 승인
+
+**아래를 기본 요청에 일괄 포함하지 않는다.** 해당 기능을 유지하거나 특정 문서 근거가
+필요한 경우에만 실제 목적지를 추가한다. 출처 하나가 필요하다고 같은 행의 다른 호스트까지
+함께 승인하지 않는다.
 
 | 규칙 | 출발지 | 목적지 FQDN | 포트 | 적용 조건·목적 | 근거 |
 |---|---|---|---|---|---|
-| N10 | A의 App/Job | `www.microsoft.com` | TCP 443 | 필수. `/releasecommunications/api/v2/azure/...` RSS·상세·과거 기간 조회 | [C01], [V02] |
-| N11 | B | `learn.microsoft.com` | TCP 443 | 필수. 문서 검색·본문과 Learn MCP `/api/mcp` | [C02], [C05] |
-| N12 | B | `azure.microsoft.com`, `www.microsoft.com` | TCP 443 | 관련 공지·공식 문서 본문을 조회하는 경우 | [C02] |
-| N13 | B | `techcommunity.microsoft.com`, `devblogs.microsoft.com`, `github.com` | TCP 443 | 허용된 관련 기술 문서·샘플 페이지, Tech Community RSS 본문 | [C02], [C03] |
-| N14 | B | `aka.ms`, `go.microsoft.com` | TCP 443 | 문서 단축 링크/redirect 사용 시. 최종 목적지도 애플리케이션 허용 목록에 있어야 함 | [C02] |
-| N15 | B | `azureweekly.info` | TCP 443 | 커뮤니티 보강. **기본 활성**. 불필요하면 `COMMUNITY_INSIGHTS_ENABLED=false`를 명시 | [C03], [V02] |
-| N16 | A의 App/Job | `<ACS리소스명>.communication.azure.com` | TCP 443 | 메일 기능 사용 시 필수. 실제 ACS 리소스 endpoint로 제한 | [C06], [S15] |
+| N12 | B | `azure.microsoft.com`, `www.microsoft.com` | TCP 443 | Learn에 없는 공지·문서 본문이 필요한 경우 해당 호스트만 추가. A의 RSS용 N10을 B에 자동 확대하지 않음 | [C02] |
+| N13 | B | `techcommunity.microsoft.com`, `devblogs.microsoft.com`, `github.com` | TCP 443 | 실제 필요한 추가 기술 문서·샘플 호스트만 선택. 커뮤니티 본문 보강을 유지하면 Tech Community도 필요 | [C02], [C03] |
+| N14 | B | `aka.ms`, `go.microsoft.com` | TCP 443 | 단축 링크가 실제 필요할 때만. 검증된 최종 허용 URL을 직접 사용하면 제외 가능 | [C02] |
+| N15 | B | `azureweekly.info` | TCP 443 | 커뮤니티 보강을 유지할 때. **기본 활성**이므로 제외 시 Hosted의 비활성 설정 확인 필수 | [C03], [V02] |
+| N16 | A의 App/Job | `<ACS리소스명>.communication.azure.com` | TCP 443 | **메일 전송을 사용하면 필수**, 미구성/미사용이면 제외. wildcard 대신 실제 리소스 endpoint 하나 | [C06], [S15] |
 
 N12–N15를 차단해도 프로세스가 기동될 수 있지만, **근거 수집 범위 축소와 정상 운영은
 동일하지 않다.** 문서 조사를 지원하려면 코드의 허용 호스트와 방화벽 정책을 함께 맞춘다.
@@ -157,14 +198,18 @@ Learn MCP는 Foundry 관리형 도구/data proxy 경로이며, 로컬 문서 fet
 메일 본문·수신자 정보는 ACS로, 테넌트 근거는 설정된 Foundry 경로로 전송되므로
 네트워크 허용과 별도로 고객의 데이터 처리·지역 정책도 승인해야 한다.
 
-### 3.3 로그·관측·선택 기능
+### 3.3 로그·관측 — 사용 기능만 추가
+
+**서비스 문서에 나오는 모든 alias·신규 endpoint·wildcard를 동시에 요청하지 않는다.**
+현재 설정된 실제 endpoint와 사용 기능을 먼저 확인한다. 기능이 켜져 있다면 의도된 전송
+실패를 정상으로 처리하지 말고, 필요한 규칙을 승인하거나 해당 기능을 명시적으로 비활성화한다.
 
 | 규칙 | 출발지 | 대상 | 포트 | 적용 조건 | 근거 |
 |---|---|---|---|---|---|
 | O01 | A | Service Tag `AzureMonitor` | TCP 443 | ACA의 기존 Log Analytics/Monitor 연결을 사용할 때 | [S02], [S14] |
-| O02 | A/B의 Logs Query 호출자 | `api.loganalytics.io`, `*.api.loganalytics.io`, `api.loganalytics.azure.com`, `api.monitor.azure.com`, `*.api.monitor.azure.com` | TCP 443 | Admin 오류 이력·분석 도구의 Logs Query API. 조사한 SDK 기본 주소는 `api.loganalytics.io` | [C07], [S14] |
-| O03 | A/B의 Logs Ingestion 호출자 | 설정된 실제 DCR/DCE ingestion FQDN, 통상 `*.ingest.monitor.azure.com` 계열 | TCP 443 | `AzBriefFailures_CL` 등 별도 수집을 구성할 때. 실제 endpoint와 필요한 서비스 redirect를 확인 | [C08], [S14] |
-| O04 | 활성화된 Insights 호출자 | `settings.sdk.monitor.azure.com`, `*.in.applicationinsights.azure.com`, `*.livediagnostics.monitor.azure.com` | TCP 443 | Application Insights 연결·계측을 실제 사용할 때. KT 초기 배포에는 없음 | [C08], [S07], [S14] |
+| O02 | A/B의 Logs Query 호출자 | 현재 SDK의 `api.loganalytics.io` 또는 실제 설정한 Logs Query endpoint | TCP 443 | 기능 사용 시 해당 주소부터. 다른 alias/서비스 redirect는 실제 필요 확인 후 추가 | [C07], [S14] |
+| O03 | A/B의 Logs Ingestion 호출자 | 설정된 **실제 DCR/DCE ingestion FQDN** | TCP 443 | `AzBriefFailures_CL` 등 별도 수집을 구성할 때만. 기본적으로 `*.ingest.monitor.azure.com` 전체를 신청하지 않음 | [C08], [S14] |
+| O04 | 활성화된 Insights 호출자 | 실제 regional ingestion/live endpoint와 사용하는 설정 endpoint | TCP 443 | KT 초기 배포에는 없음. 연결·활성 기능 확인 후 정확한 FQDN을 신청하며 아래 공식 범위는 참고용 | [C08], [S07], [S14] |
 | O05 | Foundry hosting library | `agent365.svc.cloud.microsoft` | TCP 443 | A365 데이터 수집이 켜진 경우. **기본 on/off는 조사 문서에서 미확인**, 실제 상태 확인 | [S07], [S08] |
 | O06 | Foundry cloud evaluation 실행 경로 | `AzureMachineLearning` 태그 또는 해당 리전의 `<region>.api.azureml.ms`, `*.dataproxy.<region>.api.azureml.ms` | TCP 443 | 해당 cloud evaluation/catalog 기능을 사용할 때. 일반 Quality Reviewer/G-Eval 호출만으로 추가하지 않음 | [S07] |
 
@@ -172,6 +217,11 @@ Learn MCP는 Foundry 관리형 도구/data proxy 경로이며, 로컬 문서 fet
   이 표는 AMPLS 구축 완료를 전제하지 않는다.
 - Azure Monitor의 전체 제품 목록에는 Profiler, Availability, JS SDK, AMA 등 다른 기능도
   포함된다. 사용하지 않는 기능의 endpoint를 모두 가져오지 않는다.
+- O02의 공식 목록에는 `*.api.loganalytics.io`, `api.loganalytics.azure.com`,
+  `api.monitor.azure.com`, `*.api.monitor.azure.com`도 있다. 모두를 동시에 호출한다는 뜻은
+  아니므로 실제 SDK/설정/redirect에 필요한 것만 추가한다. O04의 공식 범위는
+  `settings.sdk.monitor.azure.com`, `*.in.applicationinsights.azure.com`,
+  `*.livediagnostics.monitor.azure.com`이며, 가능한 경우 실제 리전 endpoint로 좁힌다.
 - A365 수집을 사용하지 않으면 지원되는 `a365LoggingEnabled=false` 설정을 검토한다.
   문서상 **새로 시작하는 세션부터** 연결 시도가 멈추고 기존 세션은 계속 시도할 수 있다.
 - `AzureFrontDoor.Frontend`는 A365 문서에 있는 넓은 대안이다. 가능하면 O05의 정확한
@@ -373,6 +423,8 @@ Web Search를 켜는 경우 공개 endpoint 사용은 문서화되어 있지만,
 각 항목은 **해당 실제 출발지**에서 시험하고 시각, trace/run ID, 목적지 FQDN, 포트,
 NVA rule/action을 기록한다. 개발 PC의 성공은 고객 subnet의 성공으로 대체할 수 없다.
 
+- [ ] 3.1 최초 요청안과 추가 승인을 분리했으며, 제외한 기능의 실제 비활성 상태와 근거 수집 범위 축소를 승인했다.
+- [ ] N15를 제외했다면 Hosted runtime의 `COMMUNITY_INSIGHTS_ENABLED=false`를 확인했다. 문서 변경만으로 적용됐다고 판단하지 않았다.
 - [ ] A/B subnet의 UDR·NVA·DNS·NAT 경로와 로컬 플랫폼 예외를 확인했다.
 - [ ] 정상 서비스 FQDN이 승인된 PE/내부 ingress IP로 해석된다.
 - [ ] 새 revision/새 replica에서 GHCR·MCR image pull이 성공했다. 기존 캐시만 시험하지 않았다.

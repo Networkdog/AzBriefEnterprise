@@ -242,14 +242,34 @@
             }
           },
           {
+            "name": "containerAppsApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27')]"
+            }
+          },
+          {
             "name": "containerAppName",
             "type": "Microsoft.Common.TextBox",
             "label": "AzBrief Container App",
             "defaultValue": "ca-azbrief-kt",
             "constraints": {
               "required": true,
-              "regex": "^(?!.*--)[a-z][a-z0-9-]{0,30}[a-z0-9]$",
-              "validationMessage": "2~32자, 소문자로 시작하고 소문자나 숫자로 끝나야 합니다. 연속 하이픈은 사용할 수 없습니다."
+              "validations": [
+                {
+                  "regex": "^(?!.*--)[a-z][a-z0-9-]{0,30}[a-z0-9]$",
+                  "message": "2~32자, 소문자로 시작하고 소문자나 숫자로 끝나야 합니다. 연속 하이픈은 사용할 수 없습니다."
+                },
+                {
+                  "isValid": "[and(contains(coalesce(steps('names').containerAppsApi, parse('{}')), 'value'), not(contains(coalesce(steps('names').containerAppsApi, parse('{}')), 'error')), empty(coalesce(steps('names').containerAppsApi.nextLink, '')))]",
+                  "message": "기존 앱 조회를 완료하지 못했습니다. ARM 읽기 권한과 조회 결과를 확인하십시오. 페이지가 남은 조회는 신규 설치로 간주하지 않습니다. CLI 사전검사로 진행할 수도 있습니다."
+                },
+                {
+                  "isValid": "[empty(filter(coalesce(steps('names').containerAppsApi.value, parse('[]')), (app) => and(equals(toLower(app.type), 'microsoft.app/containerapps'), equals(toLower(app.name), toLower(steps('names').containerAppName)), not(equals(app.tags.deploymentProfile, 'kt-private-foundation')))))]",
+                  "message": "같은 이름의 앱이 KT 초기 배포 소유가 아닙니다. 기존 앱과 API 키를 덮어쓸 수 없습니다."
+                }
+              ]
             }
           },
           {
@@ -268,7 +288,7 @@
       },
       {
         "name": "options",
-        "label": "이미지·API·DNS·로그",
+        "label": "이미지·인증·DNS·로그",
         "elements": [
           {
             "name": "costNotice",
@@ -282,7 +302,7 @@
             "name": "registryAuthMode",
             "type": "Microsoft.Common.DropDown",
             "label": "GHCR 이미지 인증",
-            "defaultValue": "비공개 패키지 — 읽기 토큰 사용",
+            "defaultValue": "Public 전환과 익명 다운로드를 확인한 패키지",
             "constraints": {
               "required": true,
               "allowedValues": [
@@ -290,7 +310,7 @@
                 { "label": "Public 전환과 익명 다운로드를 확인한 패키지", "value": "Anonymous" }
               ]
             },
-            "toolTip": "게시된 패키지는 처음에는 비공개입니다. Public으로 변경하고 익명 다운로드를 검증하기 전에는 Anonymous를 선택하지 마십시오. Azure 관리 ID로 GHCR에 인증할 수 없습니다."
+            "toolTip": "공개 패키지는 PAT 없이 다운로드합니다. 패키지의 Public 전환과 익명 다운로드를 확인한 뒤 진행하십시오. 비공개 접근이 필요한 경우에만 읽기 토큰 모드를 사용합니다."
           },
           {
             "name": "registryUsername",
@@ -313,17 +333,11 @@
             "options": { "hideConfirmation": true }
           },
           {
-            "name": "apiKey",
-            "type": "Microsoft.Common.PasswordBox",
-            "label": {
-              "password": "AzBrief API 인증 키",
-              "confirmPassword": "API 인증 키 확인"
-            },
-            "toolTip": "32~256자의 별도 무작위 키를 입력하고 두 단계에서 같은 키를 유지하십시오. GitHub PAT과 다른 값이어야 합니다. Entra 설정 전에도 분석 API를 무인증으로 노출하지 않기 위한 키입니다.",
-            "constraints": {
-              "required": true,
-              "regex": "^\\S{32,256}$",
-              "validationMessage": "공백 없는 32~256자의 별도 무작위 API 키가 필요합니다."
+            "name": "apiKeyNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Info",
+              "text": "AzBrief API 키는 신규 설치에서 자동 생성하여 Container App Secret에 저장합니다. 기존 앱은 저장된 키를 재사용하며 API 인증은 유지됩니다. 배포자는 기존 비밀 값 조회 권한이 필요합니다. 키 조회 실패나 누락은 자동 교체하지 않고 배포를 중단합니다."
             }
           },
           {
@@ -479,7 +493,7 @@
       "containerAppsEnvironmentName": "[steps('names').containerAppsEnvironmentName]",
       "containerAppName": "[steps('names').containerAppName]",
       "foundryHostedAgentName": "[steps('names').foundryHostedAgentName]",
-      "apiKey": "[steps('options').apiKey]",
+      "reuseExistingApiKey": "[not(empty(filter(steps('names').containerAppsApi.value, (app) => and(equals(toLower(app.type), 'microsoft.app/containerapps'), equals(toLower(app.name), toLower(steps('names').containerAppName))))))]",
       "containerRegistryAuthMode": "[steps('options').registryAuthMode]",
       "containerRegistryUsername": "[if(equals(steps('options').registryAuthMode, 'Credentials'), steps('options').registryUsername, '')]",
       "containerRegistryPassword": "[if(equals(steps('options').registryAuthMode, 'Credentials'), steps('options').registryPassword, '')]",

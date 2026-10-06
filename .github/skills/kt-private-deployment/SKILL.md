@@ -51,7 +51,8 @@ contract expects two standard Enterprise Portal links and one KT Portal link in 
 | Resource exposure | Disable public network access on Foundry, storage, Cosmos DB, Search, and the Container Apps Environment at creation. |
 | Initial application | Use the pinned GHCR AzBrief image on 8000 `/health`, not hello-world. Keep API protection and disabled Admin/Archive until Entra setup. Image startup is not operational readiness. |
 | Application image | Use an approved immutable digest and matching registry authentication. Do not deploy `latest`. |
-| GHCR credentials | Packages start private. Use an explicit read-only PAT via App secret; Anonymous requires verified public pulls. Never grant GHCR an Azure identity role or deploy the publisher token. |
+| GHCR credentials | Default Anonymous after verifying Public visibility and anonymous layer downloads. Explicit Credentials accepts only a read-only PAT via App secret. Never grant GHCR an Azure identity role or deploy the publisher token. |
+| API key lifecycle | No Portal key input. ARM generates the initial secure random key; complete Portal/CLI ARM inventory selects existing-secret reuse. Read failures or missing keys never trigger rotation. Keep API authentication. |
 | Identities | Keep Container Apps control-plane, Foundry project, Hosted Agent, and Azure MCP identities distinct. |
 | Storage | One `storageAccountName` and one Blob PE. Keep app state/archive in separate containers with container-scoped App/Job grants. Foundry's required account roles share the trust boundary; do not claim hard isolation. |
 
@@ -134,10 +135,17 @@ The preflight must remain read-only and rerun immediately before validate, what-
 6. Verify existing resource ownership before any write.
 7. Permit the uncustomized legacy hello-world to move to GHCR. Reject foundation reruns that would
    overwrite a promoted image or operational settings even when the digest is unchanged.
-8. Require a separate API key (32–256 non-whitespace characters), validate secure-string types
-   case-insensitively, and require private-registry credentials only in Credentials mode. Never
-   reuse the registry PAT as the API key or leave an unused password in Anonymous mode. Redact
-   errors and what-if diagnostics with the shared `src/error_logging.py` helpers.
+8. Omit `apiKey` by default so ARM evaluates its secure random default, never serialize the
+   `newGuid()` expression as a literal key. Validate optional initial keys (32–256 non-whitespace
+   characters) and secure-string types case-insensitively. Derive reserved `reuseExistingApiKey`
+   from fresh owned app inventory before each stage; an existing real app needs exactly one
+   `orchestrator-api-key` secret. ARM reuses that secret through `listSecrets` and must fail on
+   unreadable/missing secrets, not generate a replacement. Direct ARM callers must set the reuse
+   decision explicitly; serialize deployments to one app. Portal blocks failed/paged inventory
+   and leaves legacy hello-world transitions to the CLI. Keep API/MCP authentication unchanged.
+9. Require private-registry credentials only in Credentials mode. Never reuse the registry PAT
+   as the API key or leave an unused password in Anonymous mode. Redact errors and what-if
+   diagnostics with the shared `src/error_logging.py` helpers.
 
 Never infer that a same-name zone in the deployment resource group is the linked canonical zone.
 Compare full ARM IDs.
@@ -209,6 +217,10 @@ IDs. Never add a broad 500 retry or silent success fallback.
 
 GitHub Actions is not required, but a controlled deployment path is.
 Maintain source/phase-specific destinations and evidence in `infra/NETWORK_REQUIREMENTS.md`.
+Use section 3.1 for the initial platform/core-analysis request, not all of section 3. Treat allowed
+document hosts as a maximum fetch boundary, not mandatory egress. Optional-source/telemetry additions
+need feature approval; excluding default-on community fetches requires an explicit Hosted runtime
+setting and accepts narrower evidence coverage. Never claim documentation changed the runtime.
 Separate Internet egress, private endpoints, DNS/platform-local traffic, builders and browsers.
 Preserve the Workload Profiles versus Consumption-only distinction and explicit remote-build,
 Cosmos-mode, A365 and TLS-inspection acceptance gaps; do not turn observed redirects into a

@@ -20,7 +20,7 @@ KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오
 > 여섯 Prompt Agent 및 Hosted Agent 게시, Job·Entra 인증·메일·스케줄 설정은
 > [애플리케이션 전환](#애플리케이션-전환) 단계입니다. `ktFoundation.applicationReady`는
 > 의도적으로 `false`이며 일반 `customerSetup` 출력과 호환되지 않습니다.
-> 초기 API 키는 필수이며, Entra 설정 전 Admin/Archive/Feedback은 비활성 상태로 유지합니다.
+> 초기 API 키는 자동 생성·저장하며 인증은 유지합니다. Entra 설정 전 Admin/Archive/Feedback은 비활성 상태로 유지합니다.
 
 > **임시 수동 PE 진단:** `deployContainerAppsPrivateEndpoint=false`가 기본값입니다.
 > Container Apps Environment와 앱은 생성하지만 그 Environment용 PE 및 DNS zone group
@@ -44,7 +44,7 @@ KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오
 | Container Apps Environment | Workload Profiles 유형, **Consumption** 프로필, 전용 subnet 주입, Public Network Access 비활성 |
 | Container Apps inbound | 내부 Environment 유지. `managedEnvironments` PE는 기본 수동 생성, 옵션으로 자동 생성 재개 |
 | Container App | **0.25 vCPU / 0.5 GiB**, 최소 replica 0 / 최대 1, HTTPS, GHCR AzBrief 고정 digest, 내부 포트 **8000**, readiness **`/health`** |
-| 초기 인증 | 별도 API 키 필수. 비공개 GHCR은 읽기 전용 PAT을 Container App secret으로 전달. Entra 설정 전 Admin/Archive는 비활성 |
+| 초기 인증 | API 키 자동 생성 및 기존 키 재사용. 공개 GHCR은 PAT 없이 다운로드. Entra 설정 전 Admin/Archive는 비활성 |
 | Application Insights | **배포하지 않음**. Foundry 연결, 계측 설정, publishing 역할도 생성하지 않음 |
 | Log Analytics | 기존 workspace ID를 선택적으로 연결. 새 workspace·DCR·AMPLS는 생성하지 않음 |
 | 추가 비용 리소스 | 새 VNet, 전용 D4 노드, NAT Gateway, Firewall, ACR, 모델 배포, scheduler Job, 메일 서비스는 생성하지 않음 |
@@ -76,16 +76,27 @@ ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e6
   · 태그 `sha-7bf1983b4d4c8558c3105342206b86757d367558`.
 - `linux/amd64`, 비-root `appuser`, `uvicorn src.main:app`, 포트 8000입니다.
   호환을 위해 매개변수 이름 `bootstrapImage`는 유지하지만 값은 더 이상 hello-world가 아닙니다.
-- 패키지는 최초 게시 시 **Private**입니다. 기본 `containerRegistryAuthMode=Credentials`에서는
-  패키지 읽기 권한이 있는 사용자의 이름과 별도 **PAT(classic), `read:packages`**를 입력합니다.
-  게시용 `write:packages` 토큰을 배포하지 마십시오. 토큰은 `ghcr-pull-token` App secret으로
-  전달하며 환경 변수·배포 출력에는 넣지 않습니다. 이 프로필은 Key Vault를 생성하지 않습니다.
-- 패키지 관리자가 Public으로 변경하고 **익명 다운로드를 검증한 뒤에만** `Anonymous`를
-  선택합니다. 이때 registry 자격 증명과 pull-token secret을 만들지 않습니다.
-  Azure 관리 ID는 GHCR의 로그인 수단이 아닙니다.
-- `apiKey`는 **공백 없는 32~256자의 별도 무작위 키**이며 두 단계에서 같은 값을 사용합니다.
-  GHCR PAT을 API 키로 재사용하지 마십시오. `orchestrator-api-key` App secret을
-  `API_KEY`의 `secretRef`로 연결해 분석 API를 무인증으로 열지 않습니다.
+- **2026-10-06 검증:** 패키지 Public 상태와 자격 증명 없는 전체 다운로드를 확인했습니다.
+  고정 manifest, config 및 8개 layer의 SHA-256이 일치했고 앱 소스 103개도 위 revision과
+  일치했습니다. 이는 개발 환경에서의 검증이며 KT 고객망의 egress·이미지 pull 성공을 보증하지 않습니다.
+- 기본 `containerRegistryAuthMode=Anonymous`는 PAT 입력 없이 다운로드하며 registry 자격
+  증명과 pull-token secret을 만들지 않습니다. 템플릿 선택만으로 패키지가 공개되지는 않습니다.
+  **Public 전환과 고정 digest의 익명 layer 다운로드를 확인한 뒤 배포하십시오.**
+  GitHub의 Public 전환은 되돌릴 수 없으므로 이미지의 비밀·고객 데이터 포함 여부를 먼저 확인합니다.
+- 비공개 접근이 필요한 경우에만 `Credentials`와 패키지 읽기 권한이 있는 사용자의 이름,
+  **PAT(classic), `read:packages`**를 지정합니다. 게시용 토큰을 배포하지 마십시오. 토큰은
+  `ghcr-pull-token` App secret으로만 전달합니다. Azure 관리 ID는 GHCR의 로그인 수단이 아닙니다.
+- Portal에서는 API 키를 입력하지 않습니다. 신규 앱은 ARM의 secure 기본값으로 **64자리
+  무작위 키**를 생성하고 `orchestrator-api-key` App secret에 저장합니다. `API_KEY`는 계속
+  `secretRef`로 연결되므로 분석 API와 MCP 인증은 유지됩니다. Key Vault는 추가하지 않습니다.
+- Portal/CLI는 ARM 인벤토리로 `reuseExistingApiKey`를 결정합니다. 기존 앱은 `listSecrets`로
+  저장된 키를 그대로 재사용하며 조회 실패·키 누락을 새 키로 대체하지 않습니다. 배포자에게
+  `Microsoft.App/containerApps/listSecrets/action` 권한이 필요합니다. 키는 Portal 입력·배포 출력에
+  노출하지 않습니다. 운영 API 호출에 필요할 때만 권한 있는 관리자가 App Secret을 조회하십시오.
+- Portal은 조회 실패·미완료 페이지·비소유 앱을 차단합니다. 같은 앱에 대한 배포는 직렬로
+  실행하고, raw ARM을 직접 호출할 때는 최신 인벤토리를 확인하여 `reuseExistingApiKey`를
+  명시해야 합니다. CLI에서는 이 값을 입력하지 않습니다. 키가 없는 순정 hello-world 전환은
+  CLI를 사용합니다. 선택적 초기 `apiKey`는 공백 없는 32~256자이며 기존 앱의 키 회전 수단이 아닙니다.
 - `foundryHostedAgentName`과 배포 프로젝트 endpoint, 제어면 UAMI, archive/checkpoint 경로를
   앱에 연결합니다. 이름을 설정하는 것은 Hosted Agent를 게시하거나 검증하는 작업이 아닙니다.
   `/`는 AzBrief JSON을 반환하지만 `/admin`, `/archive`는 후속 Entra/허용 목록 설정 전까지
@@ -98,7 +109,10 @@ GHCR도 외부 레지스트리입니다. 격리망에서는 `ghcr.io`와 이미�
 Packages 저장소 엔드포인트의 HTTPS/DNS 경로를 별도로 승인해야 합니다. GHCR 선택만으로
 인터넷 차단을 우회하지 못하며 ACA 플랫폼의 필수 egress도 그대로 필요합니다.
 출발지별 목적지·포트·적용 조건, 사설 DNS 및 미확정 사항과 인수 절차는
-[Network Requirements](../NETWORK_REQUIREMENTS.md)를 기준으로 고객사에 요청하십시오.
+[Network Requirements](../NETWORK_REQUIREMENTS.md)의 **3.1 최초 요청안**을 기준으로
+고객사에 요청하고, 3.2/3.3의 추가 출처·메일·관측 기능은 실제 사용 시 별도 승인하십시오.
+커뮤니티 목적지를 제외하려면 기본 활성인 보강 기능을 Hosted runtime에서 명시적으로
+꺼야 합니다. 문서 목록을 줄여도 실행 설정이 자동으로 바뀌지는 않습니다.
 고객 구독에 ACR을 만들지는 않습니다. 이번 이미지는 개발 ACR의 원격 빌더에서 만들고
 GitHub Actions 없이 GHCR로 복사했습니다. 빌드 컨텍스트에는 공개 revision의
 Dockerfile·requirements·src만 넣었으며 로컬 비밀·로그·데이터는 포함하지 않았습니다.
@@ -243,7 +257,7 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
 | 기본 사항 | 배포 구독·RG·지역 선택, 프라이빗 bootstrap 범위 안내 |
 | 기존 네트워크 | 같은 구독·지역의 기존 VNet 선택. 이름과 무관하게 역할별 기존 subnet을 선택하고 ARM 조회 CIDR·위임으로 후보 제한 |
 | 리소스 이름 | 일곱 기본 이름과 호출할 Hosted Agent 이름 편집, Storage 단일 입력 및 다섯 PE 대상 이름 충돌 차단 |
-| 이미지·API·DNS·로그 | GHCR 인증 방식·읽기 토큰, 별도 API 키, ACA PE 자동 생성 선택(기본 해제), Search/DNS/기존 Log Analytics 선택 |
+| 이미지·인증·DNS·로그 | GHCR 익명 다운로드 기본값·선택적 읽기 토큰, API 키 자동 관리 안내, ACA PE 자동 생성 선택(기본 해제), Search/DNS/기존 Log Analytics 선택 |
 | 단계·필수 확인 | 선택 요약, 기반/완료 단계 선택, 사전검사·소유권·비용·bootstrap 범위 동의 |
 
 VNet을 새로 만드는 옵션은 없습니다. 선택한 subnet 이름은 배포 매개변수로 전달되고 CIDR은
@@ -282,8 +296,9 @@ Private Endpoint의 zone group이 기존 zone을 참조하므로 Azure가 필요
 
 처음에는 기본 선택인 **1단계 — 기반·연결·권한만 배포**로 실행합니다
 (`deployCapabilityHost=false`). 성공 후 account Capability Host의 `Succeeded` 상태와 RBAC 전파를
-확인하고, **같은 RG·이름·네트워크·DNS·API 키·이미지 인증 입력**으로 다시 열어 **2단계 — project Capability Host 구성**을
+확인하고, **같은 RG·이름·네트워크·DNS·이미지 인증 입력**으로 다시 열어 **2단계 — project Capability Host 구성**을
 선택합니다. UI는 두 배포를 자동 실행하거나 account host 준비를 기다리지 않습니다.
+API 키는 기존 앱에서 자동 재사용하므로 다시 입력하지 않습니다.
 단계를 자동 처리하고 점유자·실제 IP 여유·이름 소유권을 검사하려면 CLI를 사용하십시오.
 운영 설정을 마친 환경에 초기 비활성 설정을 다시 적용하지 마십시오.
 
@@ -299,15 +314,17 @@ Private Endpoint의 zone group이 기존 zone을 참조하므로 Azure가 필요
 4. 배포/네트워크 작업과 RBAC 할당 권한. 예: 해당 범위 Contributor + Role Based Access Control
    Administrator. 기존 VNet과 중앙 DNS에 대해서도 필요한 join/link 권한을 별도로 확인합니다.
 5. Azure CLI와 이 저장소의 Python 가상 환경. 읽기·빌드 작업도 가상 환경을 활성화합니다.
-6. 별도 API 키와, 비공개 GHCR일 때 패키지 읽기 전용 토큰. 예시의 placeholder를 반드시 교체합니다.
+6. 공개 GHCR 이미지의 익명 다운로드 확인. 기본 예제에는 API 키·PAT이 없으며 ARM이 키를 생성합니다.
+  비공개 접근을 명시한 경우에만 별도 읽기 전용 토큰이 필요합니다. 재배포에는 기존 App secret 조회 권한이 필요합니다.
 
 입력 예시를 Git 제외 폴더에 복사해 기존 네트워크 placeholder와 CIDR을 실제 승인값으로 바꿉니다.
 신규 리소스 이름은 위 기본값이 채워져 있으므로 KT 표준·전역 가용성을 확인한 뒤 필요하면 변경합니다.
 기존 subnet을 그대로 재사용한다면 해당 CIDR 값을 비워도 됩니다. 값이 있으면 기존 prefix와
 정확히 일치해야 합니다. 예시에는 실제 고객 ID, 비밀, 개발 환경 기본값이 없습니다.
-실제 parameter 파일에는 비밀이 들어가므로 Git 제외·접근 제한된 위치에서만 보관하고
-채팅·로그에 붙여 넣지 마십시오. CLI는 secure-string 타입과 길이, 인증 모드, API 키와 토큰의
-분리를 검사하고 오류/what-if 로그의 비밀을 마스킹합니다. 임시 ARM parameter 파일은 실패 시에도
+선택적 초기 API 키나 private-registry 토큰을 넣은 parameter 파일은 Git 제외·접근 제한된
+위치에서만 보관하고 채팅·로그에 붙여 넣지 마십시오. CLI는 입력한 secure-string 타입과 길이,
+인증 모드, API 키와 토큰의 분리를 검사하고 오류/what-if 로그의 비밀을 마스킹합니다.
+생략한 `apiKey`는 ARM이 평가하도록 두며 기본값 식을 실제 키 문자열로 전달하지 않습니다. 임시 ARM parameter 파일은 실패 시에도
 삭제됩니다. 이 검사는 실제 GHCR 권한이나 격리망 연결성 검증을 대신하지 않습니다.
 
 ```powershell

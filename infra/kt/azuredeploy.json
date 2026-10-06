@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "2194624537227359148"
+      "templateHash": "2600986516319251728"
     }
   },
   "parameters": {
@@ -189,21 +189,28 @@
     },
     "apiKey": {
       "type": "securestring",
+      "defaultValue": "[replace(format('{0}{1}', newGuid(), newGuid()), '-', '')]",
       "minLength": 32,
       "maxLength": 256,
       "metadata": {
-        "description": "Independent random API key, at least 32 characters. Reuse the same key in both stages. Never use a GitHub PAT as the application API key."
+        "description": "Initial application API key. ARM generates a random secure value when omitted; existing installations always retain their stored key. Never use a GitHub PAT."
+      }
+    },
+    "reuseExistingApiKey": {
+      "type": "bool",
+      "metadata": {
+        "description": "Derived from live ARM inventory by the Portal or CLI. Required explicitly for direct ARM deployments: true reuses the existing app secret and fails if it cannot be read."
       }
     },
     "containerRegistryAuthMode": {
       "type": "string",
-      "defaultValue": "Credentials",
+      "defaultValue": "Anonymous",
       "allowedValues": [
         "Credentials",
         "Anonymous"
       ],
       "metadata": {
-        "description": "Credentials is required for the initially private GHCR package. Choose Anonymous only after verifying public anonymous pulls."
+        "description": "Anonymous downloads the public GHCR image without a PAT. Credentials is retained for explicitly approved private registry access."
       }
     },
     "containerRegistryUsername": {
@@ -315,6 +322,12 @@
       "dependsOn": [
         "privateEndpoints"
       ]
+    },
+    "existingContainerApp": {
+      "existing": true,
+      "type": "Microsoft.App/containerApps",
+      "apiVersion": "2026-01-01",
+      "name": "[parameters('containerAppName')]"
     },
     "storageAccount": {
       "existing": true,
@@ -28751,7 +28764,7 @@
           },
           "registries": "[if(variables('credentialRegistry'), createObject('value', createArray(createObject('server', 'ghcr.io', 'username', parameters('containerRegistryUsername'), 'passwordSecretRef', 'ghcr-pull-token'))), createObject('value', createArray()))]",
           "secrets": {
-            "value": "[concat(createArray(createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey'))), if(variables('credentialRegistry'), createArray(createObject('name', 'ghcr-pull-token', 'value', parameters('containerRegistryPassword'))), createArray()))]"
+            "value": "[concat(createArray(if(parameters('reuseExistingApiKey'), filter(listSecrets('existingContainerApp', '2026-01-01').value, lambda('secret', equals(lambdaVariables('secret').name, 'orchestrator-api-key')))[0], createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey')))), if(variables('credentialRegistry'), createArray(createObject('name', 'ghcr-pull-token', 'value', parameters('containerRegistryPassword'))), createArray()))]"
           },
           "scaleSettings": {
             "value": {

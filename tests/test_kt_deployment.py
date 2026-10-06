@@ -58,6 +58,7 @@ def values(template: dict) -> dict:
         foundrySubnetAddressPrefix="10.70.0.32/27",
         containerAppsSubnetAddressPrefix="10.70.0.64/27",
         apiKey="test-only-api-key-0123456789abcdef0123456789abcdef",
+        containerRegistryAuthMode="Credentials",
         containerRegistryPassword="test-only-ghcr-read-token",
     )
     return result
@@ -121,13 +122,13 @@ def test_new_resource_names_have_editable_literal_defaults(
         assert 3 <= len(expected) <= 32
 
 
-def test_network_and_application_api_key_are_required(template: dict):
+def test_network_and_key_reuse_decision_are_required(template: dict):
     for parameter in (
         "location",
         "virtualNetworkResourceGroupName",
         "virtualNetworkName",
         *SUBNET_NAMES,
-        "apiKey",
+        "reuseExistingApiKey",
     ):
         assert "defaultValue" not in template["parameters"][parameter]
     defaulted_name_parameters = {
@@ -151,6 +152,7 @@ def test_cli_resolves_prefilled_names_from_network_and_authentication_inputs(
             "virtualNetworkName",
             *SUBNET_NAMES,
             "apiKey",
+            "containerRegistryAuthMode",
             "containerRegistryPassword",
         )
     }
@@ -213,6 +215,8 @@ def test_example_prefills_the_same_resource_names():
     assert example["foundrySubnetName"]["value"] == "<existing-foundry-subnet-name>"
     assert example["containerAppsSubnetName"]["value"] == "<existing-container-apps-subnet-name>"
     assert example["deployContainerAppsPrivateEndpoint"]["value"] is False
+    assert example["containerRegistryAuthMode"]["value"] == "Anonymous"
+    assert not {"apiKey", "containerRegistryPassword", "containerRegistryUsername"} & example.keys()
 
 
 @pytest.fixture(scope="module")
@@ -247,9 +251,11 @@ def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
         if isinstance(node, ast.Constant):
             return node.value
         if isinstance(node, ast.Name):
-            return {"true": True, "false": False, **bindings}[node.id]
+            return {"true": True, "false": False, "null": None, **bindings}[node.id]
         if isinstance(node, ast.Attribute):
             value = evaluate(node.value, bindings)
+            if value is None:
+                return None
             assert isinstance(value, dict)
             return value.get(node.attr)
         assert isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
@@ -269,13 +275,18 @@ def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
             assert arguments == ["names"]
             return names
         if function == "parse":
-            assert arguments == ["[]"]
-            return []
+            assert arguments in (["[]"], ["{}"])
+            return json.loads(arguments[0])
         if function == "coalesce":
             return next(value for value in arguments if value is not None)
         if function == "empty":
-            assert len(arguments) == 1 and isinstance(arguments[0], list)
+            assert len(arguments) == 1 and isinstance(arguments[0], (list, dict, str))
             return len(arguments[0]) == 0
+        if function == "contains":
+            return arguments[1] in arguments[0]
+        if function == "toLower":
+            assert len(arguments) == 1 and isinstance(arguments[0], str)
+            return arguments[0].lower()
         if function == "equals":
             assert len(arguments) == 2
             return type(arguments[0]) is type(arguments[1]) and arguments[0] == arguments[1]
@@ -312,7 +323,7 @@ def test_kt_wizard_has_distinct_steps_and_matching_outputs(wizard: dict, templat
     secure_outputs = {
         key for key in outputs if template["parameters"][key]["type"].casefold() == "securestring"
     }
-    assert secure_outputs == {"apiKey", "containerRegistryPassword"}
+    assert secure_outputs == {"containerRegistryPassword"}
     assert not secure_outputs & template["outputs"]["ktFoundation"]["value"].keys()
 
 
@@ -820,13 +831,24 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
     assert template["parameters"]["apiKey"]["type"].casefold() == "securestring"
     assert template["parameters"]["apiKey"]["minLength"] == 32
     assert template["parameters"]["apiKey"]["maxLength"] == 256
+    assert template["parameters"]["apiKey"]["defaultValue"].count("newGuid()") == 2
+    assert template["parameters"]["containerRegistryAuthMode"]["defaultValue"] == "Anonymous"
     assert template["parameters"]["containerRegistryPassword"]["type"].casefold() == "securestring"
-    assert "parameters('apiKey')" in app["secrets"]
+    api_secret = app["secrets"]
+    assert "if(parameters('reuseExistingApiKey')," in api_secret
+    assert "listSecrets(" in api_secret and ")[0]" in api_secret
+    assert "parameters('apiKey')" in api_secret
     assert "parameters('containerRegistryPassword')" in app["secrets"]
     assert "ghcr.io" in app["registries"]
     assert "ghcr-pull-token" in app["registries"]
     assert "variables('credentialRegistry')" in app["registries"]
     assert "managedIdentity" not in app["registries"]
+    app_template = template["resources"]["containerApp"]["properties"]["template"]
+    assert app_template["parameters"]["secrets"]["items"]["$ref"] == "#/definitions/secretType"
+    assert (
+        app_template["definitions"]["secretType"]["properties"]["value"]["type"].casefold()
+        == "securestring"
+    )
     outputs = template["outputs"]["ktFoundation"]["value"]
     assert outputs["containerImage"] == "[parameters('bootstrapImage')]"
     assert outputs["containerRegistryAuthMode"] == "[parameters('containerRegistryAuthMode')]"
@@ -837,25 +859,76 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
             assert parameters["enableTelemetry"]["value"] is False
 
 
-def test_wizard_requires_separate_masked_api_and_registry_credentials(wizard: dict):
+def test_wizard_defaults_to_anonymous_and_does_not_request_an_api_key(wizard: dict):
     options = _ui_controls(wizard, "options")
-    assert options["registryAuthMode"]["defaultValue"] == "비공개 패키지 — 읽기 토큰 사용"
-    for name in ("registryPassword", "apiKey"):
-        assert options[name]["type"] == "Microsoft.Common.PasswordBox"
-        assert options[name]["constraints"]["required"] is True
-        assert "defaultValue" not in options[name]
+    assert (
+        options["registryAuthMode"]["defaultValue"] == "Public 전환과 익명 다운로드를 확인한 패키지"
+    )
+    assert options["registryPassword"]["type"] == "Microsoft.Common.PasswordBox"
+    assert options["registryPassword"]["constraints"]["required"] is True
+    assert "defaultValue" not in options["registryPassword"]
     assert options["registryPassword"]["visible"] == (
         "[equals(steps('options').registryAuthMode, 'Credentials')]"
     )
     assert options["registryUsername"]["visible"] == options["registryPassword"]["visible"]
-    assert options["apiKey"]["constraints"]["regex"] == r"^\S{32,256}$"
-    assert "같은 키" in options["apiKey"]["toolTip"]
+    assert "apiKey" not in options
+    assert "apiKey" not in wizard["outputs"]
+    assert "자동 생성" in options["apiKeyNotice"]["options"]["text"]
+    assert "재사용" in options["apiKeyNotice"]["options"]["text"]
     assert "게시용 write:packages" in options["registryPassword"]["toolTip"]
-    assert wizard["outputs"]["apiKey"] == "[steps('options').apiKey]"
     assert wizard["outputs"]["containerRegistryPassword"] == (
         "[if(equals(steps('options').registryAuthMode, 'Credentials'), "
         "steps('options').registryPassword, '')]"
     )
+
+
+@pytest.mark.parametrize(
+    ("inventory", "valid", "reuse"),
+    [
+        ({"value": []}, True, False),
+        ({}, False, None),
+        ({"error": {"code": "Forbidden"}}, False, None),
+        ({"value": [], "nextLink": "/another-page"}, False, None),
+        ({"value": [], "error": {"code": "Forbidden"}}, False, None),
+        ({"value": [{"type": "Microsoft.Storage/storageAccounts", "name": "other"}]}, True, False),
+        (
+            {"value": [{"type": "Microsoft.App/containerApps", "name": "ca-azbrief-kt"}]},
+            False,
+            None,
+        ),
+        (
+            {
+                "value": [
+                    {
+                        "type": "Microsoft.App/containerApps",
+                        "name": "CA-AZBRIEF-KT",
+                        "tags": {"deploymentProfile": kt.PROFILE},
+                    }
+                ]
+            },
+            True,
+            True,
+        ),
+    ],
+)
+def test_wizard_reuses_existing_keys_only_after_complete_owned_arm_inventory(
+    wizard: dict, inventory: dict, valid: bool, reuse: bool | None
+):
+    names = _ui_controls(wizard, "names")
+    request = names["containerAppsApi"]["request"]
+    assert request["method"] == "GET"
+    assert "/resources?api-version=2021-04-01" in request["path"]
+    assert "$filter=resourceGroup%20eq%20%27" in request["path"]
+    assert "resourceGroup().name" in request["path"]
+    context = {"containerAppsApi": inventory, "containerAppName": "ca-azbrief-kt"}
+    guards = [
+        rule["isValid"]
+        for rule in names["containerAppName"]["constraints"]["validations"]
+        if "isValid" in rule
+    ]
+    assert all(_evaluate_ui_guard(guard, context) for guard in guards) is valid
+    if valid:
+        assert _evaluate_ui_guard(wizard["outputs"]["reuseExistingApiKey"], context) is reuse
 
 
 def test_kt_readmes_reference_the_actual_template_image(template: dict):
@@ -1038,6 +1111,7 @@ class FakeAzure(kt.AzureCli):
         self.dns_registration_enabled = False
         self.linked_dns_zones: dict[str, str] = {}
         self.host_target_override = ""
+        self.application: dict | None = None
 
     def json(self, *args: str) -> Any:
         self.calls.append(args)
@@ -1057,6 +1131,12 @@ class FakeAzure(kt.AzureCli):
         self.calls.append(("get", resource_id, api_version))
         if resource_id == VNET:
             return copy.deepcopy(self.vnet)
+        if (
+            resource_id
+            == (f"{GROUP}/providers/Microsoft.App/containerApps/{self.values['containerAppName']}")
+            and self.application is not None
+        ):
+            return {"properties": copy.deepcopy(self.application)}
         for spec in kt.endpoint_specs(self.values, GROUP):
             if resource_id == spec["target"]:
                 return {
@@ -1154,6 +1234,9 @@ class FakeAzure(kt.AzureCli):
         self.deployments.append(copy.deepcopy(values))
         if mode == "create":
             self.stage += 1
+            app_id = f"{GROUP}/providers/Microsoft.App/containerApps/{values['containerAppName']}"
+            self.resources[app_id] = {"id": app_id, "tags": {"deploymentProfile": kt.PROFILE}}
+            self.application = _foundation_app(values)
             for role, name_parameter, prefix, create_flag, _ in kt.SUBNETS:
                 if values[create_flag]:
                     self.vnet["properties"]["subnets"].append(
@@ -1207,6 +1290,8 @@ def test_deploy_stages_reinventory_before_host_and_never_rewrite_subnets(
     assert len(cli.deployments) == 2
     assert cli.deployments[0]["deployCapabilityHost"] is False
     assert cli.deployments[1]["deployCapabilityHost"] is True
+    assert cli.deployments[0]["reuseExistingApiKey"] is False
+    assert cli.deployments[1]["reuseExistingApiKey"] is True
     assert all(cli.deployments[0][row[3]] for row in kt.SUBNETS)
     assert not any(cli.deployments[1][row[3]] for row in kt.SUBNETS)
     assert len(cli.vnet["properties"]["subnets"]) == 3
@@ -1349,14 +1434,23 @@ def _foundation_app(values: dict) -> dict:
         "configuration": {
             "activeRevisionsMode": "Single",
             "ingress": {"targetPort": 8000},
-            "secrets": [{"name": "orchestrator-api-key"}, {"name": "ghcr-pull-token"}],
-            "registries": [
-                {
-                    "server": "ghcr.io",
-                    "username": "Networkdog",
-                    "passwordSecretRef": "ghcr-pull-token",
-                }
-            ],
+            "secrets": [{"name": "orchestrator-api-key"}]
+            + (
+                [{"name": "ghcr-pull-token"}]
+                if values["containerRegistryAuthMode"] == "Credentials"
+                else []
+            ),
+            "registries": (
+                [
+                    {
+                        "server": "ghcr.io",
+                        "username": "Networkdog",
+                        "passwordSecretRef": "ghcr-pull-token",
+                    }
+                ]
+                if values["containerRegistryAuthMode"] == "Credentials"
+                else []
+            ),
         },
     }
 
@@ -1383,8 +1477,68 @@ def test_kt_image_can_replace_plain_legacy_or_reuse_unchanged_foundation(
         )
 
     monkeypatch.setattr(cli, "get", get)
+    prepared = kt.prepare(cli, values)
+    assert prepared["reuseExistingApiKey"] is not legacy
     kt.run(cli, values, "preflight")
     assert not cli.deployments
+
+
+@pytest.mark.parametrize("secret_count", [0, 2])
+def test_existing_application_never_regenerates_a_missing_or_ambiguous_key(
+    monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict, secret_count: int
+):
+    cli = FakeAzure(values, vnet)
+    app_id = f"{GROUP}/providers/Microsoft.App/containerApps/{values['containerAppName']}"
+    props = _foundation_app(values)
+    props["configuration"]["secrets"] = [
+        {"name": "orchestrator-api-key"} for _ in range(secret_count)
+    ]
+    cli.resources[app_id] = {"id": app_id, "tags": {"deploymentProfile": kt.PROFILE}}
+    original_get = cli.get
+
+    def get(resource_id: str, api_version: str) -> dict:
+        return (
+            {"properties": props}
+            if resource_id == app_id
+            else original_get(resource_id, api_version)
+        )
+
+    monkeypatch.setattr(cli, "get", get)
+    with pytest.raises(ValueError, match="refusing automatic rotation"):
+        kt.run(cli, values, "deploy")
+    assert not cli.deployments
+
+
+def test_default_credentials_are_generated_by_arm_not_serialized_by_cli(
+    tmp_path: Path, values: dict, vnet: dict
+):
+    supplied = {
+        key: {"value": value}
+        for key, value in values.items()
+        if key not in kt.INTERNAL_PARAMETERS
+        and key
+        not in {
+            "apiKey",
+            "containerRegistryAuthMode",
+            "containerRegistryUsername",
+            "containerRegistryPassword",
+        }
+    }
+    path = tmp_path / "parameters.json"
+    path.write_text(json.dumps({"parameters": supplied}), encoding="utf-8")
+    loaded = kt.load_parameters(path)
+    assert "apiKey" not in loaded
+    assert "reuseExistingApiKey" not in loaded
+    assert loaded["containerRegistryAuthMode"] == "Anonymous"
+    assert loaded["containerRegistryPassword"] == ""
+    prepared = kt.prepare(FakeAzure(loaded, vnet), loaded)
+    assert prepared["reuseExistingApiKey"] is False
+    assert "apiKey" not in prepared
+    assert "newGuid" not in json.dumps(prepared)
+    cli = FakeAzure(loaded, vnet)
+    kt.run(cli, loaded, "deploy")
+    assert [stage["reuseExistingApiKey"] for stage in cli.deployments] == [False, True]
+    assert all("apiKey" not in stage for stage in cli.deployments)
 
 
 @pytest.mark.parametrize(
@@ -1740,7 +1894,11 @@ def test_kt_never_reuses_a_registry_token_as_the_application_key(tmp_path: Path,
 
 
 def test_kt_validation_logs_redact_credentials(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], values: dict, vnet: dict
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+    values: dict,
+    vnet: dict,
 ):
     cli = FakeAzure(values, vnet)
     monkeypatch.setattr(
@@ -1753,7 +1911,8 @@ def test_kt_validation_logs_redact_credentials(
         },
     )
     kt.run(cli, values, "what-if")
-    output = capsys.readouterr().out
+    captured = capsys.readouterr()
+    output = captured.out + captured.err + caplog.text
     assert "kt_validation_result" in output
     assert values["apiKey"] not in output
     assert values["containerRegistryPassword"] not in output

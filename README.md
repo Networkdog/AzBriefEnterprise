@@ -28,11 +28,14 @@ the separate application handoff and acceptance. See the
 [KT private-deployment skill](.github/skills/kt-private-deployment/SKILL.md) for reusable
 network, Policy, DNS, logging, bootstrap, and isolated-release guidance.
 See [Network Requirements](infra/NETWORK_REQUIREMENTS.md) for the customer firewall/DNS
-request matrix, source-specific deployment/runtime rules, and acceptance checklist (KT baseline; Korean).
+request matrix and acceptance checklist (KT baseline; Korean). Section 3.1 is the initial
+platform/core-analysis request; extra sources and telemetry require feature-specific approval.
 The KT ACA image is pinned to
 `ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3`
-(port 8000, `/health`). The initially private package defaults to explicit read-only GHCR
-credentials; use `Anonymous` only after public-pull verification. A separate API key is required.
+(port 8000, `/health`). The template defaults to `Anonymous`; the GHCR package must be public
+and its anonymous pull verified before deployment. No PAT or API key input is needed by default.
+ARM generates the initial API key in a Container App Secret; Portal/CLI inventory selects reuse
+on subsequent stages. Secret-read failures stop deployment instead of rotating the key.
 Admin/Archive stay disabled until Entra setup; image publication does not update existing apps.
 Stage two reuses the stage-one Environment's RG/name. The Portal normalizes the ARG internal flag
 before checking internal/PNA/KT ownership; a matching compliant Environment is not a name conflict.
