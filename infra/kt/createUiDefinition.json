@@ -262,7 +262,7 @@
                   "message": "2~32자, 소문자로 시작하고 소문자나 숫자로 끝나야 합니다. 연속 하이픈은 사용할 수 없습니다."
                 },
                 {
-                  "isValid": "[and(contains(coalesce(steps('names').containerAppsApi, parse('{}')), 'value'), not(contains(coalesce(steps('names').containerAppsApi, parse('{}')), 'error')), empty(coalesce(steps('names').containerAppsApi.nextLink, '')))]",
+                  "isValid": "[and(not(equals(coalesce(steps('names').containerAppsApi.value, false), false)), empty(steps('names').containerAppsApi.error), empty(steps('names').containerAppsApi.nextLink))]",
                   "message": "기존 앱 조회를 완료하지 못했습니다. ARM 읽기 권한과 조회 결과를 확인하십시오. 페이지가 남은 조회는 신규 설치로 간주하지 않습니다. CLI 사전검사로 진행할 수도 있습니다."
                 },
                 {

@@ -317,6 +317,10 @@ Public visibility and anonymous layer downloads before deployment. Credentials r
 and read-only; never put the publisher PAT in Azure. ARM generates the initial 64-character API
 key through a secure random default. Portal/CLI derive `reuseExistingApiKey` from complete owned
 ARM inventory; reuse the existing App secret with `listSecrets`, never rotate on read failure.
+Portal completeness checks must reference the returned `value`, `error` and `nextLink` fields
+directly, not test keys on the whole API control. Accept an empty array only after a result arrives;
+null/empty error fields are not failures. Preserve error, pagination and ownership guards, and
+distinguish actual Portal validation from offline expression tests or live ARM reads.
 Do not pass ARM default expressions as literal CLI secrets or expose keys in UI/outputs. Direct
 ARM callers must explicitly choose reuse from fresh inventory; serialize deployments to one app.
 Retain validation for optional 32–256-character initial keys and App secret refs, not literal

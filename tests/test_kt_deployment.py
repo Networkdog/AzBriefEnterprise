@@ -280,6 +280,8 @@ def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
         if function == "coalesce":
             return next(value for value in arguments if value is not None)
         if function == "empty":
+            if arguments == [None]:
+                return True
             assert len(arguments) == 1 and isinstance(arguments[0], (list, dict, str))
             return len(arguments[0]) == 0
         if function == "contains":
@@ -886,7 +888,10 @@ def test_wizard_defaults_to_anonymous_and_does_not_request_an_api_key(wizard: di
     ("inventory", "valid", "reuse"),
     [
         ({"value": []}, True, False),
+        ({"value": [], "error": None, "nextLink": None}, True, False),
+        ({"value": [], "error": {}, "nextLink": ""}, True, False),
         ({}, False, None),
+        ({"value": None}, False, None),
         ({"error": {"code": "Forbidden"}}, False, None),
         ({"value": [], "nextLink": "/another-page"}, False, None),
         ({"value": [], "error": {"code": "Forbidden"}}, False, None),
@@ -904,7 +909,9 @@ def test_wizard_defaults_to_anonymous_and_does_not_request_an_api_key(wizard: di
                         "name": "CA-AZBRIEF-KT",
                         "tags": {"deploymentProfile": kt.PROFILE},
                     }
-                ]
+                ],
+                "error": None,
+                "nextLink": None,
             },
             True,
             True,
