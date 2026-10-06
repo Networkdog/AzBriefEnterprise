@@ -242,10 +242,15 @@ def _ui_regex(control: dict) -> str:
     )
 
 
-def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
-    """Evaluate the pure CAE guard subset with CreateUiDefinition's strict equality."""
+def _evaluate_ui_expression(
+    expression: str,
+    names: dict[str, object],
+    resource_group: dict[str, object] | None = None,
+    subscription: dict[str, object] | None = None,
+) -> object:
+    """Evaluate the tested Portal expression subset with strict equality."""
     source = re.sub(r"\((\w+)\)\s*=>", r"lambda \1:", expression[1:-1])
-    source = re.sub(r"\b(and|or|not)\(", r"ui_\1(", source)
+    source = re.sub(r"\b(and|or|not|if)\(", r"ui_\1(", source)
 
     def evaluate(node: ast.expr, bindings: dict[str, object]) -> object:
         if isinstance(node, ast.Constant):
@@ -260,6 +265,10 @@ def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
             return value.get(node.attr)
         assert isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         function = node.func.id
+        if function == "ui_if":
+            condition = evaluate(node.args[0], bindings)
+            assert isinstance(condition, bool)
+            return evaluate(node.args[1] if condition else node.args[2], bindings)
         if function == "filter":
             rows = evaluate(node.args[0], bindings)
             predicate = node.args[1]
@@ -271,6 +280,15 @@ def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
                 if evaluate(predicate.body, {**bindings, predicate.args.args[0].arg: row}) is True
             ]
         arguments = [evaluate(argument, bindings) for argument in node.args]
+        if function == "resourceGroup":
+            assert not arguments and resource_group is not None
+            return resource_group
+        if function == "subscription":
+            assert not arguments and subscription is not None
+            return subscription
+        if function == "concat":
+            assert all(isinstance(value, str) for value in arguments)
+            return "".join(arguments)
         if function == "steps":
             assert arguments == ["names"]
             return names
@@ -301,7 +319,11 @@ def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
             return all(arguments) if function == "ui_and" else any(arguments)
         raise AssertionError(f"Unsupported UI guard function: {function}")
 
-    result = evaluate(ast.parse(source, mode="eval").body, {})
+    return evaluate(ast.parse(source, mode="eval").body, {})
+
+
+def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
+    result = _evaluate_ui_expression(expression, names)
     assert isinstance(result, bool)
     return result
 
@@ -922,11 +944,6 @@ def test_wizard_reuses_existing_keys_only_after_complete_owned_arm_inventory(
     wizard: dict, inventory: dict, valid: bool, reuse: bool | None
 ):
     names = _ui_controls(wizard, "names")
-    request = names["containerAppsApi"]["request"]
-    assert request["method"] == "GET"
-    assert "/resources?api-version=2021-04-01" in request["path"]
-    assert "$filter=resourceGroup%20eq%20%27" in request["path"]
-    assert "resourceGroup().name" in request["path"]
     context = {"containerAppsApi": inventory, "containerAppName": "ca-azbrief-kt"}
     guards = [
         rule["isValid"]
@@ -936,6 +953,62 @@ def test_wizard_reuses_existing_keys_only_after_complete_owned_arm_inventory(
     assert all(_evaluate_ui_guard(guard, context) for guard in guards) is valid
     if valid:
         assert _evaluate_ui_guard(wizard["outputs"]["reuseExistingApiKey"], context) is reuse
+
+
+@pytest.mark.parametrize("group_mode", ["Existing", "New"])
+def test_wizard_inventory_uses_the_selected_resource_group_scope(wizard: dict, group_mode: str):
+    request = _ui_controls(wizard, "names")["containerAppsApi"]["request"]
+    assert request["method"] == "GET"
+    path = _evaluate_ui_expression(
+        request["path"],
+        {},
+        resource_group={"mode": group_mode, "name": "rg-selected-kt"},
+        subscription={"subscriptionId": SUBSCRIPTION},
+    )
+    if group_mode == "Existing":
+        assert path == (
+            f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-selected-kt"
+            "/providers/Microsoft.App/containerApps?api-version=2026-01-01"
+        )
+        assert "$filter" not in path
+    else:
+        assert path == (
+            f"/subscriptions/{SUBSCRIPTION}/resources?api-version=2021-04-01"
+            "&$filter=resourceGroup%20eq%20%27rg-selected-kt%27"
+        )
+
+
+@pytest.mark.parametrize(
+    ("inventory", "expected"),
+    [
+        ({}, "응답 없음"),
+        (
+            {"error": {"code": "AuthorizationFailed", "message": "private-diagnostic-detail"}},
+            "ARM 오류 코드: AuthorizationFailed",
+        ),
+        (
+            {
+                "value": [],
+                "nextLink": "https://management.azure.com/page?sig=private-diagnostic-detail",
+            },
+            "다음 페이지: 있음",
+        ),
+    ],
+)
+def test_wizard_inventory_error_discloses_only_safe_status(
+    wizard: dict, inventory: dict, expected: str
+):
+    control = _ui_controls(wizard, "names")["containerAppName"]
+    rule = next(
+        validation
+        for validation in control["constraints"]["validations"]
+        if "containerAppsApi.nextLink" in validation.get("isValid", "")
+    )
+    message = _evaluate_ui_expression(rule["message"], {"containerAppsApi": inventory})
+    assert isinstance(message, str)
+    assert expected in message
+    assert "private-diagnostic-detail" not in message
+    assert "https://" not in message
 
 
 def test_kt_readmes_reference_the_actual_template_image(template: dict):

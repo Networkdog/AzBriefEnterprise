@@ -246,7 +246,7 @@
             "type": "Microsoft.Solutions.ArmApiControl",
             "request": {
               "method": "GET",
-              "path": "[concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27')]"
+              "path": "[if(equals(resourceGroup().mode, 'Existing'), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.App/containerApps?api-version=2026-01-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27'))]"
             }
           },
           {
@@ -263,7 +263,7 @@
                 },
                 {
                   "isValid": "[and(not(equals(coalesce(steps('names').containerAppsApi.value, false), false)), empty(steps('names').containerAppsApi.error), empty(steps('names').containerAppsApi.nextLink))]",
-                  "message": "기존 앱 조회를 완료하지 못했습니다. ARM 읽기 권한과 조회 결과를 확인하십시오. 페이지가 남은 조회는 신규 설치로 간주하지 않습니다. CLI 사전검사로 진행할 수도 있습니다."
+                  "message": "[concat('기존 앱 조회 상태: ', if(equals(coalesce(steps('names').containerAppsApi.value, false), false), '응답 없음', '응답 수신'), '; ARM 오류 코드: ', coalesce(steps('names').containerAppsApi.error.code, '없음'), '; 다음 페이지: ', if(empty(steps('names').containerAppsApi.nextLink), '없음', '있음'), '. 선택한 RG의 읽기 권한과 조회 결과를 확인하십시오.')]"
                 },
                 {
                   "isValid": "[empty(filter(coalesce(steps('names').containerAppsApi.value, parse('[]')), (app) => and(equals(toLower(app.type), 'microsoft.app/containerapps'), equals(toLower(app.name), toLower(steps('names').containerAppName)), not(equals(app.tags.deploymentProfile, 'kt-private-foundation')))))]",

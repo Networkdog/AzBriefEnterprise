@@ -94,11 +94,14 @@ private/VNet paths.
    ownership checks; never bypass them based on the selected stage or recommend deletion solely
    because a name exists. Evaluate the serialized predicate against typed fixtures, not only
    substring assertions, and distinguish live query verification from a full Portal deployment.
-9. Validate app inventory through the API control's returned `value`, `error` and `nextLink`
-   fields, not key membership on the whole control. A returned empty array is a valid new-install
-   result; a missing/null result is not. Null/empty error fields must not block a successful lookup.
-   Keep real errors, pending pages and foreign ownership blocking. Test loading, empty, populated
-   and error responses; offline expression evaluation is not a Portal Sandbox acceptance test.
+9. For `resourceGroup().mode == 'Existing'`, use the RG-scoped Container Apps list API instead
+   of generic subscription inventory. Preserve the RG-filtered generic request for `New` groups
+   that do not exist yet; do not bypass a 404 or invent absence. Validate returned `value`, `error`
+   and `nextLink` fields directly. A returned empty array is a valid new-install result, while
+   missing/null results, real errors, pending pages and foreign ownership remain blocking.
+   Null/empty error fields are not failures. Show only response state, error code and page
+   presence, never error bodies or signed continuation URLs. Test both generated request paths
+   and the guards; a live ARM read or offline expression test is not Portal Sandbox acceptance.
 
 Portal discovery depends on the deploying principal having read access to the VNet links and zones.
 If a linked central zone is in another subscription or outside that read scope, require its explicit

@@ -36,8 +36,10 @@ The KT ACA image is pinned to
 and its anonymous pull verified before deployment. No PAT or API key input is needed by default.
 ARM generates the initial API key in a Container App Secret; Portal/CLI inventory selects reuse
 on subsequent stages. Secret-read failures stop deployment instead of rotating the key.
-Portal app validation reads the returned `value`, `error` and `nextLink` fields directly; empty
-error fields do not reject a successful lookup, while missing results and pending pages still block.
+For an Existing resource group, Portal app discovery uses the resource-group-scoped Container
+Apps API; New groups retain the filtered generic inventory so an absent group is not a 404 blocker.
+Validation reads `value`, `error` and `nextLink` directly and preserves missing-result, error,
+pagination and ownership guards. Failures show only response state, error code and page presence.
 Admin/Archive stay disabled until Entra setup; image publication does not update existing apps.
 Stage two reuses the stage-one Environment's RG/name. The Portal normalizes the ARG internal flag
 before checking internal/PNA/KT ownership; a matching compliant Environment is not a name conflict.

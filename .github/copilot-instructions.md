@@ -317,10 +317,14 @@ Public visibility and anonymous layer downloads before deployment. Credentials r
 and read-only; never put the publisher PAT in Azure. ARM generates the initial 64-character API
 key through a secure random default. Portal/CLI derive `reuseExistingApiKey` from complete owned
 ARM inventory; reuse the existing App secret with `listSecrets`, never rotate on read failure.
+Use the RG-scoped Container Apps list API when `resourceGroup().mode` is `Existing`; retain the
+filtered generic inventory for `New` so a not-yet-created RG does not require a 404 bypass.
 Portal completeness checks must reference the returned `value`, `error` and `nextLink` fields
 directly, not test keys on the whole API control. Accept an empty array only after a result arrives;
 null/empty error fields are not failures. Preserve error, pagination and ownership guards, and
-distinguish actual Portal validation from offline expression tests or live ARM reads.
+show only response state, error code and page presence, never error bodies or continuation URLs.
+Distinguish actual Portal validation from offline expression tests or live ARM reads; a prior
+guard-only patch did not resolve the reported Portal symptom.
 Do not pass ARM default expressions as literal CLI secrets or expose keys in UI/outputs. Direct
 ARM callers must explicitly choose reuse from fresh inventory; serialize deployments to one app.
 Retain validation for optional 32–256-character initial keys and App secret refs, not literal
