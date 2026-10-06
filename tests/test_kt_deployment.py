@@ -587,7 +587,9 @@ def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
     }
     assert options["dnsDiscovery"]["visible"] == "[equals(steps('options').dnsMode, 'auto')]"
     assert "linkedPrivateDnsZonesApi.data" in options["dnsDiscovery"]["options"]["text"]
-    assert review["deploymentStage"]["defaultValue"] == "1단계 — 기반·연결·권한만 배포"
+    assert review["deploymentStage"]["defaultValue"] == "1단계 — 네트워크·저장소·계정 기반"
+    assert "1단계는 프로젝트를 생성하지 않습니다" in review["deploymentStage"]["toolTip"]
+    assert "별도 복구" in review["deploymentStage"]["toolTip"]
     assert (
         outputs["deployCapabilityHost"] == "[equals(steps('review').deploymentStage, 'complete')]"
     )
@@ -678,6 +680,23 @@ def test_minimum_subnets_are_conditional_child_modules(template: dict):
         ("containerAppsSubnetId", "containerAppsSubnetName"),
     ):
         assert f"parameters('{parameter}')" in template["variables"][variable]
+
+
+def test_foundation_defers_project_and_all_byo_dependencies(template: dict):
+    condition = "[parameters('deployCapabilityHost')]"
+    for name in ("project", "agentBindings", "capabilityHost", "controlPlaneFoundryRole"):
+        assert template["resources"][name]["condition"] == condition
+    for name in ("foundry", "storage", "cosmos", "search", "containerApp"):
+        assert "condition" not in template["resources"][name]
+    assert "project" in template["resources"]["agentBindings"]["dependsOn"]
+    assert "agentBindings" in template["resources"]["capabilityHost"]["dependsOn"]
+    output = template["outputs"]["ktFoundation"]["value"]
+    assert output["foundryProjectPrincipalId"].startswith("[if(parameters('deployCapabilityHost'),")
+    assert output["foundryProjectPrincipalId"].endswith(", '')]")
+    assert output["foundryProjectResourceId"] == (
+        "[resourceId('Microsoft.CognitiveServices/accounts/projects', "
+        "parameters('foundryAccountName'), parameters('projectName'))]"
+    )
 
 
 def test_foundry_standard_setup_and_connection_roles(template: dict):
@@ -1184,6 +1203,9 @@ class FakeAzure(kt.AzureCli):
         self.deployments: list[dict] = []
         self.free_ips = True
         self.stage = 0
+        self.project_exists = False
+        self.project_host_exists = False
+        self.project_host_name = "agents"
         self.public_access = "Disabled"
         self.account_subscription = SUBSCRIPTION
         self.host_state = "Succeeded"
@@ -1278,13 +1300,14 @@ class FakeAzure(kt.AzureCli):
                 else []
             )
         if resource_id.endswith("/projects"):
-            return [{"name": self.values["projectName"]}] if self.stage else []
+            return [{"name": self.values["projectName"]}] if self.project_exists else []
         if resource_id.endswith("/capabilityHosts"):
-            if "/projects/" in resource_id and self.stage < 2:
+            project_scope = "/projects/" in resource_id
+            if project_scope and not self.project_host_exists:
                 return []
             return [
                 {
-                    "name": "agents",
+                    "name": self.project_host_name if project_scope else "agents",
                     "properties": {
                         "provisioningState": self.host_state,
                         "storageConnections": ["agent-storage"],
@@ -1314,6 +1337,10 @@ class FakeAzure(kt.AzureCli):
         self.deployments.append(copy.deepcopy(values))
         if mode == "create":
             self.stage += 1
+            if values["deployCapabilityHost"]:
+                self.project_exists = True
+                self.project_host_exists = True
+                self.project_host_name = "agents"
             app_id = f"{GROUP}/providers/Microsoft.App/containerApps/{values['containerAppName']}"
             self.resources[app_id] = {"id": app_id, "tags": {"deploymentProfile": kt.PROFILE}}
             self.application = _foundation_app(values)
@@ -1343,6 +1370,26 @@ class FakeAzure(kt.AzureCli):
                 "outputs": {"ktFoundation": {"value": {"applicationReady": False}}},
             }
         }
+
+
+def test_project_is_absent_during_the_operator_pause(values: dict, vnet: dict):
+    cli = FakeAzure(values, vnet)
+    prepared = kt.prepare(cli, values)
+    prepared["deployCapabilityHost"] = False
+    cli.deploy(prepared, "create", "stage-one")
+    account_id = kt.endpoint_specs(values, GROUP)[0]["target"]
+    assert cli.collection(f"{account_id}/projects", kt.FOUNDRY_API) == []
+    assert (
+        cli.collection(
+            f"{account_id}/projects/{values['projectName']}/capabilityHosts", kt.HOST_API
+        )
+        == []
+    )
+    second = kt.prepare(cli, values)
+    second["deployCapabilityHost"] = True
+    cli.deploy(second, "create", "stage-two")
+    assert cli.project_exists and cli.project_host_exists
+    assert second["reuseExistingApiKey"] is True
 
 
 def test_preflight_never_mutates_azure(values: dict, vnet: dict):
@@ -1729,6 +1776,36 @@ def test_existing_host_is_not_redirected(values: dict, vnet: dict, case_changed:
     with pytest.raises(ValueError, match="Refusing to redirect"):
         kt.run(cli, values, "deploy")
     assert len(cli.deployments) == 2
+
+
+@pytest.mark.parametrize("state", ["missing", "automatic", "not_ready"])
+def test_legacy_or_incomplete_project_requires_explicit_recovery(
+    values: dict, vnet: dict, state: str
+):
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    if state == "missing":
+        cli.project_host_exists = False
+        expected = "without a verifiable BYO"
+    elif state == "automatic":
+        cli.project_host_name = "account@project@aml_aiagentservice"
+        expected = "legacy automatic"
+    else:
+        cli.host_state = "Creating"
+        expected = "not ready"
+    before = copy.deepcopy(cli.deployments)
+    with pytest.raises(ValueError, match=expected):
+        kt.run(cli, values, "deploy")
+    assert cli.deployments == before
+
+
+def test_existing_completed_byo_setup_can_be_redeployed(values: dict, vnet: dict):
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    kt.run(cli, values, "deploy")
+    assert len(cli.deployments) == 4
+    assert all(stage["reuseExistingApiKey"] for stage in cli.deployments[1:])
+    assert cli.project_exists and cli.project_host_exists
 
 
 def test_readback_rejects_public_network_access(values: dict, vnet: dict):

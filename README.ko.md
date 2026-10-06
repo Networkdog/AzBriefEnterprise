@@ -43,6 +43,10 @@ Portal에서 기존 RG를 선택하면 RG 범위의 Container Apps API로 앱을
 Entra 설정 전 Admin/Archive는 비활성이고, 이미지 게시만으로 기존 앱이 업데이트되지는 않습니다.
 2단계는 1단계와 같은 RG·Environment 이름을 재사용합니다. Portal은 ARG 내부 환경 값을
 정규화해 internal/PNA/KT 소유권을 검사하며, 조건을 충족하는 기존 환경은 이름 충돌이 아닙니다.
+1단계에서는 Foundry 프로젝트를 생성하지 않습니다. 계정 host가 준비된 뒤 2단계에서 프로젝트·
+권한·연결·BYO host를 한 배포로 생성합니다. 1단계 출력의 프로젝트 ID·endpoint는 예정값이고
+프로젝트 principal은 비어 있습니다. 기존 자동 host나 불완전 초기화는 별도 승인을 거쳐 복구하며,
+재배포 중 자동으로 삭제하거나 초기화하지 않습니다.
 KT는 수동 진단을 위해 `deployContainerAppsPrivateEndpoint=false`를 임시 기본값으로 사용합니다.
 Environment와 나머지 네 PE는 생성하고 ACA PE 및 그 DNS zone group만 건너뜁니다. 기존 PE를
 삭제하지 않으며 내부 환경·PNA 차단과 수동 DNS/HTTPS 인수 검증은 유지합니다.

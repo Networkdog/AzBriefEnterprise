@@ -337,6 +337,15 @@ KT stage two reuses the stage-one Environment's RG/name. ARG can serialize boole
 numbers, so the Portal query emits `internal=tostring(tobool(...))` and validation compares to the
 string `'true'`, not Boolean `true`. Preserve PNA/ownership checks and reject unknown field values;
 do not bypass validation for stage two or recommend deletion solely because the name exists.
+Do not create the Foundry project during KT stage one: the default project host can finalize
+before a later BYO request. Gate the project, agentBindings, capabilityHost and control-plane
+project role together on `deployCapabilityHost`. Stage-one project ID/endpoint are planned values;
+return an empty project principal without evaluating a missing project. After the account host is
+ready, stage two creates the project and its BYO dependencies in one deployment. Keep Incremental
+replay and matching BYO connections. CLI rejects pre-existing projects with missing, automatic,
+unready or mismatched hosts before touching connections; never delete/reset them automatically.
+Old installations need separately approved, data-loss-aware recovery. Do not move Korea Central
+to capabilitySettings preview based on documentation for other regions, or invent a BYO grace period.
 For Private Endpoint failures, compare the exact customer deployment operations and resource
 states before attributing a generic InternalServerError to Azure or changing the topology.
 An Approved connection is not provisioning success: final KT readback requires every PE to be

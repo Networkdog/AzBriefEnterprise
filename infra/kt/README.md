@@ -36,7 +36,7 @@ KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오
 | Foundry | `AIServices/S0`, 시스템 ID, 로컬 키 인증 비활성, Public Network Access 비활성 |
 | Foundry inbound | `account` Private Endpoint → 선택한 Private Endpoint subnet |
 | Foundry outbound | 계정 최초 생성 시 `scenario=agent`, 선택한 Foundry 전용 subnet으로 VNet Injection |
-| Capability Host | 자동 생성되는 account host 확인 후, project `agents` host 생성. account host 중복 생성 없음 |
+| Capability Host | 1단계는 account host 준비까지만. 2단계에서 프로젝트·연결·project `agents` host를 함께 생성. account host 중복 생성 없음 |
 | 공유 Storage Account | **StorageV2 / Standard_LRS 계정 하나**, Blob PE 하나, Public Network Access 비활성, Entra 전용 |
 | Blob 컨테이너 | 앱용 `azbrief-state`, `azbrief-archive`와 Foundry가 만드는 agent/system 컨테이너를 논리적으로 분리 |
 | Cosmos DB | NoSQL, 단일 리전 Serverless, `Sql` PE, Public Network Access·로컬 키 인증 비활성 |
@@ -294,10 +294,23 @@ Private Endpoint의 zone group이 기존 zone을 참조하므로 Azure가 필요
 수동/실패 ACA PE의 상태를 읽거나 수정하지 않습니다. Environment 자체의 소유권·전용 subnet·
 `internal=true`·PNA 비활성 검사는 그대로 유지됩니다. 기존 실패 PE 정리는 자동 실행하지 않습니다.
 
-처음에는 기본 선택인 **1단계 — 기반·연결·권한만 배포**로 실행합니다
-(`deployCapabilityHost=false`). 성공 후 account Capability Host의 `Succeeded` 상태와 RBAC 전파를
-확인하고, **같은 RG·이름·네트워크·DNS·이미지 인증 입력**으로 다시 열어 **2단계 — project Capability Host 구성**을
-선택합니다. UI는 두 배포를 자동 실행하거나 account host 준비를 기다리지 않습니다.
+처음에는 기본 선택인 **1단계 — 네트워크·저장소·계정 기반**으로 실행합니다
+(`deployCapabilityHost=false`). 이 단계는 **Foundry 프로젝트를 생성하지 않습니다.**
+계정의 자동 Capability Host가 `Succeeded`인 것을 확인하고,
+**같은 RG·이름·네트워크·DNS·이미지 인증 입력**으로 다시 열어
+**2단계 — 프로젝트·연결·BYO host 구성**을 선택합니다. UI는 두 배포를 자동 실행하거나
+account host 준비를 기다리지 않습니다.
+
+| 단계 | 생성·갱신 범위 | 프로젝트 상태 |
+|---|---|---|
+| 1단계 | 기존 네트워크 기반, 사설 endpoint, Foundry 계정·자동 account host, 저장소, 초기 App와 제어면 저장소 권한 | 새 프로젝트·연결·프로젝트 역할·BYO project host를 생성하지 않음 |
+| 2단계 | 위 기반을 재사용하고 프로젝트 → 권한·연결 → BYO host → 후속 데이터 역할·제어면 프로젝트 역할 순으로 구성 | 한 배포 안에서 BYO 구성을 완료 |
+
+프로젝트만 먼저 만든 상태로 두 단계 사이에 기다리면 기본 저장소용 host가 초기화되어
+나중의 BYO 연결 추가가 거부될 수 있습니다. 따라서 2단계 전에 프로젝트를 수동으로 만들거나
+Agent를 실행하지 마십시오. 1단계 출력의 `foundryProjectResourceId`와
+`foundryProjectEndpoint`는 생성 예정 주소이며, `foundryProjectPrincipalId`는 빈 문자열입니다.
+프로젝트 principal과 BYO host가 준비되는 시점은 2단계가 성공한 뒤입니다.
 API 키는 기존 앱에서 자동 재사용하므로 다시 입력하지 않습니다.
 Basics에서 기존 RG를 선택한 경우 앱 조회는 그 RG의 `Microsoft.App/containerApps` 목록
 API를 사용합니다. 새 RG는 아직 존재하지 않는 상태의 404를 피하도록 기존의 RG 필터가 있는
@@ -310,6 +323,22 @@ API를 사용합니다. 새 RG는 아직 존재하지 않는 상태의 404를 �
 검증된 것은 아니므로 수정된 UI 정의를 게시한 뒤 새 배포 화면에서 확인해야 합니다.
 단계를 자동 처리하고 점유자·실제 IP 여유·이름 소유권을 검사하려면 CLI를 사용하십시오.
 운영 설정을 마친 환경에 초기 비활성 설정을 다시 적용하지 마십시오.
+
+#### 기존 설치와 중단된 배포
+
+프로젝트와 BYO host가 이미 정상이라면 CLI 사전검사로 연결 이름·대상 리소스 ID를 확인한 뒤
+같은 설정으로 재배포할 수 있습니다. Incremental 1단계에서 프로젝트를 생략해도 기존
+프로젝트나 데이터는 삭제되지 않습니다. 원래 API 키도 계속 재사용합니다.
+
+이전 템플릿의 1단계가 프로젝트를 이미 만들었거나 2단계가 도중에 실패했다면 먼저 CLI
+사전검사를 수행하십시오. 기본 자동 host(`aml_aiagentservice`), host 부재·미완료 또는
+다른 저장소 연결은 자동 보정하지 않고 중단합니다. 특히 `past the window for adding
+bring-your-own (BYO) connections`는 기다리거나 같은 요청을 반복해서 해결할 오류가 아닙니다.
+기존 host 재생성은 Agent·대화·파일·벡터 상태를 영구적으로 고립시킬 수 있어 데이터 보존 여부와
+별도 승인이 필요합니다. 템플릿·CLI에는 host 자동 삭제나 초기화 경로가 없습니다.
+
+로컬 검사와 ARM what-if는 생성 순서·계획 검증입니다. 신규 고객의 실제 두 단계 배포,
+RBAC 전파, BYO 데이터 읽기·쓰기 및 사설 경로 인수는 별도로 완료해야 합니다.
 
 ### CLI 사전검사와 배포
 

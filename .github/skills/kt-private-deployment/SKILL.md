@@ -50,6 +50,7 @@ contract expects two standard Enterprise Portal links and one KT Portal link in 
 | Optional ACA logs | Pass `null` when no Log Analytics workspace is selected. AVM `0.16.0` accepts only `azure-monitor` or `log-analytics`, not `none`. |
 | Resource exposure | Disable public network access on Foundry, storage, Cosmos DB, Search, and the Container Apps Environment at creation. |
 | Initial application | Use the pinned GHCR AzBrief image on 8000 `/health`, not hello-world. Keep API protection and disabled Admin/Archive until Entra setup. Image startup is not operational readiness. |
+| Project timing | Stage one must not create the project, its connections or project roles. After the account host is ready, stage two creates the project, role/connection bindings and BYO host together. Stage-one project IDs are planned; its principal is empty. |
 | Application image | Use an approved immutable digest and matching registry authentication. Do not deploy `latest`. |
 | GHCR credentials | Default Anonymous after verifying Public visibility and anonymous layer downloads. Explicit Credentials accepts only a read-only PAT via App secret. Never grant GHCR an Azure identity role or deploy the publisher token. |
 | API key lifecycle | No Portal key input. ARM generates the initial secure random key; complete Portal/CLI ARM inventory selects existing-secret reuse. Read failures or missing keys never trigger rotation. Keep API authentication. |
@@ -154,6 +155,10 @@ The preflight must remain read-only and rerun immediately before validate, what-
 9. Require private-registry credentials only in Credentials mode. Never reuse the registry PAT
    as the API key or leave an unused password in Anonymous mode. Redact errors and what-if
    diagnostics with the shared `src/error_logging.py` helpers.
+10. A pre-existing project must have one ready `agents` host with matching BYO connection names
+   and resource IDs. Missing, automatic, unready or redirected hosts stop preflight before writes.
+   Never delete/reset a project host automatically. Recovery requires separate data-retention
+   approval and exact project-host identity; do not replace the account or backing stores.
 
 Never infer that a same-name zone in the deployment resource group is the linked canonical zone.
 Compare full ARM IDs.
@@ -173,6 +178,7 @@ Compare full ARM IDs.
 | Container Apps PE failed with generic `InternalServerError` | The error alone does not distinguish a transient provider failure from an unsupported or incomplete configuration. | Preserve exact customer operations, Correlation ID, Environment/PE states and `privateLinkResources`; do not weaken PNA/internal settings or delete the whole foundation as a first response. |
 | Bootstrap image reported invalid with `Get https://mcr.microsoft.com/v2/: EOF` | The registry connection ended before a usable response, not proof of an invalid image name or an inbound PE failure. | Check actual Environment DNS/egress/TLS and MCR data endpoints; preserve PNA/internal settings and verify a real image pull. |
 | GitHub source changed but deployed runtime did not | Git is source control, not a deployment trigger in the isolated environment. | Transfer reviewed immutable artifacts and deploy manually from an approved private-network host. |
+| Project host is past the window for adding BYO connections | Stage one created the project; its automatic host was already finalized when a later stage attempted BYO attachment. | Defer the project and all BYO dependencies to the same second-stage deployment. Existing data-bearing hosts need explicit recovery approval, never silent reset. |
 | `/admin` displayed the Container Apps welcome page after stage two | Both infrastructure stages still used the hello-world image; a Capability Host is not application code. | Deploy the real image together with 8000 `/health`, tenant/UAMI/Hosted configuration and API protection. Do not enable Admin/Archive without Entra and an allow-list. |
 | ACR task built and tested the image but push returned unauthorized | The development registry used ABAC repository permissions and the quick task lacked source-registry authentication. | Use documented `--source-acr-auth-id '[caller]'` with the existing authorized identity. Do not enable the ACR admin or broaden roles. |
 

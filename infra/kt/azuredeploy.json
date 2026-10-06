@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "2600986516319251728"
+      "templateHash": "12843316939273513626"
     }
   },
   "parameters": {
@@ -166,7 +166,7 @@
       "type": "bool",
       "defaultValue": true,
       "metadata": {
-        "description": "False is a foundation-only staging operation, not a completed installation."
+        "description": "False creates only the foundation, not a project. True creates the project, its role/connection bindings and BYO Capability Host together after the account host is ready. Never use stage one to precreate the project."
       }
     },
     "bootstrapImage": {
@@ -308,6 +308,7 @@
       "name": "[parameters('foundryAccountName')]"
     },
     "project": {
+      "condition": "[parameters('deployCapabilityHost')]",
       "type": "Microsoft.CognitiveServices/accounts/projects",
       "apiVersion": "2025-06-01",
       "name": "[format('{0}/{1}', parameters('foundryAccountName'), parameters('projectName'))]",
@@ -384,9 +385,9 @@
       ]
     },
     "controlPlaneFoundryRole": {
+      "condition": "[parameters('deployCapabilityHost')]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
       "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('id-{0}', parameters('containerAppName'))), 'foundry-user')]",
       "properties": {
         "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
@@ -28447,6 +28448,7 @@
       ]
     },
     "agentBindings": {
+      "condition": "[parameters('deployCapabilityHost')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "kt-agent-bindings",
@@ -30454,7 +30456,7 @@
         "foundryProjectResourceId": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
         "foundryProjectEndpoint": "[variables('foundryProjectEndpoint')]",
         "foundryHostedAgentName": "[parameters('foundryHostedAgentName')]",
-        "foundryProjectPrincipalId": "[reference('project', '2025-06-01', 'full').identity.principalId]",
+        "foundryProjectPrincipalId": "[if(parameters('deployCapabilityHost'), reference('project', '2025-06-01', 'full').identity.principalId, '')]",
         "storageAccountResourceId": "[variables('storageId')]",
         "agentStorageAccountResourceId": "[variables('storageId')]",
         "stateStorageAccountResourceId": "[variables('storageId')]",

@@ -440,15 +440,15 @@
             "name": "deploymentStage",
             "type": "Microsoft.Common.DropDown",
             "label": "이번 배포 단계",
-            "defaultValue": "1단계 — 기반·연결·권한만 배포",
+            "defaultValue": "1단계 — 네트워크·저장소·계정 기반",
             "constraints": {
               "required": true,
               "allowedValues": [
-                { "label": "1단계 — 기반·연결·권한만 배포", "value": "foundation" },
-                { "label": "2단계 — 준비된 기반에 project Capability Host 구성", "value": "complete" }
+                { "label": "1단계 — 네트워크·저장소·계정 기반", "value": "foundation" },
+                { "label": "2단계 — 프로젝트·연결·BYO host 구성", "value": "complete" }
               ]
             },
-            "toolTip": "처음에는 1단계를 배포하십시오. 계정의 자동 Capability Host와 권한 전파를 확인한 뒤 같은 입력으로 2단계를 배포합니다. 이 화면은 단계를 자동 실행하거나 준비 상태를 기다리지 않습니다."
+            "toolTip": "1단계는 프로젝트를 생성하지 않습니다. 계정의 자동 Capability Host가 Succeeded인 것을 확인한 뒤 같은 입력으로 2단계를 배포합니다. 2단계가 프로젝트·권한·연결·BYO host를 한 배포에서 구성합니다. 그 전에 프로젝트를 수동 생성하거나 Agent를 실행하지 마십시오. 기존 프로젝트는 CLI 사전검사로 BYO 연결을 확인하고, 기본 host가 있으면 별도 복구를 승인해야 합니다."
           },
           {
             "name": "hostReady",

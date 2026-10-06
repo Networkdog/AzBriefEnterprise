@@ -68,7 +68,7 @@ param logAnalyticsWorkspaceResourceId string = ''
 ])
 param searchSku string = 'basic'
 
-@description('False is a foundation-only staging operation, not a completed installation.')
+@description('False creates only the foundation, not a project. True creates the project, its role/connection bindings and BYO Capability Host together after the account host is ready. Never use stage one to precreate the project.')
 param deployCapabilityHost bool = true
 
 @description('Compatibility parameter name for the pinned AzBrief control-plane image. Agent publication and authenticated Admin/Archive setup remain separate.')
@@ -425,7 +425,7 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
   name: foundryAccountName
 }
 
-resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
+resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = if (deployCapabilityHost) {
   parent: account
   name: projectName
   location: location
@@ -441,12 +441,12 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = {
   ]
 }
 
-module agentBindings 'agent-bindings.bicep' = {
+module agentBindings 'agent-bindings.bicep' = if (deployCapabilityHost) {
   name: 'kt-agent-bindings'
   params: {
     foundryAccountName: foundryAccountName
     projectName: projectName
-    projectPrincipalId: project.identity.principalId
+    projectPrincipalId: project!.identity.principalId
     agentStorageAccountName: storageAccountName
     cosmosAccountName: cosmosAccountName
     searchServiceName: searchServiceName
@@ -458,10 +458,10 @@ module capabilityHost 'capability-host.bicep' = if (deployCapabilityHost) {
   params: {
     foundryAccountName: foundryAccountName
     projectName: projectName
-    projectPrincipalId: project.identity.principalId
+    projectPrincipalId: project!.identity.principalId
     // 공식 Standard Setup 샘플이 사용하는 내부 ID이며 생성된 Bicep 형식에는 빠져 있다.
     #disable-next-line BCP053
-    projectInternalId: project.properties.internalId
+    projectInternalId: project!.properties.internalId
     agentStorageAccountName: storageAccountName
     cosmosAccountName: cosmosAccountName
   }
@@ -608,9 +608,9 @@ resource controlPlaneArchiveRole 'Microsoft.Authorization/roleAssignments@2022-0
   ]
 }
 
-resource controlPlaneFoundryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  scope: project
-  name: guid(project.id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-${containerAppName}'), 'foundry-user')
+resource controlPlaneFoundryRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployCapabilityHost) {
+  scope: project!
+  name: guid(resourceId('Microsoft.CognitiveServices/accounts/projects', foundryAccountName, projectName), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-${containerAppName}'), 'foundry-user')
   properties: {
     roleDefinitionId: subscriptionResourceId(
       'Microsoft.Authorization/roleDefinitions',
@@ -639,10 +639,10 @@ output ktFoundation object = {
   foundrySubnetId: foundrySubnetId
   containerAppsSubnetId: containerAppsSubnetId
   foundryAccountResourceId: foundryAccountId
-  foundryProjectResourceId: project.id
+  foundryProjectResourceId: resourceId('Microsoft.CognitiveServices/accounts/projects', foundryAccountName, projectName)
   foundryProjectEndpoint: foundryProjectEndpoint
   foundryHostedAgentName: foundryHostedAgentName
-  foundryProjectPrincipalId: project.identity.principalId
+  foundryProjectPrincipalId: deployCapabilityHost ? project!.identity.principalId : ''
   storageAccountResourceId: storageId
   agentStorageAccountResourceId: storageId
   stateStorageAccountResourceId: storageId

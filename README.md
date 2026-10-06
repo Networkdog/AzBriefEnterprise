@@ -43,6 +43,10 @@ pagination and ownership guards. Failures show only response state, error code a
 Admin/Archive stay disabled until Entra setup; image publication does not update existing apps.
 Stage two reuses the stage-one Environment's RG/name. The Portal normalizes the ARG internal flag
 before checking internal/PNA/KT ownership; a matching compliant Environment is not a name conflict.
+Stage one does not create the Foundry project. After the account host is ready, stage two creates
+the project, role/connection bindings and BYO host in one deployment. The stage-one project ID
+and endpoint are planned values; its project principal is empty. Existing automatic or incomplete
+hosts require an explicitly approved recovery, never an automatic reset during redeployment.
 KT temporarily defaults `deployContainerAppsPrivateEndpoint=false` for manual diagnosis: the
 Environment and four other PEs still deploy, while the ACA PE and its DNS zone group are skipped.
 Existing PEs are not deleted; internal/PNA restrictions and manual DNS/HTTPS acceptance still apply.

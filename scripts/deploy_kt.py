@@ -369,9 +369,21 @@ def validate_existing_host(cli: AzureCli, account_id: str, values: dict[str, Any
     project_id = f"{account_id}/projects/{values['projectName']}"
     hosts = cli.collection(f"{project_id}/capabilityHosts", HOST_API)
     if not hosts:
-        return
+        raise ValueError(
+            "The project already exists without a verifiable BYO Capability Host. "
+            "Stop before changing its connections; inspect initialization and use an "
+            "explicitly approved recovery. The deployment never deletes or resets hosts."
+        )
     if len(hosts) != 1 or hosts[0]["name"].split("/")[-1].casefold() != "agents":
-        raise ValueError("An incompatible project Capability Host already exists")
+        raise ValueError(
+            "An incompatible project Capability Host already exists. A legacy automatic "
+            "host cannot be converted by rerunning stage two; review data retention and "
+            "approve a separate recovery. The deployment never deletes or resets hosts."
+        )
+    if hosts[0]["properties"].get("provisioningState") != "Succeeded":
+        raise ValueError(
+            "Existing project Capability Host is not ready; no connections were changed"
+        )
     expected = {
         "storageConnections": ["agent-storage"],
         "threadStorageConnections": ["agent-cosmos"],
