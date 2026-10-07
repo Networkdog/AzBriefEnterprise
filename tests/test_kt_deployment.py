@@ -576,6 +576,7 @@ def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
         "[not(steps('options').deployContainerAppsPrivateEndpoint)]"
     )
     assert "공유 Storage의 계정 범위 Foundry 권한" in review["scopeAccepted"]["label"]
+    assert "운영 권한은 배포 후 직접 부여" in review["scopeAccepted"]["label"]
     assert {v["value"] for v in options["searchSku"]["constraints"]["allowedValues"]} == {
         "basic",
         "standard",
@@ -684,7 +685,7 @@ def test_minimum_subnets_are_conditional_child_modules(template: dict):
 
 def test_foundation_defers_project_and_all_byo_dependencies(template: dict):
     condition = "[parameters('deployCapabilityHost')]"
-    for name in ("project", "agentBindings", "capabilityHost", "controlPlaneFoundryRole"):
+    for name in ("project", "agentBindings", "capabilityHost"):
         assert template["resources"][name]["condition"] == condition
     for name in ("foundry", "storage", "cosmos", "search", "containerApp"):
         assert "condition" not in template["resources"][name]
@@ -783,20 +784,29 @@ def test_one_private_storage_account_uses_separate_application_containers(templa
         assert container in output[field]
 
 
-def test_control_plane_storage_permissions_are_container_scoped(template: dict):
-    for role_name, container_name in (
-        ("controlPlaneStorageRole", "azbrief-state"),
-        ("controlPlaneArchiveRole", "azbrief-archive"),
+def test_runtime_permissions_are_assigned_by_the_operator(template: dict):
+    resources = template["resources"]
+    assert (
+        not {"controlPlaneStorageRole", "controlPlaneArchiveRole", "controlPlaneFoundryRole"}
+        & resources.keys()
+    )
+    assert not any(
+        resource["type"] == "Microsoft.Authorization/roleAssignments"
+        for resource in resources.values()
+    )
+    for module in ("containerApp", "controlPlaneIdentity"):
+        assert "roleAssignments" not in _params(template, module)
+    outputs = template["outputs"]["ktFoundation"]["value"]
+    assert outputs["applicationReady"] is False
+    for name in (
+        "controlPlaneIdentityResourceId",
+        "controlPlanePrincipalId",
+        "controlPlaneClientId",
     ):
-        role = template["resources"][role_name]
-        assert "storageAccountName" in role["scope"]
-        assert role["scope"] == (
-            "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', "
-            f"parameters('storageAccountName'), 'default', '{container_name}')]"
-        )
-        assert "ba92f5b4-2d11-453d-a403-e96b0029c9fe" in role["properties"]["roleDefinitionId"]
-        assert "controlPlaneIdentity" in role["properties"]["principalId"]
-        assert "storage" in role["dependsOn"]
+        assert "controlPlaneIdentity" in outputs[name]
+
+
+def test_byo_project_permissions_remain_separate_from_runtime_permissions(template: dict):
     bindings = template["resources"]["agentBindings"]["properties"]["template"]
     project_roles = [
         resource
@@ -808,6 +818,13 @@ def test_control_plane_storage_permissions_are_container_scoped(template: dict):
     assert "agentStorageAccountName" in project_roles[0]["scope"]
     assert "/blobServices/containers" not in project_roles[0]["scope"]
     assert "projectPrincipalId" in project_roles[0]["properties"]["principalId"]
+    for module in ("agentBindings", "capabilityHost"):
+        for resource in _resources(template["resources"][module]["properties"]["template"]):
+            if resource["type"] in {
+                "Microsoft.Authorization/roleAssignments",
+                "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
+            }:
+                assert resource["properties"]["principalId"] == "[parameters('projectPrincipalId')]"
 
 
 def test_other_backing_stores_keep_private_low_cost_settings(template: dict):

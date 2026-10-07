@@ -338,14 +338,19 @@ numbers, so the Portal query emits `internal=tostring(tobool(...))` and validati
 string `'true'`, not Boolean `true`. Preserve PNA/ownership checks and reject unknown field values;
 do not bypass validation for stage two or recommend deletion solely because the name exists.
 Do not create the Foundry project during KT stage one: the default project host can finalize
-before a later BYO request. Gate the project, agentBindings, capabilityHost and control-plane
-project role together on `deployCapabilityHost`. Stage-one project ID/endpoint are planned values;
+before a later BYO request. Gate the project, agentBindings and capabilityHost together on
+`deployCapabilityHost`. Stage-one project ID/endpoint are planned values;
 return an empty project principal without evaluating a missing project. After the account host is
 ready, stage two creates the project and its BYO dependencies in one deployment. Keep Incremental
 replay and matching BYO connections. CLI rejects pre-existing projects with missing, automatic,
 unready or mismatched hosts before touching connections; never delete/reset them automatically.
 Old installations need separately approved, data-loss-aware recovery. Do not move Korea Central
 to capabilitySettings preview based on documentation for other regions, or invent a BYO grace period.
+KT runtime RBAC for Container App/Job and Hosted Agent identities is operator-managed after
+deployment. Keep principal outputs and `applicationReady=false`, but do not emit control-plane
+Storage/Archive/Foundry role assignments or add automatic Hosted evidence grants. Preserve the
+distinct project identity's BYO provisioning/data roles; they are not runtime evidence permissions.
+Incremental omission leaves old assignments intact; never delete them or expand scope implicitly.
 For Private Endpoint failures, compare the exact customer deployment operations and resource
 states before attributing a generic InternalServerError to Azure or changing the topology.
 An Approved connection is not provisioning success: final KT readback requires every PE to be
@@ -410,7 +415,7 @@ approved retirement. Internal environments require verified Foundry-to-MCP routi
 
 New standard and KT deployments create one dedicated Entra-only StorageV2 account. Keep
 `azbrief-state` (including feedback) and `azbrief-archive` separate from Foundry-managed containers.
-App/Job Blob Data Contributor grants are container-scoped; retain Foundry's required account-level
+App/Job Blob Data Contributor grants are container-scoped (operator-assigned for KT); retain Foundry's required account-level
 roles and state honestly that this shares the trust, throughput and failure boundary, not hard
 account isolation. Standard evaluation keeps its existing connection name as an alias to the shared
 account. Use one Blob Private Endpoint/NSP association and one readiness storage entry. KT exposes

@@ -56,12 +56,14 @@ Cosmos의 `enterprise_memory`에 Cosmos-native Data Contributor를 부여합니�
 `agent-definitions-v1`·`run-state-v1`도 포함하는 DB 범위이며 Classic 컨테이너 세 개만 지정하지 않습니다.
 프로젝트 이름이 아닌 `project.properties.internalId`로 workspace GUID를 계산합니다.
 
-제어면 UAMI는 **`azbrief-state`와 `azbrief-archive` 각각의 Blob Data Contributor + 프로젝트 Foundry User**를 받습니다.
-계정 전체의 Blob 권한은 받지 않습니다. 다만 Foundry의 필수 계정 권한 때문에 **프로젝트 ID가
+Container App 제어면 UAMI와 Hosted Agent의 **운영 역할·범위는 배포 후 운영자가 직접 부여**합니다.
+템플릿은 이들 ID에 Blob 또는 Foundry 운영 역할을 자동 부여하지 않습니다.
+위의 프로젝트 ID 권한은 BYO 초기화·데이터 저장에 필요한 별도 권한이므로 유지합니다.
+Foundry의 필수 계정 권한 때문에 **프로젝트 ID가
 canonical archive를 변경할 수 없다는 격리는 더 이상 제공하지 않습니다**. AzBrief 전용 계정
 안의 동일한 신뢰 경계로 승인된 환경에 사용하며, 처리량·중복성·네트워크와 계정 장애 범위도 공유합니다.
 Blob·컨테이너 soft delete는 기존 7일 설정을 유지하며, 공유 계정의 Foundry 컨테이너에도 적용됩니다.
-Hosted 전용 ID의 구독/테넌트 근거 조회 권한은 게시 후 별도 부여합니다.
+실제 역할·scope 선택은 [배포 후 수동 운영 권한](#배포-후-수동-운영-권한)을 참고하십시오.
 
 ## GHCR 이미지와 초기 인증
 
@@ -303,8 +305,8 @@ account host 준비를 기다리지 않습니다.
 
 | 단계 | 생성·갱신 범위 | 프로젝트 상태 |
 |---|---|---|
-| 1단계 | 기존 네트워크 기반, 사설 endpoint, Foundry 계정·자동 account host, 저장소, 초기 App와 제어면 저장소 권한 | 새 프로젝트·연결·프로젝트 역할·BYO project host를 생성하지 않음 |
-| 2단계 | 위 기반을 재사용하고 프로젝트 → 권한·연결 → BYO host → 후속 데이터 역할·제어면 프로젝트 역할 순으로 구성 | 한 배포 안에서 BYO 구성을 완료 |
+| 1단계 | 기존 네트워크 기반, 사설 endpoint, Foundry 계정·자동 account host, 저장소, 초기 App와 제어면 ID | 새 프로젝트·연결·프로젝트 역할·BYO project host를 생성하지 않음 |
+| 2단계 | 위 기반을 재사용하고 프로젝트 → BYO 필수 권한·연결 → BYO host → 프로젝트 데이터 역할 순으로 구성 | 한 배포 안에서 BYO 구성을 완료. App·Hosted 운영 역할은 별도 수동 부여 |
 
 프로젝트만 먼저 만든 상태로 두 단계 사이에 기다리면 기본 저장소용 host가 초기화되어
 나중의 BYO 연결 추가가 거부될 수 있습니다. 따라서 2단계 전에 프로젝트를 수동으로 만들거나
@@ -517,15 +519,40 @@ Environment가 정상이고 PE만 실패했다면 전체 RG, Foundry/Capability 
 [Azure MCP 템플릿](../azure-mcp-server/README.md)은 공유 Application Insights를 전제로 합니다.
 `ktFoundation`을 `customerSetup`으로 변환해 넘기거나 그 스크립트의 검증을 생략하지 마십시오.
 
+### 배포 후 수동 운영 권한
+
+운영자는 다음 최소 권한 예시를 기준으로 실제 사용할 역할과 scope를 결정하여 직접 부여합니다.
+이 표는 템플릿의 자동 부여 목록이 아닙니다. Container App의 대상은 배포 출력
+`controlPlanePrincipalId`이며, `controlPlaneClientId`나 `foundryProjectPrincipalId`와 혼동하지 마십시오.
+Hosted Agent는 게시 후 생성되는 **별도의 identity object ID**를 확인해야 합니다.
+
+| 대상 ID | 사용할 기능 | 역할·범위 예시 |
+|---|---|---|
+| Container App 제어면 UAMI | 상태·체크포인트 및 분석 archive 저장 | Storage Blob Data Contributor, `azbrief-state`와 `azbrief-archive` 각각의 컨테이너 범위 |
+| Container App 제어면 UAMI | 배포된 Hosted Agent 호출 | Foundry User, 대상 Foundry 프로젝트 범위 |
+| Hosted Agent 전용 ID | Azure 리소스 근거 조회 | 필요한 읽기 역할을 실제 분석 대상 구독·관리 그룹·RG에 한정. 제어면·프로젝트 ID에 대신 부여하지 않음 |
+| Hosted Agent 전용 ID | 프로젝트 Responses/네이티브 도구 사용 | Foundry User, 대상 Foundry 프로젝트 범위 |
+
+Billing 등 추가 기능의 권한도 사용 여부와 서비스별 범위에 맞춰 별도 부여합니다. 역할 전파 후
+실제 호출·저장을 검증하기 전에는 `applicationReady=false` 상태를 운영 준비 완료로 보지 않습니다.
+기본 앱의 `/health` 성공은 운영 권한 부여가 끝났다는 뜻이 아닙니다.
+
+이 변경은 기존 Azure 권한을 회수하지 않습니다. Incremental 배포에서 생략한 기존 역할 할당은
+유지되며 정리·범위 조정은 운영자가 별도로 승인합니다. Foundry **프로젝트 ID**에 대한 BYO
+초기화 권한은 템플릿에 남으므로, 배포자는 그 권한을 부여할 수 있는 접근 권한이 여전히 필요합니다.
+
+### 운영 설정과 인수
+
 1. 승인된 모델 ID/버전/SKU/처리량을 배포하고 여섯 specialist를 고유 이름으로 게시합니다.
    KT 전용 azd 환경과 배포 패키지를 사용하고 개발 `.env`는 재사용하지 않습니다.
 2. 인증된 read-only Azure MCP를 이 Environment에 별도 App/ID로 구성합니다. Insights 리소스나
    `AppInsights` 프로젝트 연결을 만들지 않습니다. Hosted에 `APPLICATIONINSIGHTS_CONNECTION_STRING`을
    수동 선언하지 않으며 KT용 runtime은 Insights exporter를 사용하지 않도록 설정합니다.
-3. Hosted Agent를 게시하고 **그 ID**에 evidence 및 프로젝트 데이터 역할을 부여합니다.
+3. Hosted Agent를 게시하고 **그 ID**에 evidence 및 프로젝트 데이터 역할을 직접 부여합니다.
    제어면/프로젝트 ID에 tenant evidence Reader를 대신 부여하지 않습니다.
 4. App에 배포된 GHCR digest와 8000 `/health` 설정을 확인하고, 후속 scheduler Job에도 같은
-   승인 digest·레지스트리 인증을 적용합니다. Entra/allow-list를 설정한 뒤 Admin/Archive를
+  승인 digest·레지스트리 인증을 적용합니다. 제어면 ID에 필요한 운영 역할을 직접 부여하고
+  저장소·Foundry 호출을 검증합니다. Entra/allow-list를 설정한 뒤 Admin/Archive를
    활성화하고, 초기 API 키·private archive/checkpoint·이메일을 인수합니다.
    이미지가 배포됐다는 사실만으로 AzBrief 운영 설치가 완료되는 것은 아닙니다.
 5. 현재 Admin Manual Run은 App 내 background 작업입니다. 실제 운영 전 **최소 replica 1**과

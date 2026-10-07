@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "12843316939273513626"
+      "templateHash": "10758740510525797158"
     }
   },
   "parameters": {
@@ -329,76 +329,6 @@
       "type": "Microsoft.App/containerApps",
       "apiVersion": "2026-01-01",
       "name": "[parameters('containerAppName')]"
-    },
-    "storageAccount": {
-      "existing": true,
-      "type": "Microsoft.Storage/storageAccounts",
-      "apiVersion": "2023-05-01",
-      "name": "[parameters('storageAccountName')]"
-    },
-    "blobService": {
-      "existing": true,
-      "type": "Microsoft.Storage/storageAccounts/blobServices",
-      "apiVersion": "2023-05-01",
-      "name": "[format('{0}/{1}', parameters('storageAccountName'), 'default')]"
-    },
-    "stateContainer": {
-      "existing": true,
-      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
-      "apiVersion": "2023-05-01",
-      "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', 'azbrief-state')]"
-    },
-    "archiveContainer": {
-      "existing": true,
-      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
-      "apiVersion": "2023-05-01",
-      "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', 'azbrief-archive')]"
-    },
-    "controlPlaneStorageRole": {
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-state')]",
-      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-state'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('id-{0}', parameters('containerAppName'))), 'blob-contributor')]",
-      "properties": {
-        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
-        "principalId": "[reference('controlPlaneIdentity').outputs.principalId.value]",
-        "principalType": "ServicePrincipal"
-      },
-      "dependsOn": [
-        "controlPlaneIdentity",
-        "storage"
-      ]
-    },
-    "controlPlaneArchiveRole": {
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-archive')]",
-      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-archive'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('id-{0}', parameters('containerAppName'))), 'blob-contributor')]",
-      "properties": {
-        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
-        "principalId": "[reference('controlPlaneIdentity').outputs.principalId.value]",
-        "principalType": "ServicePrincipal"
-      },
-      "dependsOn": [
-        "controlPlaneIdentity",
-        "storage"
-      ]
-    },
-    "controlPlaneFoundryRole": {
-      "condition": "[parameters('deployCapabilityHost')]",
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('id-{0}', parameters('containerAppName'))), 'foundry-user')]",
-      "properties": {
-        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
-        "principalId": "[reference('controlPlaneIdentity').outputs.principalId.value]",
-        "principalType": "ServicePrincipal"
-      },
-      "dependsOn": [
-        "capabilityHost",
-        "controlPlaneIdentity",
-        "project"
-      ]
     },
     "peSubnet": {
       "condition": "[parameters('createPESubnet')]",

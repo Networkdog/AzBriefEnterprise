@@ -55,7 +55,8 @@ contract expects two standard Enterprise Portal links and one KT Portal link in 
 | GHCR credentials | Default Anonymous after verifying Public visibility and anonymous layer downloads. Explicit Credentials accepts only a read-only PAT via App secret. Never grant GHCR an Azure identity role or deploy the publisher token. |
 | API key lifecycle | No Portal key input. ARM generates the initial secure random key; complete Portal/CLI ARM inventory selects existing-secret reuse. Read failures or missing keys never trigger rotation. Keep API authentication. |
 | Identities | Keep Container Apps control-plane, Foundry project, Hosted Agent, and Azure MCP identities distinct. |
-| Storage | One `storageAccountName` and one Blob PE. Keep app state/archive in separate containers with container-scoped App/Job grants. Foundry's required account roles share the trust boundary; do not claim hard isolation. |
+| Runtime roles | Operators choose and grant Container App/Job and Hosted Agent runtime permissions after deployment. Preserve principal outputs; no automatic control-plane/evidence grants or deletion of existing grants. |
+| Storage | One `storageAccountName` and one Blob PE. Keep app state/archive separate and document container-scoped operator grants. Retain project-ID BYO provisioning/data roles; these share the trust boundary, not hard account isolation. |
 
 Built-in policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` is named “Container Apps environment should
 disable public network access,” but its actual rule denies a missing or false

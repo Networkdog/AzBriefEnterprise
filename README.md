@@ -47,6 +47,9 @@ Stage one does not create the Foundry project. After the account host is ready, 
 the project, role/connection bindings and BYO host in one deployment. The stage-one project ID
 and endpoint are planned values; its project principal is empty. Existing automatic or incomplete
 hosts require an explicitly approved recovery, never an automatic reset during redeployment.
+KT does not assign Container App or Hosted Agent runtime roles. Operators grant these after
+deployment using the distinct identities; only project-identity permissions required for BYO
+provisioning remain in the template. Existing assignments are not deleted by Incremental replay.
 KT temporarily defaults `deployContainerAppsPrivateEndpoint=false` for manual diagnosis: the
 Environment and four other PEs still deploy, while the ACA PE and its DNS zone group are skipped.
 Existing PEs are not deleted; internal/PNA restrictions and manual DNS/HTTPS acceptance still apply.

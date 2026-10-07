@@ -472,7 +472,7 @@
           {
             "name": "scopeAccepted",
             "type": "Microsoft.Common.CheckBox",
-            "label": "유휴 비용과 공유 Storage의 계정 범위 Foundry 권한을 확인했으며, 실제 앱 이미지 배포와 별개로 모델·Agent 게시·운영 Job·Entra·메일·스케줄 설정이 필요함을 확인했습니다.",
+            "label": "유휴 비용과 공유 Storage의 계정 범위 Foundry 권한을 확인했으며, Container App·Hosted Agent 운영 권한은 배포 후 직접 부여하고 모델·Agent 게시·운영 Job·Entra·메일·스케줄을 별도로 설정함을 확인했습니다.",
             "constraints": { "required": true, "validationMessage": "비용과 인프라 초기 배포 범위를 확인하십시오." }
           }
         ]
