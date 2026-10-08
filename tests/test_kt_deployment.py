@@ -687,8 +687,16 @@ def test_foundation_defers_project_and_all_byo_dependencies(template: dict):
     condition = "[parameters('deployCapabilityHost')]"
     for name in ("project", "agentBindings", "capabilityHost"):
         assert template["resources"][name]["condition"] == condition
-    for name in ("foundry", "storage", "cosmos", "search", "containerApp"):
+    assert template["parameters"]["deployCapabilityHost"]["defaultValue"] is False
+    assert template["resources"]["foundry"]["condition"] == (
+        "[not(parameters('deployCapabilityHost'))]"
+    )
+    for name in ("storage", "cosmos", "search", "containerApp"):
         assert "condition" not in template["resources"][name]
+    assert (
+        _params(template, "foundry")["customSubDomainName"]
+        == "[parameters('foundryAccountName')]"
+    )
     assert "project" in template["resources"]["agentBindings"]["dependsOn"]
     assert "agentBindings" in template["resources"]["capabilityHost"]["dependsOn"]
     output = template["outputs"]["ktFoundation"]["value"]

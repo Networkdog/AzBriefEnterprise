@@ -47,6 +47,10 @@ Entra 설정 전 Admin/Archive는 비활성이고, 이미지 게시만으로 기
 권한·연결·BYO host를 한 배포로 생성합니다. 1단계 출력의 프로젝트 ID·endpoint는 예정값이고
 프로젝트 principal은 비어 있습니다. 기존 자동 host나 불완전 초기화는 별도 승인을 거쳐 복구하며,
 재배포 중 자동으로 삭제하거나 초기화하지 않습니다.
+2단계는 1단계 Foundry 계정을 기존 리소스로만 참조하며 계정 모듈이나 전역 고유 custom
+subdomain을 다시 제출하지 않습니다. 따라서 동일 이름의 2단계 배포에서
+`CustomDomainInUse`가 발생하면 살아 있는 1단계 계정을 삭제·purge하지 말고, 서로 다른
+revision의 ARM/UI 파일을 사용하고 있지 않은지 먼저 확인해야 합니다.
 KT 템플릿은 Container App과 Hosted Agent의 운영 역할을 부여하지 않습니다. 배포 후 운영자가
 각각의 ID에 필요한 역할·범위를 지정합니다. BYO 프로비저닝에 필요한 프로젝트 ID 권한만
 유지하며, Incremental 재배포로 기존 역할 할당을 삭제하지 않습니다.

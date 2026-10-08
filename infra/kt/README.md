@@ -303,10 +303,18 @@ Private Endpoint의 zone group이 기존 zone을 참조하므로 Azure가 필요
 **2단계 — 프로젝트·연결·BYO host 구성**을 선택합니다. UI는 두 배포를 자동 실행하거나
 account host 준비를 기다리지 않습니다.
 
+2단계는 1단계의 Foundry 계정을 `existing` 리소스로만 참조합니다. 계정 AVM 모듈이나
+`customSubDomainName`을 다시 제출하지 않으므로 정상적인 동일 이름 재사용은 전역 subdomain
+가용성 검사로 차단되지 않습니다. 2단계에서 `CustomDomainInUse`가 발생한다면 이전 버전의
+ARM/UI 조합을 사용 중인지 먼저 확인하십시오. 살아 있는 1단계 계정을 삭제하거나 purge하지
+말고, 같은 source revision에서 생성된 `azuredeploy.json`과 `createUiDefinition.json`을
+다시 게시하십시오. 직접 ARM을 호출할 때도 1단계는 명시적 또는 기본
+`deployCapabilityHost=false`, 2단계만 `true`를 사용합니다.
+
 | 단계 | 생성·갱신 범위 | 프로젝트 상태 |
 |---|---|---|
 | 1단계 | 기존 네트워크 기반, 사설 endpoint, Foundry 계정·자동 account host, 저장소, 초기 App와 제어면 ID | 새 프로젝트·연결·프로젝트 역할·BYO project host를 생성하지 않음 |
-| 2단계 | 위 기반을 재사용하고 프로젝트 → BYO 필수 권한·연결 → BYO host → 프로젝트 데이터 역할 순으로 구성 | 한 배포 안에서 BYO 구성을 완료. App·Hosted 운영 역할은 별도 수동 부여 |
+| 2단계 | Foundry 계정은 재배포하지 않고 `existing`으로 참조하며, 나머지 기반을 재사용해 프로젝트 → BYO 필수 권한·연결 → BYO host → 프로젝트 데이터 역할 순으로 구성 | 한 배포 안에서 BYO 구성을 완료. App·Hosted 운영 역할은 별도 수동 부여 |
 
 프로젝트만 먼저 만든 상태로 두 단계 사이에 기다리면 기본 저장소용 host가 초기화되어
 나중의 BYO 연결 추가가 거부될 수 있습니다. 따라서 2단계 전에 프로젝트를 수동으로 만들거나

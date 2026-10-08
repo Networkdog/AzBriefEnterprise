@@ -47,6 +47,10 @@ Stage one does not create the Foundry project. After the account host is ready, 
 the project, role/connection bindings and BYO host in one deployment. The stage-one project ID
 and endpoint are planned values; its project principal is empty. Existing automatic or incomplete
 hosts require an explicitly approved recovery, never an automatic reset during redeployment.
+Stage two references the stage-one Foundry account as an existing resource and does not replay the
+account module or resubmit its globally unique custom subdomain. A same-name stage-two
+`CustomDomainInUse` therefore indicates a stale ARM/UI pair, not a reason to delete or purge the
+live stage-one account.
 KT does not assign Container App or Hosted Agent runtime roles. Operators grant these after
 deployment using the distinct identities; only project-identity permissions required for BYO
 provisioning remain in the template. Existing assignments are not deleted by Incremental replay.

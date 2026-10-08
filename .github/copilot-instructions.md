@@ -341,8 +341,12 @@ Do not create the Foundry project during KT stage one: the default project host 
 before a later BYO request. Gate the project, agentBindings and capabilityHost together on
 `deployCapabilityHost`. Stage-one project ID/endpoint are planned values;
 return an empty project principal without evaluating a missing project. After the account host is
-ready, stage two creates the project and its BYO dependencies in one deployment. Keep Incremental
-replay and matching BYO connections. CLI rejects pre-existing projects with missing, automatic,
+ready, stage two creates the project and its BYO dependencies in one deployment. The Foundry account
+module is stage-one-only; stage two must reference the live account as `existing` and must not
+resubmit `customSubDomainName`, because the service can reject that replay as `CustomDomainInUse`.
+Keep `deployCapabilityHost=false` as the direct-ARM default and require stage two to opt in
+explicitly. Never delete or purge the live stage-one account to recover from a stale ARM/UI pair.
+Keep Incremental replay and matching BYO connections. CLI rejects pre-existing projects with missing, automatic,
 unready or mismatched hosts before touching connections; never delete/reset them automatically.
 Old installations need separately approved, data-loss-aware recovery. Do not move Korea Central
 to capabilitySettings preview based on documentation for other regions, or invent a BYO grace period.

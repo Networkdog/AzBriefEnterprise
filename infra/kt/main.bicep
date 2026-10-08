@@ -69,7 +69,7 @@ param logAnalyticsWorkspaceResourceId string = ''
 param searchSku string = 'basic'
 
 @description('False creates only the foundation, not a project. True creates the project, its role/connection bindings and BYO Capability Host together after the account host is ready. Never use stage one to precreate the project.')
-param deployCapabilityHost bool = true
+param deployCapabilityHost bool = false
 
 @description('Compatibility parameter name for the pinned AzBrief control-plane image. Agent publication and authenticated Admin/Archive setup remain separate.')
 @allowed([
@@ -202,7 +202,7 @@ module dnsZones 'br/public:avm/res/network/private-dns-zone:0.8.1' = [
   }
 ]
 
-module foundry 'br/public:avm/res/cognitive-services/account:0.19.1' = {
+module foundry 'br/public:avm/res/cognitive-services/account:0.19.1' = if (!deployCapabilityHost) {
   name: 'kt-foundry'
   params: {
     name: foundryAccountName
