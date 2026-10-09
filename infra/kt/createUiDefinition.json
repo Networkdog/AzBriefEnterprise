@@ -445,7 +445,7 @@
               "required": true,
               "allowedValues": [
                 { "label": "1단계 — 네트워크·저장소·계정 기반", "value": "foundation" },
-                { "label": "2단계 — 프로젝트·연결·BYO host 구성", "value": "complete" }
+                { "label": "2단계 — 프로젝트·BYO host·웹 인증 구성", "value": "complete" }
               ]
             },
             "toolTip": "1단계는 프로젝트를 생성하지 않습니다. 계정의 자동 Capability Host가 Succeeded인 것을 확인한 뒤 같은 입력으로 2단계를 배포합니다. 2단계가 프로젝트·권한·연결·BYO host를 한 배포에서 구성합니다. 그 전에 프로젝트를 수동 생성하거나 Agent를 실행하지 마십시오. 기존 프로젝트는 CLI 사전검사로 BYO 연결을 확인하고, 기본 host가 있으면 별도 복구를 승인해야 합니다."
@@ -456,6 +456,98 @@
             "label": "1단계가 성공했고 account Capability Host가 Succeeded이며, 같은 RG·이름·VNet·DNS 설정으로 진행함을 확인했습니다.",
             "visible": "[equals(steps('review').deploymentStage, 'complete')]",
             "constraints": { "required": true, "validationMessage": "계정 host 준비와 기존 입력을 확인하십시오." }
+          },
+          {
+            "name": "privateAnonymousWebUi",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "임시 Anonymous Admin·Archive 접근 (KT 사설망 한정, 최소 replica 1)",
+            "defaultValue": true,
+            "toolTip": "지금은 Entra 사용자 인증을 적용하지 않습니다. 이 모드에서는 사설망에서 접속 가능한 누구나 Admin 관리 API와 Archive 데이터에 접근합니다. API/MCP 키와 Azure 서비스용 Managed Identity는 유지합니다. 운영용 사용자 인증은 나중에 별도 적용해야 합니다.",
+            "visible": "[equals(steps('review').deploymentStage, 'complete')]"
+          },
+          {
+            "name": "privateAnonymousNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Warning",
+              "text": "익명 모드는 화면만 공개하는 것이 아닙니다. 접속 가능한 사설망 사용자가 설정 변경·분석 실행 등 관리자 기능을 사용할 수 있고 Archive 근거 데이터도 읽을 수 있습니다. 내부 Environment와 Public Network Access Disabled를 유지하며, 승인된 점프박스/사설 경로만 허용하십시오. 사용자별 인증·감사와 운영 준비 완료를 보장하지 않습니다. 최소 replica 1로 유휴 비용이 늘어납니다."
+            },
+            "visible": "[and(equals(steps('review').deploymentStage, 'complete'), steps('review').privateAnonymousWebUi)]"
+          },
+          {
+            "name": "privateAnonymousReady",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "승인된 사설 경로만 접속할 수 있음을 확인했고, 접속 가능한 모든 클라이언트의 관리 기능·데이터 접근을 임시로 허용하는 위험과 유휴 비용을 이해했습니다.",
+            "constraints": { "required": true, "validationMessage": "사설 접근 경계와 익명 관리자 접근의 위험을 확인하십시오." },
+            "visible": "[and(equals(steps('review').deploymentStage, 'complete'), steps('review').privateAnonymousWebUi)]"
+          },
+          {
+            "name": "configureWebUi",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "기존 Entra 앱으로 Admin·Archive 인증 자동 구성 (Admin 활성화 시 최소 replica 1)",
+            "defaultValue": false,
+            "toolTip": "2단계에서 EasyAuth, 허용 목록, 관리자 설정 저장 경로와 Archive 링크를 구성합니다. 승인된 Entra 앱이 아직 없으면 선택을 해제하십시오. Entra 앱 생성과 운영 RBAC 부여는 자동 실행하지 않습니다. 최소 replica 1은 유휴 비용이 증가합니다.",
+            "visible": "[and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi))]"
+          },
+          {
+            "name": "webSetupNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Info",
+              "text": "1단계 출력 ktFoundation.entraRedirectUri를 기존 고객 테넌트 Entra 앱의 Web redirect URI로 등록하십시오. 이전 출력에는 applicationUrl 뒤에 /.auth/login/aad/callback을 붙입니다. 2단계는 아래 입력으로 웹 인증을 자동 구성하지만 앱 등록·secret 발급·운영 RBAC·모델/Agent 게시를 대신하지 않습니다. 제어면 ID의 azbrief-state/azbrief-archive Blob 권한과 점프박스의 Entra 로그인 통신을 별도로 확인해야 합니다."
+            },
+            "visible": "[and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi)]"
+          },
+          {
+            "name": "adminClientId",
+            "type": "Microsoft.Common.TextBox",
+            "label": "기존 고객 테넌트 Entra 앱의 Application (client) ID",
+            "constraints": {
+              "required": true,
+              "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "validationMessage": "Entra Application (client) ID GUID를 입력하십시오."
+            },
+            "visible": "[and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi)]"
+          },
+          {
+            "name": "adminSecret",
+            "type": "Microsoft.Common.PasswordBox",
+            "label": { "password": "기존 Entra 앱 client secret 값", "confirmPassword": "Client secret 값 확인" },
+            "toolTip": "Secret ID가 아니라 발급된 값입니다. Portal에 직접 입력하십시오. 채팅·소스·명령줄·배포 출력에 넣지 마십시오. Container App Secret에 저장되며 API 키·GHCR 토큰과 별도여야 합니다.",
+            "constraints": { "required": true },
+            "options": { "hideConfirmation": true },
+            "visible": "[and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi)]"
+          },
+          {
+            "name": "adminPrincipals",
+            "type": "Microsoft.Common.TextBox",
+            "label": "허용할 관리자 Object ID 또는 UPN (쉼표 구분)",
+            "toolTip": "배포자나 로그인한 모든 사용자를 자동 허용하지 않습니다. 지정한 관리자는 Archive도 읽을 수 있습니다.",
+            "constraints": {
+              "required": true,
+              "regex": "^\\s*[^\\s,]+(?:\\s*,\\s*[^\\s,]+)*\\s*$",
+              "validationMessage": "하나 이상의 관리자 Object ID 또는 UPN을 쉼표로 구분하여 입력하십시오."
+            },
+            "visible": "[and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi)]"
+          },
+          {
+            "name": "archivePrincipals",
+            "type": "Microsoft.Common.TextBox",
+            "label": "추가 Archive 조회 사용자·그룹 Object ID 또는 UPN (선택 사항)",
+            "defaultValue": "",
+            "constraints": {
+              "required": false,
+              "regex": "^\\s*(?:[^\\s,]+(?:\\s*,\\s*[^\\s,]+)*)?\\s*$",
+              "validationMessage": "Object ID 또는 UPN을 쉼표로 구분하거나 비워 두십시오."
+            },
+            "visible": "[and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi)]"
+          },
+          {
+            "name": "webPrerequisitesReady",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "고객 테넌트의 승인된 Entra 앱·유효한 secret·Web callback 등록과 로그인 통신을 확인했으며, Blob 운영 권한과 실제 로그인 인수는 별도임을 확인했습니다.",
+            "constraints": { "required": true, "validationMessage": "기존 Entra 앱과 callback, secret 및 로그인 통신을 확인하십시오." },
+            "visible": "[and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi)]"
           },
           {
             "name": "networkReady",
@@ -472,7 +564,7 @@
           {
             "name": "scopeAccepted",
             "type": "Microsoft.Common.CheckBox",
-            "label": "유휴 비용과 공유 Storage의 계정 범위 Foundry 권한을 확인했으며, Container App·Hosted Agent 운영 권한은 배포 후 직접 부여하고 모델·Agent 게시·운영 Job·Entra·메일·스케줄을 별도로 설정함을 확인했습니다.",
+            "label": "유휴 비용과 공유 Storage의 계정 범위 Foundry 권한을 확인했으며, Container App·Hosted Agent 운영 권한은 배포 후 직접 부여합니다. Entra 앱 등록과 모델·Agent 게시·운영 Job·메일·스케줄은 별도이며, 2단계 웹 인증 자동 구성도 운영 인수 완료는 아님을 확인했습니다.",
             "constraints": { "required": true, "validationMessage": "비용과 인프라 초기 배포 범위를 확인하십시오." }
           }
         ]
@@ -504,6 +596,11 @@
       "linkedPrivateDnsZones": "[if(equals(steps('options').dnsMode, 'auto'), coalesce(steps('network').linkedPrivateDnsZonesApi.data, parse('[]')), parse('[]'))]",
       "searchSku": "[steps('options').searchSku]",
       "deployCapabilityHost": "[equals(steps('review').deploymentStage, 'complete')]",
+      "enablePrivateAnonymousWebUi": "[and(equals(steps('review').deploymentStage, 'complete'), steps('review').privateAnonymousWebUi)]",
+      "adminEntraClientId": "[if(and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi), steps('review').adminClientId, '')]",
+      "adminEntraClientSecret": "[if(and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi), steps('review').adminSecret, '')]",
+      "adminAllowedPrincipals": "[if(and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi), steps('review').adminPrincipals, '')]",
+      "archiveAllowedPrincipals": "[if(and(equals(steps('review').deploymentStage, 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi), steps('review').archivePrincipals, '')]",
       "logAnalyticsWorkspaceResourceId": "[if(steps('options').collectLogs, steps('options').workspaceId, '')]",
       "existingPrivateDnsZoneIds": "[if(equals(steps('options').dnsMode, 'existing'), parse(concat('{\"privatelink.cognitiveservices.azure.com\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.cognitiveservices.azure.com\",\"privatelink.openai.azure.com\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.openai.azure.com\",\"privatelink.services.ai.azure.com\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.services.ai.azure.com\",\"privatelink.blob.core.windows.net\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.blob.core.windows.net\",\"privatelink.documents.azure.com\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.documents.azure.com\",\"privatelink.search.windows.net\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.search.windows.net\",\"privatelink.', steps('network').virtualNetwork.location, '.azurecontainerapps.io\":\"', steps('options').dnsResourceGroupId, '/providers/Microsoft.Network/privateDnsZones/privatelink.', steps('network').virtualNetwork.location, '.azurecontainerapps.io\"}')), parse('{}'))]"
     }

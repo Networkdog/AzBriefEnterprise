@@ -31,6 +31,13 @@ SUBNET_NAMES = {
     "foundrySubnetName": "snet-foundry-agent",
     "containerAppsSubnetName": "snet-container-apps",
 }
+WEB_INPUTS = {
+    "adminEntraClientId": "33333333-3333-3333-3333-333333333333",
+    "adminEntraClientSecret": "test-only-entra-client-secret",
+    "adminAllowedPrincipals": "44444444-4444-4444-4444-444444444444",
+    "archiveAllowedPrincipals": "",
+}
+EXISTING_API_KEY = "existing-test-only-api-key-0123456789abcdef0123456789abcdef"
 
 
 @pytest.fixture(scope="module")
@@ -247,10 +254,17 @@ def _evaluate_ui_expression(
     names: dict[str, object],
     resource_group: dict[str, object] | None = None,
     subscription: dict[str, object] | None = None,
+    review: dict[str, object] | None = None,
+    parameters: dict[str, object] | None = None,
+    variables: dict[str, object] | None = None,
 ) -> object:
     """Evaluate the tested Portal expression subset with strict equality."""
-    source = re.sub(r"\((\w+)\)\s*=>", r"lambda \1:", expression[1:-1])
-    source = re.sub(r"\b(and|or|not|if)\(", r"ui_\1(", source)
+
+    def parse_expression(value: str) -> ast.expr:
+        source = re.sub(r"\((\w+)\)\s*=>", r"lambda \1:", value[1:-1])
+        source = re.sub(r"\b(and|or|not|if)\(", r"ui_\1(", source)
+        source = re.sub(r"\blambda\(", "arm_lambda(", source)
+        return ast.parse(source, mode="eval").body
 
     def evaluate(node: ast.expr, bindings: dict[str, object]) -> object:
         if isinstance(node, ast.Constant):
@@ -263,6 +277,11 @@ def _evaluate_ui_expression(
                 return None
             assert isinstance(value, dict)
             return value.get(node.attr)
+        if isinstance(node, ast.Subscript):
+            value = evaluate(node.value, bindings)
+            index = evaluate(node.slice, bindings)
+            assert isinstance(value, list) and isinstance(index, int)
+            return value[index]
         assert isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         function = node.func.id
         if function == "ui_if":
@@ -272,13 +291,18 @@ def _evaluate_ui_expression(
         if function == "filter":
             rows = evaluate(node.args[0], bindings)
             predicate = node.args[1]
-            assert isinstance(rows, list) and isinstance(predicate, ast.Lambda)
-            assert len(predicate.args.args) == 1
-            return [
-                row
-                for row in rows
-                if evaluate(predicate.body, {**bindings, predicate.args.args[0].arg: row}) is True
-            ]
+            assert isinstance(rows, list)
+            if isinstance(predicate, ast.Lambda):
+                assert len(predicate.args.args) == 1
+                variable_name = predicate.args.args[0].arg
+                body = predicate.body
+            else:
+                assert isinstance(predicate, ast.Call) and isinstance(predicate.func, ast.Name)
+                assert predicate.func.id == "arm_lambda" and len(predicate.args) == 2
+                variable_name = evaluate(predicate.args[0], bindings)
+                assert isinstance(variable_name, str)
+                body = predicate.args[1]
+            return [row for row in rows if evaluate(body, {**bindings, variable_name: row}) is True]
         arguments = [evaluate(argument, bindings) for argument in node.args]
         if function == "resourceGroup":
             assert not arguments and resource_group is not None
@@ -287,11 +311,89 @@ def _evaluate_ui_expression(
             assert not arguments and subscription is not None
             return subscription
         if function == "concat":
-            assert all(isinstance(value, str) for value in arguments)
-            return "".join(arguments)
+            if all(isinstance(value, str) for value in arguments):
+                return "".join(arguments)
+            assert all(isinstance(value, list) for value in arguments)
+            return [item for value in arguments for item in value]
         if function == "steps":
+            if arguments == ["review"]:
+                assert review is not None
+                return review
             assert arguments == ["names"]
             return names
+        if function == "parameters":
+            assert parameters is not None and len(arguments) == 1 and isinstance(arguments[0], str)
+            return parameters[arguments[0]]
+        if function == "lambdaVariables":
+            assert len(arguments) == 1 and isinstance(arguments[0], str)
+            return bindings[arguments[0]]
+        if function == "variables":
+            assert variables is not None and len(arguments) == 1 and isinstance(arguments[0], str)
+            value = variables[arguments[0]]
+            if isinstance(value, str) and value.startswith("[") and value.endswith("]"):
+                return evaluate(parse_expression(value), bindings)
+            return value
+        if function == "null":
+            assert not arguments
+            return None
+        if function in {"true", "false"}:
+            assert not arguments
+            return function == "true"
+        if function == "createObject":
+            assert len(arguments) % 2 == 0
+            assert all(isinstance(value, str) for value in arguments[::2])
+            return dict(zip(arguments[::2], arguments[1::2]))
+        if function == "createArray":
+            return arguments
+        if function == "environment":
+            assert not arguments
+            return {"authentication": {"loginEndpoint": "https://login.microsoftonline.com/"}}
+        if function == "tenant":
+            assert not arguments
+            return {"tenantId": TENANT}
+        if function == "reference":
+            assert parameters is not None
+            if arguments == ["containerEnvironment"]:
+                return {
+                    "outputs": {"defaultDomain": {"value": "kt-test.eastus2.azurecontainerapps.io"}}
+                }
+            if arguments == ["storage"]:
+                return {
+                    "outputs": {
+                        "primaryBlobEndpoint": {
+                            "value": f"https://{parameters['storageAccountName']}.blob.core.windows.net/"
+                        }
+                    }
+                }
+            if arguments == ["containerApp"]:
+                return {
+                    "outputs": {
+                        "fqdn": {
+                            "value": f"{parameters['containerAppName']}.kt-test.eastus2.azurecontainerapps.io"
+                        }
+                    }
+                }
+            raise AssertionError(f"Unexpected offline ARM reference: {arguments}")
+        if function == "listSecrets":
+            assert arguments == ["existingContainerApp", "2026-01-01"]
+            return {
+                "value": [
+                    {"name": "ghcr-pull-token", "value": "previous-test-only-ghcr-token"},
+                    {"name": "orchestrator-api-key", "value": EXISTING_API_KEY},
+                ]
+            }
+        if function == "trim":
+            assert len(arguments) == 1 and isinstance(arguments[0], str)
+            return arguments[0].strip()
+        if function == "replace":
+            assert len(arguments) == 3 and all(isinstance(value, str) for value in arguments)
+            return arguments[0].replace(arguments[1], arguments[2])
+        if function == "string":
+            assert len(arguments) == 1 and isinstance(arguments[0], bool)
+            return str(arguments[0]).lower()
+        if function == "format":
+            assert isinstance(arguments[0], str)
+            return arguments[0].format(*arguments[1:])
         if function == "parse":
             assert arguments in (["[]"], ["{}"])
             return json.loads(arguments[0])
@@ -319,7 +421,7 @@ def _evaluate_ui_expression(
             return all(arguments) if function == "ui_and" else any(arguments)
         raise AssertionError(f"Unsupported UI guard function: {function}")
 
-    return evaluate(ast.parse(source, mode="eval").body, {})
+    return evaluate(parse_expression(expression), {})
 
 
 def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
@@ -347,7 +449,7 @@ def test_kt_wizard_has_distinct_steps_and_matching_outputs(wizard: dict, templat
     secure_outputs = {
         key for key in outputs if template["parameters"][key]["type"].casefold() == "securestring"
     }
-    assert secure_outputs == {"containerRegistryPassword"}
+    assert secure_outputs == {"containerRegistryPassword", "adminEntraClientSecret"}
     assert not secure_outputs & template["outputs"]["ktFoundation"]["value"].keys()
 
 
@@ -694,8 +796,7 @@ def test_foundation_defers_project_and_all_byo_dependencies(template: dict):
     for name in ("storage", "cosmos", "search", "containerApp"):
         assert "condition" not in template["resources"][name]
     assert (
-        _params(template, "foundry")["customSubDomainName"]
-        == "[parameters('foundryAccountName')]"
+        _params(template, "foundry")["customSubDomainName"] == "[parameters('foundryAccountName')]"
     )
     assert "project" in template["resources"]["agentBindings"]["dependsOn"]
     assert "agentBindings" in template["resources"]["capabilityHost"]["dependsOn"]
@@ -866,7 +967,10 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
     ]
     assert environment["zoneRedundant"] is False
     app = _params(template, "containerApp")
-    assert app["scaleSettings"] == {"minReplicas": 0, "maxReplicas": 1}
+    assert app["scaleSettings"] == {
+        "minReplicas": "[if(variables('adminUiEnabled'), 1, 0)]",
+        "maxReplicas": 1,
+    }
     assert app["ingressExternal"] is True
     assert app["ingressTargetPort"] == 8000
     assert app["ingressAllowInsecure"] is False
@@ -879,7 +983,7 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
     assert template["parameters"]["bootstrapImage"]["allowedValues"] == [image]
     assert container["probes"][0]["httpGet"] == {"path": "/health", "port": 8000}
     env = {entry["name"]: entry for entry in container["env"]}
-    assert set(env) == kt.FOUNDATION_ENV_NAMES
+    assert set(env) == kt.FOUNDATION_ENV_NAMES | kt.WEB_ENV_NAMES
     assert env["AZURE_TENANT_ID"]["value"] == "[tenant().tenantId]"
     assert env["AZURE_SUBSCRIPTION_ID"]["value"] == "[subscription().subscriptionId]"
     assert "controlPlaneIdentity" in env["AZURE_CLIENT_ID"]["value"]
@@ -888,10 +992,11 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
     assert env["API_KEY"] == {"name": "API_KEY", "secretRef": "orchestrator-api-key"}
     assert "azbrief-archive" in env["ARCHIVE_BLOB_CONTAINER_URL"]["value"]
     assert "azbrief-state/checkpoint.json" in env["CHECKPOINT_BLOB_URL"]["value"]
-    for name in ("ADMIN_UI_ENABLED", "ARCHIVE_UI_ENABLED", "FEEDBACK_UI_ENABLED"):
-        assert env[name]["value"] == "false"
+    assert env["ADMIN_UI_ENABLED"]["value"] == "[string(variables('adminUiEnabled'))]"
+    assert env["ARCHIVE_UI_ENABLED"]["value"] == "[string(variables('archiveUiEnabled'))]"
+    assert env["FEEDBACK_UI_ENABLED"]["value"] == "false"
     for name in ("ADMIN_REQUIRE_AUTH", "ARCHIVE_REQUIRE_AUTH"):
-        assert env[name]["value"] == "true"
+        assert env[name]["value"] == "[string(not(variables('privateAnonymousWebUi')))]"
     assert env["MAX_CONCURRENT_ANALYSES"]["value"] == "1"
     assert "APPLICATIONINSIGHTS_CONNECTION_STRING" not in env
     assert "OTEL_SDK_DISABLED" not in env
@@ -907,6 +1012,7 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
     assert "listSecrets(" in api_secret and ")[0]" in api_secret
     assert "parameters('apiKey')" in api_secret
     assert "parameters('containerRegistryPassword')" in app["secrets"]
+    assert "parameters('adminEntraClientSecret')" in app["secrets"]
     assert "ghcr.io" in app["registries"]
     assert "ghcr-pull-token" in app["registries"]
     assert "variables('credentialRegistry')" in app["registries"]
@@ -920,11 +1026,310 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
     outputs = template["outputs"]["ktFoundation"]["value"]
     assert outputs["containerImage"] == "[parameters('bootstrapImage')]"
     assert outputs["containerRegistryAuthMode"] == "[parameters('containerRegistryAuthMode')]"
-    assert "apiKey" not in outputs and "containerRegistryPassword" not in outputs
+    assert not {"apiKey", "containerRegistryPassword", "adminEntraClientSecret"} & outputs.keys()
     for resource in template["resources"].values():
         parameters = resource.get("properties", {}).get("parameters", {})
         if "enableTelemetry" in parameters:
             assert parameters["enableTelemetry"]["value"] is False
+
+
+@pytest.mark.parametrize("reuse_api_key", [False, True])
+@pytest.mark.parametrize(
+    ("stage_two", "inputs", "admin", "archive", "authenticated"),
+    [
+        (False, WEB_INPUTS, False, False, False),
+        (True, {}, False, False, False),
+        (True, {"adminEntraClientId": WEB_INPUTS["adminEntraClientId"]}, False, False, False),
+        (
+            True,
+            {**WEB_INPUTS, "adminAllowedPrincipals": ""},
+            False,
+            False,
+            True,
+        ),
+        (True, WEB_INPUTS, True, True, True),
+        (
+            True,
+            {**WEB_INPUTS, "adminAllowedPrincipals": "", "archiveAllowedPrincipals": "reader"},
+            False,
+            True,
+            True,
+        ),
+        (
+            True,
+            {**WEB_INPUTS, "adminAllowedPrincipals": " ,  , "},
+            False,
+            False,
+            True,
+        ),
+    ],
+)
+def test_compiled_web_setup_is_stage_gated_and_fail_closed(
+    template: dict,
+    values: dict,
+    stage_two: bool,
+    inputs: dict[str, str],
+    admin: bool,
+    archive: bool,
+    authenticated: bool,
+    reuse_api_key: bool,
+):
+    values.update(inputs, deployCapabilityHost=stage_two, reuseExistingApiKey=reuse_api_key)
+
+    def resolve(value: object) -> object:
+        if isinstance(value, str) and value.startswith("["):
+            return _evaluate_ui_expression(
+                value, {}, parameters=values, variables=template["variables"]
+            )
+        return value
+
+    app = _params(template, "containerApp")
+    env = {entry["name"]: entry for entry in app["containers"][0]["env"]}
+    assert resolve(env["ADMIN_UI_ENABLED"]["value"]) == str(admin).lower()
+    assert resolve(env["ARCHIVE_UI_ENABLED"]["value"]) == str(archive).lower()
+    assert resolve(env["ADMIN_REQUIRE_AUTH"]["value"]) == "true"
+    assert resolve(env["ARCHIVE_REQUIRE_AUTH"]["value"]) == "true"
+    assert resolve(env["ADMIN_ALLOWED_PRINCIPALS"]["value"]) == (
+        values["adminAllowedPrincipals"] if admin else ""
+    )
+    assert resolve(env["ARCHIVE_ALLOWED_PRINCIPALS"]["value"]) == (
+        values["archiveAllowedPrincipals"] if archive else ""
+    )
+    assert resolve(app["scaleSettings"]["minReplicas"]) == (1 if admin else 0)
+    auth_parameter = resolve(app["authConfig"])
+    assert isinstance(auth_parameter, dict) and set(auth_parameter) == {"value"}
+    assert (auth_parameter["value"] is not None) is authenticated
+    secrets = resolve(app["secrets"])
+    assert isinstance(secrets, list)
+    assert [secret for secret in secrets if secret["name"] == "orchestrator-api-key"] == [
+        {
+            "name": "orchestrator-api-key",
+            "value": EXISTING_API_KEY if reuse_api_key else values["apiKey"],
+        }
+    ]
+    auth_secrets = [
+        secret for secret in secrets if secret["name"] == "microsoft-provider-authentication-secret"
+    ]
+    assert auth_secrets == (
+        [
+            {
+                "name": "microsoft-provider-authentication-secret",
+                "value": values["adminEntraClientSecret"],
+            }
+        ]
+        if authenticated
+        else []
+    )
+    origin = f"https://{values['containerAppName']}.kt-test.eastus2.azurecontainerapps.io"
+    assert resolve(env["ARCHIVE_BASE_URL"]["value"]) == (origin if archive else "")
+    assert resolve(env["ADMIN_CONFIG_BLOB_URL"]["value"]) == (
+        f"https://{values['storageAccountName']}.blob.core.windows.net/azbrief-state/admin-config.json"
+        if admin
+        else ""
+    )
+    outputs = template["outputs"]["ktFoundation"]["value"]
+    assert resolve(outputs["webAuthenticationConfigured"]) is authenticated
+    assert resolve(outputs["adminUiEnabled"]) is admin
+    assert resolve(outputs["archiveUiEnabled"]) is archive
+    assert resolve(outputs["adminPageUrl"]) == (f"{origin}/admin" if admin else "")
+    assert resolve(outputs["archivePageUrl"]) == (f"{origin}/archive" if archive else "")
+    assert resolve(outputs["entraRedirectUri"]) == f"{origin}/.auth/login/aad/callback"
+    assert outputs["applicationReady"] is False
+    assert kt._web_ui_flags(values) == (admin, archive)
+
+
+def test_web_auth_uses_existing_tenant_and_preserves_api_key_routes(template: dict, values: dict):
+    values.update(WEB_INPUTS, deployCapabilityHost=True)
+    app = _params(template, "containerApp")
+    auth_parameter = _evaluate_ui_expression(
+        app["authConfig"], {}, parameters=values, variables=template["variables"]
+    )
+    assert isinstance(auth_parameter, dict)
+    auth = auth_parameter["value"]
+    assert auth["platform"] == {"enabled": True}
+    assert auth["globalValidation"] == {"unauthenticatedClientAction": "AllowAnonymous"}
+    assert auth["httpSettings"] == {"requireHttps": True}
+    provider = auth["identityProviders"]["azureActiveDirectory"]
+    assert provider["enabled"] is True
+    registration = provider["registration"]
+    assert registration["clientSecretSettingName"] == "microsoft-provider-authentication-secret"
+    assert registration["openIdIssuer"] == f"https://login.microsoftonline.com/{TENANT}/v2.0"
+    assert "tenant().tenantId" in app["authConfig"]
+    for actual, expected in (
+        (registration["clientId"], WEB_INPUTS["adminEntraClientId"]),
+        (
+            provider["validation"]["allowedAudiences"][0],
+            f"api://{WEB_INPUTS['adminEntraClientId']}",
+        ),
+        (provider["validation"]["allowedAudiences"][1], WEB_INPUTS["adminEntraClientId"]),
+    ):
+        assert actual == expected
+    assert auth["login"] == {
+        "allowedExternalRedirectUrls": [
+            f"https://{values['containerAppName']}.kt-test.eastus2.azurecontainerapps.io"
+        ],
+        "preserveUrlFragmentsForLogins": False,
+    }
+    assert "variables('adminAuthConfigured')" in app["authConfig"]
+    env = {entry["name"]: entry for entry in app["containers"][0]["env"]}
+    assert "adminEntraClientSecret" not in json.dumps(env)
+    assert "variables('adminUiEnabled')" in env["ADMIN_CONFIG_BLOB_URL"]["value"]
+    assert "azbrief-state/admin-config.json" in env["ADMIN_CONFIG_BLOB_URL"]["value"]
+    assert (
+        "reference('storage').outputs.primaryBlobEndpoint.value"
+        in env["ADMIN_CONFIG_BLOB_URL"]["value"]
+    )
+    assert "variables('archiveUiEnabled')" in env["ARCHIVE_BASE_URL"]["value"]
+    assert (
+        "reference('containerEnvironment').outputs.defaultDomain.value"
+        in env["ARCHIVE_BASE_URL"]["value"]
+    )
+    nested = template["resources"]["containerApp"]["properties"]["template"]
+    auth_module = nested["resources"]["containerAppAuthConfigs"]
+    assert auth_module["condition"] == "[not(empty(parameters('authConfig')))]"
+    assert "containerApp" in auth_module["dependsOn"]
+    leaf = auth_module["properties"]["template"]["resources"]["containerAppAuthConfigs"]
+    assert leaf["type"] == "Microsoft.App/containerApps/authConfigs"
+    assert leaf["apiVersion"] == "2026-01-01"
+
+
+@pytest.mark.parametrize(
+    ("stage", "enabled", "forwarded"),
+    [("foundation", True, False), ("complete", False, False), ("complete", True, True)],
+)
+def test_wizard_forwards_web_inputs_only_for_opted_in_stage_two(
+    wizard: dict, stage: str, enabled: bool, forwarded: bool
+):
+    controls = _ui_controls(wizard, "review")
+    assert controls["configureWebUi"]["defaultValue"] is False
+    assert controls["configureWebUi"]["visible"] == (
+        "[and(equals(steps('review').deploymentStage, 'complete'), "
+        "not(steps('review').privateAnonymousWebUi))]"
+    )
+    review = {
+        "deploymentStage": stage,
+        "configureWebUi": enabled,
+        "privateAnonymousWebUi": False,
+        "adminClientId": WEB_INPUTS["adminEntraClientId"],
+        "adminSecret": WEB_INPUTS["adminEntraClientSecret"],
+        "adminPrincipals": WEB_INPUTS["adminAllowedPrincipals"],
+        "archivePrincipals": "55555555-5555-5555-5555-555555555555",
+    }
+    for control in (
+        "adminClientId",
+        "adminSecret",
+        "adminPrincipals",
+        "archivePrincipals",
+        "webPrerequisitesReady",
+        "webSetupNotice",
+    ):
+        assert _evaluate_ui_expression(controls[control]["visible"], {}, review=review) is forwarded
+    for parameter, control in (
+        ("adminEntraClientId", "adminClientId"),
+        ("adminEntraClientSecret", "adminSecret"),
+        ("adminAllowedPrincipals", "adminPrincipals"),
+        ("archiveAllowedPrincipals", "archivePrincipals"),
+    ):
+        assert _evaluate_ui_expression(wizard["outputs"][parameter], {}, review=review) == (
+            review[control] if forwarded else ""
+        )
+    assert controls["adminSecret"]["type"] == "Microsoft.Common.PasswordBox"
+    assert "defaultValue" not in controls["adminSecret"]
+    for name in ("adminClientId", "adminSecret", "adminPrincipals", "webPrerequisitesReady"):
+        assert controls[name]["constraints"]["required"] is True
+    assert controls["archivePrincipals"]["constraints"]["required"] is False
+    regex = _ui_regex(controls["adminPrincipals"])
+    assert re.fullmatch(regex, " , , ") is None
+    assert re.fullmatch(regex, f" {WEB_INPUTS['adminAllowedPrincipals']},admin@example.invalid ")
+
+
+@pytest.mark.parametrize("stage_two", [False, True])
+@pytest.mark.parametrize("opted_in", [False, True])
+def test_private_anonymous_template_is_explicit_and_keeps_workload_auth(
+    template: dict, values: dict, stage_two: bool, opted_in: bool
+):
+    values.update(
+        deployCapabilityHost=stage_two,
+        enablePrivateAnonymousWebUi=opted_in,
+        reuseExistingApiKey=True,
+    )
+    enabled = stage_two and opted_in
+
+    def resolve(expression: object) -> object:
+        if isinstance(expression, str) and expression.startswith("["):
+            return _evaluate_ui_expression(
+                expression, {}, parameters=values, variables=template["variables"]
+            )
+        return expression
+
+    app = _params(template, "containerApp")
+    env = {entry["name"]: entry for entry in app["containers"][0]["env"]}
+    assert template["parameters"]["enablePrivateAnonymousWebUi"]["defaultValue"] is False
+    assert resolve(env["ADMIN_UI_ENABLED"]["value"]) == str(enabled).lower()
+    assert resolve(env["ARCHIVE_UI_ENABLED"]["value"]) == str(enabled).lower()
+    assert resolve(env["ADMIN_REQUIRE_AUTH"]["value"]) == str(not enabled).lower()
+    assert resolve(env["ARCHIVE_REQUIRE_AUTH"]["value"]) == str(not enabled).lower()
+    assert resolve(env["ADMIN_ALLOWED_PRINCIPALS"]["value"]) == ""
+    assert resolve(env["ARCHIVE_ALLOWED_PRINCIPALS"]["value"]) == ""
+    assert env["API_KEY"] == {"name": "API_KEY", "secretRef": "orchestrator-api-key"}
+    assert "controlPlaneIdentity" in env["AZURE_CLIENT_ID"]["value"]
+    assert resolve(app["scaleSettings"]["minReplicas"]) == (1 if enabled else 0)
+    secrets = resolve(app["secrets"])
+    assert isinstance(secrets, list)
+    assert not any(s["name"] == "microsoft-provider-authentication-secret" for s in secrets)
+    assert (
+        next(s["value"] for s in secrets if s["name"] == "orchestrator-api-key") == EXISTING_API_KEY
+    )
+    auth_parameter = resolve(app["authConfig"])
+    assert isinstance(auth_parameter, dict)
+    auth = auth_parameter["value"]
+    if enabled:
+        assert auth["platform"] == {"enabled": False}
+        assert auth["identityProviders"] == {"azureActiveDirectory": {"enabled": False}}
+        assert auth["globalValidation"] == {"unauthenticatedClientAction": "AllowAnonymous"}
+        assert auth["httpSettings"] == {"requireHttps": True}
+        assert "registration" not in auth["identityProviders"]["azureActiveDirectory"]
+    else:
+        assert auth is None
+    output = template["outputs"]["ktFoundation"]["value"]
+    assert resolve(output["privateAnonymousWebUiEnabled"]) is enabled
+    assert resolve(output["webAuthenticationConfigured"]) is False
+    assert output["applicationReady"] is False
+    environment = _params(template, "containerEnvironment")
+    assert environment["internal"] is True
+    assert environment["publicNetworkAccess"] == "Disabled"
+    assert app["ingressAllowInsecure"] is False
+
+
+@pytest.mark.parametrize("stage", ["foundation", "complete"])
+def test_anonymous_wizard_does_not_apply_hidden_entra_values(wizard: dict, stage: str):
+    controls = _ui_controls(wizard, "review")
+    assert controls["privateAnonymousWebUi"]["defaultValue"] is True
+    assert controls["privateAnonymousReady"]["constraints"]["required"] is True
+    assert "관리자 기능" in controls["privateAnonymousNotice"]["options"]["text"]
+    review = {
+        "deploymentStage": stage,
+        "privateAnonymousWebUi": True,
+        "configureWebUi": True,
+        "adminClientId": WEB_INPUTS["adminEntraClientId"],
+        "adminSecret": WEB_INPUTS["adminEntraClientSecret"],
+        "adminPrincipals": WEB_INPUTS["adminAllowedPrincipals"],
+        "archivePrincipals": "reader",
+    }
+    for name in (
+        "configureWebUi",
+        "adminClientId",
+        "adminSecret",
+        "adminPrincipals",
+        "archivePrincipals",
+        "webPrerequisitesReady",
+    ):
+        assert _evaluate_ui_expression(controls[name]["visible"], {}, review=review) is False
+    assert _evaluate_ui_expression(
+        wizard["outputs"]["enablePrivateAnonymousWebUi"], {}, review=review
+    ) is (stage == "complete")
+    for name in WEB_INPUTS:
+        assert _evaluate_ui_expression(wizard["outputs"][name], {}, review=review) == ""
 
 
 def test_wizard_defaults_to_anonymous_and_does_not_request_an_api_key(wizard: dict):
@@ -1239,6 +1644,7 @@ class FakeAzure(kt.AzureCli):
         self.linked_dns_zones: dict[str, str] = {}
         self.host_target_override = ""
         self.application: dict | None = None
+        self.authentication: dict | None = None
 
     def json(self, *args: str) -> Any:
         self.calls.append(args)
@@ -1258,6 +1664,13 @@ class FakeAzure(kt.AzureCli):
         self.calls.append(("get", resource_id, api_version))
         if resource_id == VNET:
             return copy.deepcopy(self.vnet)
+        if resource_id == (
+            f"{GROUP}/providers/Microsoft.App/containerApps/"
+            f"{self.values['containerAppName']}/authConfigs/current"
+        ):
+            if self.authentication is None:
+                raise RuntimeError("Container App authentication is absent")
+            return {"properties": copy.deepcopy(self.authentication)}
         if (
             resource_id
             == (f"{GROUP}/providers/Microsoft.App/containerApps/{self.values['containerAppName']}")
@@ -1368,7 +1781,59 @@ class FakeAzure(kt.AzureCli):
                 self.project_host_name = "agents"
             app_id = f"{GROUP}/providers/Microsoft.App/containerApps/{values['containerAppName']}"
             self.resources[app_id] = {"id": app_id, "tags": {"deploymentProfile": kt.PROFILE}}
+            identity_id = (
+                f"{GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+                f"id-{values['containerAppName']}"
+            )
+            self.resources[identity_id] = {
+                "id": identity_id,
+                "tags": {"deploymentProfile": kt.PROFILE},
+            }
             self.application = _foundation_app(values)
+            if (
+                values["deployCapabilityHost"]
+                and not values["enablePrivateAnonymousWebUi"]
+                and values["adminEntraClientId"]
+                and values["adminEntraClientSecret"]
+            ):
+                fqdn = self.application["configuration"]["ingress"]["fqdn"]
+                self.authentication = {
+                    "platform": {"enabled": True},
+                    "globalValidation": {"unauthenticatedClientAction": "AllowAnonymous"},
+                    "httpSettings": {"requireHttps": True},
+                    "identityProviders": {
+                        "azureActiveDirectory": {
+                            "enabled": True,
+                            "registration": {
+                                "clientId": values["adminEntraClientId"],
+                                "clientSecretSettingName": "microsoft-provider-authentication-secret",
+                                "openIdIssuer": f"https://login.microsoftonline.com/{TENANT}/v2.0",
+                            },
+                            "validation": {
+                                "allowedAudiences": [
+                                    f"api://{values['adminEntraClientId']}",
+                                    values["adminEntraClientId"],
+                                ]
+                            },
+                        }
+                    },
+                    "login": {
+                        "allowedExternalRedirectUrls": [f"https://{fqdn}"],
+                        "preserveUrlFragmentsForLogins": False,
+                    },
+                }
+            if values["deployCapabilityHost"] and values["enablePrivateAnonymousWebUi"]:
+                fqdn = self.application["configuration"]["ingress"]["fqdn"]
+                self.authentication = {
+                    "platform": {"enabled": False},
+                    "globalValidation": {"unauthenticatedClientAction": "AllowAnonymous"},
+                    "httpSettings": {"requireHttps": True},
+                    "identityProviders": {"azureActiveDirectory": {"enabled": False}},
+                    "login": {
+                        "allowedExternalRedirectUrls": [f"https://{fqdn}"],
+                        "preserveUrlFragmentsForLogins": False,
+                    },
+                }
             for role, name_parameter, prefix, create_flag, _ in kt.SUBNETS:
                 if values[create_flag]:
                     self.vnet["properties"]["subnets"].append(
@@ -1424,10 +1889,162 @@ def test_preflight_never_mutates_azure(values: dict, vnet: dict):
     assert cli.vnet == vnet
 
 
+def test_complete_stage_requires_existing_foundation(values: dict, vnet: dict):
+    values.update(WEB_INPUTS)
+    cli = FakeAzure(values, vnet)
+    with pytest.raises(ValueError, match="Stage two requires a complete existing KT foundation"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
+
+
+def test_private_anonymous_complete_stage_and_later_entra_upgrade(values: dict, vnet: dict):
+    values["enablePrivateAnonymousWebUi"] = True
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy", "foundation")
+    assert cli.authentication is None
+    cli.deployments.clear()
+    kt.run(cli, values, "deploy", "complete")
+    assert len(cli.deployments) == 1
+    assert cli.application is not None and cli.authentication is not None
+    env = {e["name"]: e for e in cli.application["template"]["containers"][0]["env"]}
+    assert env["ADMIN_UI_ENABLED"]["value"] == env["ARCHIVE_UI_ENABLED"]["value"] == "true"
+    assert env["ADMIN_REQUIRE_AUTH"]["value"] == env["ARCHIVE_REQUIRE_AUTH"]["value"] == "false"
+    assert cli.authentication["platform"]["enabled"] is False
+    assert cli.authentication["identityProviders"]["azureActiveDirectory"]["enabled"] is False
+    assert cli.deployments[0]["reuseExistingApiKey"] is True
+    cli.deployments.clear()
+    kt.run(cli, values, "deploy", "complete")
+    assert len(cli.deployments) == 1
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="cannot overwrite"):
+        kt.run(cli, values, "deploy")
+    assert not cli.deployments
+    upgraded = {**values, **WEB_INPUTS, "enablePrivateAnonymousWebUi": False}
+    kt.run(cli, upgraded, "deploy", "complete")
+    assert cli.authentication["platform"]["enabled"] is True
+    env = {e["name"]: e for e in cli.application["template"]["containers"][0]["env"]}
+    assert env["ADMIN_REQUIRE_AUTH"]["value"] == env["ARCHIVE_REQUIRE_AUTH"]["value"] == "true"
+
+
+def test_private_anonymous_does_not_downgrade_an_existing_authenticated_app(
+    values: dict, vnet: dict
+):
+    values.update(WEB_INPUTS)
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    requested = {
+        **values,
+        **{name: "" for name in WEB_INPUTS},
+        "enablePrivateAnonymousWebUi": True,
+    }
+    with pytest.raises(ValueError, match="refusing automatic anonymous downgrade"):
+        kt.run(cli, requested, "deploy", "complete")
+    assert len(cli.deployments) == 2
+
+
+@pytest.mark.parametrize("field", ["platform", "provider"])
+def test_private_anonymous_readback_requires_disabled_auth(values: dict, vnet: dict, field: str):
+    values["enablePrivateAnonymousWebUi"] = True
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.authentication is not None
+    if field == "platform":
+        cli.authentication["platform"]["enabled"] = True
+    else:
+        cli.authentication["identityProviders"]["azureActiveDirectory"]["enabled"] = True
+    with pytest.raises(RuntimeError, match="EasyAuth does not match"):
+        kt.verify_foundation(cli, cli.deployments[-1])
+
+
+def test_private_anonymous_does_not_bypass_private_network_check(values: dict, vnet: dict):
+    values["enablePrivateAnonymousWebUi"] = True
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy", "foundation")
+    cli.public_access = "Enabled"
+    with pytest.raises(ValueError, match="public network access"):
+        kt.run(cli, values, "deploy", "complete")
+    assert len(cli.deployments) == 1
+
+
+def test_complete_stage_configures_web_without_replaying_stage_one(values: dict, vnet: dict):
+    values.update(WEB_INPUTS)
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy", "foundation")
+    assert len(cli.deployments) == 1
+    assert cli.deployments[0]["deployCapabilityHost"] is False
+    assert cli.authentication is None
+    assert cli.application["template"]["scale"]["minReplicas"] == 0
+    assert not any(
+        secret["name"] == "microsoft-provider-authentication-secret"
+        for secret in cli.application["configuration"]["secrets"]
+    )
+    cli.deployments.clear()
+    kt.run(cli, values, "what-if", "complete")
+    assert cli.deployments[0]["deployCapabilityHost"] is True
+    assert cli.application["template"]["scale"]["minReplicas"] == 0
+    cli.deployments.clear()
+    kt.run(cli, values, "deploy", "complete")
+    assert len(cli.deployments) == 1
+    assert cli.deployments[0]["deployCapabilityHost"] is True
+    assert cli.deployments[0]["reuseExistingApiKey"] is True
+    env = {entry["name"]: entry for entry in cli.application["template"]["containers"][0]["env"]}
+    assert env["ADMIN_UI_ENABLED"]["value"] == env["ARCHIVE_UI_ENABLED"]["value"] == "true"
+    assert env["ADMIN_REQUIRE_AUTH"]["value"] == env["ARCHIVE_REQUIRE_AUTH"]["value"] == "true"
+    assert env["ADMIN_ALLOWED_PRINCIPALS"]["value"] == WEB_INPUTS["adminAllowedPrincipals"]
+    assert env["ADMIN_CONFIG_BLOB_URL"]["value"].endswith("azbrief-state/admin-config.json")
+    assert cli.application["template"]["scale"]["minReplicas"] == 1
+    assert cli.authentication["platform"]["enabled"] is True
+    assert values["deployCapabilityHost"] is False
+    cli.deployments.clear()
+    kt.run(cli, values, "deploy", "complete")
+    assert len(cli.deployments) == 1
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="cannot overwrite"):
+        kt.run(cli, values, "deploy")
+    assert not cli.deployments
+
+
+@pytest.mark.parametrize(
+    ("section", "field", "invalid"),
+    [
+        ("platform", "enabled", False),
+        ("globalValidation", "unauthenticatedClientAction", "RedirectToLoginPage"),
+        ("httpSettings", "requireHttps", False),
+        ("registration", "clientId", "66666666-6666-6666-6666-666666666666"),
+        ("registration", "clientSecretSettingName", "unapproved-secret"),
+        ("registration", "openIdIssuer", "https://login.microsoftonline.com/foreign/v2.0"),
+        ("validation", "allowedAudiences", ["unapproved-audience"]),
+        ("login", "allowedExternalRedirectUrls", ["https://unapproved.invalid"]),
+    ],
+)
+def test_complete_stage_auth_readback_rejects_drift(
+    values: dict, vnet: dict, section: str, field: str, invalid: object
+):
+    values.update(WEB_INPUTS)
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    if section in {"registration", "validation"}:
+        settings = cli.authentication["identityProviders"]["azureActiveDirectory"][section]
+    else:
+        settings = cli.authentication[section]
+    settings[field] = invalid
+    with pytest.raises(RuntimeError, match="EasyAuth does not match"):
+        kt.verify_foundation(cli, cli.deployments[-1])
+    assert len(cli.deployments) == 2
+
+
 def test_unknown_mode_never_falls_through_to_deploy(values: dict, vnet: dict):
     cli = FakeAzure(values, vnet)
     with pytest.raises(ValueError, match="Unsupported KT operation"):
         kt.run(cli, values, "deployment")
+    assert not cli.calls
+    assert not cli.deployments
+
+
+def test_unknown_stage_never_falls_through_to_deploy(values: dict, vnet: dict):
+    cli = FakeAzure(values, vnet)
+    with pytest.raises(ValueError, match="Unsupported KT stage"):
+        kt.run(cli, values, "deploy", "unknown")
     assert not cli.calls
     assert not cli.deployments
 
@@ -1559,17 +2176,48 @@ def test_promoted_application_is_not_replaced_by_bootstrap(
 
 
 def _foundation_app(values: dict) -> dict:
+    anonymous = bool(values["deployCapabilityHost"] and values["enablePrivateAnonymousWebUi"])
+    authenticated = bool(
+        values["deployCapabilityHost"]
+        and not anonymous
+        and values["adminEntraClientId"]
+        and values["adminEntraClientSecret"]
+    )
+    admin = anonymous or (
+        authenticated and any(part.strip() for part in values["adminAllowedPrincipals"].split(","))
+    )
+    archive = anonymous or (
+        authenticated
+        and (admin or any(part.strip() for part in values["archiveAllowedPrincipals"].split(",")))
+    )
+    fqdn = f"{values['containerAppName']}.kt-test.eastus2.azurecontainerapps.io"
     flags = {
-        "ADMIN_UI_ENABLED": "false",
-        "ADMIN_REQUIRE_AUTH": "true",
-        "ARCHIVE_UI_ENABLED": "false",
-        "ARCHIVE_REQUIRE_AUTH": "true",
+        "ADMIN_UI_ENABLED": str(admin).lower(),
+        "ADMIN_REQUIRE_AUTH": str(not anonymous).lower(),
+        "ARCHIVE_UI_ENABLED": str(archive).lower(),
+        "ARCHIVE_REQUIRE_AUTH": str(not anonymous).lower(),
         "FEEDBACK_UI_ENABLED": "false",
         "MAX_CONCURRENT_ANALYSES": "1",
+        "ADMIN_ALLOWED_PRINCIPALS": (
+            values["adminAllowedPrincipals"] if authenticated and admin else ""
+        ),
+        "ARCHIVE_ALLOWED_PRINCIPALS": (
+            values["archiveAllowedPrincipals"] if authenticated and archive else ""
+        ),
+        "ADMIN_CONFIG_BLOB_URL": (
+            f"https://{values['storageAccountName']}.blob.core.windows.net/"
+            "azbrief-state/admin-config.json"
+            if admin
+            else ""
+        ),
+        "ARCHIVE_BASE_URL": f"https://{fqdn}" if archive else "",
+        "ADMIN_READINESS_RESOURCE_GROUP": "rg-kt-test",
+        "ADMIN_READINESS_FOUNDRY_ACCOUNT": values["foundryAccountName"],
+        "ADMIN_READINESS_FOUNDRY_PROJECT": values["projectName"],
     }
     env = [
         {"name": name, "value": flags.get(name, "configured")}
-        for name in sorted(kt.FOUNDATION_ENV_NAMES - {"API_KEY"})
+        for name in sorted((kt.FOUNDATION_ENV_NAMES | kt.WEB_ENV_NAMES) - {"API_KEY"})
     ] + [{"name": "API_KEY", "secretRef": "orchestrator-api-key"}]
     return {
         "template": {
@@ -1581,17 +2229,18 @@ def _foundation_app(values: dict) -> dict:
                     "resources": {"cpu": 0.25, "memory": "0.5Gi"},
                 }
             ],
-            "scale": {"minReplicas": 0, "maxReplicas": 1},
+            "scale": {"minReplicas": 1 if admin else 0, "maxReplicas": 1},
         },
         "configuration": {
             "activeRevisionsMode": "Single",
-            "ingress": {"targetPort": 8000},
+            "ingress": {"targetPort": 8000, "fqdn": fqdn},
             "secrets": [{"name": "orchestrator-api-key"}]
             + (
                 [{"name": "ghcr-pull-token"}]
                 if values["containerRegistryAuthMode"] == "Credentials"
                 else []
-            ),
+            )
+            + ([{"name": "microsoft-provider-authentication-secret"}] if authenticated else []),
             "registries": (
                 [
                     {
@@ -2028,6 +2677,110 @@ def test_kt_rejects_missing_or_invalid_runtime_credentials(
         kt.load_parameters(path)
 
 
+@pytest.mark.parametrize(
+    ("overrides", "error"),
+    [
+        ({"adminEntraClientId": ""}, "Authenticated web setup requires"),
+        ({"adminEntraClientSecret": ""}, "Authenticated web setup requires"),
+        ({"adminAllowedPrincipals": " , , "}, "Authenticated web setup requires"),
+        ({"adminEntraClientId": "not-a-guid"}, "client ID GUID"),
+        ({"adminEntraClientSecret": 123}, "must be a string"),
+        ({"adminEntraClientSecret": "secret with whitespace"}, "must not contain whitespace"),
+        ({"adminAllowedPrincipals": "object id"}, "comma-separated"),
+    ],
+)
+def test_kt_rejects_incomplete_or_invalid_web_inputs(
+    tmp_path: Path, values: dict, overrides: dict[str, object], error: str
+):
+    values.update(WEB_INPUTS)
+    values.update(overrides)
+    path = tmp_path / "parameters.json"
+    path.write_text(
+        json.dumps(
+            {
+                "parameters": {
+                    name: {"value": value}
+                    for name, value in values.items()
+                    if name not in kt.INTERNAL_PARAMETERS
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=error):
+        kt.load_parameters(path)
+
+
+@pytest.mark.parametrize("field", list(WEB_INPUTS))
+def test_private_anonymous_rejects_unused_entra_inputs(tmp_path: Path, values: dict, field: str):
+    values["enablePrivateAnonymousWebUi"] = True
+    values[field] = WEB_INPUTS[field] or "reader@example.invalid"
+    path = tmp_path / "parameters.json"
+    path.write_text(
+        json.dumps(
+            {
+                "parameters": {
+                    name: {"value": value}
+                    for name, value in values.items()
+                    if name not in kt.INTERNAL_PARAMETERS
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must not carry unused Entra inputs"):
+        kt.load_parameters(path)
+
+
+def test_kt_normalizes_web_inputs_and_supports_archive_only(tmp_path: Path, values: dict):
+    values.update(WEB_INPUTS)
+    values["adminEntraClientId"] = f" {WEB_INPUTS['adminEntraClientId']} "
+    values["adminAllowedPrincipals"] = ""
+    values["archiveAllowedPrincipals"] = " reader@example.invalid, , another@example.invalid "
+    path = tmp_path / "parameters.json"
+    path.write_text(
+        json.dumps(
+            {
+                "parameters": {
+                    name: {"value": value}
+                    for name, value in values.items()
+                    if name not in kt.INTERNAL_PARAMETERS
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = kt.load_parameters(path)
+    assert loaded["adminEntraClientId"] == WEB_INPUTS["adminEntraClientId"]
+    assert loaded["archiveAllowedPrincipals"] == "reader@example.invalid,another@example.invalid"
+    assert kt._web_ui_flags(loaded) == (False, False)
+    loaded["deployCapabilityHost"] = True
+    assert kt._web_ui_flags(loaded) == (False, True)
+
+
+@pytest.mark.parametrize("reused", ["apiKey", "containerRegistryPassword"])
+def test_web_secret_must_be_distinct_from_other_credentials(
+    tmp_path: Path, values: dict, reused: str
+):
+    values.update(WEB_INPUTS)
+    values["adminEntraClientSecret"] = values[reused]
+    path = tmp_path / "parameters.json"
+    path.write_text(
+        json.dumps(
+            {
+                "parameters": {
+                    name: {"value": value}
+                    for name, value in values.items()
+                    if name not in kt.INTERNAL_PARAMETERS
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="must be different"):
+        kt.load_parameters(path)
+
+
 @pytest.mark.parametrize("key_length", [32, 256])
 def test_kt_accepts_api_key_boundaries_and_explicit_anonymous_registry(
     tmp_path: Path, values: dict, key_length: int
@@ -2082,6 +2835,7 @@ def test_kt_validation_logs_redact_credentials(
     values: dict,
     vnet: dict,
 ):
+    values.update(WEB_INPUTS)
     cli = FakeAzure(values, vnet)
     monkeypatch.setattr(
         cli,
@@ -2090,6 +2844,8 @@ def test_kt_validation_logs_redact_credentials(
             "status": "Succeeded",
             "apiKey": values["apiKey"],
             "changes": [{"before": values["apiKey"], "after": values["containerRegistryPassword"]}],
+            "adminEntraClientSecret": values["adminEntraClientSecret"],
+            "unlabelled": values["adminEntraClientSecret"],
         },
     )
     kt.run(cli, values, "what-if")
@@ -2098,12 +2854,14 @@ def test_kt_validation_logs_redact_credentials(
     assert "kt_validation_result" in output
     assert values["apiKey"] not in output
     assert values["containerRegistryPassword"] not in output
+    assert values["adminEntraClientSecret"] not in output
     assert "[REDACTED]" in output
 
 
 def test_kt_failed_cli_redacts_secrets_and_removes_parameter_file(
     monkeypatch: pytest.MonkeyPatch, values: dict
 ):
+    values.update(WEB_INPUTS)
     cli = kt.AzureCli(SUBSCRIPTION, TENANT, "rg-kt-test")
     paths: list[Path] = []
 
@@ -2114,14 +2872,19 @@ def test_kt_failed_cli_redacts_secrets_and_removes_parameter_file(
         assert (
             parameters["containerRegistryPassword"]["value"] == values["containerRegistryPassword"]
         )
+        assert parameters["adminEntraClientSecret"]["value"] == values["adminEntraClientSecret"]
         assert values["apiKey"] not in args
         assert values["containerRegistryPassword"] not in args
+        assert values["adminEntraClientSecret"] not in args
         paths.append(path)
         return subprocess.CompletedProcess(
             args,
             1,
             stdout="",
-            stderr=f"Failure: {values['apiKey']} / {values['containerRegistryPassword']}",
+            stderr=(
+                f"Failure: {values['apiKey']} / {values['containerRegistryPassword']} "
+                f"/ {values['adminEntraClientSecret']}"
+            ),
         )
 
     monkeypatch.setattr(kt.shutil, "which", lambda _: "az-test")
@@ -2131,6 +2894,7 @@ def test_kt_failed_cli_redacts_secrets_and_removes_parameter_file(
     assert "[REDACTED]" in str(failure.value)
     assert values["apiKey"] not in str(failure.value)
     assert values["containerRegistryPassword"] not in str(failure.value)
+    assert values["adminEntraClientSecret"] not in str(failure.value)
     assert paths and all(not path.exists() and not path.parent.exists() for path in paths)
 
 

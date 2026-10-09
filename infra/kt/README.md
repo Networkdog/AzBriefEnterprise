@@ -17,10 +17,13 @@ KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오
 
 > **범위:** 프라이빗 Foundry Standard Agent Setup과 GHCR의 실제 AzBrief 제어면 이미지를
 > 배포합니다. 운영 설치 완료를 의미하지 않습니다. 모델 배포,
-> 여섯 Prompt Agent 및 Hosted Agent 게시, Job·Entra 인증·메일·스케줄 설정은
+> 여섯 Prompt Agent 및 Hosted Agent 게시, Job·Entra 앱 등록·메일·스케줄 설정은
 > [애플리케이션 전환](#애플리케이션-전환) 단계입니다. `ktFoundation.applicationReady`는
 > 의도적으로 `false`이며 일반 `customerSetup` 출력과 호환되지 않습니다.
-> 초기 API 키는 자동 생성·저장하며 인증은 유지합니다. Entra 설정 전 Admin/Archive/Feedback은 비활성 상태로 유지합니다.
+> 초기 API 키는 자동 생성·저장하며 인증은 유지합니다. 1단계는 화면을 비활성 상태로 유지하고,
+> 2단계는 위험 확인을 거친 사설망 임시 Anonymous 접근을 지원합니다. 지금은 Entra 사용자
+> 인증을 기본 적용하지 않습니다. 승인된 기존 Entra 앱을 이용한 인증은 추후 명시적으로 선택합니다.
+> Feedback은 계속 비활성입니다.
 
 > **임시 수동 PE 진단:** `deployContainerAppsPrivateEndpoint=false`가 기본값입니다.
 > Container Apps Environment와 앱은 생성하지만 그 Environment용 PE 및 DNS zone group
@@ -43,8 +46,8 @@ KT에 다른 Agent를 추가할 때도 해당 Skill을 먼저 적용하십시오
 | AI Search | Basic, replica 1 / partition 1, `searchService` PE, Public Network Access·로컬 키 인증 비활성 |
 | Container Apps Environment | Workload Profiles 유형, **Consumption** 프로필, 전용 subnet 주입, Public Network Access 비활성 |
 | Container Apps inbound | 내부 Environment 유지. `managedEnvironments` PE는 기본 수동 생성, 옵션으로 자동 생성 재개 |
-| Container App | **0.25 vCPU / 0.5 GiB**, 최소 replica 0 / 최대 1, HTTPS, GHCR AzBrief 고정 digest, 내부 포트 **8000**, readiness **`/health`** |
-| 초기 인증 | API 키 자동 생성 및 기존 키 재사용. 공개 GHCR은 PAT 없이 다운로드. Entra 설정 전 Admin/Archive는 비활성 |
+| Container App | **0.25 vCPU / 0.5 GiB**, 최소 replica 0 (Admin 활성화 시 1) / 최대 1, HTTPS, GHCR AzBrief 고정 digest, 내부 포트 **8000**, readiness **`/health`** |
+| 초기 인증 | API 키 자동 생성 및 기존 키 재사용. 1단계는 화면 비활성. 2단계는 위험 확인 후 사설망 임시 Anonymous 선택 가능. Entra는 기본 보류, API/MCP 키·Azure Managed Identity는 유지 |
 | Application Insights | **배포하지 않음**. Foundry 연결, 계측 설정, publishing 역할도 생성하지 않음 |
 | Log Analytics | 기존 workspace ID를 선택적으로 연결. 새 workspace·DCR·AMPLS는 생성하지 않음 |
 | 추가 비용 리소스 | 새 VNet, 전용 D4 노드, NAT Gateway, Firewall, ACR, 모델 배포, scheduler Job, 메일 서비스는 생성하지 않음 |
@@ -101,11 +104,14 @@ ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e6
   CLI를 사용합니다. 선택적 초기 `apiKey`는 공백 없는 32~256자이며 기존 앱의 키 회전 수단이 아닙니다.
 - `foundryHostedAgentName`과 배포 프로젝트 endpoint, 제어면 UAMI, archive/checkpoint 경로를
   앱에 연결합니다. 이름을 설정하는 것은 Hosted Agent를 게시하거나 검증하는 작업이 아닙니다.
-  `/`는 AzBrief JSON을 반환하지만 `/admin`, `/archive`는 후속 Entra/허용 목록 설정 전까지
-  404입니다. `/health` 응답만으로 전체 운영 준비가 완료됐다고 판단하지 마십시오.
+  `/`는 AzBrief JSON을 반환하지만 `/admin`, `/archive`는 인증 구성 전까지 404입니다.
+  [2단계 웹 인증 자동 구성](#2단계-웹-인증-자동-구성)을 선택하면 코드 재빌드 없이 인증·허용 목록을
+  적용합니다. `/health` 응답만으로 전체 운영 준비가 완료됐다고 판단하지 마십시오.
 - 기존 순정 hello-world 앱은 같은 RG·이름으로 전환할 수 있습니다. CLI는 이미지가 같더라도
   UI 활성화, 추가 환경 변수·secret, 실행 명령 또는 운영용 replica/리소스 설정이 있는 앱에
-  초기 비활성 설정을 덮어쓰지 않습니다. 운영 전환 이후에는 foundation 재배포를 사용하지 않습니다.
+  초기 비활성 설정을 덮어쓰지 않습니다. 명시적 `--stage complete`는 요청과 일치하는 자동
+  웹 설정만 재사용하며, 별도로 변경한 운영 설정은 계속 보호합니다. 운영 전환 이후에는
+  foundation 또는 기본 `both` 재배포를 사용하지 않습니다.
 
 GHCR도 외부 레지스트리입니다. 격리망에서는 `ghcr.io`와 이미지 다운로드 시 사용하는 GitHub
 Packages 저장소 엔드포인트의 HTTPS/DNS 경로를 별도로 승인해야 합니다. GHCR 선택만으로
@@ -300,7 +306,7 @@ Private Endpoint의 zone group이 기존 zone을 참조하므로 Azure가 필요
 (`deployCapabilityHost=false`). 이 단계는 **Foundry 프로젝트를 생성하지 않습니다.**
 계정의 자동 Capability Host가 `Succeeded`인 것을 확인하고,
 **같은 RG·이름·네트워크·DNS·이미지 인증 입력**으로 다시 열어
-**2단계 — 프로젝트·연결·BYO host 구성**을 선택합니다. UI는 두 배포를 자동 실행하거나
+**2단계 — 프로젝트·BYO host·웹 인증 구성**을 선택합니다. UI는 두 배포를 자동 실행하거나
 account host 준비를 기다리지 않습니다.
 
 2단계는 1단계의 Foundry 계정을 `existing` 리소스로만 참조합니다. 계정 AVM 모듈이나
@@ -314,7 +320,7 @@ ARM/UI 조합을 사용 중인지 먼저 확인하십시오. 살아 있는 1단�
 | 단계 | 생성·갱신 범위 | 프로젝트 상태 |
 |---|---|---|
 | 1단계 | 기존 네트워크 기반, 사설 endpoint, Foundry 계정·자동 account host, 저장소, 초기 App와 제어면 ID | 새 프로젝트·연결·프로젝트 역할·BYO project host를 생성하지 않음 |
-| 2단계 | Foundry 계정은 재배포하지 않고 `existing`으로 참조하며, 나머지 기반을 재사용해 프로젝트 → BYO 필수 권한·연결 → BYO host → 프로젝트 데이터 역할 순으로 구성 | 한 배포 안에서 BYO 구성을 완료. App·Hosted 운영 역할은 별도 수동 부여 |
+| 2단계 | Foundry 계정은 `existing`으로 참조하며, 프로젝트 → BYO 필수 권한·연결 → BYO host → 프로젝트 데이터 역할을 구성. 승인된 기존 Entra 앱 입력 시 웹 인증·허용 목록도 구성 | BYO와 선택한 웹 설정을 완료. App·Hosted 운영 역할과 실제 로그인·저장소 인수는 별도 |
 
 프로젝트만 먼저 만든 상태로 두 단계 사이에 기다리면 기본 저장소용 host가 초기화되어
 나중의 BYO 연결 추가가 거부될 수 있습니다. 따라서 2단계 전에 프로젝트를 수동으로 만들거나
@@ -333,6 +339,93 @@ API를 사용합니다. 새 RG는 아직 존재하지 않는 상태의 404를 �
 검증된 것은 아니므로 수정된 UI 정의를 게시한 뒤 새 배포 화면에서 확인해야 합니다.
 단계를 자동 처리하고 점유자·실제 IP 여유·이름 소유권을 검사하려면 CLI를 사용하십시오.
 운영 설정을 마친 환경에 초기 비활성 설정을 다시 적용하지 마십시오.
+
+#### 2단계 웹 인증 자동 구성
+
+현재 2단계의 기본 선택은 **임시 Anonymous Admin·Archive 접근**이며, 별도의 위험 확인을
+완료해야 제출할 수 있습니다. **기존 Entra 앱으로 인증 자동 구성**은 기본 선택하지 않습니다.
+
+##### 사설망 임시 Anonymous 접근
+
+Portal에서 해당 옵션과 위험 확인을 선택하면 Entra client ID·secret·사용자 허용 목록을
+입력하지 않습니다. 숨겨진 이전 Entra 입력도 ARM으로 전달하지 않습니다. 직접 ARM/CLI의
+보호된 parameter 파일에서는 다음 하나만 추가하고 Entra 입력은 비워 둡니다.
+
+```json
+"enablePrivateAnonymousWebUi": { "value": true }
+```
+
+이 파라미터의 템플릿 기본값은 **false**입니다. 1단계에서는 true여도 화면·인증 정책을
+바꾸지 않으며, 2단계만 다음을 적용합니다.
+
+- `ADMIN_UI_ENABLED=true`, `ARCHIVE_UI_ENABLED=true`.
+- `ADMIN_REQUIRE_AUTH=false`, `ARCHIVE_REQUIRE_AUTH=false`. 기존 런타임의 비인증 경로를
+  사용하므로 현재 GHCR 이미지로 동작하며 재빌드가 필요하지 않습니다.
+- EasyAuth `platform.enabled=false` 및 Entra provider 비활성. Incremental 배포에서
+  `authConfig=null`은 기존 설정을 삭제하지 않으므로 명시적으로 비활성 상태를 제출합니다.
+- 관리자 설정 Blob·Archive 링크·readiness 바인딩과 최소 replica 1. API/MCP 키, Azure 서비스용
+  UAMI, HTTPS, 내부 Environment와 `publicNetworkAccess=Disabled`, Feedback 비활성은 유지합니다.
+
+**접속 가능한 모든 사설망 클라이언트가 관리 기능·관리 API를 호출하고 Archive 데이터를 읽을 수
+있습니다.** 화면만 또는 조회만 익명으로 여는 옵션이 아닙니다. 승인된 점프박스/사설 경로로
+네트워크 접근을 제한하고 시험 기간에만 사용하십시오. 사용자별 인증·감사 추적은 제공하지
+않으며, 현재 비인증 런타임 principal은 `local-development`로 표시됩니다. 로그인용 Enterprise
+Application을 등록하지 않더라도 Azure 리소스 접근의 Managed Identity와 RBAC는 필요합니다.
+Container App의 UAMI service principal은 브라우저 사용자 로그인 앱 등록과 다른 객체입니다.
+
+CLI는 2단계 활성화 **전에** 기존 Environment의 internal/PNA/소유권/서브넷을 확인합니다.
+PNA 누락·unknown·Enabled는 익명 접근 근거로 인정하지 않습니다. 기존에 인증을 켠 앱을
+자동으로 익명 접근으로 낮추지 않으며, 다른 운영 설정도 덮어쓰지 않습니다. 익명 설정이
+요청과 일치하면 `--stage complete`로 재적용할 수 있고, 추후 아래의 Entra 인증으로 강화할 수
+있습니다. `both`/`foundation`을 다시 적용해 활성화된 앱을 초기화할 수는 없습니다.
+
+`ktFoundation.privateAnonymousWebUiEnabled=true`는 **설정 선택**을 나타냅니다.
+`webAuthenticationConfigured=false`와 `applicationReady=false`는 그대로 유지합니다.
+실제 접속 경계·Blob 권한·관리 기능 인수는 별도로 확인하십시오.
+
+##### 추후 Entra 사용자 인증
+
+Anonymous 옵션을 해제하고 **기존 Entra 앱으로 Admin·Archive 인증 자동 구성**을 명시적으로
+선택하면 다음을 입력합니다. Enterprise Application/앱 등록이나 secret을 자동 생성하지 않습니다.
+
+| Portal 입력 | ARM 파라미터 | 필수 여부 |
+|---|---|---|
+| 기존 Entra Application (client) ID | `adminEntraClientId` | 필수, GUID |
+| 발급된 client secret **값** (Secret ID 아님) | `adminEntraClientSecret` | 필수, 보안 입력 |
+| 관리자 Object ID 또는 UPN (쉼표 구분) | `adminAllowedPrincipals` | 필수 |
+| 추가 Archive 조회 사용자·그룹 | `archiveAllowedPrincipals` | 선택, 관리자는 자동으로 조회 가능 |
+
+기존 Entra 앱에 **Web redirect URI**를 먼저 등록합니다. 새 1단계 출력의
+`ktFoundation.entraRedirectUri`를 사용하거나, 이전 출력의 `applicationUrl` 뒤에
+`/.auth/login/aad/callback`을 붙입니다. 정확한 HTTPS FQDN을 사용하고 ID-token 로그인,
+secret 만료·회전 담당자와 점프박스의 Entra 로그인 통신을 확인하십시오.
+[Microsoft 공식 설정 절차](https://learn.microsoft.com/azure/container-apps/authentication-entra)를
+따릅니다. 템플릿은 Entra 앱·secret을 생성하거나 Graph 권한을 부여하지 않습니다.
+
+완전한 입력이 있으면 2단계가 다음을 자동 적용합니다.
+
+- 고객 테넌트 issuer와 지정 client ID를 사용하는 EasyAuth, HTTPS 및 동일 origin 리다이렉트.
+- Entra secret의 Container App Secret 저장. 환경 변수·출력·이미지에는 값을 넣지 않습니다.
+- `ADMIN_UI_ENABLED`/`ARCHIVE_UI_ENABLED`, 명시적 허용 목록과 `*_REQUIRE_AUTH=true`.
+- `azbrief-state/admin-config.json`의 `ADMIN_CONFIG_BLOB_URL`, `ARCHIVE_BASE_URL`과 Admin
+  readiness의 RG/Foundry 계정/프로젝트 바인딩.
+- Admin 활성화 시 최소 replica **1**. 유휴 비용이 늘어나며 CPU/메모리는 초기값을 유지합니다.
+  실제 운영 부하에 맞는 리소스 검증은 별도입니다.
+
+EasyAuth의 전역 정책은 `AllowAnonymous`입니다. `/health`와 API-key `/api/*`·`/mcp` 호출을
+대화형 로그인으로 돌리지 않기 위해서이며, Admin/Archive는 앱에서 인증·허용 목록을 검사합니다.
+Entra 모드에서는 인증을 필수로 유지합니다. 두 옵션을 모두 생략하면 해당 화면은 계속 404이며,
+원래 API 키는 그대로 재사용합니다. 직접 ARM 호출도 기본 입력은 빈 문자열입니다.
+CLI는 일부만 입력한 구성, 잘못된 GUID·공백 secret·빈 허용 목록·다른 자격 증명과의
+secret 재사용을 오류로 처리합니다.
+
+`ktFoundation`은 `webAuthenticationConfigured`, `adminUiEnabled`, `archiveUiEnabled`,
+화면 URL, 관리자 설정 저장 URL과 callback URI를 반환합니다. 이 값은 **설정 반영**을
+표시할 뿐 실제 로그인이나 Blob 권한 검증 결과가 아닙니다. `applicationReady=false`와
+Feedback 비활성은 유지됩니다. 제어면 UAMI의 컨테이너 범위 Blob 권한과 Hosted 호출 권한은
+[수동 운영 권한](#배포-후-수동-운영-권한) 절차대로 별도 부여하고, 허용 사용자 로그인,
+비허용 사용자 거부, Admin 설정 저장과 Archive 조회를 사설 경로에서 인수하십시오.
+1·2단계 기반 배포가 이미 끝났다면 1단계를 다시 실행할 필요 없이 **2단계만** 적용합니다.
 
 #### 기존 설치와 중단된 배포
 
@@ -392,14 +485,43 @@ python -m scripts.deploy_kt `
 예상 변경을 검토한 후에만 **`--mode deploy`**로 실행합니다. 기본 모드는 읽기 전용
 `preflight`이며 Azure 리소스를 만들지 않습니다. 본 문서 작성 시 KT 구독에 배포하지 않았습니다.
 
-`deploy`는 두 번의 Incremental 배포를 수행합니다.
+`--stage`는 `both`(기본값), `foundation`, `complete`를 지원합니다. 기존 기반 배포를
+완료한 환경에서는 승인된 웹 입력을 보호된 parameter 파일에 추가하고 **`--stage complete`**로
+사전검사·ARM validate·what-if·배포를 순서대로 실행합니다. secret은 파일 또는 Portal의
+보안 입력에만 넣고 명령줄·채팅·소스에 넣지 않습니다.
 
-1. 네트워크·서비스·PE/DNS·프로젝트·AAD 연결·사전 RBAC와 초기 비활성 상태의 AzBrief App을 생성.
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.deploy_kt `
+  --subscription '<KT-subscription-ID>' `
+  --tenant '<KT-tenant-ID>' `
+  --resource-group '<KT-deployment-RG>' `
+  --parameters out\kt.parameters.json `
+  --stage complete `
+  --mode preflight
+```
+
+같은 인수로 `--mode validate`, `--mode what-if`를 먼저 검토한 뒤 `--mode deploy`를 실행합니다.
+`complete`는 기존 기반 리소스와 account host 준비를 요구하며 Foundry 계정을 다시 PUT하지
+않습니다. 자동 구성한 웹 설정은 알려진 동일 경로·자원 설정일 때만 재사용합니다. 임시 익명 설정의
+Entra 강화는 허용하지만, 이미 인증을 켠 앱의 익명 다운그레이드는 자동 실행하지 않습니다.
+다른 운영 설정이나 사용자 목록을 덮어쓰는 초기화 경로가 아닙니다.
+
+기본 `both`의 `deploy`는 두 번의 Incremental 배포를 수행합니다.
+
+1. 네트워크·서비스·PE/DNS·Foundry 계정과 초기 비활성 상태의 AzBrief App을 생성. 프로젝트는 생성하지 않음.
 2. 자동 account Capability Host를 10초 간격으로 최대 31회 확인. 다시 live inventory를 읽어 신규 subnet
-   플래그를 해제한 뒤 project Capability Host와 생성된 컨테이너의 data 역할을 구성.
+   플래그를 해제한 뒤 프로젝트·BYO 권한/연결·project host와 생성된 컨테이너의 data 역할을 구성.
+   완전한 기존 Entra 입력이 있으면 웹 인증도 이 단계에 적용.
 3. host 상태, 필수 subnet/자동 관리 PE의 존재·승인·binding, DNS 링크, 각 서비스의 Public Network Access
    비활성 설정과 각 PE의 `provisioningState=Succeeded`를 읽어 확인. 연결의 `Approved`만으로
-   PE 생성 성공을 판단하지 않음. 비공개 데이터 경로의 실제 연결 검사는 아래 인수 단계에서 수행.
+   PE 생성 성공을 판단하지 않음. 웹 구성 선택 시 활성화 flag, secret 참조, issuer/client ID,
+   audience·HTTPS·동일 origin 리다이렉트와 API-key 호환 정책도 readback으로 확인.
+   실제 사용자 로그인·비공개 데이터 연결 검사는 아래 인수 단계에서 수행.
+
+`--stage foundation`은 첫 배포와 account host 확인까지만 수행합니다.
+`validate`/`what-if`의 기본 `both`는 아직 존재하지 않는 기반을 대상으로 1단계 계획을
+검증합니다. 2단계의 정확한 계획은 기반 준비 후 `--stage complete`로 검증하십시오.
 
 실패하면 비정상 종료하며 원래 오류를 출력합니다. RBAC 전파 지연은 권한과 기존 host 상태를
 먼저 확인한 후 같은 입력으로 재실행합니다. host 연결을 다른 데이터 저장소로 변경하거나
@@ -560,11 +682,13 @@ Billing 등 추가 기능의 권한도 사용 여부와 서비스별 범위에 �
    제어면/프로젝트 ID에 tenant evidence Reader를 대신 부여하지 않습니다.
 4. App에 배포된 GHCR digest와 8000 `/health` 설정을 확인하고, 후속 scheduler Job에도 같은
   승인 digest·레지스트리 인증을 적용합니다. 제어면 ID에 필요한 운영 역할을 직접 부여하고
-  저장소·Foundry 호출을 검증합니다. Entra/allow-list를 설정한 뒤 Admin/Archive를
-   활성화하고, 초기 API 키·private archive/checkpoint·이메일을 인수합니다.
+  저장소·Foundry 호출을 검증합니다. [2단계 웹 인증 자동 구성](#2단계-웹-인증-자동-구성)을
+   사용하고 실제 로그인·허용 목록 거부를 확인한 뒤 초기 API 키·private archive/checkpoint·
+   관리자 설정 저장·이메일을 인수합니다.
    이미지가 배포됐다는 사실만으로 AzBrief 운영 설치가 완료되는 것은 아닙니다.
-5. 현재 Admin Manual Run은 App 내 background 작업입니다. 실제 운영 전 **최소 replica 1**과
-   검증된 CPU/메모리로 전환하십시오. scale-to-zero는 긴 분석 도중 App을 종료할 수 있습니다.
+5. 현재 Admin Manual Run은 App 내 background 작업입니다. 2단계의 Admin 자동 구성은
+   **최소 replica 1**을 적용하지만 실제 운영에 적합한 CPU/메모리는 따로 검증하십시오.
+   수동 활성화 시에도 최소 replica 1이 필요합니다. scale-to-zero는 긴 분석 도중 App을 종료할 수 있습니다.
    scheduler는 인수 전 Manual 상태로 두고 분석 동시성은 1에서 시작합니다.
 
 필수 인수: 사설 경로에서 FQDN→PE IP, bootstrap/실제 health, Foundry Responses, Blob 저장/조회,

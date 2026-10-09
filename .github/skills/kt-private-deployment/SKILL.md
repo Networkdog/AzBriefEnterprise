@@ -49,7 +49,9 @@ contract expects two standard Enterprise Portal links and one KT Portal link in 
 | Private Endpoint readiness | Final readback requires every automatically managed PE to be `Succeeded` and `Approved` with the expected target/subnet. Manual ACA PE acceptance is separate; never label an ignored endpoint healthy. |
 | Optional ACA logs | Pass `null` when no Log Analytics workspace is selected. AVM `0.16.0` accepts only `azure-monitor` or `log-analytics`, not `none`. |
 | Resource exposure | Disable public network access on Foundry, storage, Cosmos DB, Search, and the Container Apps Environment at creation. |
-| Initial application | Use the pinned GHCR AzBrief image on 8000 `/health`, not hello-world. Keep API protection and disabled Admin/Archive until Entra setup. Image startup is not operational readiness. |
+| Initial application | Use the pinned GHCR AzBrief image on 8000 `/health`, not hello-world. Stage one keeps Admin/Archive off and auth required. Image startup is not operational readiness. |
+| Stage-two web setup | Accept an existing customer-tenant Entra client ID, secure secret and explicit administrator allow-list; Archive readers are optional. Configure EasyAuth, protected UI flags, Admin config/readiness and Archive links. Admin uses minReplicas=1 with disclosed idle cost. Never create a directory app, issue a secret or grant runtime RBAC implicitly. |
+| Temporary anonymous exception | `enablePrivateAnonymousWebUi` is false by ARM default and acts only in stage two. The Portal offers it with mandatory risk acknowledgement and Entra off by default. Explicitly disable EasyAuth and both UI auth requirements only inside the internal/PNA-disabled KT profile; retain API/MCP keys, MI, HTTPS and minReplicas=1. Every reachable private client can manage/read; no user-level audit or production-auth claim. |
 | Project timing | Stage one creates the Foundry account but not the project, its connections or project roles. After the account host is ready, stage two references the account as `existing` without replaying its custom subdomain, then creates the project, role/connection bindings and BYO host together. Stage-one project IDs are planned; its principal is empty. |
 | Application image | Use an approved immutable digest and matching registry authentication. Do not deploy `latest`. |
 | GHCR credentials | Default Anonymous after verifying Public visibility and anonymous layer downloads. Explicit Credentials accepts only a read-only PAT via App secret. Never grant GHCR an Azure identity role or deploy the publisher token. |
@@ -145,6 +147,11 @@ The preflight must remain read-only and rerun immediately before validate, what-
 6. Verify existing resource ownership before any write.
 7. Permit the uncustomized legacy hello-world to move to GHCR. Reject foundation reruns that would
    overwrite a promoted image or operational settings even when the digest is unchanged.
+   `--stage complete` requires all existing foundation resources and a ready account host, and
+   skips the account module. It can reuse only matching known stage-two web settings. Do not let
+   that exception authorize a `both`/`foundation` downgrade or overwrite unrelated customization.
+   Retain old GHCR environment projections; compare readiness resource names and principal sets
+   semantically rather than treating harmless case/spacing differences as a new owner.
 8. Omit `apiKey` by default so ARM evaluates its secure random default, never serialize the
    `newGuid()` expression as a literal key. Validate optional initial keys (32–256 non-whitespace
    characters) and secure-string types case-insensitively. Derive reserved `reuseExistingApiKey`
@@ -160,6 +167,25 @@ The preflight must remain read-only and rerun immediately before validate, what-
    and resource IDs. Missing, automatic, unready or redirected hosts stop preflight before writes.
    Never delete/reset a project host automatically. Recovery requires separate data-retention
    approval and exact project-host identity; do not replace the account or backing stores.
+11. Optional Entra inputs must be complete: GUID client ID, non-whitespace secret and a non-empty
+    administrator or reader list. Secrets must differ from the API key and registry token and
+    remain secure parameters/App secrets, never environment values or outputs. Stage one must
+    neither enable pages nor store that secret. Stage two retains API-key-compatible
+    `AllowAnonymous`, HTTPS, the exact customer issuer/audiences and same-origin redirects.
+    Final readback checks these plus UI activation; it does not prove a real sign-in or Blob access.
+    The Portal hides and clears auth outputs outside opted-in stage two, and requires operator
+    confirmation of an existing app/valid secret/Web callback/login connectivity. Registration,
+    callback updates, runtime roles and private-path acceptance stay manual.
+12. The requested temporary private-anonymous option must clear all Entra outputs and reject
+    unused Entra inputs in CLI files. Stage one stays disabled/auth-required; stage two explicitly
+    submits `platform.enabled=false` and a disabled Entra provider, because null/Incremental
+    omission leaves old auth in place. Check Environment internal/PNA/ownership/subnet before
+    anonymous writes; missing or public state stays blocking. Reject automatic Entra downgrades,
+    arbitrary customization and foundation resets of active anonymous apps. Allow later explicit
+    Entra strengthening of the known anonymous projection. Keep UAMI storage/Foundry access and
+    API/MCP keys; this exception is neither a public profile nor an individual authorization model.
+    Verify actual private reachability and Blob permissions. Existing non-auth runtime principal
+    names remain `local-development`, not a verified human operator.
 
 Never infer that a same-name zone in the deployment resource group is the linked canonical zone.
 Compare full ARM IDs.
@@ -182,6 +208,7 @@ Compare full ARM IDs.
 | GitHub source changed but deployed runtime did not | Git is source control, not a deployment trigger in the isolated environment. | Transfer reviewed immutable artifacts and deploy manually from an approved private-network host. |
 | Project host is past the window for adding BYO connections | Stage one created the project; its automatic host was already finalized when a later stage attempted BYO attachment. | Defer the project and all BYO dependencies to the same second-stage deployment. Existing data-bearing hosts need explicit recovery approval, never silent reset. |
 | `/admin` displayed the Container Apps welcome page after stage two | Both infrastructure stages still used the hello-world image; a Capability Host is not application code. | Deploy the real image together with 8000 `/health`, tenant/UAMI/Hosted configuration and API protection. Do not enable Admin/Archive without Entra and an allow-list. |
+| `/admin` and `/archive` returned `{"detail":"Not Found"}` after the real image started | Disabled UI flags deliberately hide the routes; infrastructure success is not web-auth setup. | Use the stage-two existing-Entra inputs and exact Web callback, keep auth required, and accept login/denial/Blob access separately. Never solve this by turning authentication off. |
 | ACR task built and tested the image but push returned unauthorized | The development registry used ABAC repository permissions and the quick task lacked source-registry authentication. | Use documented `--source-acr-auth-id '[caller]'` with the existing authorized identity. Do not enable the ACR admin or broaden roles. |
 
 ## DNS Consolidation and Recovery

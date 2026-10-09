@@ -71,7 +71,23 @@ param searchSku string = 'basic'
 @description('False creates only the foundation, not a project. True creates the project, its role/connection bindings and BYO Capability Host together after the account host is ready. Never use stage one to precreate the project.')
 param deployCapabilityHost bool = false
 
-@description('Compatibility parameter name for the pinned AzBrief control-plane image. Agent publication and authenticated Admin/Archive setup remain separate.')
+@description('Explicit temporary stage-two anonymous Admin/Archive access inside the isolated KT network. Every reachable client can administer the app and read reports. Never use for public or production access; API/MCP keys and Azure Managed Identity remain required.')
+param enablePrivateAnonymousWebUi bool = false
+
+@description('Existing customer-tenant Entra application client ID for optional stage-two Admin/Archive authentication. This template does not create the app registration.')
+param adminEntraClientId string = ''
+
+@description('Existing Entra app client secret value. Used only in stage two and stored as a Container App secret, never an environment value or output.')
+@secure()
+param adminEntraClientSecret string = ''
+
+@description('Comma-separated administrator Object IDs or UPNs. Stage two enables Admin only with Entra credentials and a non-empty allow-list.')
+param adminAllowedPrincipals string = ''
+
+@description('Optional comma-separated Archive reader Object IDs, UPNs or group IDs. Administrators are readers automatically.')
+param archiveAllowedPrincipals string = ''
+
+@description('Compatibility parameter name for the pinned AzBrief control-plane image. Agent publication remains separate; stage two can configure authenticated Admin/Archive from an existing Entra app.')
 @allowed([
   'ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3'
 ])
@@ -125,6 +141,68 @@ var searchId = resourceId('Microsoft.Search/searchServices', searchServiceName)
 var environmentId = resourceId('Microsoft.App/managedEnvironments', containerAppsEnvironmentName)
 var foundryProjectEndpoint = 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${projectName}'
 var credentialRegistry = containerRegistryAuthMode == 'Credentials'
+var privateAnonymousWebUi = deployCapabilityHost && enablePrivateAnonymousWebUi
+var adminAuthConfigured = deployCapabilityHost && !privateAnonymousWebUi && !empty(trim(adminEntraClientId)) && !empty(trim(adminEntraClientSecret))
+var adminUiEnabled = privateAnonymousWebUi || (adminAuthConfigured && !empty(trim(replace(adminAllowedPrincipals, ',', ''))))
+var archiveUiEnabled = privateAnonymousWebUi || (adminAuthConfigured && (adminUiEnabled || !empty(trim(replace(archiveAllowedPrincipals, ',', '')))))
+var applicationUrl = 'https://${containerAppName}.${containerEnvironment.outputs.defaultDomain}'
+var adminConfigBlobUrl = adminUiEnabled ? '${storage.outputs.primaryBlobEndpoint}azbrief-state/admin-config.json' : ''
+var webAuthConfig = {
+  platform: {
+    enabled: true
+  }
+  // API 키 호출과 health는 유지하고, 웹 화면은 앱의 인증·허용 목록 검사를 거친다.
+  globalValidation: {
+    unauthenticatedClientAction: 'AllowAnonymous'
+  }
+  httpSettings: {
+    requireHttps: true
+  }
+  identityProviders: {
+    azureActiveDirectory: {
+      enabled: true
+      registration: {
+        clientId: trim(adminEntraClientId)
+        clientSecretSettingName: 'microsoft-provider-authentication-secret'
+        openIdIssuer: '${environment().authentication.loginEndpoint}${tenant().tenantId}/v2.0'
+      }
+      validation: {
+        allowedAudiences: [
+          'api://${trim(adminEntraClientId)}'
+          trim(adminEntraClientId)
+        ]
+      }
+    }
+  }
+  login: {
+    allowedExternalRedirectUrls: [
+      applicationUrl
+    ]
+    preserveUrlFragmentsForLogins: false
+  }
+}
+var anonymousWebConfig = {
+  platform: {
+    enabled: false
+  }
+  globalValidation: {
+    unauthenticatedClientAction: 'AllowAnonymous'
+  }
+  httpSettings: {
+    requireHttps: true
+  }
+  identityProviders: {
+    azureActiveDirectory: {
+      enabled: false
+    }
+  }
+  login: {
+    allowedExternalRedirectUrls: [
+      applicationUrl
+    ]
+    preserveUrlFragmentsForLogins: false
+  }
+}
 var dnsZoneNames = [
   'privatelink.cognitiveservices.azure.com'
   'privatelink.openai.azure.com'
@@ -495,6 +573,8 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
     ingressAllowInsecure: false
     ingressTargetPort: 8000
     activeRevisionsMode: 'Single'
+    // Incremental 배포의 null은 기존 인증을 제거하지 않으므로 익명 모드는 명시적으로 비활성화한다.
+    authConfig: privateAnonymousWebUi ? anonymousWebConfig : (adminAuthConfigured ? webAuthConfig : null)
     registries: credentialRegistry ? [
       {
         server: 'ghcr.io'
@@ -509,10 +589,16 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
           name: 'ghcr-pull-token'
           value: containerRegistryPassword
         }
+      ] : [],
+      adminAuthConfigured ? [
+        {
+          name: 'microsoft-provider-authentication-secret'
+          value: adminEntraClientSecret
+        }
       ] : []
     )
     scaleSettings: {
-      minReplicas: 0
+      minReplicas: adminUiEnabled ? 1 : 0
       maxReplicas: 1
     }
     containers: [
@@ -532,10 +618,17 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
           { name: 'API_KEY', secretRef: 'orchestrator-api-key' }
           { name: 'ARCHIVE_BLOB_CONTAINER_URL', value: '${storage.outputs.primaryBlobEndpoint}azbrief-archive' }
           { name: 'CHECKPOINT_BLOB_URL', value: '${storage.outputs.primaryBlobEndpoint}azbrief-state/checkpoint.json' }
-          { name: 'ADMIN_UI_ENABLED', value: 'false' }
-          { name: 'ADMIN_REQUIRE_AUTH', value: 'true' }
-          { name: 'ARCHIVE_UI_ENABLED', value: 'false' }
-          { name: 'ARCHIVE_REQUIRE_AUTH', value: 'true' }
+          { name: 'ADMIN_CONFIG_BLOB_URL', value: adminConfigBlobUrl }
+          { name: 'ARCHIVE_BASE_URL', value: archiveUiEnabled ? applicationUrl : '' }
+          { name: 'ADMIN_UI_ENABLED', value: string(adminUiEnabled) }
+          { name: 'ADMIN_REQUIRE_AUTH', value: string(!privateAnonymousWebUi) }
+          { name: 'ADMIN_ALLOWED_PRINCIPALS', value: adminAuthConfigured && adminUiEnabled ? adminAllowedPrincipals : '' }
+          { name: 'ADMIN_READINESS_RESOURCE_GROUP', value: resourceGroup().name }
+          { name: 'ADMIN_READINESS_FOUNDRY_ACCOUNT', value: foundryAccountName }
+          { name: 'ADMIN_READINESS_FOUNDRY_PROJECT', value: projectName }
+          { name: 'ARCHIVE_UI_ENABLED', value: string(archiveUiEnabled) }
+          { name: 'ARCHIVE_REQUIRE_AUTH', value: string(!privateAnonymousWebUi) }
+          { name: 'ARCHIVE_ALLOWED_PRINCIPALS', value: adminAuthConfigured && archiveUiEnabled ? archiveAllowedPrincipals : '' }
           { name: 'FEEDBACK_UI_ENABLED', value: 'false' }
           { name: 'MAX_CONCURRENT_ANALYSES', value: '1' }
         ]
@@ -588,6 +681,14 @@ output ktFoundation object = {
   containerAppResourceId: containerApp.outputs.resourceId
   containerImage: bootstrapImage
   containerRegistryAuthMode: containerRegistryAuthMode
+  webAuthenticationConfigured: adminAuthConfigured
+  privateAnonymousWebUiEnabled: privateAnonymousWebUi
+  adminUiEnabled: adminUiEnabled
+  archiveUiEnabled: archiveUiEnabled
+  adminPageUrl: adminUiEnabled ? '${applicationUrl}/admin' : ''
+  archivePageUrl: archiveUiEnabled ? '${applicationUrl}/archive' : ''
+  adminConfigBlobUrl: adminConfigBlobUrl
+  entraRedirectUri: 'https://${containerApp.outputs.fqdn}/.auth/login/aad/callback'
   applicationUrl: 'https://${containerApp.outputs.fqdn}'
   bootstrapUrl: 'https://${containerApp.outputs.fqdn}'
   controlPlaneIdentityResourceId: controlPlaneIdentity.outputs.resourceId

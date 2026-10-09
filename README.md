@@ -40,7 +40,17 @@ For an Existing resource group, Portal app discovery uses the resource-group-sco
 Apps API; New groups retain the filtered generic inventory so an absent group is not a 404 blocker.
 Validation reads `value`, `error` and `nextLink` directly and preserves missing-result, error,
 pagination and ownership guards. Failures show only response state, error code and page presence.
-Admin/Archive stay disabled until Entra setup; image publication does not update existing apps.
+Stage one keeps Admin/Archive disabled. The KT Portal now offers temporary **private anonymous**
+access in stage two, with an explicit risk acknowledgement; Entra setup is off by default.
+Direct ARM/CLI callers must opt in with `enablePrivateAnonymousWebUi=true` (default false).
+Every client that can reach the private app can use management functions and read archive data:
+this is not read-only or production authentication. The Environment remains internal with public
+network access disabled; Azure access still uses Managed Identity and API/MCP keys stay required.
+Both web modes bind durable Admin configuration and use minimum replicas one (additional idle
+cost). Entra can be configured later from an existing customer app; registration, callback and
+runtime RBAC remain operator-managed. See
+[stage-two web setup](infra/kt/README.md#2단계-웹-인증-자동-구성). Image publication alone does not
+update existing apps. CLI `--stage complete` applies stage two without replaying the foundation.
 Stage two reuses the stage-one Environment's RG/name. The Portal normalizes the ARG internal flag
 before checking internal/PNA/KT ownership; a matching compliant Environment is not a name conflict.
 Stage one does not create the Foundry project. After the account host is ready, stage two creates

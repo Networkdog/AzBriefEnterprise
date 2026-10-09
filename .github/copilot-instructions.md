@@ -330,6 +330,27 @@ ARM callers must explicitly choose reuse from fresh inventory; serialize deploym
 Retain validation for optional 32–256-character initial keys and App secret refs, not literal
 environment values. Bind tenant/UAMI/project/Hosted name and durable
 archive/checkpoint paths, but keep Admin/Archive/Feedback disabled and auth required until setup.
+KT stage-two web setup accepts an existing customer-tenant Entra client ID, secure client secret,
+administrator allow-list and optional Archive readers. Stage one ignores those inputs and keeps
+the surfaces off. Complete credentials and non-empty reader lists gate Entra-protected surfaces;
+never disable `*_REQUIRE_AUTH` in that mode. The sole KT exception is an explicitly approved,
+temporary stage-two `enablePrivateAnonymousWebUi` option (ARM default false; Portal requires risk
+acknowledgement). It enables both pages and turns off their auth plus EasyAuth explicitly, not via
+an Incremental omission. Every reachable private client can administer and read; it is not read-only,
+production authorization or user-level auditing. Keep the Environment internal/PNA Disabled,
+reject unknown/public state before CLI writes, retain API/MCP keys and Azure Managed Identity.
+Anonymous and Entra inputs must not mix; hidden Portal Entra values are cleared. Do not silently
+downgrade an authenticated app. Known anonymous settings may later be upgraded to explicit Entra.
+Keep global `AllowAnonymous`
+for health/API-key routes, application-level authorization, HTTPS and same-origin redirects.
+Store the Entra value only as an App secret; bind Admin config in `azbrief-state/admin-config.json`,
+Archive links and readiness targets. Admin activation sets minReplicas=1 with disclosed idle cost.
+Do not create Entra registrations, issue secrets, assign runtime RBAC or mark applicationReady=true.
+Operators register the exact Web callback and accept actual login, refusal and Blob access.
+CLI `--stage complete` requires the existing foundation and avoids account replay. It may reuse
+only matching known web settings; default `both`/`foundation` must reject an authenticated or
+otherwise promoted app, including a private anonymous one. Preserve legacy GHCR foundation compatibility, case-insensitive resource
+names/principal sets, API-key reuse, post-stage auth readback and credential redaction.
 CLI may replace an uncustomized legacy hello-world app; the same pinned image must not permit
 overwriting promoted settings. Reuse the shared redactor for parameter/CLI diagnostics. These
 image changes do not create models, Agent versions, Entra apps, Jobs or email configuration.

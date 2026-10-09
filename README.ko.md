@@ -40,7 +40,16 @@ Portal에서 기존 RG를 선택하면 RG 범위의 Container Apps API로 앱을
 아직 존재하지 않아도 404로 막히지 않도록 기존의 필터된 일반 인벤토리 조회를 유지합니다.
 검증은 `value`, `error`, `nextLink`를 직접 확인하며 결과 누락·오류·페이지·소유권 보호를
 유지합니다. 실패 시 응답 상태·오류 코드·추가 페이지 유무만 표시합니다.
-Entra 설정 전 Admin/Archive는 비활성이고, 이미지 게시만으로 기존 앱이 업데이트되지는 않습니다.
+1단계에서는 Admin/Archive가 비활성입니다. KT Portal의 2단계는 위험 확인을 거쳐 임시
+**사설망 Anonymous 접근**을 선택할 수 있으며, Entra 구성은 기본 선택하지 않습니다.
+직접 ARM/CLI에서는 `enablePrivateAnonymousWebUi=true`로 명시해야 합니다(기본 false).
+이 모드는 사설 앱에 접속 가능한 모든 클라이언트의 관리 기능·Archive 데이터 접근을 허용합니다.
+조회 전용이나 운영용 사용자 인증이 아닙니다. 내부 Environment와 공용 접근 차단, Azure 서비스용
+Managed Identity와 API/MCP 키는 유지합니다. 관리자 설정 저장 경로와 최소 replica 1도
+설정합니다(유휴 비용 증가). Entra 앱·callback·운영 RBAC는 추후 운영자가 별도로 관리합니다.
+[2단계 웹 인증 자동 구성](infra/kt/README.md#2단계-웹-인증-자동-구성)을 따르십시오.
+CLI의 `--stage complete`는 1단계를 반복하지 않고 2단계만 적용합니다. 이미지 게시만으로
+기존 앱이 업데이트되지는 않습니다.
 2단계는 1단계와 같은 RG·Environment 이름을 재사용합니다. Portal은 ARG 내부 환경 값을
 정규화해 internal/PNA/KT 소유권을 검사하며, 조건을 충족하는 기존 환경은 이름 충돌이 아닙니다.
 1단계에서는 Foundry 프로젝트를 생성하지 않습니다. 계정 host가 준비된 뒤 2단계에서 프로젝트·

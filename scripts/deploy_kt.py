@@ -46,6 +46,17 @@ FOUNDATION_ENV_NAMES = frozenset(
         "MAX_CONCURRENT_ANALYSES",
     }
 )
+WEB_ENV_NAMES = frozenset(
+    {
+        "ADMIN_ALLOWED_PRINCIPALS",
+        "ARCHIVE_ALLOWED_PRINCIPALS",
+        "ADMIN_CONFIG_BLOB_URL",
+        "ARCHIVE_BASE_URL",
+        "ADMIN_READINESS_RESOURCE_GROUP",
+        "ADMIN_READINESS_FOUNDRY_ACCOUNT",
+        "ADMIN_READINESS_FOUNDRY_PROJECT",
+    }
+)
 PRIVATE_RANGES = tuple(
     IPv4Network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
@@ -228,7 +239,62 @@ def load_parameters(path: Path) -> dict[str, Any]:
             raise ValueError("apiKey and the GHCR pull token must be different")
     elif values["containerRegistryPassword"]:
         raise ValueError("Anonymous registry mode must not carry an unused pull token")
+    web_fields = (
+        "adminEntraClientId",
+        "adminEntraClientSecret",
+        "adminAllowedPrincipals",
+        "archiveAllowedPrincipals",
+    )
+    if values["enablePrivateAnonymousWebUi"] and any(values[name].strip() for name in web_fields):
+        raise ValueError("Private anonymous web access must not carry unused Entra inputs")
+    if any(values[name].strip() for name in web_fields):
+        for name in ("adminAllowedPrincipals", "archiveAllowedPrincipals"):
+            principals = [part.strip() for part in values[name].split(",") if part.strip()]
+            if any(any(character.isspace() for character in part) for part in principals):
+                raise ValueError(f"{name} must contain comma-separated Object IDs or UPNs")
+            values[name] = ",".join(principals)
+        if (
+            not values["adminEntraClientId"].strip()
+            or not values["adminEntraClientSecret"].strip()
+            or not (values["adminAllowedPrincipals"] or values["archiveAllowedPrincipals"])
+        ):
+            raise ValueError(
+                "Authenticated web setup requires adminEntraClientId, adminEntraClientSecret "
+                "and at least one administrator or Archive reader"
+            )
+        try:
+            values["adminEntraClientId"] = str(UUID(values["adminEntraClientId"].strip()))
+        except ValueError:
+            raise ValueError("adminEntraClientId must be an application client ID GUID") from None
+        secret = values["adminEntraClientSecret"]
+        if any(character.isspace() for character in secret):
+            raise ValueError("adminEntraClientSecret must not contain whitespace")
+        if secret in (api_key, values["containerRegistryPassword"]):
+            raise ValueError("Entra client secret, API key and GHCR token must be different")
     return values
+
+
+def _web_ui_flags(values: dict[str, Any]) -> tuple[bool, bool]:
+    """Resolve the same stage and credential gates as the KT template."""
+    if _private_anonymous_web_ui(values):
+        return True, True
+    authenticated = (
+        values["deployCapabilityHost"]
+        and bool(values["adminEntraClientId"].strip())
+        and bool(values["adminEntraClientSecret"].strip())
+    )
+    admin = authenticated and any(
+        part.strip() for part in values["adminAllowedPrincipals"].split(",")
+    )
+    archive = authenticated and (
+        admin or any(part.strip() for part in values["archiveAllowedPrincipals"].split(","))
+    )
+    return admin, archive
+
+
+def _private_anonymous_web_ui(values: dict[str, Any]) -> bool:
+    """Require an explicit opt-in and stage two for the KT private exception."""
+    return values["deployCapabilityHost"] is True and values["enablePrivateAnonymousWebUi"] is True
 
 
 class AzureCli:
@@ -449,10 +515,16 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(
                 f"Refusing to modify a resource not owned by the KT profile: {resource_id}"
             )
+    if values["deployCapabilityHost"] and any(
+        resource_id.casefold() not in by_id for resource_id in planned_ids
+    ):
+        raise ValueError(
+            "Stage two requires a complete existing KT foundation; run stage one first"
+        )
     app_id = planned_ids[-2]
     reuse_existing_api_key = False
     if app_id.casefold() in by_id:
-        app = cli.get(app_id, "2025-01-01")["properties"]
+        app = cli.get(app_id, CONTAINER_ENV_API)["properties"]
         containers = app.get("template", {}).get("containers", [])
         if len(containers) != 1 or containers[0].get("image") not in {
             values["bootstrapImage"],
@@ -476,22 +548,98 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
         else:
             entries = container.get("env", [])
             env = {entry["name"]: entry for entry in entries}
+            admin_ui, archive_ui = _web_ui_flags(values)
+            matches_web_request = (admin_ui or archive_ui) and all(
+                env.get(name, {}).get("value") == str(enabled).lower()
+                for name, enabled in (
+                    ("ADMIN_UI_ENABLED", admin_ui),
+                    ("ARCHIVE_UI_ENABLED", archive_ui),
+                )
+            )
+            current_private_anonymous = matches_web_request and all(
+                env.get(name, {}).get("value") == "false"
+                for name in ("ADMIN_REQUIRE_AUTH", "ARCHIVE_REQUIRE_AUTH")
+            )
+            if (
+                _private_anonymous_web_ui(values)
+                and any(
+                    env.get(name, {}).get("value") == "true"
+                    for name in ("ADMIN_UI_ENABLED", "ARCHIVE_UI_ENABLED")
+                )
+                and not current_private_anonymous
+            ):
+                raise ValueError(
+                    "Existing web access requires authentication; refusing automatic anonymous downgrade"
+                )
             flags = {
-                "ADMIN_UI_ENABLED": "false",
-                "ADMIN_REQUIRE_AUTH": "true",
-                "ARCHIVE_UI_ENABLED": "false",
-                "ARCHIVE_REQUIRE_AUTH": "true",
+                "ADMIN_UI_ENABLED": str(admin_ui and matches_web_request).lower(),
+                "ADMIN_REQUIRE_AUTH": str(not current_private_anonymous).lower(),
+                "ARCHIVE_UI_ENABLED": str(archive_ui and matches_web_request).lower(),
+                "ARCHIVE_REQUIRE_AUTH": str(not current_private_anonymous).lower(),
                 "FEEDBACK_UI_ENABLED": "false",
                 "MAX_CONCURRENT_ANALYSES": "1",
             }
+            ingress = configuration.get("ingress", {})
+            fqdn = ingress.get("fqdn")
+            if matches_web_request and (not isinstance(fqdn, str) or not fqdn):
+                raise ValueError("Authenticated web setup requires the Container App HTTPS FQDN")
+            web_env = {
+                "ADMIN_ALLOWED_PRINCIPALS": (
+                    values["adminAllowedPrincipals"]
+                    if admin_ui and matches_web_request and not current_private_anonymous
+                    else ""
+                ),
+                "ARCHIVE_ALLOWED_PRINCIPALS": (
+                    values["archiveAllowedPrincipals"]
+                    if archive_ui and matches_web_request and not current_private_anonymous
+                    else ""
+                ),
+                "ADMIN_CONFIG_BLOB_URL": (
+                    f"https://{values['storageAccountName']}.blob.core.windows.net/"
+                    "azbrief-state/admin-config.json"
+                    if admin_ui and matches_web_request
+                    else ""
+                ),
+                "ARCHIVE_BASE_URL": (
+                    f"https://{fqdn}" if archive_ui and matches_web_request else ""
+                ),
+                "ADMIN_READINESS_RESOURCE_GROUP": cli.group,
+                "ADMIN_READINESS_FOUNDRY_ACCOUNT": values["foundryAccountName"],
+                "ADMIN_READINESS_FOUNDRY_PROJECT": values["projectName"],
+            }
+            web_env_matches = True
+            for name, expected in web_env.items():
+                if name not in env:
+                    continue
+                actual = env[name].get("value")
+                if not isinstance(actual, str):
+                    matches = False
+                elif name.endswith("_ALLOWED_PRINCIPALS"):
+                    matches = {
+                        part.strip().casefold() for part in actual.split(",") if part.strip()
+                    } == {part.strip().casefold() for part in expected.split(",") if part.strip()}
+                elif name.startswith("ADMIN_READINESS_"):
+                    matches = actual.casefold() == expected.casefold()
+                else:
+                    matches = actual == expected
+                web_env_matches = web_env_matches and matches
+            full_env_names = FOUNDATION_ENV_NAMES | WEB_ENV_NAMES
+            permitted_env_names = (
+                (full_env_names,) if matches_web_request else (FOUNDATION_ENV_NAMES, full_env_names)
+            )
+            permitted_secrets = {"orchestrator-api-key", "ghcr-pull-token"}
+            if matches_web_request and not current_private_anonymous:
+                permitted_secrets.add("microsoft-provider-authentication-secret")
             if (
                 container.get("name") != "azbrief"
-                or set(env) != FOUNDATION_ENV_NAMES
+                or set(env) not in permitted_env_names
                 or len(entries) != len(env)
                 or any(env[name].get("value") != value for name, value in flags.items())
+                or not web_env_matches
                 or env["API_KEY"].get("secretRef") != "orchestrator-api-key"
                 or env["API_KEY"].get("value")
-                or app.get("template", {}).get("scale", {}).get("minReplicas") != 0
+                or app.get("template", {}).get("scale", {}).get("minReplicas")
+                != (1 if admin_ui and matches_web_request else 0)
                 or app.get("template", {}).get("scale", {}).get("maxReplicas") != 1
                 or container.get("resources") != {"cpu": 0.25, "memory": "0.5Gi"}
                 or configuration.get("activeRevisionsMode") != "Single"
@@ -503,7 +651,16 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                     for registry in configuration.get("registries", [])
                 )
                 or {secret["name"] for secret in configuration.get("secrets", [])}
-                - {"orchestrator-api-key", "ghcr-pull-token"}
+                - permitted_secrets
+                or (
+                    matches_web_request
+                    and not current_private_anonymous
+                    and sum(
+                        secret.get("name") == "microsoft-provider-authentication-secret"
+                        for secret in configuration.get("secrets", [])
+                    )
+                    != 1
+                )
             ):
                 raise ValueError("Foundation cannot overwrite a promoted or customized AzBrief app")
             api_secrets = [
@@ -545,6 +702,14 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                         "Existing Container Apps Environment is external. KT Policy requires "
                         "vnetConfiguration.internal=true at creation; recreate the foundation "
                         "instead of attempting an in-place conversion."
+                    )
+                if (
+                    _private_anonymous_web_ui(values)
+                    and owner.get("publicNetworkAccess") != "Disabled"
+                ):
+                    raise ValueError(
+                        "Private anonymous web access requires public network access Disabled "
+                        "before deployment; missing or unknown values are not private isolation."
                     )
             if not matches:
                 raise ValueError(
@@ -757,36 +922,88 @@ def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
                 f"(provisioningState={endpoint_state!r}); Approved alone is not readiness. "
                 "Inspect deployment operations before retrying or deleting resources."
             )
+    admin_ui, archive_ui = _web_ui_flags(values)
+    if admin_ui or archive_ui:
+        app_id = (
+            f"{cli.group_id}/providers/Microsoft.App/containerApps/{values['containerAppName']}"
+        )
+        app = cli.get(app_id, CONTAINER_ENV_API)["properties"]
+        env = {entry["name"]: entry for entry in app["template"]["containers"][0]["env"]}
+        anonymous = _private_anonymous_web_ui(values)
+        expected_flags = {
+            "ADMIN_UI_ENABLED": str(admin_ui).lower(),
+            "ARCHIVE_UI_ENABLED": str(archive_ui).lower(),
+            "ADMIN_REQUIRE_AUTH": str(not anonymous).lower(),
+            "ARCHIVE_REQUIRE_AUTH": str(not anonymous).lower(),
+        }
+        if any(env[name].get("value") != expected for name, expected in expected_flags.items()):
+            raise RuntimeError("Stage-two Admin/Archive activation was not applied")
+        auth = cli.get(f"{app_id}/authConfigs/current", CONTAINER_ENV_API)["properties"]
+        provider = auth.get("identityProviders", {}).get("azureActiveDirectory", {})
+        registration = provider.get("registration", {})
+        audiences = provider.get("validation", {}).get("allowedAudiences", [])
+        client_id = values["adminEntraClientId"]
+        origin = f"https://{app['configuration']['ingress']['fqdn']}"
+        if (
+            auth.get("platform", {}).get("enabled") is not (not anonymous)
+            or auth.get("globalValidation", {}).get("unauthenticatedClientAction")
+            != "AllowAnonymous"
+            or auth.get("httpSettings", {}).get("requireHttps") is not True
+            or provider.get("enabled") is not (not anonymous)
+            or (
+                not anonymous
+                and (
+                    registration.get("clientId") != client_id
+                    or registration.get("clientSecretSettingName")
+                    != "microsoft-provider-authentication-secret"
+                    or registration.get("openIdIssuer")
+                    != f"https://login.microsoftonline.com/{cli.tenant}/v2.0"
+                    or not isinstance(audiences, list)
+                    or not all(isinstance(audience, str) for audience in audiences)
+                    or set(audiences) != {client_id, f"api://{client_id}"}
+                )
+            )
+            or auth.get("login", {}).get("allowedExternalRedirectUrls") != [origin]
+            or auth.get("login", {}).get("preserveUrlFragmentsForLogins") is not False
+        ):
+            raise RuntimeError("Stage-two EasyAuth does not match the approved tenant and settings")
 
 
-def run(cli: AzureCli, values: dict[str, Any], mode: str) -> None:
+def run(cli: AzureCli, values: dict[str, Any], mode: str, stage: str = "both") -> None:
     """Require fresh preflight for every operation, including the second deployment stage."""
     configure_redaction(values)
     if mode not in {"preflight", "validate", "what-if", "deploy"}:
         raise ValueError(f"Unsupported KT operation: {mode}")
-    prepared = prepare(cli, values)
+    if stage not in {"both", "foundation", "complete"}:
+        raise ValueError(f"Unsupported KT stage: {stage}")
+    prepared = prepare(cli, {**values, "deployCapabilityHost": stage == "complete"})
+    account_id = endpoint_specs(values, cli.group_id)[0]["target"]
+    if stage == "complete":
+        wait_for_host(cli, account_id)
     if mode == "preflight":
-        logger.info("kt_preflight_complete", azure_mutations=False, application_ready=False)
+        logger.info(
+            "kt_preflight_complete", stage=stage, azure_mutations=False, application_ready=False
+        )
         return
     if mode in {"validate", "what-if"}:
         result = cli.deploy(prepared, mode, "kt-private-validation")
-        logger.info("kt_validation_result", mode=mode, result=redact_fields(result))
+        logger.info("kt_validation_result", mode=mode, stage=stage, result=redact_fields(result))
         return
-    prepared["deployCapabilityHost"] = False
-    result = cli.deploy(prepared, "create", "kt-private-foundation")
-    if result["properties"]["provisioningState"] != "Succeeded":
-        raise RuntimeError("KT foundation deployment did not succeed")
-    account_id = endpoint_specs(values, cli.group_id)[0]["target"]
-    wait_for_host(cli, account_id)
-    prepared = prepare(cli, values)
-    prepared["deployCapabilityHost"] = True
-    result = cli.deploy(prepared, "create", "kt-private-capability-host")
-    if result["properties"]["provisioningState"] != "Succeeded":
-        raise RuntimeError("KT Capability Host deployment did not succeed")
-    wait_for_host(cli, f"{account_id}/projects/{values['projectName']}", "agents")
-    verify_foundation(cli, values)
+    if stage != "complete":
+        result = cli.deploy(prepared, "create", "kt-private-foundation")
+        if result["properties"]["provisioningState"] != "Succeeded":
+            raise RuntimeError("KT foundation deployment did not succeed")
+        wait_for_host(cli, account_id)
+    if stage != "foundation":
+        prepared = prepare(cli, {**values, "deployCapabilityHost": True})
+        result = cli.deploy(prepared, "create", "kt-private-capability-host")
+        if result["properties"]["provisioningState"] != "Succeeded":
+            raise RuntimeError("KT Capability Host deployment did not succeed")
+        wait_for_host(cli, f"{account_id}/projects/{values['projectName']}", "agents")
+    verify_foundation(cli, prepared)
     logger.info(
         "kt_foundation_deployed",
+        stage=stage,
         application_ready=False,
         container_apps_private_endpoint_managed=values["deployContainerAppsPrivateEndpoint"],
         outputs=result["properties"]["outputs"]["ktFoundation"]["value"],
@@ -803,6 +1020,12 @@ def main() -> int:
     parser.add_argument(
         "--mode", choices=("preflight", "validate", "what-if", "deploy"), default="preflight"
     )
+    parser.add_argument(
+        "--stage",
+        choices=("both", "foundation", "complete"),
+        default="both",
+        help="Select complete to apply stage two without replaying the Foundry account",
+    )
     args = parser.parse_args()
     try:
         values = load_parameters(args.parameters)
@@ -810,6 +1033,7 @@ def main() -> int:
             AzureCli(str(args.subscription), str(args.tenant), args.resource_group),
             values,
             args.mode,
+            args.stage,
         )
     except (
         ValueError,

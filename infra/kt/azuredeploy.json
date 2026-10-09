@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "16072672954900793650"
+      "templateHash": "6560790503864702431"
     }
   },
   "parameters": {
@@ -169,6 +169,41 @@
         "description": "False creates only the foundation, not a project. True creates the project, its role/connection bindings and BYO Capability Host together after the account host is ready. Never use stage one to precreate the project."
       }
     },
+    "enablePrivateAnonymousWebUi": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Explicit temporary stage-two anonymous Admin/Archive access inside the isolated KT network. Every reachable client can administer the app and read reports. Never use for public or production access; API/MCP keys and Azure Managed Identity remain required."
+      }
+    },
+    "adminEntraClientId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing customer-tenant Entra application client ID for optional stage-two Admin/Archive authentication. This template does not create the app registration."
+      }
+    },
+    "adminEntraClientSecret": {
+      "type": "securestring",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing Entra app client secret value. Used only in stage two and stored as a Container App secret, never an environment value or output."
+      }
+    },
+    "adminAllowedPrincipals": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Comma-separated administrator Object IDs or UPNs. Stage two enables Admin only with Entra credentials and a non-empty allow-list."
+      }
+    },
+    "archiveAllowedPrincipals": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional comma-separated Archive reader Object IDs, UPNs or group IDs. Administrators are readers automatically."
+      }
+    },
     "bootstrapImage": {
       "type": "string",
       "defaultValue": "ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3",
@@ -176,7 +211,7 @@
         "ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3"
       ],
       "metadata": {
-        "description": "Compatibility parameter name for the pinned AzBrief control-plane image. Agent publication and authenticated Admin/Archive setup remain separate."
+        "description": "Compatibility parameter name for the pinned AzBrief control-plane image. Agent publication remains separate; stage two can configure authenticated Admin/Archive from an existing Entra app."
       }
     },
     "foundryHostedAgentName": {
@@ -248,6 +283,10 @@
     "environmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
     "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('foundryAccountName'), parameters('projectName'))]",
     "credentialRegistry": "[equals(parameters('containerRegistryAuthMode'), 'Credentials')]",
+    "privateAnonymousWebUi": "[and(parameters('deployCapabilityHost'), parameters('enablePrivateAnonymousWebUi'))]",
+    "adminAuthConfigured": "[and(and(and(parameters('deployCapabilityHost'), not(variables('privateAnonymousWebUi'))), not(empty(trim(parameters('adminEntraClientId'))))), not(empty(trim(parameters('adminEntraClientSecret')))))]",
+    "adminUiEnabled": "[or(variables('privateAnonymousWebUi'), and(variables('adminAuthConfigured'), not(empty(trim(replace(parameters('adminAllowedPrincipals'), ',', ''))))))]",
+    "archiveUiEnabled": "[or(variables('privateAnonymousWebUi'), and(variables('adminAuthConfigured'), or(variables('adminUiEnabled'), not(empty(trim(replace(parameters('archiveAllowedPrincipals'), ',', '')))))))]",
     "dnsZoneNames": [
       "privatelink.cognitiveservices.azure.com",
       "privatelink.openai.azure.com",
@@ -28695,13 +28734,14 @@
           "activeRevisionsMode": {
             "value": "Single"
           },
+          "authConfig": "[if(variables('privateAnonymousWebUi'), createObject('value', createObject('platform', createObject('enabled', false()), 'globalValidation', createObject('unauthenticatedClientAction', 'AllowAnonymous'), 'httpSettings', createObject('requireHttps', true()), 'identityProviders', createObject('azureActiveDirectory', createObject('enabled', false())), 'login', createObject('allowedExternalRedirectUrls', createArray(format('https://{0}.{1}', parameters('containerAppName'), reference('containerEnvironment').outputs.defaultDomain.value)), 'preserveUrlFragmentsForLogins', false()))), if(variables('adminAuthConfigured'), createObject('value', createObject('platform', createObject('enabled', true()), 'globalValidation', createObject('unauthenticatedClientAction', 'AllowAnonymous'), 'httpSettings', createObject('requireHttps', true()), 'identityProviders', createObject('azureActiveDirectory', createObject('enabled', true(), 'registration', createObject('clientId', trim(parameters('adminEntraClientId')), 'clientSecretSettingName', 'microsoft-provider-authentication-secret', 'openIdIssuer', format('{0}{1}/v2.0', environment().authentication.loginEndpoint, tenant().tenantId)), 'validation', createObject('allowedAudiences', createArray(format('api://{0}', trim(parameters('adminEntraClientId'))), trim(parameters('adminEntraClientId')))))), 'login', createObject('allowedExternalRedirectUrls', createArray(format('https://{0}.{1}', parameters('containerAppName'), reference('containerEnvironment').outputs.defaultDomain.value)), 'preserveUrlFragmentsForLogins', false()))), createObject('value', null())))]",
           "registries": "[if(variables('credentialRegistry'), createObject('value', createArray(createObject('server', 'ghcr.io', 'username', parameters('containerRegistryUsername'), 'passwordSecretRef', 'ghcr-pull-token'))), createObject('value', createArray()))]",
           "secrets": {
-            "value": "[concat(createArray(if(parameters('reuseExistingApiKey'), filter(listSecrets('existingContainerApp', '2026-01-01').value, lambda('secret', equals(lambdaVariables('secret').name, 'orchestrator-api-key')))[0], createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey')))), if(variables('credentialRegistry'), createArray(createObject('name', 'ghcr-pull-token', 'value', parameters('containerRegistryPassword'))), createArray()))]"
+            "value": "[concat(createArray(if(parameters('reuseExistingApiKey'), filter(listSecrets('existingContainerApp', '2026-01-01').value, lambda('secret', equals(lambdaVariables('secret').name, 'orchestrator-api-key')))[0], createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey')))), if(variables('credentialRegistry'), createArray(createObject('name', 'ghcr-pull-token', 'value', parameters('containerRegistryPassword'))), createArray()), if(variables('adminAuthConfigured'), createArray(createObject('name', 'microsoft-provider-authentication-secret', 'value', parameters('adminEntraClientSecret'))), createArray()))]"
           },
           "scaleSettings": {
             "value": {
-              "minReplicas": 0,
+              "minReplicas": "[if(variables('adminUiEnabled'), 1, 0)]",
               "maxReplicas": 1
             }
           },
@@ -28748,20 +28788,48 @@
                     "value": "[format('{0}azbrief-state/checkpoint.json', reference('storage').outputs.primaryBlobEndpoint.value)]"
                   },
                   {
+                    "name": "ADMIN_CONFIG_BLOB_URL",
+                    "value": "[if(variables('adminUiEnabled'), format('{0}azbrief-state/admin-config.json', reference('storage').outputs.primaryBlobEndpoint.value), '')]"
+                  },
+                  {
+                    "name": "ARCHIVE_BASE_URL",
+                    "value": "[if(variables('archiveUiEnabled'), format('https://{0}.{1}', parameters('containerAppName'), reference('containerEnvironment').outputs.defaultDomain.value), '')]"
+                  },
+                  {
                     "name": "ADMIN_UI_ENABLED",
-                    "value": "false"
+                    "value": "[string(variables('adminUiEnabled'))]"
                   },
                   {
                     "name": "ADMIN_REQUIRE_AUTH",
-                    "value": "true"
+                    "value": "[string(not(variables('privateAnonymousWebUi')))]"
+                  },
+                  {
+                    "name": "ADMIN_ALLOWED_PRINCIPALS",
+                    "value": "[if(and(variables('adminAuthConfigured'), variables('adminUiEnabled')), parameters('adminAllowedPrincipals'), '')]"
+                  },
+                  {
+                    "name": "ADMIN_READINESS_RESOURCE_GROUP",
+                    "value": "[resourceGroup().name]"
+                  },
+                  {
+                    "name": "ADMIN_READINESS_FOUNDRY_ACCOUNT",
+                    "value": "[parameters('foundryAccountName')]"
+                  },
+                  {
+                    "name": "ADMIN_READINESS_FOUNDRY_PROJECT",
+                    "value": "[parameters('projectName')]"
                   },
                   {
                     "name": "ARCHIVE_UI_ENABLED",
-                    "value": "false"
+                    "value": "[string(variables('archiveUiEnabled'))]"
                   },
                   {
                     "name": "ARCHIVE_REQUIRE_AUTH",
-                    "value": "true"
+                    "value": "[string(not(variables('privateAnonymousWebUi')))]"
+                  },
+                  {
+                    "name": "ARCHIVE_ALLOWED_PRINCIPALS",
+                    "value": "[if(and(variables('adminAuthConfigured'), variables('archiveUiEnabled')), parameters('archiveAllowedPrincipals'), '')]"
                   },
                   {
                     "name": "FEEDBACK_UI_ENABLED",
@@ -30397,6 +30465,14 @@
         "containerAppResourceId": "[reference('containerApp').outputs.resourceId.value]",
         "containerImage": "[parameters('bootstrapImage')]",
         "containerRegistryAuthMode": "[parameters('containerRegistryAuthMode')]",
+        "webAuthenticationConfigured": "[variables('adminAuthConfigured')]",
+        "privateAnonymousWebUiEnabled": "[variables('privateAnonymousWebUi')]",
+        "adminUiEnabled": "[variables('adminUiEnabled')]",
+        "archiveUiEnabled": "[variables('archiveUiEnabled')]",
+        "adminPageUrl": "[if(variables('adminUiEnabled'), format('{0}/admin', format('https://{0}.{1}', parameters('containerAppName'), reference('containerEnvironment').outputs.defaultDomain.value)), '')]",
+        "archivePageUrl": "[if(variables('archiveUiEnabled'), format('{0}/archive', format('https://{0}.{1}', parameters('containerAppName'), reference('containerEnvironment').outputs.defaultDomain.value)), '')]",
+        "adminConfigBlobUrl": "[if(variables('adminUiEnabled'), format('{0}azbrief-state/admin-config.json', reference('storage').outputs.primaryBlobEndpoint.value), '')]",
+        "entraRedirectUri": "[format('https://{0}/.auth/login/aad/callback', reference('containerApp').outputs.fqdn.value)]",
         "applicationUrl": "[format('https://{0}', reference('containerApp').outputs.fqdn.value)]",
         "bootstrapUrl": "[format('https://{0}', reference('containerApp').outputs.fqdn.value)]",
         "controlPlaneIdentityResourceId": "[reference('controlPlaneIdentity').outputs.resourceId.value]",
