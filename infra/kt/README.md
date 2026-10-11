@@ -172,7 +172,7 @@ CLI도 명시한 이름을 그대로 사용합니다. 기존 배포에 재적용
 | Container Apps 전용 subnet | **/27** | `Microsoft.App/environments` | Container Apps Environment 전용 |
 
 Foundry와 Container Apps는 위임 이름이 같아도 **같은 서브넷을 공유할 수 없습니다**.
-Portal은 선택한 VNet의 실제 subnet 목록을 읽어 역할별 드롭다운으로 표시합니다. 고정된
+Portal은 세 역할의 서브넷 **이름을 텍스트로 입력**받고 선택한 VNet의 실제 subnet 목록으로 검증합니다. 고정된
 `PESubnet`·`FoundrySubnet`·`ContainerAppsSubnet` 이름은 요구하지 않습니다. CLI에서는
 `peSubnetName`, `foundrySubnetName`, `containerAppsSubnetName`으로 같은 매핑을 명시하며,
 세 이름은 대소문자를 무시하고 서로 달라야 합니다.
@@ -262,15 +262,15 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
 | 화면 | 제공 기능 |
 |---|---|
 | 기본 사항 | 배포 단계(1단계/2단계)를 먼저 결정하고 구독·RG·지역 선택. 선택한 단계의 범위 안내 |
-| 기존 네트워크 | 같은 구독·지역의 VNet과 역할별 서브넷을 직접 선택. CIDR·위임·예약 범위 검사는 유지, 자동 추천 없음 |
+| 기존 네트워크 | 같은 구독·지역의 VNet 선택 후 역할별 서브넷 이름을 텍스트로 입력. CIDR·위임·예약 범위 검사는 유지, 드롭다운·자동 추천 없음 |
 | 리소스 이름 | 새 RG·기존 RG 모두 Foundry·Storage·Cosmos·Search·프로젝트·Environment·App 이름을 직접 입력. API 키 보호·사설 Environment·PE 이름 충돌 검증 |
 | 이미지·인증·DNS·로그 | GHCR 익명 다운로드 기본값·선택적 읽기 토큰, API 키 자동 관리 안내, ACA PE 자동 생성 선택(기본 해제), Search/DNS/기존 Log Analytics 선택 |
 | 검토·필수 확인 | 처음 선택한 단계와 실제 선택 요약, 웹 옵션, 사전검사·소유권·비용·bootstrap 범위 동의. 단계를 다시 선택하지 않음 |
 
-VNet을 새로 만드는 옵션은 없습니다. 선택한 subnet 이름은 배포 매개변수로 전달되고 CIDR은
-드롭다운 설명으로만 표시되므로 사용자가 주소를 다시 입력하지 않습니다. ARM에서 읽은 단일
-IPv4 prefix, RFC1918 범위, 최소 크기, 위임 및 Container Apps 예약 범위를 충족하는 subnet만
-역할별 후보에 포함됩니다. 조회 실패·후보 없음은 진행 조건을 충족하지 못합니다.
+VNet을 새로 만드는 옵션은 없습니다. 입력한 subnet 이름만 배포 매개변수로 전달하고
+CIDR을 다시 입력받지 않습니다. 선택한 VNet의 ARM 응답으로 단일 IPv4 prefix, RFC1918 범위,
+최소 크기, 위임 및 Container Apps 예약 범위를 검증합니다.
+조회 실패·이름 불일치·부적합한 서브넷은 진행 조건을 충족하지 못합니다.
 `createPESubnet`, `createFoundrySubnet`, `createContainerAppsSubnet`은 항상 `false`를 전달하므로
 **Portal에서는 준비된 서브넷만 재사용**합니다. 새 subnet이 필요하면 CLI에서 같은 역할별
 이름과 CIDR을 명시합니다.
@@ -286,10 +286,11 @@ IPv4 prefix, RFC1918 범위, 최소 크기, 위임 및 Container Apps 예약 범
 확인해야 합니다. 단계는 자동 전환하지 않습니다. 기존 프로젝트가 없어도 2단계에서 새 이름을 입력해
 프로젝트와 BYO 구성을 함께 생성할 수 있습니다.
 
-선택적 기존 리소스 드롭다운과 실제 연결/키워드 기반 서브넷 기본값은 제거했습니다.
-고객 화면에서 `existingContainerAppsEnvironment` 요소 생성 실패와 의존 검증의 연쇄 오류가
-확인됐기 때문입니다. 1·2단계 모두 **서브넷을 직접 선택하십시오.**에서 역할별 유효한
-서브넷을 직접 선택합니다. 이름과 CIDR은 목록에서 확인하며 새 서브넷을 자동 생성하지 않습니다.
+선택적 기존 리소스 드롭다운과 실제 연결/키워드 기반 서브넷 기본값을 제거한 뒤에도
+`containerAppsSubnetName` 드롭다운 생성 실패가 보고됐습니다. 현재는 **세 서브넷 입력도 모두
+정적 TextBox**로 변경하여 동적 목록 생성에 의존하지 않습니다. 1·2단계 모두 이름만 직접
+입력하며 전체 ARM ID나 CIDR은 입력하지 않습니다. 서브넷을 새로 생성하지 않습니다.
+선택한 VNet → Subnets 또는 1단계 출력에서 실제 이름을 확인하십시오.
 
 | 역할 | 유지하는 조건 |
 |---|---|
@@ -298,9 +299,13 @@ IPv4 prefix, RFC1918 범위, 최소 크기, 위임 및 Container Apps 예약 범
 | Container Apps | /27 이상, 같은 위임·예약 범위 제외, Foundry 서브넷과 다름 |
 
 2단계는 1단계 출력 `privateEndpointSubnetId`, `foundrySubnetId`, `containerAppsSubnetId`와
-같은 서브넷을 선택하십시오. 입력한 선택값이 그대로 배포에 전달됩니다. 다른 VNet의 이전
+해당 ID의 마지막 서브넷 이름을 입력하십시오. 입력한 값이 그대로 배포에 전달됩니다. 다른 VNet의 이전
 응답이나 부적합한 서브넷은 차단하지만, 이 확인은 IP 여유·점유자·DNS·NSG·UDR·고객 정책
 인수를 대신하지 않습니다.
+서브넷 정규식과 별도의 조회 검증은 유지합니다. 검증식은 nullable/빈 `addressPrefixes`와
+IPv6 항목에도 안전하게 평가하고, 다중 prefix·누락·상충된 주소는 허용하지 않습니다.
+로컬에서 `first(null)` 위험을 재현했지만 Portal의 정확한 내부 예외는 확인하지 못했습니다.
+수정된 폼에는 문제가 된 서브넷 DropDown 자체가 없으며 고객 Portal의 실제 인수는 별도입니다.
 
 #### 리소스 이름 직접 입력
 

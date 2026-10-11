@@ -327,7 +327,13 @@ The KT names tab is manual in both New and Existing RG modes. Remove optional ex
 dropdowns, generic-resource/project discovery and automatic subnet defaults after the observed
 `existingContainerAppsEnvironment` control-creation failure. Do not restore those dependencies
 merely because local expression tests pass. Preserve direct name outputs, endpoint-name uniqueness,
-manual live-subnet eligibility and current VNet-response identity. Keep essential owned App/key
+manual live-subnet eligibility and current VNet-response identity. All three subnet roles now use
+static TextBoxes after the remaining `containerAppsSubnetName` DropDown initialization failure.
+Validate names against the selected VNet separately, deriving CIDR/delegation from ARM; do not
+request CIDRs again or restore dynamic subnet initialization. Validation must evaluate safely
+without lazy-branch assumptions: pad nullable prefix arrays before first(), avoid numeric casts
+on unknown/IPv6 data, and reject multiple or conflicting prefixes. Keep subnet size, RFC1918,
+reserved-range and distinct-role checks plus exact outputs. Keep essential owned App/key
 inventory fail-closed, and read the exact typed Environment in stage two through the 2026-01-01
 ARM API. Verify internal=true, PNA Disabled, ownership and the selected infrastructure subnet.
 First-stage/New-RG paths must not GET an absent Environment. Other ownership/BYO investigation

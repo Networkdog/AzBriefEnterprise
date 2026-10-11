@@ -34,7 +34,6 @@ SUBNET_NAMES = {
     "foundrySubnetName": "snet-foundry-agent",
     "containerAppsSubnetName": "snet-container-apps",
 }
-MANUAL_SUBNET_LABEL = "서브넷을 직접 선택하십시오."
 WEB_INPUTS = {
     "adminEntraClientId": "33333333-3333-3333-3333-333333333333",
     "adminEntraClientSecret": "test-only-entra-client-secret",
@@ -265,6 +264,7 @@ def _evaluate_ui_expression(
     variables: dict[str, object] | None = None,
     network: dict[str, object] | None = None,
     basics: dict[str, object] | None = None,
+    eager_conditionals: bool = False,
 ) -> object:
     """Evaluate the tested Portal expression subset with strict equality."""
 
@@ -295,6 +295,9 @@ def _evaluate_ui_expression(
         if function == "ui_if":
             condition = evaluate(node.args[0], bindings)
             assert isinstance(condition, bool)
+            if eager_conditionals:
+                branches = [evaluate(argument, bindings) for argument in node.args[1:]]
+                return branches[0] if condition else branches[1]
             return evaluate(node.args[1] if condition else node.args[2], bindings)
         if function in {"filter", "map"}:
             rows = evaluate(node.args[0], bindings)
@@ -444,6 +447,10 @@ def _evaluate_ui_expression(
             assert len(arguments) == 2 and isinstance(arguments[0], list)
             assert type(arguments[1]) is int
             return arguments[0][arguments[1] :]
+        if function == "take":
+            assert len(arguments) == 2 and isinstance(arguments[0], list)
+            assert type(arguments[1]) is int
+            return arguments[0][: arguments[1]]
         if function == "int":
             assert len(arguments) == 1 and isinstance(arguments[0], str)
             return int(arguments[0])
@@ -548,44 +555,30 @@ def test_wizard_only_selects_existing_same_region_network_and_reads_subnets(wiza
         ("containerAppsSubnetName", "createContainerAppsSubnet", 27),
     ):
         subnet_selector = controls[name_control]
-        assert subnet_selector["type"] == "Microsoft.Common.DropDown"
+        assert subnet_selector["type"] == "Microsoft.Common.TextBox"
         assert subnet_selector["constraints"]["required"] is True
-        assert subnet_selector["multiLine"] is True
-        assert subnet_selector["defaultValue"] == MANUAL_SUBNET_LABEL
-        allowed = subnet_selector["constraints"]["allowedValues"]
-        assert "virtualNetworkApi.properties.subnets" in allowed
-        assert "s.name" in allowed
-        assert '"description":"' in allowed
-        assert f"lessOrEquals(int(last(split(s.prefix, '/'))), {maximum_prefix})" in allowed
-        assert "startsWith(s.prefix, '10.')" in allowed
-        assert "startsWith(s.prefix, '172.')" in allowed
-        assert "startsWith(s.prefix, '192.168.')" in allowed
-        assert allowed.count("(") == allowed.count(")")
-        assert allowed.startswith("[concat(") and allowed.endswith(")]")
-        assert MANUAL_SUBNET_LABEL in allowed
+        assert subnet_selector["defaultValue"] == ""
+        assert "allowedValues" not in subnet_selector["constraints"]
+        assert not {"multiLine", "filter", "defaultDescription"} & subnet_selector.keys()
+        assert re.fullmatch(_ui_regex(subnet_selector), SUBNET_NAMES[name_control])
+        assert "전체 ARM ID나 CIDR" in subnet_selector["toolTip"]
+        role_label = subnet_selector["label"].removesuffix(" 이름")
+        rule = next(
+            rule
+            for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"][
+                "validations"
+            ]
+            if rule["message"].startswith(role_label + " 이름")
+        )
+        assert "virtualNetworkApi.properties.subnets" in rule["isValid"]
+        assert "s.properties.addressPrefixes" in rule["isValid"]
+        assert "s.properties.delegations" in rule["isValid"]
+        assert "map(" not in rule["isValid"] and "int(" not in rule["isValid"]
+        assert rule["isValid"].count("(") == rule["isValid"].count(")")
+        assert f"/{maximum_prefix}" in rule["message"]
         assert wizard["outputs"][name_control] == f"[steps('network').{name_control}]"
         assert wizard["outputs"][flag] is False
         assert order.index("virtualNetworkApi") < order.index(name_control)
-    assert (
-        "equals(s.delegationCount, 0)" in controls["peSubnetName"]["constraints"]["allowedValues"]
-    )
-    for name_control in ("foundrySubnetName", "containerAppsSubnetName"):
-        assert (
-            "equals(s.appDelegationCount, 1)"
-            in controls[name_control]["constraints"]["allowedValues"]
-        )
-    assert (
-        "not(equals(s.name, steps('network').foundrySubnetName))"
-        in controls["containerAppsSubnetName"]["constraints"]["allowedValues"]
-    )
-    assert (
-        "lessOrEquals(int(first(skip("
-        in controls["containerAppsSubnetName"]["constraints"]["allowedValues"]
-    )
-    container_candidates = controls["containerAppsSubnetName"]["constraints"]["allowedValues"]
-    for upper_octet, minimum_prefix in ((23, 13), (27, 14), (29, 15)):
-        assert f"), {upper_octet})" in container_candidates
-        assert f"), {minimum_prefix})" in container_candidates
     for removed in (
         "peSubnetApi",
         "pePrefix",
@@ -611,6 +604,245 @@ def _subnet_form(subnets: list[dict]) -> dict:
     }
 
 
+@pytest.mark.parametrize("prefixes", [None, []])
+def test_subnet_input_initialization_does_not_require_a_plural_prefix_array(
+    wizard: dict, prefixes: list[str] | None
+):
+    subnet = _subnet("snet-container-apps", "10.70.0.64/27", True)
+    subnet["properties"]["addressPrefixes"] = prefixes
+    network = _subnet_form([subnet])
+    for parameter in SUBNET_NAMES:
+        control = _ui_controls(wizard, "network")[parameter]
+        initializer = {key: value for key, value in control.items() if key not in {"constraints"}}
+        if "allowedValues" in control["constraints"]:
+            initializer["allowedValues"] = control["constraints"]["allowedValues"]
+        for value in initializer.values():
+            if isinstance(value, str) and value.startswith("["):
+                _evaluate_ui_expression(value, {}, network=network, eager_conditionals=True)
+        assert control["type"] == "Microsoft.Common.TextBox"
+
+
+def _manual_subnet_validation(wizard: dict, parameter: str) -> str:
+    label = _ui_controls(wizard, "network")[parameter]["label"]
+    return next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if rule["message"].startswith(label)
+    )
+
+
+@pytest.mark.parametrize("parameter", SUBNET_NAMES)
+@pytest.mark.parametrize(
+    ("prefixes", "valid"),
+    [
+        ({}, False),
+        ({"addressPrefix": "10.70.0.0/27"}, True),
+        ({"addressPrefix": "10.70.0.0/27", "addressPrefixes": None}, True),
+        ({"addressPrefix": "10.70.0.0/27", "addressPrefixes": []}, True),
+        ({"addressPrefixes": []}, False),
+        ({"addressPrefixes": None}, False),
+        ({"addressPrefixes": [None]}, False),
+        ({"addressPrefixes": [""]}, False),
+        ({"addressPrefixes": ["10.70.0.0/27"]}, True),
+        (
+            {"addressPrefix": "10.70.0.0/27", "addressPrefixes": ["10.70.0.0/27"]},
+            True,
+        ),
+        (
+            {"addressPrefix": "10.70.0.0/27", "addressPrefixes": ["10.70.1.0/27"]},
+            False,
+        ),
+        (
+            {
+                "addressPrefix": "10.70.0.0/27",
+                "addressPrefixes": ["10.70.0.0/27", "10.70.1.0/27"],
+            },
+            False,
+        ),
+        ({"addressPrefixes": ["10.70.0.0/27", "fd00::/64"]}, False),
+        ({"addressPrefix": None, "addressPrefixes": ["10.70.0.0/27"]}, True),
+        ({"addressPrefix": ""}, False),
+        ({"addressPrefix": "fd00::/64"}, False),
+        ({"addressPrefix": "not-a-prefix"}, False),
+    ],
+)
+def test_manual_subnet_validation_handles_prefix_shapes_without_lazy_branches(
+    wizard: dict, parameter: str, prefixes: dict, valid: bool
+):
+    subnet = _subnet(SUBNET_NAMES[parameter], "10.70.0.0/27", parameter != "peSubnetName")
+    subnet["properties"].pop("addressPrefix")
+    subnet["properties"].update(prefixes)
+    unrelated = _subnet("IPv6-unrelated", "fd00::/64", True)
+    network = _subnet_form([unrelated, subnet])
+    result = _resolve_selection(
+        _manual_subnet_validation(wizard, parameter),
+        {},
+        network=network,
+        eager_conditionals=True,
+    )
+    assert result is valid
+
+
+@pytest.mark.parametrize(
+    ("parameter", "prefix", "valid"),
+    [
+        ("peSubnetName", "10.70.0.0/28", True),
+        ("peSubnetName", "10.70.0.0/29", False),
+        ("foundrySubnetName", "10.70.0.0/27", True),
+        ("foundrySubnetName", "10.70.0.0/28", False),
+        ("containerAppsSubnetName", "10.70.0.0/27", True),
+        ("containerAppsSubnetName", "10.70.0.0/28", False),
+        ("containerAppsSubnetName", "10.0.0.0/8", True),
+        ("containerAppsSubnetName", "10.0.0.0/7", False),
+        ("containerAppsSubnetName", "192.168.0.0/16", True),
+        ("containerAppsSubnetName", "192.168.0.0/15", False),
+        ("foundrySubnetName", "172.16.0.0/12", True),
+        ("foundrySubnetName", "172.16.0.0/11", False),
+        ("containerAppsSubnetName", "172.16.0.0/12", False),
+        ("containerAppsSubnetName", "172.16.0.0/13", True),
+        ("containerAppsSubnetName", "172.24.0.0/13", False),
+        ("containerAppsSubnetName", "172.24.0.0/14", True),
+        ("containerAppsSubnetName", "172.28.0.0/14", False),
+        ("containerAppsSubnetName", "172.28.0.0/15", True),
+        ("containerAppsSubnetName", "172.29.0.0/27", True),
+        ("containerAppsSubnetName", "172.30.0.0/27", False),
+        ("containerAppsSubnetName", "172.31.0.0/27", False),
+        ("containerAppsSubnetName", "169.254.0.0/27", False),
+        ("containerAppsSubnetName", "100.100.0.0/27", False),
+        ("containerAppsSubnetName", "100.100.128.0/27", False),
+        ("containerAppsSubnetName", "172.32.0.0/27", False),
+        ("containerAppsSubnetName", "8.8.8.0/27", False),
+        ("containerAppsSubnetName", "10.70.0.0/not-a-number", False),
+    ],
+)
+def test_manual_subnet_validation_preserves_exact_network_boundaries(
+    wizard: dict, parameter: str, prefix: str, valid: bool
+):
+    subnet = _subnet(SUBNET_NAMES[parameter], prefix, parameter != "peSubnetName")
+    network = _subnet_form([subnet])
+    result = _resolve_selection(
+        _manual_subnet_validation(wizard, parameter),
+        {},
+        network=network,
+        eager_conditionals=True,
+    )
+    assert result is valid
+    values = {
+        "location": "eastus2",
+        **SUBNET_NAMES,
+        **{
+            row[2]: (
+                ""
+                if row[1] == parameter
+                else f"{'172.16' if prefix.startswith('10.') else '10.70'}.{10 + index}.0/27"
+            )
+            for index, row in enumerate(kt.SUBNETS)
+        },
+    }
+    vnet = {
+        "location": "eastus2",
+        "properties": {
+            "addressSpace": {"addressPrefixes": ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]},
+            "subnets": [subnet],
+        },
+    }
+    if valid:
+        kt.plan_subnets(values, vnet)
+    else:
+        with pytest.raises(ValueError):
+            kt.plan_subnets(values, vnet)
+
+
+@pytest.mark.parametrize("parameter", SUBNET_NAMES)
+@pytest.mark.parametrize("change", ["no-delegation", "wrong-delegation", "multiple-delegations"])
+def test_manual_subnet_validation_requires_the_role_delegation(
+    wizard: dict, parameter: str, change: str
+):
+    subnet = _subnet(SUBNET_NAMES[parameter], "10.70.0.0/27", parameter != "peSubnetName")
+    if change == "no-delegation":
+        subnet["properties"]["delegations"] = []
+    elif change == "wrong-delegation":
+        subnet["properties"]["delegations"] = [
+            {"properties": {"serviceName": "Microsoft.Web/serverFarms"}}
+        ]
+    else:
+        subnet["properties"]["delegations"] = [
+            {"properties": {"serviceName": "Microsoft.App/environments"}},
+            {"properties": {"serviceName": "Microsoft.Web/serverFarms"}},
+        ]
+    assert _resolve_selection(
+        _manual_subnet_validation(wizard, parameter),
+        {},
+        network=_subnet_form([subnet]),
+        eager_conditionals=True,
+    ) is (parameter == "peSubnetName" and change == "no-delegation")
+
+
+@pytest.mark.parametrize("parameter", SUBNET_NAMES)
+@pytest.mark.parametrize(
+    "value", ["", "/subscriptions/tenant/subnets/name", "10.70.0.0/27", "bad name"]
+)
+def test_manual_subnet_inputs_reject_ids_cidrs_and_blank_names(
+    wizard: dict, parameter: str, value: str
+):
+    control = _ui_controls(wizard, "network")[parameter]
+    assert re.fullmatch(_ui_regex(control), value) is None
+
+
+@pytest.mark.parametrize("parameter", SUBNET_NAMES)
+@pytest.mark.parametrize("value", ["a", "a" * 80, "snet_Name.zone-01"])
+def test_manual_subnet_inputs_accept_supported_names(wizard: dict, parameter: str, value: str):
+    assert re.fullmatch(_ui_regex(_ui_controls(wizard, "network")[parameter]), value)
+
+
+def test_subnet_names_preserve_case_and_cannot_share_roles(wizard: dict):
+    network = _subnet_form(
+        [
+            _subnet(SUBNET_NAMES["peSubnetName"], "10.70.0.0/28"),
+            _subnet(SUBNET_NAMES["foundrySubnetName"], "10.70.0.32/27", True),
+            _subnet(SUBNET_NAMES["containerAppsSubnetName"], "10.70.0.64/27", True),
+        ]
+    )
+    for parameter in SUBNET_NAMES:
+        network[parameter] = network[parameter].upper()
+        assert (
+            _resolve_selection(_manual_subnet_validation(wizard, parameter), {}, network=network)
+            is True
+        )
+        assert (
+            _resolve_selection(wizard["outputs"][parameter], {}, network=network)
+            == network[parameter]
+        )
+    rule = next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if rule["message"].startswith("Private Endpoint·Foundry·Container Apps")
+    )
+    assert _resolve_selection(rule, {}, network=network) is True
+    network["containerAppsSubnetName"] = network["foundrySubnetName"].lower()
+    assert _resolve_selection(rule, {}, network=network) is False
+
+
+@pytest.mark.parametrize("response", [{}, {"properties": {}}, {"properties": {"subnets": []}}])
+def test_subnet_initialization_and_validation_handle_an_unloaded_vnet(wizard: dict, response: dict):
+    network = {"virtualNetworkApi": response}
+    for parameter in SUBNET_NAMES:
+        control = _ui_controls(wizard, "network")[parameter]
+        assert control["type"] == "Microsoft.Common.TextBox"
+        assert all(
+            not (isinstance(value, str) and value.startswith("[")) for value in control.values()
+        )
+        assert (
+            _resolve_selection(
+                _manual_subnet_validation(wizard, parameter),
+                {},
+                network=network,
+                eager_conditionals=True,
+            )
+            is False
+        )
+
+
 @pytest.mark.parametrize(
     "failure", ["missing-id", "wrong-vnet", "read-error", "no-subnet-response"]
 )
@@ -624,7 +856,7 @@ def test_vnet_read_identity_and_errors_block_stale_subnet_defaults(wizard: dict,
         form["virtualNetworkApi"]["error"] = {"code": "Forbidden"}
     else:
         form["virtualNetworkApi"]["properties"].pop("subnets")
-    assert _ui_controls(wizard, "network")["peSubnetName"]["defaultValue"] == MANUAL_SUBNET_LABEL
+    assert _ui_controls(wizard, "network")["peSubnetName"]["defaultValue"] == ""
     rule = next(
         rule["isValid"]
         for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
@@ -637,12 +869,12 @@ def test_subnet_manual_choice_is_preserved_in_outputs_and_revalidated(wizard: di
     manual = "snet-manual-choice"
     form = _subnet_form([_subnet(manual, "10.70.0.0/28")])
     form["peSubnetName"] = manual
-    assert _ui_controls(wizard, "network")["peSubnetName"]["defaultValue"] == MANUAL_SUBNET_LABEL
+    assert _ui_controls(wizard, "network")["peSubnetName"]["defaultValue"] == ""
     assert _resolve_selection(wizard["outputs"]["peSubnetName"], {}, network=form) == manual
     rule = next(
         rule["isValid"]
         for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
-        if rule["message"].startswith("Private Endpoint subnet을")
+        if rule["message"].startswith("Private Endpoint subnet 이름")
     )
     assert _resolve_selection(rule, {}, network=form) is True
     form["peSubnetName"] = ""
@@ -723,6 +955,7 @@ def _resolve_selection(
     group: str = "rg-kt-test",
     stage: str = "complete",
     network: dict[str, object] | None = None,
+    eager_conditionals: bool = False,
 ) -> object:
     return _evaluate_ui_expression(
         expression,
@@ -731,6 +964,7 @@ def _resolve_selection(
         subscription={"subscriptionId": SUBSCRIPTION},
         network=network or {"virtualNetwork": {"location": "eastus2"}},
         basics={"deploymentStage": stage},
+        eager_conditionals=eager_conditionals,
     )
 
 
