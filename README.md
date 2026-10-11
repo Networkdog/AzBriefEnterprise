@@ -76,6 +76,12 @@ live stage-one account.
 KT does not assign Container App or Hosted Agent runtime roles. Operators grant these after
 deployment using the distinct identities; only project-identity permissions required for BYO
 provisioning remain in the template. Existing assignments are not deleted by Incremental replay.
+The KT template binds Admin readiness to its actual Environment, Container App, UAMI and shared
+Storage/Cosmos/Search resources. These non-secret descriptors do not grant read access. The
+control-plane identity needs scoped ARM Reader, project Foundry User and container-scoped Blob
+permissions separately. Models, six Prompt Agents and the Hosted Agent, mail, scheduled Job and
+optional telemetry remain post-deployment work. A configured endpoint or Archive URL is not a
+successful live call; see [configuration-status triage](infra/kt/README.md#configuration-status-진단).
 KT temporarily defaults `deployContainerAppsPrivateEndpoint=false` for manual diagnosis: the
 Environment and four other PEs still deploy, while the ACA PE and its DNS zone group are skipped.
 Existing PEs are not deleted; internal/PNA restrictions and manual DNS/HTTPS acceptance still apply.

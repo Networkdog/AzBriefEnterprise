@@ -737,8 +737,9 @@ Hosted Agent는 게시 후 생성되는 **별도의 identity object ID**를 확�
 
 | 대상 ID | 사용할 기능 | 역할·범위 예시 |
 |---|---|---|
+| Container App 제어면 UAMI | Admin의 ARM 기반 계정·프로젝트·모델·Environment·App·지원 서비스 진단 | Reader, 실제 검사할 리소스 또는 KT 배포 RG 범위. 분석 대상 구독 전체의 읽기 권한과는 별개 |
 | Container App 제어면 UAMI | 상태·체크포인트 및 분석 archive 저장 | Storage Blob Data Contributor, `azbrief-state`와 `azbrief-archive` 각각의 컨테이너 범위 |
-| Container App 제어면 UAMI | 배포된 Hosted Agent 호출 | Foundry User, 대상 Foundry 프로젝트 범위 |
+| Container App 제어면 UAMI | 배포된 Hosted Agent 호출과 Admin Agent 목록 조회 | Foundry User, 대상 Foundry 프로젝트 범위. 프로젝트에만 부여한 역할은 부모 계정 ARM 조회 권한을 대신하지 않음 |
 | Hosted Agent 전용 ID | Azure 리소스 근거 조회 | 필요한 읽기 역할을 실제 분석 대상 구독·관리 그룹·RG에 한정. 제어면·프로젝트 ID에 대신 부여하지 않음 |
 | Hosted Agent 전용 ID | 프로젝트 Responses/네이티브 도구 사용 | Foundry User, 대상 Foundry 프로젝트 범위 |
 
@@ -749,6 +750,71 @@ Billing 등 추가 기능의 권한도 사용 여부와 서비스별 범위에 �
 이 변경은 기존 Azure 권한을 회수하지 않습니다. Incremental 배포에서 생략한 기존 역할 할당은
 유지되며 정리·범위 조정은 운영자가 별도로 승인합니다. Foundry **프로젝트 ID**에 대한 BYO
 초기화 권한은 템플릿에 남으므로, 배포자는 그 권한을 부여할 수 있는 접근 권한이 여전히 필요합니다.
+
+### Configuration status 진단
+
+2단계 성공은 Foundry 계정 기반·프로젝트/BYO host와 선택한 웹 설정의 배포 성공입니다.
+Admin **Overview → Configuration status**는 그보다 넓은 운영 구성을 검사하므로,
+초기 KT 환경에서 모든 항목이 Ready인 것은 아닙니다. 다음 세 종류를 구분하십시오.
+
+| 표시 | 의미와 조치 |
+|---|---|
+| 계정·프로젝트 `lookup failed (HTTP 403)` | Admin 조회를 실행하는 **Container App UAMI**의 ARM 읽기 권한을 확인. 점프박스 사용자나 배포자의 Owner 권한은 앱에 전달되지 않음 |
+| Agent data plane `HttpResponseError` | 같은 UAMI의 프로젝트 Foundry User와 앱에서의 프로젝트 DNS/사설 연결 확인. 예외 종류만으로 RBAC와 네트워크 중 하나를 단정하지 않음 |
+| Hosted Agent `vnone`, `no kind`, `no status` | 앞선 목록 조회가 실패하면 버전 존재 여부를 확인할 수 없음. 데이터 조회 성공 후 정확한 이름·`HostedAgentDefinition`·ACTIVE 버전 확인 |
+| Prompt roster `0/6 roles` | **진단용 역할 이름 매핑이 비어 있음**. 실제 프로젝트의 Agent 수가 0이라는 증거가 아님. 게시한 여섯 Agent와 역할 매핑을 함께 확인 |
+| 모델 `Not configured · UnknownError` | 진단용 모델 배포 이름이 없음. 해당 ARM 요청이 생성되지 않아 발생하는 표시이며 모델 배포가 실패했다는 증거가 아님 |
+| Environment·App·지원 서비스 `No expected ... configured` | 이전 KT 템플릿의 진단 대상 누락. 새 템플릿의 대상 메타데이터를 적용한 뒤 실제 조회 권한·상태 확인 |
+| Admin store `HTTPStatusError` | `ADMIN_CONFIG_BLOB_URL`, UAMI의 state 컨테이너 데이터 권한, Storage 사설 DNS/접근 확인. 정상 404의 아직 없는 설정 Blob은 빈 초기 상태로 처리하므로 임의 파일 생성으로 우회하지 않음 |
+| Job·메일·Application Insights 미구성 | KT 기반 템플릿의 의도적인 제외 또는 후속 운영 작업. 이번 수정은 리소스·자격 증명·스케줄을 자동 생성하지 않음 |
+
+새 템플릿은 다음 세 환경 변수를 **실제로 배포한 이름에서 생성한 Base64 JSON**으로 연결합니다.
+
+| 환경 변수 | 초기 KT 진단 대상 |
+|---|---|
+| `ADMIN_READINESS_CONTAINER_ENVIRONMENTS` | 이 배포의 Container Apps Environment 하나 |
+| `ADMIN_READINESS_CONTAINER_APPS` | 이 배포의 AzBrief Container App 하나 |
+| `ADMIN_READINESS_SUPPORT_RESOURCES` | 제어면 UAMI, 공유 Storage, Cosmos DB, Search의 이름·타입·API 버전 |
+
+Secret·Blob 데이터·tenant evidence나 운영 권한은 이 메타데이터에 포함하지 않습니다.
+구성한 객체가 존재해도 ARM 조회권이 없으면 계속 Attention입니다. 이 수정은 기존 GHCR
+이미지의 진단 기능을 사용하므로 이미지 재빌드가 필요 없습니다. 같은 ARM/UI revision을 게시하고
+기존 기반에 **2단계만** 재적용하십시오. CLI는 진단 메타데이터가 없던 이전 KT App도 재사용하되,
+이미 추가한 다른 운영 설정이나 확장된 검사 대상을 덮어쓰지 않고 중단합니다.
+
+배포 후 운영자는 필요한 기능을 다음 순서로 준비합니다.
+
+1. 실제 App의 UAMI `controlPlanePrincipalId`를 확인하여 위의 범위가 제한된 ARM Reader,
+   프로젝트 Foundry User와 두 컨테이너 Blob 역할을 직접 부여하고 전파 후 다시 검사합니다.
+   `controlPlaneClientId`, Foundry project principal, Hosted principal은 서로 다른 대상입니다.
+   [Foundry User의 공식 권한](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/ai-machine-learning#foundry-user)
+   과 ARM/Blob 데이터 권한을 구분하며 Contributor/Owner나 계정 전체 Blob 권한으로 확대하지 않습니다.
+2. 승인된 모델을 별도로 배포하고 `ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT`에 **배포 이름**을
+   설정합니다. 모델 ID와 다릅니다. 두 번째 모델이 있으면
+   `ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT`도 설정합니다.
+3. 고유한 여섯 Prompt Agent를 게시하고 `ADMIN_READINESS_PROMPT_AGENTS`에 JSON 객체로 실제
+   `coordinator`, `resource_graph`, `azure_mcp`, `azure_api`, `report_writer`, `quality_reviewer`
+   이름을 매핑합니다. 이 값은 **조회 대상만** 지정합니다. Hosted runtime의 여섯 역할 설정,
+   MCP 연결·도구·스키마와 roster `--check`도 별도로 일치해야 합니다.
+4. `FOUNDRY_HOSTED_AGENT_NAME`과 일치하는 Hosted Agent를 게시하고 ACTIVE 버전을 확인합니다.
+   ARM 템플릿은 Prompt/Hosted 데이터-plane 버전을 만들지 않습니다. 데이터-plane 조회 실패 중
+   `vnone` 표시를 새 Agent 생성이나 기존 Agent 삭제의 근거로 삼지 마십시오.
+5. 메일이 필요하면 `COMMUNICATION_SERVICES_ENDPOINT`(MI 접근) 또는 보호된 connection string,
+   `EMAIL_SENDER_ADDRESS`, `EMAIL_RECIPIENT_ADDRESS` 또는 Admin 구독자를 구성하고 실제 발송을
+   인수합니다. 분석 시험은 먼저 이메일 없이 수행할 수 있습니다.
+6. 자동 실행이 필요하면 별도 scheduler Job과 그 이름의 `ADMIN_READINESS_CONTAINER_JOBS`를
+   구성합니다. 초기에는 Manual과 동시성 1로 검증하고 이후 스케줄을 승인합니다. 현재 진단의
+   Job 검사는 Schedule/cron까지 요구하므로 Manual 시험 중에는 Attention이 정상입니다.
+7. Application Insights는 현재 KT 구성에서 배포하지 않습니다. 해당 Attention을 제거하기 위해
+   임의 리소스·외부 exporter·광범위 권한을 추가하지 마십시오. 선택적 도입은 별도 승인·
+   네트워크 인수가 필요하며, 미도입 시 제외 내역으로 기록합니다. 일반 진단의 전체 `ok`는
+   이런 항목이 빠져 있으면 false로 남습니다.
+
+**Configured와 실제 성공은 다릅니다.** endpoint·identity·checkpoint·Archive의 일부 Ready는
+설정값의 존재만 확인하고, `Analysis services initialized`는 제어면 proxy 초기화를 뜻합니다.
+실제 Hosted 분석, canonical Archive 저장/조회, 관리자 설정 저장, 메일·Job 실행을 성공했다는
+뜻이 아닙니다. 검사 대상이 늘면 전체 항목 수도 바뀌므로 `8/25` 등의 숫자만을 인수 기준으로
+사용하지 마십시오. 실제 실패는 해결하고, 범위에서 제외한 기능은 별도로 기록하십시오.
 
 ### 운영 설정과 인수
 

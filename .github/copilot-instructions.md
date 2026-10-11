@@ -396,6 +396,16 @@ deployment. Keep principal outputs and `applicationReady=false`, but do not emit
 Storage/Archive/Foundry role assignments or add automatic Hosted evidence grants. Preserve the
 distinct project identity's BYO provisioning/data roles; they are not runtime evidence permissions.
 Incremental omission leaves old assignments intact; never delete them or expand scope implicitly.
+KT Admin readiness binds actual Environment/App names and UAMI/Storage/Cosmos/Search descriptors
+through the existing Base64-JSON settings. Preserve legacy App projections in CLI preflight and
+reject redirected, extended or malformed metadata; descriptor keys remain case-sensitive.
+These are non-secret lookup targets, not new resources or automatic role assignments. Account/
+project ARM 403s concern the control-plane UAMI's scoped reads, while Agent listing requires project
+data permissions and private reachability. A failed Agent listing cannot prove an absent Hosted
+version; 0/6 role mappings and unset model names are not inventory results. Model/Agent publication,
+Job/email setup and optional telemetry remain separate operator work. Keep actual failures explicit;
+Configured endpoint/identity/checkpoint/Archive checks are not live analysis or storage acceptance.
+Do not turn intentionally absent Jobs/Insights or unpublished names into fabricated Ready status.
 For Private Endpoint failures, compare the exact customer deployment operations and resource
 states before attributing a generic InternalServerError to Azure or changing the topology.
 An Approved connection is not provisioning success: final KT readback requires every PE to be

@@ -16,6 +16,7 @@ from uuid import UUID
 
 import structlog
 
+from src.config import Settings
 from src.error_logging import configure_redaction, redact_fields, redact_text
 
 logger = structlog.get_logger(__name__)
@@ -55,6 +56,13 @@ WEB_ENV_NAMES = frozenset(
         "ADMIN_READINESS_RESOURCE_GROUP",
         "ADMIN_READINESS_FOUNDRY_ACCOUNT",
         "ADMIN_READINESS_FOUNDRY_PROJECT",
+    }
+)
+READINESS_ENV_NAMES = frozenset(
+    {
+        "ADMIN_READINESS_CONTAINER_ENVIRONMENTS",
+        "ADMIN_READINESS_CONTAINER_APPS",
+        "ADMIN_READINESS_SUPPORT_RESOURCES",
     }
 )
 PRIVATE_RANGES = tuple(
@@ -623,9 +631,85 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                 else:
                     matches = actual == expected
                 web_env_matches = web_env_matches and matches
-            full_env_names = FOUNDATION_ENV_NAMES | WEB_ENV_NAMES
+            readiness_targets: dict[str, list[Any]] = {
+                "ADMIN_READINESS_CONTAINER_ENVIRONMENTS": [values["containerAppsEnvironmentName"]],
+                "ADMIN_READINESS_CONTAINER_APPS": [values["containerAppName"]],
+                "ADMIN_READINESS_SUPPORT_RESOURCES": [
+                    {
+                        "id": key,
+                        "label": label,
+                        "name": name,
+                        "resource_type": resource_type,
+                        "api_version": api,
+                    }
+                    for key, label, name, resource_type, api in (
+                        (
+                            "managed_identity",
+                            "User-assigned managed identity",
+                            f"id-{values['containerAppName']}",
+                            "Microsoft.ManagedIdentity/userAssignedIdentities",
+                            "2023-01-31",
+                        ),
+                        (
+                            "state_storage",
+                            "Shared Storage (State, Archive, Foundry)",
+                            values["storageAccountName"],
+                            "Microsoft.Storage/storageAccounts",
+                            "2023-05-01",
+                        ),
+                        (
+                            "cosmos",
+                            "Cosmos DB",
+                            values["cosmosAccountName"],
+                            "Microsoft.DocumentDB/databaseAccounts",
+                            "2024-11-15",
+                        ),
+                        (
+                            "search",
+                            "Azure AI Search",
+                            values["searchServiceName"],
+                            "Microsoft.Search/searchServices",
+                            "2023-11-01",
+                        ),
+                    )
+                ],
+            }
+            for name, expected_rows in readiness_targets.items():
+                if name not in env:
+                    continue
+                raw = env[name].get("value")
+                if not isinstance(raw, str):
+                    raise ValueError(f"{name} requires a JSON or Base64 JSON value")
+                actual_rows = Settings._decode_readiness_json(raw)
+                if actual_rows is None:
+                    raise ValueError(f"{name} contains invalid readiness metadata")
+                if not isinstance(actual_rows, list):
+                    raise ValueError(f"{name} readiness metadata must be an array")
+                if name == "ADMIN_READINESS_SUPPORT_RESOURCES":
+                    expected_keys = set(expected_rows[0])
+                    if any(
+                        not isinstance(row, dict)
+                        or set(row) != expected_keys
+                        or any(not isinstance(value, str) for value in row.values())
+                        for row in actual_rows
+                    ):
+                        raise ValueError(
+                            f"{name} readiness resource descriptors have invalid fields"
+                        )
+                elif any(not isinstance(row, str) for row in actual_rows):
+                    raise ValueError(f"{name} readiness metadata must contain only resource names")
+                if sorted(
+                    json.dumps(row, sort_keys=True).casefold() for row in actual_rows
+                ) != sorted(json.dumps(row, sort_keys=True).casefold() for row in expected_rows):
+                    raise ValueError(
+                        f"Foundation cannot overwrite customized readiness metadata: {name}"
+                    )
+            legacy_web_env_names = FOUNDATION_ENV_NAMES | WEB_ENV_NAMES
+            full_env_names = legacy_web_env_names | READINESS_ENV_NAMES
             permitted_env_names = (
-                (full_env_names,) if matches_web_request else (FOUNDATION_ENV_NAMES, full_env_names)
+                (legacy_web_env_names, full_env_names)
+                if matches_web_request
+                else (FOUNDATION_ENV_NAMES, legacy_web_env_names, full_env_names)
             )
             permitted_secrets = {"orchestrator-api-key", "ghcr-pull-token"}
             if matches_web_request and not current_private_anonymous:

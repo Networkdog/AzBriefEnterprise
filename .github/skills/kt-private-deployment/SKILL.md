@@ -210,6 +210,14 @@ The preflight must remain read-only and rerun immediately before validate, what-
     API/MCP keys; this exception is neither a public profile nor an individual authorization model.
     Verify actual private reachability and Blob permissions. Existing non-auth runtime principal
     names remain `local-development`, not a verified human operator.
+13. Wire Admin's existing readiness settings to actual Environment/App and UAMI/shared Storage/
+    Cosmos/Search descriptors, encoded as Base64 JSON. This does not grant reads or provision
+    models, Agents, Jobs, mail or Insights. Reuse legacy projections when adding these metadata
+    keys; keep descriptor keys canonical and reject malformed, redirected or extended targets.
+    Explain scoped ARM Reader versus project Foundry User versus container Blob data access for
+    the control-plane UAMI. 403/listing failure is not resource absence, 0/6 mappings is not a live
+    Agent count, and Configured is not an invocation/storage result. Preserve real errors and
+    explicit post-deployment work; never add capabilities or role grants merely to green the total.
 
 Never infer that a same-name zone in the deployment resource group is the linked canonical zone.
 Compare full ARM IDs.

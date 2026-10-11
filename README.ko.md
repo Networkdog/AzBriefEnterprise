@@ -74,6 +74,12 @@ revision의 ARM/UI 파일을 사용하고 있지 않은지 먼저 확인해야 �
 KT 템플릿은 Container App과 Hosted Agent의 운영 역할을 부여하지 않습니다. 배포 후 운영자가
 각각의 ID에 필요한 역할·범위를 지정합니다. BYO 프로비저닝에 필요한 프로젝트 ID 권한만
 유지하며, Incremental 재배포로 기존 역할 할당을 삭제하지 않습니다.
+KT 템플릿은 실제 Environment·Container App·UAMI와 공유 Storage/Cosmos/Search를 Admin
+진단 대상으로 연결합니다. 비밀이 아닌 대상 정보만 설정하며 읽기 권한을 부여하지 않습니다.
+제어면 ID의 범위가 제한된 ARM Reader·프로젝트 Foundry User·컨테이너 Blob 권한은 별도입니다.
+모델·여섯 Prompt Agent·Hosted Agent 게시, 메일·스케줄 Job·선택적 계측은 배포 후 작업입니다.
+endpoint나 Archive URL의 설정만으로 실제 호출 성공을 의미하지 않습니다.
+[Configuration status 진단](infra/kt/README.md#configuration-status-진단)을 참고하십시오.
 KT는 수동 진단을 위해 `deployContainerAppsPrivateEndpoint=false`를 임시 기본값으로 사용합니다.
 Environment와 나머지 네 PE는 생성하고 ACA PE 및 그 DNS zone group만 건너뜁니다. 기존 PE를
 삭제하지 않으며 내부 환경·PNA 차단과 수동 DNS/HTTPS 인수 검증은 유지합니다.

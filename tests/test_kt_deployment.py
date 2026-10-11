@@ -1,6 +1,7 @@
 """Offline contracts for the KT private infrastructure and existing-network preflight."""
 
 import ast
+import base64
 import copy
 import json
 import re
@@ -12,6 +13,8 @@ from typing import Any
 import pytest
 
 from scripts import deploy_kt as kt
+from src.admin.readiness import AdminReadinessCollector
+from src.config import Settings
 
 SUBSCRIPTION = "11111111-1111-1111-1111-111111111111"
 TENANT = "22222222-2222-2222-2222-222222222222"
@@ -428,6 +431,9 @@ def _evaluate_ui_expression(
         if function == "string":
             assert len(arguments) == 1
             return json.dumps(arguments[0], ensure_ascii=False, separators=(",", ":"))
+        if function == "base64":
+            assert len(arguments) == 1 and isinstance(arguments[0], str)
+            return base64.b64encode(arguments[0].encode("utf-8")).decode("ascii")
         if function == "format":
             assert isinstance(arguments[0], str)
             return arguments[0].format(*arguments[1:])
@@ -1797,7 +1803,7 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
     assert template["parameters"]["bootstrapImage"]["allowedValues"] == [image]
     assert container["probes"][0]["httpGet"] == {"path": "/health", "port": 8000}
     env = {entry["name"]: entry for entry in container["env"]}
-    assert set(env) == kt.FOUNDATION_ENV_NAMES | kt.WEB_ENV_NAMES
+    assert set(env) == kt.FOUNDATION_ENV_NAMES | kt.WEB_ENV_NAMES | kt.READINESS_ENV_NAMES
     assert env["AZURE_TENANT_ID"]["value"] == "[tenant().tenantId]"
     assert env["AZURE_SUBSCRIPTION_ID"]["value"] == "[subscription().subscriptionId]"
     assert "controlPlaneIdentity" in env["AZURE_CLIENT_ID"]["value"]
@@ -1845,6 +1851,221 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
         parameters = resource.get("properties", {}).get("parameters", {})
         if "enableTelemetry" in parameters:
             assert parameters["enableTelemetry"]["value"] is False
+
+
+def test_kt_readiness_metadata_resolves_to_deployed_resources(template: dict, values: dict):
+    app = _params(template, "containerApp")
+    environment = {item["name"]: item for item in app["containers"][0]["env"]}
+    support = [
+        {
+            key: (
+                _evaluate_ui_expression(value, {}, parameters=values)
+                if isinstance(value, str) and value.startswith("[")
+                else value
+            )
+            for key, value in resource.items()
+        }
+        for resource in template["variables"]["adminReadinessSupportResources"]
+    ]
+    variables = {**template["variables"], "adminReadinessSupportResources": support}
+    resolved = {
+        name: _evaluate_ui_expression(
+            environment[name]["value"], {}, parameters=values, variables=variables
+        )
+        for name in kt.READINESS_ENV_NAMES
+    }
+    assert set(resolved) == {
+        "ADMIN_READINESS_CONTAINER_ENVIRONMENTS",
+        "ADMIN_READINESS_CONTAINER_APPS",
+        "ADMIN_READINESS_SUPPORT_RESOURCES",
+    }
+    settings = Settings(
+        _env_file=None,
+        azure_subscription_id=SUBSCRIPTION,
+        admin_readiness_resource_group="rg-kt-test",
+        admin_readiness_foundry_account=values["foundryAccountName"],
+        admin_readiness_foundry_project=values["projectName"],
+        admin_readiness_foundry_model_deployment=None,
+        admin_readiness_foundry_simple_model_deployment=None,
+        **{name.lower(): value for name, value in resolved.items()},
+    )
+    expected = _readiness_metadata(values)
+    assert (
+        settings.get_admin_readiness_container_environments()
+        == expected["ADMIN_READINESS_CONTAINER_ENVIRONMENTS"]
+    )
+    assert (
+        settings.get_admin_readiness_container_apps() == expected["ADMIN_READINESS_CONTAINER_APPS"]
+    )
+    assert (
+        settings.get_admin_readiness_support_resources()
+        == expected["ADMIN_READINESS_SUPPORT_RESOURCES"]
+    )
+    assert settings.get_admin_readiness_container_jobs() == []
+    assert settings.get_admin_readiness_prompt_agents() == {}
+    requests = AdminReadinessCollector(settings=settings)._arm_requests()
+    assert requests[f"environment:{values['containerAppsEnvironmentName']}"][0] == (
+        f"{GROUP}/providers/Microsoft.App/managedEnvironments/"
+        f"{values['containerAppsEnvironmentName']}"
+    )
+    assert requests[f"app:{values['containerAppName']}"][0] == (
+        f"{GROUP}/providers/Microsoft.App/containerApps/{values['containerAppName']}"
+    )
+    for resource in expected["ADMIN_READINESS_SUPPORT_RESOURCES"]:
+        assert requests[f"support:{resource['id']}"] == (
+            f"{GROUP}/providers/{resource['resource_type']}/{resource['name']}",
+            resource["api_version"],
+        )
+    assert len(requests) == 8
+    assert (
+        not {
+            "ADMIN_READINESS_CONTAINER_JOBS",
+            "ADMIN_READINESS_PROMPT_AGENTS",
+            "ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT",
+            "APPLICATIONINSIGHTS_CONNECTION_STRING",
+        }
+        & environment.keys()
+    )
+    assert template["outputs"]["ktFoundation"]["value"]["applicationReady"] is False
+    assert template["outputs"]["ktFoundation"]["value"]["adminReadinessSupportResources"] == (
+        "[variables('adminReadinessSupportResources')]"
+    )
+
+
+@pytest.mark.parametrize(
+    ("auth_mode", "projection"),
+    [("disabled", "legacy-minimal")]
+    + [
+        (auth, projection)
+        for auth in ("disabled", "anonymous", "entra")
+        for projection in ("web-before-readiness", "current")
+    ],
+)
+def test_existing_kt_projections_receive_readiness_metadata_without_being_downgraded(
+    values: dict, vnet: dict, auth_mode: str, projection: str
+):
+    if auth_mode == "anonymous":
+        values["enablePrivateAnonymousWebUi"] = True
+    elif auth_mode == "entra":
+        values.update(WEB_INPUTS)
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.application is not None
+    if projection == "legacy-minimal":
+        allowed_names = kt.FOUNDATION_ENV_NAMES
+    elif projection == "web-before-readiness":
+        allowed_names = kt.FOUNDATION_ENV_NAMES | kt.WEB_ENV_NAMES
+    else:
+        allowed_names = kt.FOUNDATION_ENV_NAMES | kt.WEB_ENV_NAMES | kt.READINESS_ENV_NAMES
+    container = cli.application["template"]["containers"][0]
+    container["env"] = [entry for entry in container["env"] if entry["name"] in allowed_names]
+    cli.deployments.clear()
+    kt.run(cli, values, "deploy", "complete")
+    assert len(cli.deployments) == 1
+    assert cli.deployments[0]["reuseExistingApiKey"] is True
+    environment = {
+        entry["name"]: entry for entry in cli.application["template"]["containers"][0]["env"]
+    }
+    for name, rows in _readiness_metadata(values).items():
+        assert Settings._decode_readiness_json(environment[name]["value"]) == rows
+    assert environment["ADMIN_REQUIRE_AUTH"]["value"] == (
+        "false" if auth_mode == "anonymous" else "true"
+    )
+
+
+@pytest.mark.parametrize("encoding", ["json", "base64"])
+def test_cli_accepts_equivalent_readiness_encodings_and_order(
+    values: dict, vnet: dict, encoding: str
+):
+    values["enablePrivateAnonymousWebUi"] = True
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.application is not None
+    environment = {
+        entry["name"]: entry for entry in cli.application["template"]["containers"][0]["env"]
+    }
+    for name, rows in _readiness_metadata(values).items():
+        normalized = [
+            (
+                {key: value.upper() for key, value in row.items()}
+                if isinstance(row, dict)
+                else row.upper()
+            )
+            for row in reversed(rows)
+        ]
+        raw = json.dumps(normalized)
+        environment[name]["value"] = (
+            base64.b64encode(raw.encode("utf-8")).decode("ascii") if encoding == "base64" else raw
+        )
+    cli.deployments.clear()
+    prepared = kt.prepare(cli, {**values, "deployCapabilityHost": True})
+    assert prepared["reuseExistingApiKey"] is True
+    assert not cli.deployments
+
+
+@pytest.mark.parametrize("name", sorted(kt.READINESS_ENV_NAMES))
+@pytest.mark.parametrize("invalid", [123, "not-valid-json-or-base64", "{}", "[]"])
+def test_readiness_projection_errors_stop_before_mutation(
+    values: dict, vnet: dict, name: str, invalid: object
+):
+    values["enablePrivateAnonymousWebUi"] = True
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.application is not None
+    environment = {
+        entry["name"]: entry for entry in cli.application["template"]["containers"][0]["env"]
+    }
+    environment[name]["value"] = invalid
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="(?i)readiness"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
+
+
+@pytest.mark.parametrize(
+    "invalid",
+    [
+        [{"ID": "managed_identity"}],
+        [{"id": "managed_identity", "name": "id-ca"}],
+        ["not-a-resource-descriptor"],
+    ],
+)
+def test_readiness_descriptor_keys_remain_case_sensitive(values: dict, vnet: dict, invalid: list):
+    values["enablePrivateAnonymousWebUi"] = True
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.application is not None
+    environment = {
+        entry["name"]: entry for entry in cli.application["template"]["containers"][0]["env"]
+    }
+    environment["ADMIN_READINESS_SUPPORT_RESOURCES"]["value"] = json.dumps(invalid)
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="descriptors have invalid fields"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
+
+
+@pytest.mark.parametrize("name", sorted(kt.READINESS_ENV_NAMES))
+def test_readiness_metadata_cannot_redirect_or_expand_the_expected_inventory(
+    values: dict, vnet: dict, name: str
+):
+    values["enablePrivateAnonymousWebUi"] = True
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.application is not None
+    environment = {
+        entry["name"]: entry for entry in cli.application["template"]["containers"][0]["env"]
+    }
+    metadata = _readiness_metadata(values)[name]
+    if name == "ADMIN_READINESS_SUPPORT_RESOURCES":
+        metadata[0]["name"] = "different-identity"
+    else:
+        metadata.append("different-resource")
+    environment[name]["value"] = json.dumps(metadata)
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="cannot overwrite customized readiness metadata"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
 
 
 @pytest.mark.parametrize("reuse_api_key", [False, True])
@@ -3018,6 +3239,52 @@ def test_promoted_application_is_not_replaced_by_bootstrap(
     assert not cli.deployments
 
 
+def _readiness_metadata(values: dict) -> dict:
+    return {
+        "ADMIN_READINESS_CONTAINER_ENVIRONMENTS": [values["containerAppsEnvironmentName"]],
+        "ADMIN_READINESS_CONTAINER_APPS": [values["containerAppName"]],
+        "ADMIN_READINESS_SUPPORT_RESOURCES": [
+            {
+                "id": key,
+                "label": label,
+                "name": name,
+                "resource_type": resource_type,
+                "api_version": api_version,
+            }
+            for key, label, name, resource_type, api_version in (
+                (
+                    "managed_identity",
+                    "User-assigned managed identity",
+                    f"id-{values['containerAppName']}",
+                    "Microsoft.ManagedIdentity/userAssignedIdentities",
+                    "2023-01-31",
+                ),
+                (
+                    "state_storage",
+                    "Shared Storage (State, Archive, Foundry)",
+                    values["storageAccountName"],
+                    "Microsoft.Storage/storageAccounts",
+                    "2023-05-01",
+                ),
+                (
+                    "cosmos",
+                    "Cosmos DB",
+                    values["cosmosAccountName"],
+                    "Microsoft.DocumentDB/databaseAccounts",
+                    "2024-11-15",
+                ),
+                (
+                    "search",
+                    "Azure AI Search",
+                    values["searchServiceName"],
+                    "Microsoft.Search/searchServices",
+                    "2023-11-01",
+                ),
+            )
+        ],
+    }
+
+
 def _foundation_app(values: dict) -> dict:
     anonymous = bool(values["deployCapabilityHost"] and values["enablePrivateAnonymousWebUi"])
     authenticated = bool(
@@ -3057,10 +3324,16 @@ def _foundation_app(values: dict) -> dict:
         "ADMIN_READINESS_RESOURCE_GROUP": "rg-kt-test",
         "ADMIN_READINESS_FOUNDRY_ACCOUNT": values["foundryAccountName"],
         "ADMIN_READINESS_FOUNDRY_PROJECT": values["projectName"],
+        **{
+            name: base64.b64encode(json.dumps(rows).encode("utf-8")).decode("ascii")
+            for name, rows in _readiness_metadata(values).items()
+        },
     }
     env = [
         {"name": name, "value": flags.get(name, "configured")}
-        for name in sorted((kt.FOUNDATION_ENV_NAMES | kt.WEB_ENV_NAMES) - {"API_KEY"})
+        for name in sorted(
+            (kt.FOUNDATION_ENV_NAMES | kt.WEB_ENV_NAMES | kt.READINESS_ENV_NAMES) - {"API_KEY"}
+        )
     ] + [{"name": "API_KEY", "secretRef": "orchestrator-api-key"}]
     return {
         "template": {

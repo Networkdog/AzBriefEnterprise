@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "6560790503864702431"
+      "templateHash": "17098730570293586418"
     }
   },
   "parameters": {
@@ -287,6 +287,36 @@
     "adminAuthConfigured": "[and(and(and(parameters('deployCapabilityHost'), not(variables('privateAnonymousWebUi'))), not(empty(trim(parameters('adminEntraClientId'))))), not(empty(trim(parameters('adminEntraClientSecret')))))]",
     "adminUiEnabled": "[or(variables('privateAnonymousWebUi'), and(variables('adminAuthConfigured'), not(empty(trim(replace(parameters('adminAllowedPrincipals'), ',', ''))))))]",
     "archiveUiEnabled": "[or(variables('privateAnonymousWebUi'), and(variables('adminAuthConfigured'), or(variables('adminUiEnabled'), not(empty(trim(replace(parameters('archiveAllowedPrincipals'), ',', '')))))))]",
+    "adminReadinessSupportResources": [
+      {
+        "id": "managed_identity",
+        "label": "User-assigned managed identity",
+        "name": "[format('id-{0}', parameters('containerAppName'))]",
+        "resource_type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+        "api_version": "2023-01-31"
+      },
+      {
+        "id": "state_storage",
+        "label": "Shared Storage (State, Archive, Foundry)",
+        "name": "[parameters('storageAccountName')]",
+        "resource_type": "Microsoft.Storage/storageAccounts",
+        "api_version": "2023-05-01"
+      },
+      {
+        "id": "cosmos",
+        "label": "Cosmos DB",
+        "name": "[parameters('cosmosAccountName')]",
+        "resource_type": "Microsoft.DocumentDB/databaseAccounts",
+        "api_version": "2024-11-15"
+      },
+      {
+        "id": "search",
+        "label": "Azure AI Search",
+        "name": "[parameters('searchServiceName')]",
+        "resource_type": "Microsoft.Search/searchServices",
+        "api_version": "2023-11-01"
+      }
+    ],
     "dnsZoneNames": [
       "privatelink.cognitiveservices.azure.com",
       "privatelink.openai.azure.com",
@@ -28820,6 +28850,18 @@
                     "value": "[parameters('projectName')]"
                   },
                   {
+                    "name": "ADMIN_READINESS_CONTAINER_ENVIRONMENTS",
+                    "value": "[base64(string(createArray(parameters('containerAppsEnvironmentName'))))]"
+                  },
+                  {
+                    "name": "ADMIN_READINESS_CONTAINER_APPS",
+                    "value": "[base64(string(createArray(parameters('containerAppName'))))]"
+                  },
+                  {
+                    "name": "ADMIN_READINESS_SUPPORT_RESOURCES",
+                    "value": "[base64(string(variables('adminReadinessSupportResources')))]"
+                  },
+                  {
                     "name": "ARCHIVE_UI_ENABLED",
                     "value": "[string(variables('archiveUiEnabled'))]"
                   },
@@ -30472,6 +30514,7 @@
         "adminPageUrl": "[if(variables('adminUiEnabled'), format('{0}/admin', format('https://{0}.{1}', parameters('containerAppName'), reference('containerEnvironment').outputs.defaultDomain.value)), '')]",
         "archivePageUrl": "[if(variables('archiveUiEnabled'), format('{0}/archive', format('https://{0}.{1}', parameters('containerAppName'), reference('containerEnvironment').outputs.defaultDomain.value)), '')]",
         "adminConfigBlobUrl": "[if(variables('adminUiEnabled'), format('{0}azbrief-state/admin-config.json', reference('storage').outputs.primaryBlobEndpoint.value), '')]",
+        "adminReadinessSupportResources": "[variables('adminReadinessSupportResources')]",
         "entraRedirectUri": "[format('https://{0}/.auth/login/aad/callback', reference('containerApp').outputs.fqdn.value)]",
         "applicationUrl": "[format('https://{0}', reference('containerApp').outputs.fqdn.value)]",
         "bootstrapUrl": "[format('https://{0}', reference('containerApp').outputs.fqdn.value)]",

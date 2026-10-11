@@ -147,6 +147,36 @@ var adminUiEnabled = privateAnonymousWebUi || (adminAuthConfigured && !empty(tri
 var archiveUiEnabled = privateAnonymousWebUi || (adminAuthConfigured && (adminUiEnabled || !empty(trim(replace(archiveAllowedPrincipals, ',', '')))))
 var applicationUrl = 'https://${containerAppName}.${containerEnvironment.outputs.defaultDomain}'
 var adminConfigBlobUrl = adminUiEnabled ? '${storage.outputs.primaryBlobEndpoint}azbrief-state/admin-config.json' : ''
+var adminReadinessSupportResources = [
+  {
+    id: 'managed_identity'
+    label: 'User-assigned managed identity'
+    name: 'id-${containerAppName}'
+    resource_type: 'Microsoft.ManagedIdentity/userAssignedIdentities'
+    api_version: '2023-01-31'
+  }
+  {
+    id: 'state_storage'
+    label: 'Shared Storage (State, Archive, Foundry)'
+    name: storageAccountName
+    resource_type: 'Microsoft.Storage/storageAccounts'
+    api_version: '2023-05-01'
+  }
+  {
+    id: 'cosmos'
+    label: 'Cosmos DB'
+    name: cosmosAccountName
+    resource_type: 'Microsoft.DocumentDB/databaseAccounts'
+    api_version: '2024-11-15'
+  }
+  {
+    id: 'search'
+    label: 'Azure AI Search'
+    name: searchServiceName
+    resource_type: 'Microsoft.Search/searchServices'
+    api_version: '2023-11-01'
+  }
+]
 var webAuthConfig = {
   platform: {
     enabled: true
@@ -626,6 +656,9 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
           { name: 'ADMIN_READINESS_RESOURCE_GROUP', value: resourceGroup().name }
           { name: 'ADMIN_READINESS_FOUNDRY_ACCOUNT', value: foundryAccountName }
           { name: 'ADMIN_READINESS_FOUNDRY_PROJECT', value: projectName }
+          { name: 'ADMIN_READINESS_CONTAINER_ENVIRONMENTS', value: base64(string([containerAppsEnvironmentName])) }
+          { name: 'ADMIN_READINESS_CONTAINER_APPS', value: base64(string([containerAppName])) }
+          { name: 'ADMIN_READINESS_SUPPORT_RESOURCES', value: base64(string(adminReadinessSupportResources)) }
           { name: 'ARCHIVE_UI_ENABLED', value: string(archiveUiEnabled) }
           { name: 'ARCHIVE_REQUIRE_AUTH', value: string(!privateAnonymousWebUi) }
           { name: 'ARCHIVE_ALLOWED_PRINCIPALS', value: adminAuthConfigured && archiveUiEnabled ? archiveAllowedPrincipals : '' }
@@ -688,6 +721,7 @@ output ktFoundation object = {
   adminPageUrl: adminUiEnabled ? '${applicationUrl}/admin' : ''
   archivePageUrl: archiveUiEnabled ? '${applicationUrl}/archive' : ''
   adminConfigBlobUrl: adminConfigBlobUrl
+  adminReadinessSupportResources: adminReadinessSupportResources
   entraRedirectUri: 'https://${containerApp.outputs.fqdn}/.auth/login/aad/callback'
   applicationUrl: 'https://${containerApp.outputs.fqdn}'
   bootstrapUrl: 'https://${containerApp.outputs.fqdn}'
