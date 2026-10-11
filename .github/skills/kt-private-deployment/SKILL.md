@@ -70,7 +70,11 @@ private/VNet paths.
 
 ## Portal Form Design
 
-1. Select an existing VNet filtered to the deployment subscription and region.
+1. Put deployment-stage selection in the first Basics tab and reference
+   `basics('deploymentStage')` in all later gates/outputs. Do not choose it again at Review or
+   silently switch it from a resource name. Existing RG and stage are independent; stage two
+   requires an existing foundation, while a first installation may also use an Existing RG.
+   Select an existing VNet filtered to the deployment subscription and region.
 2. Read the VNet through `Microsoft.Solutions.ArmApiControl`.
 3. Present role-based subnet dropdowns from the live subnet inventory:
    - derive CIDR and delegation from ARM;
@@ -78,6 +82,13 @@ private/VNet paths.
    - do not ask the operator to re-enter CIDR;
    - filter out invalid sizes, non-RFC1918 ranges, multiple prefixes, wrong delegations, and
      Container Apps reserved ranges.
+   - In stage two, prefer a unique actual KT-owned ARM binding over name hints. Inspect all agent
+     injections; multiple PEs sharing a subnet are one candidate. Only when there is no owned
+     binding resource may role keywords suggest a unique eligible candidate, preferring AzBrief.
+     Use PE token/Endpoint, Foundry and Container/ACA; AzBrief alone cannot distinguish roles.
+     Preserve case-insensitive matching, reject mixed roles and avoid PE substring false positives.
+     Known-owner binding gaps, wrong VNet, failed/paged reads or ambiguous candidates stay manual.
+     Keep explicit manual selection and validate live-list membership; no fabricated first default.
 4. Output the selected subnet names. The Bicep template constructs the exact child resource IDs.
 5. Use Azure Resource Graph to find required Private DNS zones already linked to the VNet in the
    selected subscription.
@@ -106,6 +117,19 @@ private/VNet paths.
    Null/empty error fields are not failures. Show only response state, error code and page
    presence, never error bodies or signed continuation URLs. Test both generated request paths
    and the guards; a live ARM read or offline expression test is not Portal Sandbox acceptance.
+10. On the names tab, an Existing RG gets optional dropdowns for Foundry, shared Storage, Cosmos,
+    Search, project and Environment. Use RG-scoped ARM inventory and parent-scoped projects,
+    with a filtered generic request for absent/new parents or groups. Limit candidates to the
+    selected subscription/RG/region, KT ownership and supported resource kinds. Project values
+    are leaf names from the selected account's IDs, not full IDs or another account's children.
+    Retain new-name inputs and a new-name option; ignore hidden existing choices in New mode.
+    Resolve the effective name in every output/query/summary/validation. Put common validation
+    on the always-visible Container App name so hiding a new-name field cannot bypass it.
+    Block stale membership, failed/paged reads and incomplete Environment evidence, preserving
+    internal/PNA/ownership and selected-name uniqueness. Existing Foundry reuse requires stage two
+    selected in Basics; reject phase/account conflicts to avoid account/subdomain replay. Stage one
+    ignores hidden existing Foundry/project selections. Do not turn selectors into arbitrary adoption,
+    cross-RG lookup, data migration, or project-host repair. Require separate Portal acceptance.
 
 Portal discovery depends on the deploying principal having read access to the VNet links and zones.
 If a linked central zone is in another subscription or outside that read scope, require its explicit

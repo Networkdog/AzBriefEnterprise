@@ -40,6 +40,18 @@ For an Existing resource group, Portal app discovery uses the resource-group-sco
 Apps API; New groups retain the filtered generic inventory so an absent group is not a 404 blocker.
 Validation reads `value`, `error` and `nextLink` directly and preserves missing-result, error,
 pagination and ownership guards. Failures show only response state, error code and page presence.
+For an Existing RG, the KT **Resource names** tab offers dropdowns for Foundry, shared Storage,
+Cosmos DB, Search, Foundry project and Container Apps Environment. Candidates are limited to the
+selected RG/region and KT ownership; projects are scoped to the selected Foundry account.
+Choose **Enter a new name** when no suitable candidate exists. New RGs retain editable names.
+Choose the deployment stage in **Basics** before entering the remaining settings. An Existing RG
+may still be a first installation; stage two requires an existing foundation and never silently
+changes the selected stage. Stage/account conflicts are blocked to prevent account/subdomain replay.
+Stage-two subnet defaults prefer unique actual KT resource bindings, then unique role-keyword
+candidates (`PE`/`Endpoint`, `Foundry`, `Container`/`ACA`), favoring `AzBrief` names. CIDR/delegation
+filters remain in force; unknown bindings, read failures and ambiguous candidates require manual
+selection. Stale selections and incomplete discovery remain blocking. Selection does not migrate data,
+adopt unrelated resources or replace the existing BYO/network checks.
 Stage one keeps Admin/Archive disabled. The KT Portal now offers temporary **private anonymous**
 access in stage two, with an explicit risk acknowledgement; Entra setup is off by default.
 Direct ARM/CLI callers must opt in with `enablePrivateAnonymousWebUi=true` (default false).

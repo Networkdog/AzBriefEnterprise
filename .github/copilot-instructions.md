@@ -323,6 +323,26 @@ Portal completeness checks must reference the returned `value`, `error` and `nex
 directly, not test keys on the whole API control. Accept an empty array only after a result arrives;
 null/empty error fields are not failures. Preserve error, pagination and ownership guards, and
 show only response state, error code and page presence, never error bodies or continuation URLs.
+The KT names tab uses existing-resource dropdowns only for an Existing RG: Foundry account,
+shared Storage, Cosmos, Search, project and Environment. Read the RG inventory through ARM;
+query projects only under a known existing selected account, otherwise use the filtered inventory
+without a missing-parent GET. Limit candidates to the selected subscription/RG/region, KT ownership
+and supported kinds; projects inherit the parent boundary. Keep new-name inputs and an optional
+new-name dropdown value. Effective names must feed outputs, lookups, summaries and guards,
+not hidden stale text or IDs. Recheck membership after RG/account changes, block failed/paged
+inventory and incomplete Environment evidence, and preserve endpoint-name uniqueness.
+Select the KT stage in Basics and resolve it through `basics('deploymentStage')` everywhere;
+Review summarizes it without another selector. An Existing RG is not itself evidence of stage two.
+Block stage/account conflicts and stage two on a New RG rather than silently switching phases.
+Stage one must ignore hidden existing Foundry/project choices; never replay an account module as
+a name-selection side effect. Stage-two subnet defaults prefer unique actual KT-owned ARM
+bindings in the selected RG/VNet over unique role keywords, with AzBrief names favored. Check all
+agent injections, count shared PE subnet candidates once, and preserve the existing live subnet
+CIDR/delegation/reserved-range filters. Known-owner binding gaps or mismatches, incomplete reads
+and ambiguous keyword candidates must leave an explicit manual selection, not an arbitrary first
+value. Validate selected membership and read completeness before deployment; defaults are neither
+occupancy nor customer network acceptance. This is not arbitrary adoption, data migration or BYO repair.
+Keep Container App/Hosted name inputs and all networking/identity protections unchanged.
 Distinguish actual Portal validation from offline expression tests or live ARM reads; a prior
 guard-only patch did not resolve the reported Portal symptom.
 Do not pass ARM default expressions as literal CLI secrets or expose keys in UI/outputs. Direct

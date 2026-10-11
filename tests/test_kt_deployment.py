@@ -26,11 +26,36 @@ RESOURCE_NAME_DEFAULTS = {
     "containerAppsEnvironmentName": "cae-azbrief-kt",
     "containerAppName": "ca-azbrief-kt",
 }
+RESOURCE_SELECTORS = {
+    "foundryAccountName": ("existingFoundryAccount", "Microsoft.CognitiveServices/accounts"),
+    "storageAccountName": ("existingStorageAccount", "Microsoft.Storage/storageAccounts"),
+    "cosmosAccountName": ("existingCosmosAccount", "Microsoft.DocumentDB/databaseAccounts"),
+    "searchServiceName": ("existingSearchService", "Microsoft.Search/searchServices"),
+    "projectName": ("existingFoundryProject", "Microsoft.CognitiveServices/accounts/projects"),
+    "containerAppsEnvironmentName": (
+        "existingContainerAppsEnvironment",
+        "Microsoft.App/managedEnvironments",
+    ),
+}
 SUBNET_NAMES = {
     "peSubnetName": "snet-private-endpoints",
     "foundrySubnetName": "snet-foundry-agent",
     "containerAppsSubnetName": "snet-container-apps",
 }
+SUBNET_DEFAULT_APIS = {
+    "peSubnetName": ("privateEndpointsApi", "Microsoft.Network/privateEndpoints", "2024-05-01"),
+    "foundrySubnetName": (
+        "foundryAccountsApi",
+        "Microsoft.CognitiveServices/accounts",
+        "2025-06-01",
+    ),
+    "containerAppsSubnetName": (
+        "managedEnvironmentsApi",
+        "Microsoft.App/managedEnvironments",
+        "2026-01-01",
+    ),
+}
+MANUAL_SUBNET_LABEL = "서브넷을 직접 선택하십시오."
 WEB_INPUTS = {
     "adminEntraClientId": "33333333-3333-3333-3333-333333333333",
     "adminEntraClientSecret": "test-only-entra-client-secret",
@@ -234,6 +259,8 @@ def wizard() -> dict:
 
 
 def _ui_controls(wizard: dict, step: str) -> dict[str, dict]:
+    if step == "basics":
+        return {control["name"]: control for control in wizard["basics"]}
     return {
         control["name"]: control
         for section in wizard["steps"]
@@ -257,6 +284,8 @@ def _evaluate_ui_expression(
     review: dict[str, object] | None = None,
     parameters: dict[str, object] | None = None,
     variables: dict[str, object] | None = None,
+    network: dict[str, object] | None = None,
+    basics: dict[str, object] | None = None,
 ) -> object:
     """Evaluate the tested Portal expression subset with strict equality."""
 
@@ -288,7 +317,7 @@ def _evaluate_ui_expression(
             condition = evaluate(node.args[0], bindings)
             assert isinstance(condition, bool)
             return evaluate(node.args[1] if condition else node.args[2], bindings)
-        if function == "filter":
+        if function in {"filter", "map"}:
             rows = evaluate(node.args[0], bindings)
             predicate = node.args[1]
             assert isinstance(rows, list)
@@ -302,6 +331,8 @@ def _evaluate_ui_expression(
                 variable_name = evaluate(predicate.args[0], bindings)
                 assert isinstance(variable_name, str)
                 body = predicate.args[1]
+            if function == "map":
+                return [evaluate(body, {**bindings, variable_name: row}) for row in rows]
             return [row for row in rows if evaluate(body, {**bindings, variable_name: row}) is True]
         arguments = [evaluate(argument, bindings) for argument in node.args]
         if function == "resourceGroup":
@@ -319,8 +350,14 @@ def _evaluate_ui_expression(
             if arguments == ["review"]:
                 assert review is not None
                 return review
+            if arguments == ["network"]:
+                assert network is not None
+                return network
             assert arguments == ["names"]
             return names
+        if function == "basics":
+            assert len(arguments) == 1 and isinstance(arguments[0], str)
+            return (basics or {"deploymentStage": "foundation"})[arguments[0]]
         if function == "parameters":
             assert parameters is not None and len(arguments) == 1 and isinstance(arguments[0], str)
             return parameters[arguments[0]]
@@ -389,13 +426,13 @@ def _evaluate_ui_expression(
             assert len(arguments) == 3 and all(isinstance(value, str) for value in arguments)
             return arguments[0].replace(arguments[1], arguments[2])
         if function == "string":
-            assert len(arguments) == 1 and isinstance(arguments[0], bool)
-            return str(arguments[0]).lower()
+            assert len(arguments) == 1
+            return json.dumps(arguments[0], ensure_ascii=False, separators=(",", ":"))
         if function == "format":
             assert isinstance(arguments[0], str)
             return arguments[0].format(*arguments[1:])
         if function == "parse":
-            assert arguments in (["[]"], ["{}"])
+            assert len(arguments) == 1 and isinstance(arguments[0], str)
             return json.loads(arguments[0])
         if function == "coalesce":
             return next(value for value in arguments if value is not None)
@@ -409,6 +446,35 @@ def _evaluate_ui_expression(
         if function == "toLower":
             assert len(arguments) == 1 and isinstance(arguments[0], str)
             return arguments[0].lower()
+        if function == "startsWith":
+            assert len(arguments) == 2 and all(isinstance(value, str) for value in arguments)
+            return arguments[0].startswith(arguments[1])
+        if function == "split":
+            assert len(arguments) == 2 and all(isinstance(value, str) for value in arguments)
+            return arguments[0].split(arguments[1])
+        if function == "last":
+            assert len(arguments) == 1 and isinstance(arguments[0], list) and arguments[0]
+            return arguments[0][-1]
+        if function == "first":
+            assert len(arguments) == 1 and isinstance(arguments[0], list) and arguments[0]
+            return arguments[0][0]
+        if function == "skip":
+            assert len(arguments) == 2 and isinstance(arguments[0], list)
+            assert type(arguments[1]) is int
+            return arguments[0][arguments[1] :]
+        if function == "int":
+            assert len(arguments) == 1 and isinstance(arguments[0], str)
+            return int(arguments[0])
+        if function == "length":
+            assert len(arguments) == 1 and isinstance(arguments[0], (list, dict, str))
+            return len(arguments[0])
+        if function in {"greater", "greaterOrEquals", "lessOrEquals"}:
+            assert len(arguments) == 2 and all(type(value) is int for value in arguments)
+            if function == "greater":
+                return arguments[0] > arguments[1]
+            if function == "greaterOrEquals":
+                return arguments[0] >= arguments[1]
+            return arguments[0] <= arguments[1]
         if function == "equals":
             assert len(arguments) == 2
             return type(arguments[0]) is type(arguments[1]) and arguments[0] == arguments[1]
@@ -424,8 +490,20 @@ def _evaluate_ui_expression(
     return evaluate(parse_expression(expression), {})
 
 
-def _evaluate_ui_guard(expression: str, names: dict[str, object]) -> bool:
-    result = _evaluate_ui_expression(expression, names)
+def _evaluate_ui_guard(
+    expression: str,
+    names: dict[str, object],
+    resource_group: dict[str, object] | None = None,
+    subscription: dict[str, object] | None = None,
+    network: dict[str, object] | None = None,
+) -> bool:
+    result = _evaluate_ui_expression(
+        expression,
+        names,
+        resource_group=resource_group,
+        subscription=subscription,
+        network=network,
+    )
     assert isinstance(result, bool)
     return result
 
@@ -444,7 +522,20 @@ def test_kt_wizard_has_distinct_steps_and_matching_outputs(wizard: dict, templat
     for parameter in SUBNET_NAMES:
         assert outputs[parameter] == f"[steps('network').{parameter}]"
     for parameter in RESOURCE_NAME_DEFAULTS:
-        assert outputs[parameter] == f"[steps('names').{parameter}]"
+        if parameter in RESOURCE_SELECTORS:
+            selector = RESOURCE_SELECTORS[parameter][0]
+            stage_guard = (
+                "equals(basics('deploymentStage'), 'complete'), "
+                if parameter in {"foundryAccountName", "projectName"}
+                else ""
+            )
+            assert outputs[parameter] == (
+                f"[if(and({stage_guard}equals(resourceGroup().mode, 'Existing'), "
+                f"not(empty(steps('names').{selector}))), "
+                f"steps('names').{selector}, steps('names').{parameter})]"
+            )
+        else:
+            assert outputs[parameter] == f"[steps('names').{parameter}]"
     assert "bootstrapImage" not in outputs
     secure_outputs = {
         key for key in outputs if template["parameters"][key]["type"].casefold() == "securestring"
@@ -500,7 +591,8 @@ def test_wizard_only_selects_existing_same_region_network_and_reads_subnets(wiza
         assert "startsWith(s.prefix, '172.')" in allowed
         assert "startsWith(s.prefix, '192.168.')" in allowed
         assert allowed.count("(") == allowed.count(")")
-        assert allowed.startswith("[map(") and allowed.endswith(")]")
+        assert allowed.startswith("[concat(") and allowed.endswith(")]")
+        assert MANUAL_SUBNET_LABEL in allowed
         assert wizard["outputs"][name_control] == f"[steps('network').{name_control}]"
         assert wizard["outputs"][flag] is False
         assert order.index("virtualNetworkApi") < order.index(name_control)
@@ -539,6 +631,344 @@ def test_wizard_only_selects_existing_same_region_network_and_reads_subnets(wiza
     assert "Microsoft.Network.VirtualNetworkCombo" not in serialized
 
 
+def _subnet_form(subnets: list[dict]) -> dict:
+    return {
+        "virtualNetwork": {"id": VNET, "location": "eastus2"},
+        "virtualNetworkApi": {"id": VNET, "properties": {"subnets": copy.deepcopy(subnets)}},
+        "peSubnetName": SUBNET_NAMES["peSubnetName"],
+        "foundrySubnetName": SUBNET_NAMES["foundrySubnetName"],
+        "containerAppsSubnetName": SUBNET_NAMES["containerAppsSubnetName"],
+        **{api: {"value": []} for api, _, _ in SUBNET_DEFAULT_APIS.values()},
+    }
+
+
+def _binding_resource(parameter: str, subnet_name: str) -> dict:
+    _, resource_type, _ = SUBNET_DEFAULT_APIS[parameter]
+    subnet_id = f"{VNET}/subnets/{subnet_name}"
+    properties = {
+        "peSubnetName": {"subnet": {"id": subnet_id}},
+        "foundrySubnetName": {
+            "networkInjections": [{"scenario": "agent", "subnetArmId": subnet_id}]
+        },
+        "containerAppsSubnetName": {
+            "vnetConfiguration": {
+                "infrastructureSubnetId": subnet_id,
+                "internal": True,
+            },
+            "publicNetworkAccess": "Disabled",
+        },
+    }[parameter]
+    return {
+        "id": f"{GROUP}/providers/{resource_type}/owned-azbrief",
+        "type": resource_type,
+        "name": "owned-azbrief",
+        "location": "eastus2",
+        "kind": "AIServices" if parameter == "foundrySubnetName" else None,
+        "tags": {"deploymentProfile": kt.PROFILE},
+        "properties": properties,
+    }
+
+
+def _resolve_subnet_default(
+    wizard: dict, parameter: str, network: dict, stage: str = "complete"
+) -> object:
+    control = _ui_controls(wizard, "network")[parameter]
+    return _resolve_selection(control["defaultValue"], {}, stage=stage, network=network)
+
+
+@pytest.mark.parametrize(
+    ("parameter", "keyword"),
+    [
+        ("peSubnetName", "AzBrief-PE"),
+        ("peSubnetName", "azbrief-privateEndpoint"),
+        ("peSubnetName", "AZBRIEF_endpoint"),
+        ("foundrySubnetName", "AzBrief-Foundry"),
+        ("foundrySubnetName", "FOUNDRY"),
+        ("containerAppsSubnetName", "AzBrief-Container"),
+        ("containerAppsSubnetName", "azbrief-ACA"),
+        ("containerAppsSubnetName", "CONTAINER"),
+    ],
+)
+def test_stage_two_subnet_keywords_choose_one_valid_default(
+    wizard: dict, parameter: str, keyword: str
+):
+    name = f"snet-{keyword}"
+    form = _subnet_form([_subnet(name, "10.70.1.0/27", parameter != "peSubnetName")])
+    assert _resolve_subnet_default(wizard, parameter, form) == name
+    control = _ui_controls(wizard, "network")[parameter]
+    options = _resolve_selection(control["constraints"]["allowedValues"], {}, network=form)
+    assert next(item["value"] for item in options if item["label"] == name) == name
+    assert next(item["description"] for item in options if item["label"] == name) == "10.70.1.0/27"
+    assert _resolve_subnet_default(wizard, parameter, form, "foundation") == MANUAL_SUBNET_LABEL
+
+
+@pytest.mark.parametrize(
+    ("parameter", "role_word"),
+    [
+        ("peSubnetName", "pe"),
+        ("foundrySubnetName", "foundry"),
+        ("containerAppsSubnetName", "container"),
+    ],
+)
+def test_subnet_defaults_prefer_azbrief_but_do_not_guess_ambiguous_candidates(
+    wizard: dict, parameter: str, role_word: str
+):
+    preferred = f"snet-azbrief-{role_word}"
+    generic = f"snet-shared-{role_word}"
+    delegated = parameter != "peSubnetName"
+    form = _subnet_form(
+        [
+            _subnet(generic, "10.70.1.0/27", delegated),
+            _subnet(preferred, "10.70.2.0/27", delegated),
+        ]
+    )
+    assert _resolve_subnet_default(wizard, parameter, form) == preferred
+    form["virtualNetworkApi"]["properties"]["subnets"].append(
+        _subnet(f"{preferred}-other", "10.70.3.0/27", delegated)
+    )
+    assert _resolve_subnet_default(wizard, parameter, form) == MANUAL_SUBNET_LABEL
+    form["virtualNetworkApi"]["properties"]["subnets"] = [
+        _subnet(generic, "10.70.1.0/27", delegated),
+        _subnet(f"{generic}-other", "10.70.3.0/27", delegated),
+    ]
+    assert _resolve_subnet_default(wizard, parameter, form) == MANUAL_SUBNET_LABEL
+
+
+@pytest.mark.parametrize("parameter", SUBNET_DEFAULT_APIS)
+def test_actual_resource_bindings_outrank_keyword_names(wizard: dict, parameter: str):
+    role = {
+        "peSubnetName": "pe",
+        "foundrySubnetName": "foundry",
+        "containerAppsSubnetName": "container",
+    }[parameter]
+    actual = "snet-operations"
+    misleading = f"snet-azbrief-{role}"
+    delegated = parameter != "peSubnetName"
+    form = _subnet_form(
+        [
+            _subnet(misleading, "10.70.1.0/27", delegated),
+            _subnet(actual, "10.70.2.0/27", delegated),
+        ]
+    )
+    api = SUBNET_DEFAULT_APIS[parameter][0]
+    form[api]["value"] = [_binding_resource(parameter, actual)]
+    assert _resolve_subnet_default(wizard, parameter, form) == actual
+    form[api]["value"].append(_binding_resource(parameter, misleading))
+    assert _resolve_subnet_default(wizard, parameter, form) == MANUAL_SUBNET_LABEL
+
+
+def test_all_private_endpoints_can_share_one_default(wizard: dict):
+    actual = "snet-pe-operations"
+    form = _subnet_form([_subnet(actual, "10.70.0.0/28")])
+    form["privateEndpointsApi"]["value"] = [
+        {**_binding_resource("peSubnetName", actual), "name": f"pe-owned-{index}"}
+        for index in range(4)
+    ]
+    assert _resolve_subnet_default(wizard, "peSubnetName", form) == actual
+
+
+def test_foundry_binding_searches_all_injections_not_only_the_first(wizard: dict):
+    actual = "snet-live-foundry"
+    form = _subnet_form([_subnet(actual, "10.70.0.32/27", True)])
+    account = _binding_resource("foundrySubnetName", actual)
+    account["properties"]["networkInjections"].insert(
+        0, {"scenario": "other", "subnetArmId": f"{VNET}/subnets/snet-irrelevant"}
+    )
+    form["foundryAccountsApi"]["value"] = [account]
+    assert _resolve_subnet_default(wizard, "foundrySubnetName", form) == actual
+
+
+@pytest.mark.parametrize("parameter", SUBNET_DEFAULT_APIS)
+def test_unknown_or_different_vnet_binding_never_falls_back_to_keywords(
+    wizard: dict, parameter: str
+):
+    role = {
+        "peSubnetName": "pe",
+        "foundrySubnetName": "foundry",
+        "containerAppsSubnetName": "container",
+    }[parameter]
+    name = f"snet-azbrief-{role}"
+    form = _subnet_form([_subnet(name, "10.70.1.0/27", parameter != "peSubnetName")])
+    resource = _binding_resource(parameter, name)
+    resource["properties"] = {}
+    api = SUBNET_DEFAULT_APIS[parameter][0]
+    form[api]["value"] = [resource]
+    assert _resolve_subnet_default(wizard, parameter, form) == MANUAL_SUBNET_LABEL
+    resource["properties"] = _binding_resource(parameter, name)["properties"]
+    encoded = json.dumps(resource["properties"]).replace("vnet-kt", "vnet-other")
+    resource["properties"] = json.loads(encoded)
+    assert _resolve_subnet_default(wizard, parameter, form) == MANUAL_SUBNET_LABEL
+
+
+@pytest.mark.parametrize(
+    ("parameter", "name", "prefix", "delegated"),
+    [
+        ("peSubnetName", "snet-azbrief-pe", "10.70.0.0/29", False),
+        ("peSubnetName", "snet-azbrief-endpoint", "10.70.0.0/28", True),
+        ("foundrySubnetName", "snet-azbrief-foundry", "10.70.0.0/28", True),
+        ("foundrySubnetName", "snet-azbrief-foundry", "10.70.0.0/27", False),
+        ("containerAppsSubnetName", "snet-azbrief-container", "172.30.0.0/27", True),
+        ("containerAppsSubnetName", "snet-azbrief-container", "8.8.8.0/27", True),
+        ("containerAppsSubnetName", "snet-azbrief-container", "10.70.0.0/28", True),
+        ("peSubnetName", "snet-pepper", "10.70.0.0/28", False),
+        ("foundrySubnetName", "snet-azbrief-foundry-container", "10.70.0.0/27", True),
+        ("containerAppsSubnetName", "snet-azbrief-container-endpoint", "10.70.0.0/27", True),
+    ],
+)
+def test_ineligible_or_role_ambiguous_names_are_not_subnet_defaults(
+    wizard: dict, parameter: str, name: str, prefix: str, delegated: bool
+):
+    form = _subnet_form([_subnet(name, prefix, delegated)])
+    assert _resolve_subnet_default(wizard, parameter, form) == MANUAL_SUBNET_LABEL
+
+
+@pytest.mark.parametrize("parameter", SUBNET_DEFAULT_APIS)
+def test_default_subnets_keep_single_prefix_and_no_role_sharing(wizard: dict, parameter: str):
+    role = {
+        "peSubnetName": "pe",
+        "foundrySubnetName": "foundry",
+        "containerAppsSubnetName": "container",
+    }[parameter]
+    name = f"snet-azbrief-{role}"
+    subnet = _subnet(name, "10.70.0.0/27", parameter != "peSubnetName")
+    subnet["properties"].pop("addressPrefix")
+    subnet["properties"]["addressPrefixes"] = ["10.70.0.0/27", "10.70.1.0/27"]
+    form = _subnet_form([subnet])
+    assert _resolve_subnet_default(wizard, parameter, form) == MANUAL_SUBNET_LABEL
+    subnet["properties"]["addressPrefixes"] = ["10.70.0.0/27"]
+    form = _subnet_form([subnet])
+    assert _resolve_subnet_default(wizard, parameter, form) == name
+    if parameter == "containerAppsSubnetName":
+        form["foundrySubnetName"] = name
+        assert _resolve_subnet_default(wizard, parameter, form) == MANUAL_SUBNET_LABEL
+
+
+@pytest.mark.parametrize("parameter", SUBNET_DEFAULT_APIS)
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        {"value": None},
+        {"value": [], "error": {"code": "Forbidden"}},
+        {"value": [], "nextLink": "/next"},
+    ],
+)
+def test_binding_read_failure_or_incomplete_page_does_not_pick_a_keyword_default(
+    wizard: dict, parameter: str, response: dict
+):
+    role = {
+        "peSubnetName": "pe",
+        "foundrySubnetName": "foundry",
+        "containerAppsSubnetName": "container",
+    }[parameter]
+    name = f"snet-azbrief-{role}"
+    form = _subnet_form([_subnet(name, "10.70.0.0/27", parameter != "peSubnetName")])
+    form[SUBNET_DEFAULT_APIS[parameter][0]] = response
+    assert _resolve_subnet_default(wizard, parameter, form) == MANUAL_SUBNET_LABEL
+    api = SUBNET_DEFAULT_APIS[parameter][0]
+    rule = next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if f"{api}.nextLink" in rule.get("isValid", "")
+    )
+    assert _resolve_selection(rule, {}, network=form) is False
+    assert _resolve_selection(rule, {}, network=form, stage="foundation") is True
+
+
+@pytest.mark.parametrize(
+    "failure", ["missing-id", "wrong-vnet", "read-error", "no-subnet-response"]
+)
+def test_vnet_read_identity_and_errors_block_stale_subnet_defaults(wizard: dict, failure: str):
+    form = _subnet_form([_subnet("snet-azbrief-pe", "10.70.0.0/28")])
+    if failure == "missing-id":
+        del form["virtualNetworkApi"]["id"]
+    elif failure == "wrong-vnet":
+        form["virtualNetworkApi"]["id"] = VNET.replace("vnet-kt", "vnet-old")
+    elif failure == "read-error":
+        form["virtualNetworkApi"]["error"] = {"code": "Forbidden"}
+    else:
+        form["virtualNetworkApi"]["properties"].pop("subnets")
+    assert _resolve_subnet_default(wizard, "peSubnetName", form) == MANUAL_SUBNET_LABEL
+    rule = next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if rule["message"].startswith("현재 선택한 VNet")
+    )
+    assert _resolve_selection(rule, {}, network=form) is False
+
+
+@pytest.mark.parametrize("parameter", SUBNET_DEFAULT_APIS)
+def test_binding_api_paths_are_stage_and_rg_scoped(wizard: dict, parameter: str):
+    api, resource_type, version = SUBNET_DEFAULT_APIS[parameter]
+    request = _ui_controls(wizard, "network")[api]["request"]
+    assert request["method"] == "GET"
+    assert _resolve_selection(request["path"], {}) == (
+        f"{GROUP}/providers/{resource_type}?api-version={version}"
+    )
+    for mode, stage in (("New", "foundation"), ("Existing", "foundation"), ("New", "complete")):
+        path = _resolve_selection(request["path"], {}, mode=mode, stage=stage)
+        assert path == (
+            f"/subscriptions/{SUBSCRIPTION}/resources?api-version=2021-04-01"
+            f"&$filter=resourceGroup%20eq%20%27rg-kt-test%27%20and%20resourceType%20eq%20%27{resource_type}%27"
+        )
+
+
+def test_subnet_manual_choice_is_preserved_in_outputs_and_revalidated(wizard: dict):
+    manual = "snet-manual-choice"
+    form = _subnet_form([_subnet(manual, "10.70.0.0/28")])
+    form["peSubnetName"] = manual
+    assert _resolve_subnet_default(wizard, "peSubnetName", form) == MANUAL_SUBNET_LABEL
+    assert _resolve_selection(wizard["outputs"]["peSubnetName"], {}, network=form) == manual
+    rule = next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if rule["message"].startswith("Private Endpoint subnet을")
+    )
+    assert _resolve_selection(rule, {}, network=form) is True
+    form["peSubnetName"] = ""
+    assert _resolve_selection(rule, {}, network=form) is False
+    form["peSubnetName"] = "snet-from-another-vnet"
+    assert _resolve_selection(rule, {}, network=form) is False
+
+
+def test_stage_two_requires_existing_rg_and_foundry_account_without_auto_switching(
+    wizard: dict, selection_names: dict
+):
+    rules = _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+    group_rule = next(
+        rule["isValid"] for rule in rules if rule["message"].startswith("2단계는 1단계")
+    )
+    account_rule = next(
+        rule["isValid"] for rule in rules if rule["message"].startswith("선택한 단계와 Foundry")
+    )
+    assert _resolve_selection(group_rule, selection_names, mode="New") is False
+    assert _resolve_selection(group_rule, selection_names, mode="Existing") is True
+    assert _resolve_selection(account_rule, selection_names, stage="complete") is True
+    selection_names["foundryAccountName"] = selection_names["existingFoundryAccount"]
+    assert _resolve_selection(account_rule, selection_names, stage="foundation") is False
+    selection_names["foundryAccountName"] = "ai-new-foundation"
+    assert _resolve_selection(account_rule, selection_names, stage="foundation") is True
+    selection_names["existingResourcesApi"] = {"value": []}
+    assert _resolve_selection(account_rule, selection_names, stage="complete") is False
+
+
+def test_stage_one_ignores_stale_foundry_and_project_dropdowns(wizard: dict, selection_names: dict):
+    for parameter in ("foundryAccountName", "projectName"):
+        controls = _ui_controls(wizard, "names")
+        selector = RESOURCE_SELECTORS[parameter][0]
+        assert (
+            _resolve_selection(controls[selector]["visible"], selection_names, stage="foundation")
+            is False
+        )
+        assert (
+            _resolve_selection(controls[parameter]["visible"], selection_names, stage="foundation")
+            is True
+        )
+        assert _resolve_selection(
+            wizard["outputs"][parameter], selection_names, stage="foundation"
+        ) == (selection_names[parameter])
+
+
 def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, template: dict):
     controls = _ui_controls(wizard, "names")
     environment_api = controls["containerAppsEnvironmentApi"]["request"]
@@ -565,18 +995,11 @@ def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, templ
     assert "stateStorageAccountName" not in controls
     assert "계정 범위 권한" in controls["storageAccountName"]["toolTip"]
     assert not re.fullmatch(_ui_regex(controls["containerAppName"]), "ca--bad")
-    uniqueness = controls["containerAppsEnvironmentName"]["constraints"]["validations"][1][
-        "isValid"
-    ]
-    pairs = re.findall(r"equals\(steps\('names'\)\.(\w+), steps\('names'\)\.(\w+)\)", uniqueness)
-    expected_names = [
-        key for key in RESOURCE_NAME_DEFAULTS if key not in {"projectName", "containerAppName"}
-    ]
-    assert {frozenset(pair) for pair in pairs} == {
-        frozenset(pair) for pair in combinations(expected_names, 2)
-    }
-    assert uniqueness.startswith("[not(or(")
-    existing_environment = controls["containerAppsEnvironmentName"]["constraints"]["validations"][2]
+    existing_environment = next(
+        rule
+        for rule in controls["containerAppName"]["constraints"]["validations"]
+        if rule["message"].startswith("기존 Environment의 재사용 조건")
+    )
     assert "containerAppsEnvironmentApi.data" in existing_environment["isValid"]
     assert "first(" not in existing_environment["isValid"]
     assert existing_environment["isValid"].startswith("[empty(filter(")
@@ -596,6 +1019,379 @@ def test_wizard_name_defaults_and_validation_remain_editable(wizard: dict, templ
     assert notice["options"]["icon"] == "Info"
     assert "containerAppsEnvironmentApi.data" in notice["visible"]
     assert "2단계에서 1단계 환경을 재사용하는 것은 정상입니다." in notice["options"]["text"]
+
+
+@pytest.fixture
+def selection_names() -> dict:
+    names = dict(RESOURCE_NAME_DEFAULTS)
+    rows = []
+    kinds = {
+        "foundryAccountName": "AIServices",
+        "storageAccountName": "StorageV2",
+        "cosmosAccountName": "GlobalDocumentDB",
+    }
+    for parameter, (selector, resource_type) in RESOURCE_SELECTORS.items():
+        name = f"{RESOURCE_NAME_DEFAULTS[parameter]}01"
+        names[selector] = name
+        if parameter == "projectName":
+            continue
+        rows.append(
+            {
+                "name": name,
+                "id": f"{GROUP}/providers/{resource_type}/{name}",
+                "type": resource_type,
+                "location": "eastus2",
+                "kind": kinds.get(parameter),
+                "tags": {"deploymentProfile": kt.PROFILE},
+            }
+        )
+    project_name = names["existingFoundryProject"]
+    account_name = names["existingFoundryAccount"]
+    names["existingResourcesApi"] = {"value": rows}
+    names["foundryProjectsApi"] = {
+        "value": [
+            {
+                "name": f"{account_name}/{project_name}",
+                "id": (
+                    f"{GROUP}/providers/Microsoft.CognitiveServices/accounts/"
+                    f"{account_name}/projects/{project_name}"
+                ),
+                "type": "Microsoft.CognitiveServices/accounts/projects",
+                "location": "eastus2",
+            }
+        ]
+    }
+    names["containerAppsEnvironmentApi"] = {
+        "data": [
+            {
+                "name": names["existingContainerAppsEnvironment"],
+                "internal": "true",
+                "publicNetworkAccess": "Disabled",
+                "deploymentProfile": kt.PROFILE,
+            }
+        ],
+        "count": 1,
+        "totalRecords": 1,
+    }
+    names["containerAppsApi"] = {"value": []}
+    return names
+
+
+def _resolve_selection(
+    expression: str,
+    names: dict,
+    mode: str = "Existing",
+    group: str = "rg-kt-test",
+    stage: str = "complete",
+    network: dict[str, object] | None = None,
+) -> object:
+    return _evaluate_ui_expression(
+        expression,
+        names,
+        resource_group={"mode": mode, "name": group},
+        subscription={"subscriptionId": SUBSCRIPTION},
+        network=network or {"virtualNetwork": {"location": "eastus2"}},
+        basics={"deploymentStage": stage},
+    )
+
+
+def _selection_reuse_rule(wizard: dict, parameter: str) -> str:
+    resource_type = RESOURCE_SELECTORS[parameter][1].lower()
+    return next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if resource_type in rule.get("isValid", "")
+        and rule["isValid"].startswith(("[and(if(", "[if(and("))
+    )
+
+
+@pytest.mark.parametrize("parameter", RESOURCE_SELECTORS)
+def test_existing_resource_dropdowns_forward_selected_names(
+    wizard: dict, selection_names: dict, parameter: str
+):
+    selector = RESOURCE_SELECTORS[parameter][0]
+    controls = _ui_controls(wizard, "names")
+    control = controls[selector]
+    assert control["type"] == "Microsoft.Common.DropDown"
+    assert control["filter"] is True
+    assert control["constraints"]["required"] is False
+    assert "defaultValue" not in control
+    options = _resolve_selection(control["constraints"]["allowedValues"], selection_names)
+    assert options == [
+        {
+            "label": selection_names[selector],
+            "description": "eastus2",
+            "value": selection_names[selector],
+        },
+        {"label": "새 이름 입력", "value": ""},
+    ]
+    assert _resolve_selection(control["visible"], selection_names) is True
+    assert _resolve_selection(controls[parameter]["visible"], selection_names) is False
+    assert (
+        _resolve_selection(wizard["outputs"][parameter], selection_names)
+        == selection_names[selector]
+    )
+    assert _resolve_selection(_selection_reuse_rule(wizard, parameter), selection_names) is True
+
+
+@pytest.mark.parametrize("parameter", RESOURCE_SELECTORS)
+def test_new_resource_group_ignores_hidden_existing_selections(
+    wizard: dict, selection_names: dict, parameter: str
+):
+    controls = _ui_controls(wizard, "names")
+    selector = RESOURCE_SELECTORS[parameter][0]
+    assert _resolve_selection(controls[selector]["visible"], selection_names, "New") is False
+    assert _resolve_selection(controls[parameter]["visible"], selection_names, "New") is True
+    assert _resolve_selection(wizard["outputs"][parameter], selection_names, "New") == (
+        RESOURCE_NAME_DEFAULTS[parameter]
+    )
+
+
+@pytest.mark.parametrize("parameter", RESOURCE_SELECTORS)
+def test_missing_resource_type_keeps_new_name_input(
+    wizard: dict, selection_names: dict, parameter: str
+):
+    controls = _ui_controls(wizard, "names")
+    selector = RESOURCE_SELECTORS[parameter][0]
+    selection_names[selector] = ""
+    selection_names["existingResourcesApi"] = {"value": []}
+    selection_names["foundryProjectsApi"] = {"value": []}
+    assert _resolve_selection(
+        controls[selector]["constraints"]["allowedValues"], selection_names
+    ) == [{"label": "새 이름 입력", "value": ""}]
+    assert _resolve_selection(controls[parameter]["visible"], selection_names) is True
+    assert _resolve_selection(wizard["outputs"][parameter], selection_names) == (
+        RESOURCE_NAME_DEFAULTS[parameter]
+    )
+
+
+@pytest.mark.parametrize("parameter", RESOURCE_SELECTORS)
+def test_existing_options_reject_wrong_scope_region_and_missing_metadata(
+    wizard: dict, selection_names: dict, parameter: str
+):
+    selector, resource_type = RESOURCE_SELECTORS[parameter]
+    api = "foundryProjectsApi" if parameter == "projectName" else "existingResourcesApi"
+    original = next(
+        row
+        for row in selection_names[api]["value"]
+        if row["type"].casefold() == resource_type.casefold()
+    )
+    invalid_rows = []
+    for field, value in (
+        ("id", original["id"].replace("rg-kt-test", "rg-foreign")),
+        ("id", original["id"].replace(SUBSCRIPTION, TENANT)),
+        ("id", None),
+        ("type", None),
+        ("location", "koreacentral"),
+        ("location", None),
+    ):
+        invalid_rows.append({**original, field: value})
+    if parameter != "projectName":
+        invalid_rows.extend(
+            [
+                {**original, "tags": {"deploymentProfile": "another-profile"}},
+                {**original, "tags": {}},
+                {**original, "tags": None},
+            ]
+        )
+    if parameter in {"foundryAccountName", "storageAccountName", "cosmosAccountName"}:
+        invalid_rows.append({**original, "kind": "unsupported"})
+        invalid_rows.append({**original, "kind": None})
+    selection_names[api]["value"] = [original, *invalid_rows]
+    options = _resolve_selection(
+        _ui_controls(wizard, "names")[selector]["constraints"]["allowedValues"], selection_names
+    )
+    assert [option["value"] for option in options] == [selection_names[selector], ""]
+
+
+@pytest.mark.parametrize("parameter", RESOURCE_SELECTORS)
+def test_changing_resource_group_rejects_stale_selection(
+    wizard: dict, selection_names: dict, parameter: str
+):
+    selector = RESOURCE_SELECTORS[parameter][0]
+    options = _resolve_selection(
+        _ui_controls(wizard, "names")[selector]["constraints"]["allowedValues"],
+        selection_names,
+        group="rg-changed",
+    )
+    assert options == [{"label": "새 이름 입력", "value": ""}]
+    assert (
+        _resolve_selection(
+            _selection_reuse_rule(wizard, parameter), selection_names, group="rg-changed"
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize("use_dropdown", [False, True])
+@pytest.mark.parametrize(
+    "parameter", [name for name in RESOURCE_SELECTORS if name != "projectName"]
+)
+def test_nonowned_names_are_rejected_for_typed_and_selected_resources(
+    wizard: dict, selection_names: dict, parameter: str, use_dropdown: bool
+):
+    selector, resource_type = RESOURCE_SELECTORS[parameter]
+    row = next(
+        r for r in selection_names["existingResourcesApi"]["value"] if r["type"] == resource_type
+    )
+    row["tags"] = {"deploymentProfile": "foreign"}
+    if not use_dropdown:
+        selection_names[parameter] = selection_names[selector]
+        selection_names[selector] = ""
+    assert _resolve_selection(_selection_reuse_rule(wizard, parameter), selection_names) is False
+
+
+@pytest.mark.parametrize("mode", ["Existing", "New"])
+def test_resource_inventory_request_is_scoped_and_new_groups_need_not_exist(
+    wizard: dict, mode: str
+):
+    request = _ui_controls(wizard, "names")["existingResourcesApi"]["request"]
+    assert request["method"] == "GET"
+    path = _resolve_selection(request["path"], {}, mode)
+    assert path == (
+        f"{GROUP}/resources?api-version=2021-04-01"
+        if mode == "Existing"
+        else f"/subscriptions/{SUBSCRIPTION}/resources?api-version=2021-04-01"
+        "&$filter=resourceGroup%20eq%20%27rg-kt-test%27"
+    )
+
+
+@pytest.mark.parametrize("mode", ["Existing", "New"])
+@pytest.mark.parametrize("account_exists", [False, True])
+def test_project_request_reads_only_an_existing_selected_account(
+    wizard: dict, selection_names: dict, mode: str, account_exists: bool
+):
+    request = _ui_controls(wizard, "names")["foundryProjectsApi"]["request"]
+    assert request["method"] == "GET"
+    if not account_exists:
+        selection_names["existingResourcesApi"] = {"value": []}
+        selection_names["existingFoundryAccount"] = ""
+    path = _resolve_selection(request["path"], selection_names, mode)
+    if mode == "Existing" and account_exists:
+        assert path == (
+            f"{GROUP}/providers/Microsoft.CognitiveServices/accounts/"
+            f"{selection_names['existingFoundryAccount']}/projects?api-version=2025-06-01"
+        )
+    else:
+        assert path == (
+            f"/subscriptions/{SUBSCRIPTION}/resources?api-version=2021-04-01"
+            "&$filter=resourceGroup%20eq%20%27rg-kt-test%27"
+        )
+
+
+def test_project_selection_cannot_survive_a_parent_account_change(
+    wizard: dict, selection_names: dict
+):
+    controls = _ui_controls(wizard, "names")
+    selection_names["existingFoundryAccount"] = "ai-other-kt"
+    assert _resolve_selection(
+        controls["existingFoundryProject"]["constraints"]["allowedValues"], selection_names
+    ) == [{"label": "새 이름 입력", "value": ""}]
+    assert (
+        _resolve_selection(_selection_reuse_rule(wizard, "projectName"), selection_names) is False
+    )
+    for row in selection_names["foundryProjectsApi"]["value"]:
+        row["id"] = row["id"].replace("ai-azbrief-kt01", "ai-other-kt")
+    assert _resolve_selection(_selection_reuse_rule(wizard, "projectName"), selection_names) is True
+
+
+@pytest.mark.parametrize(
+    ("inventory", "valid"),
+    [
+        ({}, False),
+        ({"value": None}, False),
+        ({"value": []}, True),
+        ({"value": [], "error": None, "nextLink": None}, True),
+        ({"value": [], "error": {}, "nextLink": ""}, True),
+        ({"value": [], "error": {"code": "Forbidden"}}, False),
+        ({"value": [], "nextLink": "https://management.azure.com/next"}, False),
+    ],
+)
+@pytest.mark.parametrize("api", ["existingResourcesApi", "foundryProjectsApi"])
+def test_resource_selection_read_failures_never_become_new_resource_absence(
+    wizard: dict, selection_names: dict, api: str, inventory: dict, valid: bool
+):
+    rule = next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if f"{api}.nextLink" in rule.get("isValid", "")
+    )
+    selection_names[api] = inventory
+    assert _resolve_selection(rule, selection_names) is valid
+
+
+@pytest.mark.parametrize(
+    ("inventory", "valid"),
+    [
+        ({"data": [], "count": 0, "totalRecords": 0}, True),
+        ({"data": [], "count": 0, "totalRecords": 2}, False),
+        ({"data": []}, False),
+        ({"data": None, "count": 0, "totalRecords": 0}, False),
+        ({"data": [], "count": 0, "totalRecords": 0, "error": {"code": "Forbidden"}}, False),
+    ],
+)
+def test_environment_inventory_requires_complete_response(
+    wizard: dict, selection_names: dict, inventory: dict, valid: bool
+):
+    rule = next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if "containerAppsEnvironmentApi.totalRecords" in rule.get("isValid", "")
+    )
+    selection_names["containerAppsEnvironmentApi"] = inventory
+    assert _resolve_selection(rule, selection_names) is valid
+
+
+def test_existing_environment_requires_actual_internal_and_pna_evidence(
+    wizard: dict, selection_names: dict
+):
+    rule = next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if rule["message"].startswith("ARM 목록에 있는 Environment")
+    )
+    assert _resolve_selection(rule, selection_names) is True
+    selection_names["containerAppsEnvironmentApi"] = {"data": [], "count": 0, "totalRecords": 0}
+    assert _resolve_selection(rule, selection_names) is False
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    list(combinations([p for p in RESOURCE_SELECTORS if p != "projectName"], 2)),
+)
+def test_endpoint_name_uniqueness_uses_selected_not_hidden_names(
+    wizard: dict, selection_names: dict, left: str, right: str
+):
+    rule = next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if rule["message"].startswith("Private Endpoint 이름")
+    )
+    selection_names[left] = selection_names[right]
+    assert _resolve_selection(rule, selection_names) is True
+    selection_names[RESOURCE_SELECTORS[left][0]] = selection_names[
+        RESOURCE_SELECTORS[right][0]
+    ].upper()
+    assert _resolve_selection(rule, selection_names) is False
+
+
+def test_stage_selected_in_basics_does_not_silently_change_with_resources(
+    wizard: dict, selection_names: dict
+):
+    control = _ui_controls(wizard, "basics")["deploymentStage"]
+    assert "deploymentStage" not in _ui_controls(wizard, "review")
+    assert control["type"] == "Microsoft.Common.DropDown"
+    assert control["defaultValue"] == "1단계 — 네트워크·저장소·계정 기반"
+    assert [option["value"] for option in control["constraints"]["allowedValues"]] == [
+        "foundation",
+        "complete",
+    ]
+    for selected_stage in ("foundation", "complete"):
+        output = _resolve_selection(
+            wizard["outputs"]["deployCapabilityHost"], selection_names, stage=selected_stage
+        )
+        assert output is (selected_stage == "complete")
+    assert "steps('review').deploymentStage" not in json.dumps(wizard)
 
 
 @pytest.mark.parametrize(
@@ -625,21 +1421,30 @@ def test_wizard_stage_two_environment_reuse(
         **overrides,
     }
     controls = _ui_controls(wizard, "names")
-    guard = controls["containerAppsEnvironmentName"]["constraints"]["validations"][2]["isValid"]
+    guard = next(
+        rule["isValid"]
+        for rule in controls["containerAppName"]["constraints"]["validations"]
+        if rule["message"].startswith("기존 Environment의 재사용 조건")
+    )
     names: dict[str, object] = {
         "containerAppsEnvironmentName": name,
         "containerAppsEnvironmentApi": {"data": [{"name": "cae-unrelated"}, row]},
     }
     assert "deploymentStage" not in guard
-    assert _evaluate_ui_guard(guard, names) is expected
+    group = {"mode": "Existing"}
+    assert _evaluate_ui_guard(guard, names, resource_group=group) is expected
     assert (
-        _evaluate_ui_guard(controls["existingContainerAppsEnvironmentNotice"]["visible"], names)
+        _evaluate_ui_guard(
+            controls["existingContainerAppsEnvironmentNotice"]["visible"],
+            names,
+            resource_group=group,
+        )
         is True
     )
     for field in ("internal", "publicNetworkAccess", "deploymentProfile"):
         incomplete = {key: value for key, value in row.items() if key != field}
         names["containerAppsEnvironmentApi"] = {"data": [incomplete]}
-        assert _evaluate_ui_guard(guard, names) is False
+        assert _evaluate_ui_guard(guard, names, resource_group=group) is False
 
 
 @pytest.mark.parametrize("rows", [[], [{"name": "cae-unrelated", "internal": "false"}]])
@@ -649,10 +1454,18 @@ def test_wizard_new_environment_name_is_not_blocked(wizard: dict, rows: list[dic
         "containerAppsEnvironmentName": RESOURCE_NAME_DEFAULTS["containerAppsEnvironmentName"],
         "containerAppsEnvironmentApi": {"data": rows},
     }
-    guard = controls["containerAppsEnvironmentName"]["constraints"]["validations"][2]["isValid"]
-    assert _evaluate_ui_guard(guard, names) is True
+    guard = next(
+        rule["isValid"]
+        for rule in controls["containerAppName"]["constraints"]["validations"]
+        if rule["message"].startswith("기존 Environment의 재사용 조건")
+    )
+    assert _evaluate_ui_guard(guard, names, resource_group={"mode": "New"}) is True
     assert (
-        _evaluate_ui_guard(controls["existingContainerAppsEnvironmentNotice"]["visible"], names)
+        _evaluate_ui_guard(
+            controls["existingContainerAppsEnvironmentNotice"]["visible"],
+            names,
+            resource_group={"mode": "New"},
+        )
         is False
     )
 
@@ -690,12 +1503,10 @@ def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
     }
     assert options["dnsDiscovery"]["visible"] == "[equals(steps('options').dnsMode, 'auto')]"
     assert "linkedPrivateDnsZonesApi.data" in options["dnsDiscovery"]["options"]["text"]
-    assert review["deploymentStage"]["defaultValue"] == "1단계 — 네트워크·저장소·계정 기반"
-    assert "1단계는 프로젝트를 생성하지 않습니다" in review["deploymentStage"]["toolTip"]
-    assert "별도 복구" in review["deploymentStage"]["toolTip"]
-    assert (
-        outputs["deployCapabilityHost"] == "[equals(steps('review').deploymentStage, 'complete')]"
-    )
+    stage = _ui_controls(wizard, "basics")["deploymentStage"]
+    assert stage["defaultValue"] == "1단계 — 네트워크·저장소·계정 기반"
+    assert "별도 복구" in stage["toolTip"]
+    assert outputs["deployCapabilityHost"] == "[equals(basics('deploymentStage'), 'complete')]"
     assert review["hostReady"]["visible"] == outputs["deployCapabilityHost"]
     for name in ("hostReady", "networkReady", "ownershipReady", "scopeAccepted"):
         assert review[name]["constraints"]["required"] is True
@@ -738,6 +1549,9 @@ def test_wizard_step_references_resolve_and_hidden_fields_do_not_escape(wizard: 
     }
     for step, control in re.findall(r"steps\('(\w+)'\)\.(\w+)", json.dumps(wizard)):
         assert step in steps and control in steps[step]
+    basic_names = set(_ui_controls(wizard, "basics"))
+    for control in re.findall(r"basics\('(\w+)'\)", json.dumps(wizard)):
+        assert control in basic_names
     assert not {"pePrefix", "foundryPrefix", "containerAppsPrefix"} & set(wizard["outputs"])
 
 
@@ -1203,7 +2017,7 @@ def test_wizard_forwards_web_inputs_only_for_opted_in_stage_two(
     controls = _ui_controls(wizard, "review")
     assert controls["configureWebUi"]["defaultValue"] is False
     assert controls["configureWebUi"]["visible"] == (
-        "[and(equals(steps('review').deploymentStage, 'complete'), "
+        "[and(equals(basics('deploymentStage'), 'complete'), "
         "not(steps('review').privateAnonymousWebUi))]"
     )
     review = {
@@ -1223,16 +2037,21 @@ def test_wizard_forwards_web_inputs_only_for_opted_in_stage_two(
         "webPrerequisitesReady",
         "webSetupNotice",
     ):
-        assert _evaluate_ui_expression(controls[control]["visible"], {}, review=review) is forwarded
+        assert (
+            _evaluate_ui_expression(
+                controls[control]["visible"], {}, review=review, basics={"deploymentStage": stage}
+            )
+            is forwarded
+        )
     for parameter, control in (
         ("adminEntraClientId", "adminClientId"),
         ("adminEntraClientSecret", "adminSecret"),
         ("adminAllowedPrincipals", "adminPrincipals"),
         ("archiveAllowedPrincipals", "archivePrincipals"),
     ):
-        assert _evaluate_ui_expression(wizard["outputs"][parameter], {}, review=review) == (
-            review[control] if forwarded else ""
-        )
+        assert _evaluate_ui_expression(
+            wizard["outputs"][parameter], {}, review=review, basics={"deploymentStage": stage}
+        ) == (review[control] if forwarded else "")
     assert controls["adminSecret"]["type"] == "Microsoft.Common.PasswordBox"
     assert "defaultValue" not in controls["adminSecret"]
     for name in ("adminClientId", "adminSecret", "adminPrincipals", "webPrerequisitesReady"):
@@ -1324,12 +2143,25 @@ def test_anonymous_wizard_does_not_apply_hidden_entra_values(wizard: dict, stage
         "archivePrincipals",
         "webPrerequisitesReady",
     ):
-        assert _evaluate_ui_expression(controls[name]["visible"], {}, review=review) is False
+        assert (
+            _evaluate_ui_expression(
+                controls[name]["visible"], {}, review=review, basics={"deploymentStage": stage}
+            )
+            is False
+        )
     assert _evaluate_ui_expression(
-        wizard["outputs"]["enablePrivateAnonymousWebUi"], {}, review=review
+        wizard["outputs"]["enablePrivateAnonymousWebUi"],
+        {},
+        review=review,
+        basics={"deploymentStage": stage},
     ) is (stage == "complete")
     for name in WEB_INPUTS:
-        assert _evaluate_ui_expression(wizard["outputs"][name], {}, review=review) == ""
+        assert (
+            _evaluate_ui_expression(
+                wizard["outputs"][name], {}, review=review, basics={"deploymentStage": stage}
+            )
+            == ""
+        )
 
 
 def test_wizard_defaults_to_anonymous_and_does_not_request_an_api_key(wizard: dict):
@@ -1390,16 +2222,27 @@ def test_wizard_defaults_to_anonymous_and_does_not_request_an_api_key(wizard: di
     ],
 )
 def test_wizard_reuses_existing_keys_only_after_complete_owned_arm_inventory(
-    wizard: dict, inventory: dict, valid: bool, reuse: bool | None
+    wizard: dict, selection_names: dict, inventory: dict, valid: bool, reuse: bool | None
 ):
     names = _ui_controls(wizard, "names")
-    context = {"containerAppsApi": inventory, "containerAppName": "ca-azbrief-kt"}
+    context = {
+        **selection_names,
+        "containerAppsApi": inventory,
+        "containerAppName": "ca-azbrief-kt",
+    }
+    network = _subnet_form(
+        [
+            _subnet(SUBNET_NAMES["peSubnetName"], "10.70.0.0/28"),
+            _subnet(SUBNET_NAMES["foundrySubnetName"], "10.70.0.32/27", True),
+            _subnet(SUBNET_NAMES["containerAppsSubnetName"], "10.70.0.64/27", True),
+        ]
+    )
     guards = [
         rule["isValid"]
         for rule in names["containerAppName"]["constraints"]["validations"]
         if "isValid" in rule
     ]
-    assert all(_evaluate_ui_guard(guard, context) for guard in guards) is valid
+    assert all(_resolve_selection(guard, context, network=network) for guard in guards) is valid
     if valid:
         assert _evaluate_ui_guard(wizard["outputs"]["reuseExistingApiKey"], context) is reuse
 
