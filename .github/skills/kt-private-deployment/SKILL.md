@@ -82,13 +82,10 @@ private/VNet paths.
    - do not ask the operator to re-enter CIDR;
    - filter out invalid sizes, non-RFC1918 ranges, multiple prefixes, wrong delegations, and
      Container Apps reserved ranges.
-   - In stage two, prefer a unique actual KT-owned ARM binding over name hints. Inspect all agent
-     injections; multiple PEs sharing a subnet are one candidate. Only when there is no owned
-     binding resource may role keywords suggest a unique eligible candidate, preferring AzBrief.
-     Use PE token/Endpoint, Foundry and Container/ACA; AzBrief alone cannot distinguish roles.
-     Preserve case-insensitive matching, reject mixed roles and avoid PE substring false positives.
-     Known-owner binding gaps, wrong VNet, failed/paged reads or ambiguous candidates stay manual.
-     Keep explicit manual selection and validate live-list membership; no fabricated first default.
+   - Use explicit manual selection in both stages. Optional binding/keyword defaults were
+     removed together with the failing existing-resource controls. Keep a literal manual
+     placeholder, live-list membership and the current VNet response identity; no fabricated
+     first choice or skipped CIDR/delegation/reserved-range validation.
 4. Output the selected subnet names. The Bicep template constructs the exact child resource IDs.
 5. Use Azure Resource Graph to find required Private DNS zones already linked to the VNet in the
    selected subscription.
@@ -97,15 +94,14 @@ private/VNet paths.
 7. Treat CreateUiDefinition schema checks as structural only. Preview the published ARM/UI pair in
    the Portal Sandbox and perform a customer-like validation; the legacy schema does not model every
    `Microsoft.Solutions` control.
-8. Query the deployment resource group for an existing Environment with the requested name. Reuse
+8. Read the exact typed Environment through ARM in stage two. Reuse
    it only when `internal=true`, PNA is `Disabled`, and the KT ownership tag matches; otherwise block
-   the form before ARM validation and inspect the actual ARM values before planning recovery. Do not combine
-   `or(empty(matches), first(matches)...)`: CreateUiDefinition may evaluate `first()` for an empty
-   result. Filter same-name **noncompliant** rows and validate that the filtered array is empty.
-   A compliant stage-one Environment must pass with the same name in stage two. ARG `objectArray`
-   can serialize `tobool(...)` as numeric `1`/`0`; CreateUiDefinition `equals(1, true)` is false.
-   Project `internal=tostring(tobool(properties.vnetConfiguration.internal))` and compare to the
-   string `'true'`. Missing/unknown values are not proof of an internal environment. Keep PNA and
+   the form before ARM validation and inspect the actual ARM values before planning recovery.
+   Check the full returned ID and selected infrastructure subnet. The 2026-01-01 ARM response
+   uses Boolean true; numeric/string substitutes stay unknown. The old ARG string-normalization
+   workaround is historical. A compliant stage-one Environment must pass with the same name.
+   First-stage/New-RG requests use a filtered list instead of GETting an absent target.
+   Missing/unknown values are not proof of an internal environment. Keep PNA and
    ownership checks; never bypass them based on the selected stage or recommend deletion solely
    because a name exists. Evaluate the serialized predicate against typed fixtures, not only
    substring assertions, and distinguish live query verification from a full Portal deployment.
@@ -117,19 +113,13 @@ private/VNet paths.
    Null/empty error fields are not failures. Show only response state, error code and page
    presence, never error bodies or signed continuation URLs. Test both generated request paths
    and the guards; a live ARM read or offline expression test is not Portal Sandbox acceptance.
-10. On the names tab, an Existing RG gets optional dropdowns for Foundry, shared Storage, Cosmos,
-    Search, project and Environment. Use RG-scoped ARM inventory and parent-scoped projects,
-    with a filtered generic request for absent/new parents or groups. Limit candidates to the
-    selected subscription/RG/region, KT ownership and supported resource kinds. Project values
-    are leaf names from the selected account's IDs, not full IDs or another account's children.
-    Retain new-name inputs and a new-name option; ignore hidden existing choices in New mode.
-    Resolve the effective name in every output/query/summary/validation. Put common validation
-    on the always-visible Container App name so hiding a new-name field cannot bypass it.
-    Block stale membership, failed/paged reads and incomplete Environment evidence, preserving
-    internal/PNA/ownership and selected-name uniqueness. Existing Foundry reuse requires stage two
-    selected in Basics; reject phase/account conflicts to avoid account/subdomain replay. Stage one
-    ignores hidden existing Foundry/project selections. Do not turn selectors into arbitrary adoption,
-    cross-RG lookup, data migration, or project-host repair. Require separate Portal acceptance.
+10. Resource names are direct TextBoxes for both RG modes; pass the entered leaf names to
+    Bicep without hidden existing-resource fallbacks. Optional selection/project inventory and
+    auto-subnet defaults caused a customer Portal control-creation failure and are removed.
+    Keep essential App/key and typed Environment safety checks plus name uniqueness. Use
+    CLI preflight for other ownership and BYO bindings. Stage two still requires the existing
+    foundation and omits account creation. Do not mask essential errors to make the UI green.
+    Local tests/schema are not customer Portal acceptance; verify the published pair separately.
 
 Portal discovery depends on the deploying principal having read access to the VNet links and zones.
 If a linked central zone is in another subscription or outside that read scope, require its explicit
@@ -235,6 +225,7 @@ Compare full ARM IDs.
 | Existing-Environment warning remained after entering a new name | Validation used `or(empty(matches), first(matches)...)`; `first()` on the empty result still invalidated the control. | Avoid relying on logical short-circuiting. Filter only same-name noncompliant rows and assert that result is empty. |
 | `A virtual network cannot be linked to multiple zones with overlapping namespaces` | A different zone with the same namespace was already linked to the VNet. | Discover and reuse the linked zone ID; create only missing namespaces. |
 | Portal validation passed but deployment failed | CreateUiDefinition validates input shape, not every nested AVM discriminator, Policy rule, live link, quota, or permission. | Pair UI checks with compiled-template tests, CLI preflight, ARM validate/what-if, and live acceptance. |
+| Portal reported failure to create `existingContainerAppsEnvironment` and cascaded unrelated validation errors | The optional existing-resource control did not initialize, so its dependent discovery/default expressions had no usable outputs. The precise Portal evaluator exception was not available. | Remove the optional controls and automatic defaults; use direct names/manual subnets, preserving essential App/key and typed Environment checks. Do not claim customer acceptance from local expression tests. |
 | Container Apps PE failed with generic `InternalServerError` | The error alone does not distinguish a transient provider failure from an unsupported or incomplete configuration. | Preserve exact customer operations, Correlation ID, Environment/PE states and `privateLinkResources`; do not weaken PNA/internal settings or delete the whole foundation as a first response. |
 | Bootstrap image reported invalid with `Get https://mcr.microsoft.com/v2/: EOF` | The registry connection ended before a usable response, not proof of an invalid image name or an inbound PE failure. | Check actual Environment DNS/egress/TLS and MCR data endpoints; preserve PNA/internal settings and verify a real image pull. |
 | GitHub source changed but deployed runtime did not | Git is source control, not a deployment trigger in the isolated environment. | Transfer reviewed immutable artifacts and deploy manually from an approved private-network host. |

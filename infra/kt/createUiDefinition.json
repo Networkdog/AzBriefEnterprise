@@ -37,14 +37,14 @@
             }
           ]
         },
-        "toolTip": "단계를 먼저 선택하면 이후 네트워크 추천과 웹 설정이 달라집니다. 기존 RG에도 처음 설치할 수 있으므로 RG 종류만으로 단계를 결정하지 않습니다. 2단계는 성공한 1단계와 같은 기존 RG·리소스를 사용합니다. 기존 Foundry 프로젝트는 CLI 사전검사로 BYO 연결을 확인하고, 자동 또는 불완전 host는 별도 복구 승인 없이 변경하지 않습니다."
+        "toolTip": "단계를 먼저 선택하고 실제 리소스·서브넷 이름을 직접 지정합니다. 기존 RG에도 처음 설치할 수 있으므로 RG 종류만으로 단계를 정하지 않습니다. 2단계는 성공한 1단계와 같은 기존 RG·리소스를 사용합니다. 기존 프로젝트/BYO host는 CLI 사전검사로 확인하고 별도 복구 승인 없이 변경하지 마십시오."
       },
       {
         "name": "scopeNotice",
         "type": "Microsoft.Common.InfoBox",
         "options": {
           "icon": "Info",
-          "text": "[if(equals(basics('deploymentStage'), 'complete'), '2단계는 1단계가 성공한 기존 RG와 같은 리소스를 재사용합니다. 네트워크 서브넷은 실제 연결 또는 유일한 키워드 후보를 추천하지만 직접 확인해야 합니다. Foundry 계정을 재배포하지 않고 프로젝트·BYO host 및 선택한 웹 설정을 적용합니다. 모델·Agent 게시·운영 RBAC와 실제 연결 인수는 별도입니다.', '1단계는 새 Foundry 계정과 기반 서비스·Private Endpoint·GHCR App을 구성합니다. 기존 RG에도 처음 설치할 수 있으며 프로젝트와 웹 화면은 아직 생성·활성화하지 않습니다. 준비된 VNet·서브넷과 이미지 egress를 확인하십시오. Container Apps Environment PE는 기본 수동입니다.')]",
+          "text": "[if(equals(basics('deploymentStage'), 'complete'), '2단계는 1단계와 같은 기존 RG·리소스 이름·VNet·서브넷을 직접 지정합니다. 자동 리소스 탐색·서브넷 추천은 사용하지 않습니다. Foundry 계정을 다시 배포하지 않고 프로젝트/BYO host와 선택한 웹 설정을 적용합니다. 모델·Agent 게시·운영 RBAC·실제 연결 인수는 별도입니다.', '1단계는 새 Foundry 계정·기반 서비스·Private Endpoint·GHCR App을 구성합니다. 기존 RG에도 처음 설치할 수 있으며 프로젝트와 웹 화면은 아직 생성·활성화하지 않습니다. 준비된 VNet·서브넷과 이미지 egress를 확인하십시오. ACA PE는 기본 수동입니다.')]",
           "uri": "https://github.com/Networkdog/AzBriefEnterprise/blob/main/infra/kt/README.md"
         }
       }
@@ -69,7 +69,10 @@
             "label": "기존 Virtual Network",
             "resourceType": "Microsoft.Network/virtualNetworks",
             "options": {
-              "filter": { "subscription": "onBasics", "location": "onBasics" }
+              "filter": {
+                "subscription": "onBasics",
+                "location": "onBasics"
+              }
             }
           },
           {
@@ -98,39 +101,6 @@
             }
           },
           {
-            "name": "privateEndpointsApi",
-            "type": "Microsoft.Solutions.ArmApiControl",
-            "request": {
-              "method": "GET",
-              "path": "[if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing')), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Network/privateEndpoints?api-version=2024-05-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.Network/privateEndpoints%27'))]"
-            }
-          },
-          {
-            "name": "foundryAccountsApi",
-            "type": "Microsoft.Solutions.ArmApiControl",
-            "request": {
-              "method": "GET",
-              "path": "[if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing')), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts?api-version=2025-06-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.CognitiveServices/accounts%27'))]"
-            }
-          },
-          {
-            "name": "managedEnvironmentsApi",
-            "type": "Microsoft.Solutions.ArmApiControl",
-            "request": {
-              "method": "GET",
-              "path": "[if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing')), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.App/managedEnvironments?api-version=2026-01-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.App/managedEnvironments%27'))]"
-            }
-          },
-          {
-            "name": "subnetDefaultNotice",
-            "type": "Microsoft.Common.InfoBox",
-            "visible": "[equals(basics('deploymentStage'), 'complete')]",
-            "options": {
-              "icon": "Info",
-              "text": "2단계 기본값은 선택한 RG·VNet에 연결된 KT 리소스의 실제 서브넷을 우선합니다. 연결 후보가 없으면 AzBrief와 PE/Endpoint·Foundry·Container/ACA 키워드를 보조로 사용합니다. 주소·위임 조건을 통과한 유일한 후보만 추천하며, 복수 후보·조회 오류·부적합한 기존 연결은 직접 선택으로 남깁니다. 추천은 소유권·IP 여유·DNS·정책·연결 검증을 대신하지 않습니다."
-            }
-          },
-          {
             "name": "peSubnetName",
             "type": "Microsoft.Common.DropDown",
             "label": "Private Endpoint subnet",
@@ -138,12 +108,12 @@
             "filter": true,
             "multiLine": true,
             "defaultDescription": "RFC1918 IPv4 /28 이상, 서비스 위임 없음",
-            "toolTip": "서브넷 이름은 제한하지 않습니다. 선택한 VNet에서 서비스 위임이 없는 subnet만 표시합니다. 2단계에서는 실제 바인딩 또는 유일한 역할 키워드 후보를 기본값으로 제안합니다. 필요하면 직접 변경하십시오.",
+            "toolTip": "선택한 VNet의 유효한 서브넷을 직접 선택하십시오. 기존 리소스 연결이나 이름 키워드로 자동 추천하지 않습니다. 2단계는 1단계의 실제 서브넷과 같아야 합니다.",
             "constraints": {
               "allowedValues": "[concat(parse('[{\"label\":\"서브넷을 직접 선택하십시오.\",\"description\":\"자동 추천이 없으면 유효한 서브넷을 직접 선택하십시오.\",\"value\":\"\"}]'), map(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 0), lessOrEquals(int(last(split(s.prefix, '/'))), 28), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"description\":\"', s.prefix, '\",\"value\":\"', s.name, '\"}'))))]",
               "required": true
             },
-            "defaultValue": "[if(and(equals(basics('deploymentStage'), 'complete'), and(not(equals(coalesce(steps('network').privateEndpointsApi.value, false), false)), empty(steps('network').privateEndpointsApi.error), empty(steps('network').privateEndpointsApi.nextLink)), not(equals(coalesce(steps('network').virtualNetworkApi.properties.subnets, false), false)), and(empty(steps('network').virtualNetworkApi.error), equals(toLower(coalesce(steps('network').virtualNetworkApi.id, '')), toLower(coalesce(steps('network').virtualNetwork.id, ''))))), if(not(empty(filter(coalesce(steps('network').privateEndpointsApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.network/privateendpoints'), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), ''))), equals(toLower(coalesce(r.location, '')), toLower(coalesce(steps('network').virtualNetwork.location, ''))), equals(r.tags.deploymentProfile, 'kt-private-foundation'))))), if(equals(length(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 0), lessOrEquals(int(last(split(s.prefix, '/'))), 28), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => not(empty(filter(filter(coalesce(steps('network').privateEndpointsApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.network/privateendpoints'), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), ''))), equals(toLower(coalesce(r.location, '')), toLower(coalesce(steps('network').virtualNetwork.location, ''))), equals(r.tags.deploymentProfile, 'kt-private-foundation'))), (r) => equals(toLower(coalesce(r.properties.subnet.id, '')), toLower(coalesce(concat(concat(steps('network').virtualNetwork.id, '/subnets/'), s.name), '')))))))), 1), first(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 0), lessOrEquals(int(last(split(s.prefix, '/'))), 28), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => not(empty(filter(filter(coalesce(steps('network').privateEndpointsApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.network/privateendpoints'), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), ''))), equals(toLower(coalesce(r.location, '')), toLower(coalesce(steps('network').virtualNetwork.location, ''))), equals(r.tags.deploymentProfile, 'kt-private-foundation'))), (r) => equals(toLower(coalesce(r.properties.subnet.id, '')), toLower(coalesce(concat(concat(steps('network').virtualNetwork.id, '/subnets/'), s.name), '')))))))).name, '서브넷을 직접 선택하십시오.'), if(not(empty(filter(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 0), lessOrEquals(int(last(split(s.prefix, '/'))), 28), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), (s) => contains(toLower(coalesce(s.name, '')), 'azbrief')))), if(equals(length(filter(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 0), lessOrEquals(int(last(split(s.prefix, '/'))), 28), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), (s) => contains(toLower(coalesce(s.name, '')), 'azbrief'))), 1), first(filter(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 0), lessOrEquals(int(last(split(s.prefix, '/'))), 28), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), (s) => contains(toLower(coalesce(s.name, '')), 'azbrief'))).name, '서브넷을 직접 선택하십시오.'), if(equals(length(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 0), lessOrEquals(int(last(split(s.prefix, '/'))), 28), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-')))), 1), first(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 0), lessOrEquals(int(last(split(s.prefix, '/'))), 28), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-')))).name, '서브넷을 직접 선택하십시오.'))), '서브넷을 직접 선택하십시오.')]"
+            "defaultValue": "서브넷을 직접 선택하십시오."
           },
           {
             "name": "foundrySubnetName",
@@ -153,12 +123,12 @@
             "filter": true,
             "multiLine": true,
             "defaultDescription": "RFC1918 IPv4 /27 이상, Microsoft.App/environments 위임",
-            "toolTip": "서브넷 이름은 제한하지 않습니다. Foundry 계정 하나가 독점 사용할 기존 subnet을 선택하십시오. 2단계에서는 실제 바인딩 또는 유일한 역할 키워드 후보를 기본값으로 제안합니다. 필요하면 직접 변경하십시오.",
+            "toolTip": "선택한 VNet의 유효한 서브넷을 직접 선택하십시오. 기존 리소스 연결이나 이름 키워드로 자동 추천하지 않습니다. 2단계는 1단계의 실제 서브넷과 같아야 합니다.",
             "constraints": {
               "allowedValues": "[concat(parse('[{\"label\":\"서브넷을 직접 선택하십시오.\",\"description\":\"자동 추천이 없으면 유효한 서브넷을 직접 선택하십시오.\",\"value\":\"\"}]'), map(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"description\":\"', s.prefix, '\",\"value\":\"', s.name, '\"}'))))]",
               "required": true
             },
-            "defaultValue": "[if(and(equals(basics('deploymentStage'), 'complete'), and(not(equals(coalesce(steps('network').foundryAccountsApi.value, false), false)), empty(steps('network').foundryAccountsApi.error), empty(steps('network').foundryAccountsApi.nextLink)), not(equals(coalesce(steps('network').virtualNetworkApi.properties.subnets, false), false)), and(empty(steps('network').virtualNetworkApi.error), equals(toLower(coalesce(steps('network').virtualNetworkApi.id, '')), toLower(coalesce(steps('network').virtualNetwork.id, ''))))), if(not(empty(filter(coalesce(steps('network').foundryAccountsApi.value, parse('[]')), (r) => and(and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts'), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), ''))), equals(toLower(coalesce(r.location, '')), toLower(coalesce(steps('network').virtualNetwork.location, ''))), equals(r.tags.deploymentProfile, 'kt-private-foundation')), equals(toLower(coalesce(r.kind, '')), 'aiservices'))))), if(equals(length(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => not(empty(filter(filter(coalesce(steps('network').foundryAccountsApi.value, parse('[]')), (r) => and(and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts'), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), ''))), equals(toLower(coalesce(r.location, '')), toLower(coalesce(steps('network').virtualNetwork.location, ''))), equals(r.tags.deploymentProfile, 'kt-private-foundation')), equals(toLower(coalesce(r.kind, '')), 'aiservices'))), (r) => not(empty(filter(coalesce(r.properties.networkInjections, parse('[]')), (b) => and(equals(b.scenario, 'agent'), equals(toLower(coalesce(b.subnetArmId, '')), toLower(coalesce(concat(concat(steps('network').virtualNetwork.id, '/subnets/'), s.name), '')))))))))))), 1), first(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => not(empty(filter(filter(coalesce(steps('network').foundryAccountsApi.value, parse('[]')), (r) => and(and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts'), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), ''))), equals(toLower(coalesce(r.location, '')), toLower(coalesce(steps('network').virtualNetwork.location, ''))), equals(r.tags.deploymentProfile, 'kt-private-foundation')), equals(toLower(coalesce(r.kind, '')), 'aiservices'))), (r) => not(empty(filter(coalesce(r.properties.networkInjections, parse('[]')), (b) => and(equals(b.scenario, 'agent'), equals(toLower(coalesce(b.subnetArmId, '')), toLower(coalesce(concat(concat(steps('network').virtualNetwork.id, '/subnets/'), s.name), '')))))))))))).name, '서브넷을 직접 선택하십시오.'), if(not(empty(filter(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => and(contains(toLower(coalesce(s.name, '')), 'foundry'), not(or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), not(or(contains(toLower(coalesce(s.name, '')), 'container'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-aca-'))))), (s) => contains(toLower(coalesce(s.name, '')), 'azbrief')))), if(equals(length(filter(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => and(contains(toLower(coalesce(s.name, '')), 'foundry'), not(or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), not(or(contains(toLower(coalesce(s.name, '')), 'container'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-aca-'))))), (s) => contains(toLower(coalesce(s.name, '')), 'azbrief'))), 1), first(filter(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => and(contains(toLower(coalesce(s.name, '')), 'foundry'), not(or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), not(or(contains(toLower(coalesce(s.name, '')), 'container'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-aca-'))))), (s) => contains(toLower(coalesce(s.name, '')), 'azbrief'))).name, '서브넷을 직접 선택하십시오.'), if(equals(length(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => and(contains(toLower(coalesce(s.name, '')), 'foundry'), not(or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), not(or(contains(toLower(coalesce(s.name, '')), 'container'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-aca-')))))), 1), first(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => and(contains(toLower(coalesce(s.name, '')), 'foundry'), not(or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), not(or(contains(toLower(coalesce(s.name, '')), 'container'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-aca-')))))).name, '서브넷을 직접 선택하십시오.'))), '서브넷을 직접 선택하십시오.')]"
+            "defaultValue": "서브넷을 직접 선택하십시오."
           },
           {
             "name": "containerAppsSubnetName",
@@ -168,72 +138,39 @@
             "filter": true,
             "multiLine": true,
             "defaultDescription": "RFC1918 IPv4 /27 이상, 예약 범위 제외, Microsoft.App/environments 위임",
-            "toolTip": "서브넷 이름은 제한하지 않습니다. Foundry 전용 subnet과 공유할 수 없습니다. 2단계에서는 실제 바인딩 또는 유일한 역할 키워드 후보를 기본값으로 제안합니다. 필요하면 직접 변경하십시오.",
+            "toolTip": "선택한 VNet의 유효한 서브넷을 직접 선택하십시오. 기존 리소스 연결이나 이름 키워드로 자동 추천하지 않습니다. 2단계는 1단계의 실제 서브넷과 같아야 합니다.",
             "constraints": {
               "allowedValues": "[concat(parse('[{\"label\":\"서브넷을 직접 선택하십시오.\",\"description\":\"자동 추천이 없으면 유효한 서브넷을 직접 선택하십시오.\",\"value\":\"\"}]'), map(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(not(equals(s.name, steps('network').foundrySubnetName)), equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), or(and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 23), greaterOrEquals(int(last(split(s.prefix, '/'))), 13)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 24), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 27), greaterOrEquals(int(last(split(s.prefix, '/'))), 14)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 28), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 29), greaterOrEquals(int(last(split(s.prefix, '/'))), 15))), false))))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"description\":\"', s.prefix, '\",\"value\":\"', s.name, '\"}'))))]",
               "required": true
             },
-            "defaultValue": "[if(and(equals(basics('deploymentStage'), 'complete'), and(not(equals(coalesce(steps('network').managedEnvironmentsApi.value, false), false)), empty(steps('network').managedEnvironmentsApi.error), empty(steps('network').managedEnvironmentsApi.nextLink)), not(equals(coalesce(steps('network').virtualNetworkApi.properties.subnets, false), false)), and(empty(steps('network').virtualNetworkApi.error), equals(toLower(coalesce(steps('network').virtualNetworkApi.id, '')), toLower(coalesce(steps('network').virtualNetwork.id, ''))))), if(not(empty(filter(coalesce(steps('network').managedEnvironmentsApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.app/managedenvironments'), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), ''))), equals(toLower(coalesce(r.location, '')), toLower(coalesce(steps('network').virtualNetwork.location, ''))), equals(r.tags.deploymentProfile, 'kt-private-foundation'))))), if(equals(length(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(not(equals(s.name, steps('network').foundrySubnetName)), equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), or(and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 23), greaterOrEquals(int(last(split(s.prefix, '/'))), 13)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 24), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 27), greaterOrEquals(int(last(split(s.prefix, '/'))), 14)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 28), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 29), greaterOrEquals(int(last(split(s.prefix, '/'))), 15))), false))))), (s) => not(empty(filter(filter(coalesce(steps('network').managedEnvironmentsApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.app/managedenvironments'), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), ''))), equals(toLower(coalesce(r.location, '')), toLower(coalesce(steps('network').virtualNetwork.location, ''))), equals(r.tags.deploymentProfile, 'kt-private-foundation'))), (r) => equals(toLower(coalesce(r.properties.vnetConfiguration.infrastructureSubnetId, '')), toLower(coalesce(concat(concat(steps('network').virtualNetwork.id, '/subnets/'), s.name), '')))))))), 1), first(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(not(equals(s.name, steps('network').foundrySubnetName)), equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), or(and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 23), greaterOrEquals(int(last(split(s.prefix, '/'))), 13)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 24), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 27), greaterOrEquals(int(last(split(s.prefix, '/'))), 14)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 28), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 29), greaterOrEquals(int(last(split(s.prefix, '/'))), 15))), false))))), (s) => not(empty(filter(filter(coalesce(steps('network').managedEnvironmentsApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.app/managedenvironments'), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), ''))), equals(toLower(coalesce(r.location, '')), toLower(coalesce(steps('network').virtualNetwork.location, ''))), equals(r.tags.deploymentProfile, 'kt-private-foundation'))), (r) => equals(toLower(coalesce(r.properties.vnetConfiguration.infrastructureSubnetId, '')), toLower(coalesce(concat(concat(steps('network').virtualNetwork.id, '/subnets/'), s.name), '')))))))).name, '서브넷을 직접 선택하십시오.'), if(not(empty(filter(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(not(equals(s.name, steps('network').foundrySubnetName)), equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), or(and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 23), greaterOrEquals(int(last(split(s.prefix, '/'))), 13)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 24), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 27), greaterOrEquals(int(last(split(s.prefix, '/'))), 14)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 28), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 29), greaterOrEquals(int(last(split(s.prefix, '/'))), 15))), false))))), (s) => and(or(contains(toLower(coalesce(s.name, '')), 'container'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-aca-')), not(or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), not(contains(toLower(coalesce(s.name, '')), 'foundry')))), (s) => contains(toLower(coalesce(s.name, '')), 'azbrief')))), if(equals(length(filter(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(not(equals(s.name, steps('network').foundrySubnetName)), equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), or(and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 23), greaterOrEquals(int(last(split(s.prefix, '/'))), 13)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 24), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 27), greaterOrEquals(int(last(split(s.prefix, '/'))), 14)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 28), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 29), greaterOrEquals(int(last(split(s.prefix, '/'))), 15))), false))))), (s) => and(or(contains(toLower(coalesce(s.name, '')), 'container'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-aca-')), not(or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), not(contains(toLower(coalesce(s.name, '')), 'foundry')))), (s) => contains(toLower(coalesce(s.name, '')), 'azbrief'))), 1), first(filter(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(not(equals(s.name, steps('network').foundrySubnetName)), equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), or(and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 23), greaterOrEquals(int(last(split(s.prefix, '/'))), 13)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 24), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 27), greaterOrEquals(int(last(split(s.prefix, '/'))), 14)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 28), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 29), greaterOrEquals(int(last(split(s.prefix, '/'))), 15))), false))))), (s) => and(or(contains(toLower(coalesce(s.name, '')), 'container'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-aca-')), not(or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), not(contains(toLower(coalesce(s.name, '')), 'foundry')))), (s) => contains(toLower(coalesce(s.name, '')), 'azbrief'))).name, '서브넷을 직접 선택하십시오.'), if(equals(length(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(not(equals(s.name, steps('network').foundrySubnetName)), equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), or(and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 23), greaterOrEquals(int(last(split(s.prefix, '/'))), 13)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 24), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 27), greaterOrEquals(int(last(split(s.prefix, '/'))), 14)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 28), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 29), greaterOrEquals(int(last(split(s.prefix, '/'))), 15))), false))))), (s) => and(or(contains(toLower(coalesce(s.name, '')), 'container'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-aca-')), not(or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), not(contains(toLower(coalesce(s.name, '')), 'foundry'))))), 1), first(filter(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(not(equals(s.name, steps('network').foundrySubnetName)), equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), or(and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 23), greaterOrEquals(int(last(split(s.prefix, '/'))), 13)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 24), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 27), greaterOrEquals(int(last(split(s.prefix, '/'))), 14)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 28), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 29), greaterOrEquals(int(last(split(s.prefix, '/'))), 15))), false))))), (s) => and(or(contains(toLower(coalesce(s.name, '')), 'container'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-aca-')), not(or(contains(toLower(coalesce(s.name, '')), 'endpoint'), contains(concat('-', replace(toLower(coalesce(s.name, '')), '_', '-'), '-'), '-pe-'))), not(contains(toLower(coalesce(s.name, '')), 'foundry'))))).name, '서브넷을 직접 선택하십시오.'))), '서브넷을 직접 선택하십시오.')]"
+            "defaultValue": "서브넷을 직접 선택하십시오."
           }
         ]
       },
       {
         "name": "names",
         "label": "리소스 이름",
-        "bladeTitle": "기존 리소스 선택 또는 새 이름 입력",
+        "bladeTitle": "리소스 이름 직접 입력",
         "elements": [
           {
             "name": "namingNotice",
             "type": "Microsoft.Common.InfoBox",
             "options": {
               "icon": "Warning",
-              "text": "기존 RG를 선택하면 같은 RG·지역의 KT 소유 리소스를 목록에서 선택합니다. Foundry 프로젝트는 선택한 계정 아래에서만 조회합니다. 해당 유형의 후보가 없으면 새 이름 입력을 사용하십시오. 새 이름은 수정 가능한 제안값이며 전역 가용성을 보장하지 않습니다. 기존 Foundry 계정을 재사용할 때는 2단계만 실행하고, BYO host·연결과 나머지 기반의 소유권을 확인하십시오."
+              "text": "자동 리소스 탐색·선택을 사용하지 않습니다. 1단계는 승인된 새 이름을, 2단계는 1단계와 같은 RG·리소스 이름을 직접 입력하십시오. 입력값이 기존 소유 리소스 및 BYO 연결과 일치하는지 CLI 사전검사로 확인하십시오. 일반 리소스 목록은 조회하지 않지만 API 키 보호를 위한 앱 확인과 입력한 Environment의 사설망 확인은 유지합니다."
             }
-          },
-          {
-            "name": "existingResourcesApi",
-            "type": "Microsoft.Solutions.ArmApiControl",
-            "request": {
-              "method": "GET",
-              "path": "[if(equals(resourceGroup().mode, 'Existing'), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/resources?api-version=2021-04-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27'))]"
-            }
-          },
-          {
-            "name": "existingFoundryAccount",
-            "type": "Microsoft.Common.DropDown",
-            "label": "기존 Foundry 계정",
-            "filter": true,
-            "toolTip": "선택한 RG·지역의 KT 소유 AIServices 계정만 표시합니다. 기존 계정은 2단계에서 재사용하며 VNet injection을 새로 설정하거나 custom subdomain을 재등록하지 않습니다.",
-            "constraints": {
-              "required": false,
-              "allowedValues": "[concat(map(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts'), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'))), equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)), equals(r.tags.deploymentProfile, 'kt-private-foundation'), equals(toLower(coalesce(r.kind, '')), 'aiservices'))), (r) => parse(concat('{\"label\":\"', r.name, '\",\"description\":\"', r.location, '\",\"value\":\"', r.name, '\"}'))), parse('[{\"label\":\"새 이름 입력\",\"value\":\"\"}]'))]"
-            },
-            "visible": "[and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'))]"
           },
           {
             "name": "foundryAccountName",
             "type": "Microsoft.Common.TextBox",
             "label": "Foundry 계정",
             "defaultValue": "ai-azbrief-kt",
-            "toolTip": "새 계정의 custom subdomain 전역 가용성을 확인하십시오. 기존 계정이 있으면 위 목록에서 선택하고 2단계로 진행합니다.",
+            "toolTip": "1단계는 새 Foundry 계정 이름, 2단계는 1단계와 같은 기존 계정 이름을 직접 입력합니다. 기존 계정을 삭제하거나 custom subdomain을 다시 등록하지 않습니다.",
             "constraints": {
               "required": true,
               "regex": "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$",
               "validationMessage": "2~64자의 소문자·숫자·하이픈을 사용하고 양 끝은 문자나 숫자여야 합니다."
-            },
-            "visible": "[or(not(equals(basics('deploymentStage'), 'complete')), not(equals(resourceGroup().mode, 'Existing')), empty(steps('names').existingFoundryAccount))]"
-          },
-          {
-            "name": "existingStorageAccount",
-            "type": "Microsoft.Common.DropDown",
-            "label": "기존 공유 Storage Account",
-            "filter": true,
-            "toolTip": "같은 RG·지역의 KT 소유 StorageV2 계정 하나를 선택합니다. 기존 데이터·역할·Foundry 연결을 다른 계정으로 이전하지 않습니다.",
-            "constraints": {
-              "required": false,
-              "allowedValues": "[concat(map(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.storage/storageaccounts'), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'))), equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)), equals(r.tags.deploymentProfile, 'kt-private-foundation'), equals(toLower(coalesce(r.kind, '')), 'storagev2'))), (r) => parse(concat('{\"label\":\"', r.name, '\",\"description\":\"', r.location, '\",\"value\":\"', r.name, '\"}'))), parse('[{\"label\":\"새 이름 입력\",\"value\":\"\"}]'))]"
-            },
-            "visible": "[equals(resourceGroup().mode, 'Existing')]"
+            }
           },
           {
             "name": "storageAccountName",
@@ -245,20 +182,7 @@
               "required": true,
               "regex": "^[a-z0-9]{3,24}$",
               "validationMessage": "3~24자의 소문자·숫자만 사용할 수 있습니다. 전역 이름 가용성을 확인하십시오."
-            },
-            "visible": "[or(not(equals(resourceGroup().mode, 'Existing')), empty(steps('names').existingStorageAccount))]"
-          },
-          {
-            "name": "existingCosmosAccount",
-            "type": "Microsoft.Common.DropDown",
-            "label": "기존 Cosmos DB 계정",
-            "filter": true,
-            "toolTip": "같은 RG·지역의 KT 소유 NoSQL 계정을 선택합니다. 다른 API 종류나 기존 BYO 연결을 임의로 변경하지 않습니다.",
-            "constraints": {
-              "required": false,
-              "allowedValues": "[concat(map(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.documentdb/databaseaccounts'), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'))), equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)), equals(r.tags.deploymentProfile, 'kt-private-foundation'), equals(toLower(coalesce(r.kind, '')), 'globaldocumentdb'))), (r) => parse(concat('{\"label\":\"', r.name, '\",\"description\":\"', r.location, '\",\"value\":\"', r.name, '\"}'))), parse('[{\"label\":\"새 이름 입력\",\"value\":\"\"}]'))]"
-            },
-            "visible": "[equals(resourceGroup().mode, 'Existing')]"
+            }
           },
           {
             "name": "cosmosAccountName",
@@ -269,20 +193,7 @@
               "required": true,
               "regex": "^[a-z0-9][a-z0-9-]{1,42}[a-z0-9]$",
               "validationMessage": "3~44자의 소문자·숫자·하이픈을 사용하십시오."
-            },
-            "visible": "[or(not(equals(resourceGroup().mode, 'Existing')), empty(steps('names').existingCosmosAccount))]"
-          },
-          {
-            "name": "existingSearchService",
-            "type": "Microsoft.Common.DropDown",
-            "label": "기존 Azure AI Search",
-            "filter": true,
-            "toolTip": "같은 RG·지역의 KT 소유 Search 서비스를 선택합니다. 기존 project host의 연결 대상과 일치하는지 확인하십시오.",
-            "constraints": {
-              "required": false,
-              "allowedValues": "[concat(map(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.search/searchservices'), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'))), equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)), equals(r.tags.deploymentProfile, 'kt-private-foundation'))), (r) => parse(concat('{\"label\":\"', r.name, '\",\"description\":\"', r.location, '\",\"value\":\"', r.name, '\"}'))), parse('[{\"label\":\"새 이름 입력\",\"value\":\"\"}]'))]"
-            },
-            "visible": "[equals(resourceGroup().mode, 'Existing')]"
+            }
           },
           {
             "name": "searchServiceName",
@@ -293,28 +204,7 @@
               "required": true,
               "regex": "^(?!.*--)[a-z0-9][a-z0-9-]{0,58}[a-z0-9]$",
               "validationMessage": "2~60자의 소문자·숫자·단일 하이픈을 사용하십시오."
-            },
-            "visible": "[or(not(equals(resourceGroup().mode, 'Existing')), empty(steps('names').existingSearchService))]"
-          },
-          {
-            "name": "foundryProjectsApi",
-            "type": "Microsoft.Solutions.ArmApiControl",
-            "request": {
-              "method": "GET",
-              "path": "[if(and(equals(resourceGroup().mode, 'Existing'), not(empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts'), equals(toLower(coalesce(r.name, '')), toLower(if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName))), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/')))))))), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName), '/projects?api-version=2025-06-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27'))]"
             }
-          },
-          {
-            "name": "existingFoundryProject",
-            "type": "Microsoft.Common.DropDown",
-            "label": "선택한 Foundry 계정의 기존 프로젝트",
-            "filter": true,
-            "toolTip": "선택한 계정 바로 아래의 프로젝트만 표시합니다. 기존 BYO host·연결 대상은 CLI 사전검사로 확인하고, 기본 자동 host나 불완전한 프로젝트는 자동 복구하지 않습니다.",
-            "constraints": {
-              "required": false,
-              "allowedValues": "[concat(map(filter(coalesce(steps('names').foundryProjectsApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts/projects'), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName), '/projects/'))), equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)))), (r) => parse(concat('{\"label\":\"', last(split(r.id, '/')), '\",\"description\":\"', r.location, '\",\"value\":\"', last(split(r.id, '/')), '\"}'))), parse('[{\"label\":\"새 이름 입력\",\"value\":\"\"}]'))]"
-            },
-            "visible": "[and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'))]"
           },
           {
             "name": "projectName",
@@ -325,44 +215,14 @@
               "required": true,
               "regex": "^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$",
               "validationMessage": "2~63자의 소문자·숫자·하이픈을 사용하십시오."
-            },
-            "visible": "[or(not(equals(basics('deploymentStage'), 'complete')), not(equals(resourceGroup().mode, 'Existing')), empty(steps('names').existingFoundryProject))]"
-          },
-          {
-            "name": "containerAppsEnvironmentApi",
-            "type": "Microsoft.Solutions.ArmApiControl",
-            "request": {
-              "method": "POST",
-              "path": "/providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01",
-              "body": {
-                "subscriptions": [
-                  "[subscription().subscriptionId]"
-                ],
-                "query": "[concat('Resources | where type =~ \"microsoft.app/managedenvironments\" | where resourceGroup =~ \"', resourceGroup().name, '\" | project name, internal=tostring(tobool(properties.vnetConfiguration.internal)), publicNetworkAccess=tostring(properties.publicNetworkAccess), deploymentProfile=tostring(tags.deploymentProfile)')]",
-                "options": {
-                  "resultFormat": "objectArray"
-                }
-              }
             }
-          },
-          {
-            "name": "existingContainerAppsEnvironment",
-            "type": "Microsoft.Common.DropDown",
-            "label": "기존 Container Apps Environment",
-            "filter": true,
-            "toolTip": "같은 RG·지역의 KT 소유 환경 중 internal=true와 Public Network Access Disabled를 확인한 후보만 표시합니다. 다른 서브넷으로 제자리 전환하지 않습니다.",
-            "constraints": {
-              "required": false,
-              "allowedValues": "[concat(map(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.app/managedenvironments'), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'))), equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)), equals(r.tags.deploymentProfile, 'kt-private-foundation'), not(empty(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => and(equals(toLower(e.name), toLower(r.name)), equals(e.internal, 'true'), equals(e.publicNetworkAccess, 'Disabled'), equals(e.deploymentProfile, 'kt-private-foundation'))))))), (r) => parse(concat('{\"label\":\"', r.name, '\",\"description\":\"', r.location, '\",\"value\":\"', r.name, '\"}'))), parse('[{\"label\":\"새 이름 입력\",\"value\":\"\"}]'))]"
-            },
-            "visible": "[equals(resourceGroup().mode, 'Existing')]"
           },
           {
             "name": "containerAppsEnvironmentName",
             "type": "Microsoft.Common.TextBox",
             "label": "Container Apps Environment 이름",
             "defaultValue": "cae-azbrief-kt",
-            "toolTip": "2단계에서는 1단계와 같은 RG·Environment 이름을 입력합니다. 기존 환경의 internal/PNA/KT 소유권 조건을 확인한 뒤 재사용합니다.",
+            "toolTip": "2단계는 1단계와 같은 Environment 이름을 직접 입력합니다. 자동 선택하지 않으며 입력한 환경의 internal/PNA/소유권과 실제 서브넷을 확인합니다.",
             "constraints": {
               "required": true,
               "validations": [
@@ -371,16 +231,14 @@
                   "message": "2~60자, 소문자로 시작하고 소문자나 숫자로 끝나야 합니다."
                 }
               ]
-            },
-            "visible": "[or(not(equals(resourceGroup().mode, 'Existing')), empty(steps('names').existingContainerAppsEnvironment))]"
+            }
           },
           {
-            "name": "existingContainerAppsEnvironmentNotice",
-            "type": "Microsoft.Common.InfoBox",
-            "visible": "[not(empty(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => equals(toLower(e.name), toLower(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingContainerAppsEnvironment))), steps('names').existingContainerAppsEnvironment, steps('names').containerAppsEnvironmentName))))))]",
-            "options": {
-              "icon": "Info",
-              "text": "같은 RG·이름의 Container Apps Environment가 있습니다. 2단계에서 1단계 환경을 재사용하는 것은 정상입니다. internal=true, PNA Disabled, KT 소유권 조건을 충족하면 같은 이름으로 진행할 수 있으며, 외부 환경의 제자리 전환은 허용하지 않습니다."
+            "name": "containerAppsEnvironmentApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing')), concat(concat(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name), '/providers/Microsoft.App/managedEnvironments/', steps('names').containerAppsEnvironmentName), '?api-version=2026-01-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.App/managedEnvironments%27'))]"
             }
           },
           {
@@ -412,88 +270,36 @@
                   "message": "같은 이름의 앱이 KT 초기 배포 소유가 아닙니다. 기존 앱과 API 키를 덮어쓸 수 없습니다."
                 },
                 {
-                  "isValid": "[and(not(equals(coalesce(steps('names').existingResourcesApi.value, false), false)), empty(steps('names').existingResourcesApi.error), empty(steps('names').existingResourcesApi.nextLink))]",
-                  "message": "[concat('리소스 조회 상태: ', if(equals(coalesce(steps('names').existingResourcesApi.value, false), false), '응답 없음', '응답 수신'), '; ARM 오류 코드: ', coalesce(steps('names').existingResourcesApi.error.code, '없음'), '; 다음 페이지: ', if(empty(steps('names').existingResourcesApi.nextLink), '없음', '있음'), '. 조회 실패·미완료를 새 리소스 부재로 간주할 수 없습니다. 선택한 RG의 읽기 권한과 결과를 확인하십시오.')]"
-                },
-                {
-                  "isValid": "[and(not(equals(coalesce(steps('names').foundryProjectsApi.value, false), false)), empty(steps('names').foundryProjectsApi.error), empty(steps('names').foundryProjectsApi.nextLink))]",
-                  "message": "선택한 Foundry 계정의 프로젝트 조회가 완료되지 않았거나 오류·다음 페이지가 있습니다. 계정과 프로젝트 읽기 권한 및 조회 결과를 확인하십시오."
-                },
-                {
-                  "isValid": "[and(not(equals(coalesce(steps('names').containerAppsEnvironmentApi.data, false), false)), empty(steps('names').containerAppsEnvironmentApi.error), not(equals(coalesce(steps('names').containerAppsEnvironmentApi.count, false), false)), equals(steps('names').containerAppsEnvironmentApi.count, steps('names').containerAppsEnvironmentApi.totalRecords))]",
-                  "message": "Environment 사설망 조회가 완료되지 않았거나 일부 결과만 수신했습니다. 조회 권한과 전체 결과를 확인한 뒤 진행하십시오."
-                },
-                {
-                  "isValid": "[empty(filter(parse(concat('[\"', if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName), '\",\"', if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingStorageAccount))), steps('names').existingStorageAccount, steps('names').storageAccountName), '\",\"', if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingCosmosAccount))), steps('names').existingCosmosAccount, steps('names').cosmosAccountName), '\",\"', if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingSearchService))), steps('names').existingSearchService, steps('names').searchServiceName), '\",\"', if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingContainerAppsEnvironment))), steps('names').existingContainerAppsEnvironment, steps('names').containerAppsEnvironmentName), '\"]')), (name) => greater(length(filter(parse(concat('[\"', if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName), '\",\"', if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingStorageAccount))), steps('names').existingStorageAccount, steps('names').storageAccountName), '\",\"', if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingCosmosAccount))), steps('names').existingCosmosAccount, steps('names').cosmosAccountName), '\",\"', if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingSearchService))), steps('names').existingSearchService, steps('names').searchServiceName), '\",\"', if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingContainerAppsEnvironment))), steps('names').existingContainerAppsEnvironment, steps('names').containerAppsEnvironmentName), '\"]')), (other) => equals(toLower(name), toLower(other)))), 1)))]",
-                  "message": "Private Endpoint 이름(pe-대상명)이 겹치지 않도록 선택한 기존 리소스와 새 Foundry·Storage·Cosmos·Search·Environment 이름을 모두 다르게 지정하십시오."
-                },
-                {
-                  "isValid": "[and(if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), not(empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts'), equals(r.name, steps('names').existingFoundryAccount), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'))))))), true), empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts'), equals(toLower(coalesce(r.name, '')), toLower(if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName))), not(and(equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)), equals(r.tags.deploymentProfile, 'kt-private-foundation'), equals(toLower(coalesce(r.kind, '')), 'aiservices')))))))]",
-                  "message": "선택한 Foundry 계정이 현재 RG의 후보에 없거나 지역·AIServices·KT 소유권 조건을 충족하지 않습니다. 다른 RG에서 남은 선택이나 비소유 계정을 사용할 수 없습니다."
-                },
-                {
-                  "isValid": "[and(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingStorageAccount))), not(empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.storage/storageaccounts'), equals(r.name, steps('names').existingStorageAccount), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'))))))), true), empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.storage/storageaccounts'), equals(toLower(coalesce(r.name, '')), toLower(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingStorageAccount))), steps('names').existingStorageAccount, steps('names').storageAccountName))), not(and(equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)), equals(r.tags.deploymentProfile, 'kt-private-foundation'), equals(toLower(coalesce(r.kind, '')), 'storagev2')))))))]",
-                  "message": "공유 Storage 선택이 현재 RG의 KT 소유 StorageV2 후보와 일치하지 않습니다. 지역·소유권을 확인하고, 기존 BYO 연결을 다른 계정으로 변경하지 마십시오."
-                },
-                {
-                  "isValid": "[and(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingCosmosAccount))), not(empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.documentdb/databaseaccounts'), equals(r.name, steps('names').existingCosmosAccount), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'))))))), true), empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.documentdb/databaseaccounts'), equals(toLower(coalesce(r.name, '')), toLower(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingCosmosAccount))), steps('names').existingCosmosAccount, steps('names').cosmosAccountName))), not(and(equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)), equals(r.tags.deploymentProfile, 'kt-private-foundation'), equals(toLower(coalesce(r.kind, '')), 'globaldocumentdb')))))))]",
-                  "message": "Cosmos DB 선택이 현재 RG의 KT 소유 NoSQL 후보와 일치하지 않습니다. 다른 API·지역·소유권의 계정을 재사용할 수 없습니다."
-                },
-                {
-                  "isValid": "[and(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingSearchService))), not(empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.search/searchservices'), equals(r.name, steps('names').existingSearchService), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'))))))), true), empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.search/searchservices'), equals(toLower(coalesce(r.name, '')), toLower(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingSearchService))), steps('names').existingSearchService, steps('names').searchServiceName))), not(and(equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)), equals(r.tags.deploymentProfile, 'kt-private-foundation')))))))]",
-                  "message": "Azure AI Search 선택이 현재 RG·지역의 KT 소유 후보와 일치하지 않습니다. 기존 project host 연결과 같은 대상을 사용하십시오."
-                },
-                {
-                  "isValid": "[and(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingContainerAppsEnvironment))), not(empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.app/managedenvironments'), equals(r.name, steps('names').existingContainerAppsEnvironment), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'))))))), true), empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.app/managedenvironments'), equals(toLower(coalesce(r.name, '')), toLower(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingContainerAppsEnvironment))), steps('names').existingContainerAppsEnvironment, steps('names').containerAppsEnvironmentName))), not(and(equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)), equals(r.tags.deploymentProfile, 'kt-private-foundation')))))))]",
-                  "message": "Container Apps Environment 선택이 현재 RG·지역의 KT 소유 후보와 일치하지 않습니다. 기존 환경을 다른 지역·네트워크로 변경할 수 없습니다."
-                },
-                {
-                  "isValid": "[empty(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => and(equals(toLower(e.name), toLower(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingContainerAppsEnvironment))), steps('names').existingContainerAppsEnvironment, steps('names').containerAppsEnvironmentName))), or(not(equals(e.internal, 'true')), not(equals(e.publicNetworkAccess, 'Disabled')), not(equals(e.deploymentProfile, 'kt-private-foundation'))))))]",
-                  "message": "기존 Environment의 재사용 조건(internal=true, Public Network Access Disabled, deploymentProfile=kt-private-foundation)을 확인하지 못했습니다. 같은 RG의 1단계 리소스와 실제 설정을 확인하십시오. 이름이 같다는 이유만으로 삭제하거나 재생성하지 마십시오."
-                },
-                {
-                  "isValid": "[if(not(empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.app/managedenvironments'), equals(toLower(coalesce(r.name, '')), toLower(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingContainerAppsEnvironment))), steps('names').existingContainerAppsEnvironment, steps('names').containerAppsEnvironmentName))))))), not(empty(filter(coalesce(steps('names').containerAppsEnvironmentApi.data, parse('[]')), (e) => and(equals(toLower(e.name), toLower(if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingContainerAppsEnvironment))), steps('names').existingContainerAppsEnvironment, steps('names').containerAppsEnvironmentName))), equals(e.internal, 'true'), equals(e.publicNetworkAccess, 'Disabled'), equals(e.deploymentProfile, 'kt-private-foundation'))))), true)]",
-                  "message": "ARM 목록에 있는 Environment의 internal/PNA 설정을 Resource Graph에서 확인하지 못했습니다. 누락된 근거를 사설 환경으로 간주할 수 없습니다."
-                },
-                {
-                  "isValid": "[if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryProject))), not(empty(filter(coalesce(steps('names').foundryProjectsApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts/projects'), equals(last(split(coalesce(r.id, ''), '/')), steps('names').existingFoundryProject), startsWith(toLower(coalesce(r.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName), '/projects/'))), equals(toLower(coalesce(r.location, '')), toLower(steps('network').virtualNetwork.location)))))), true)]",
-                  "message": "선택한 프로젝트가 현재 Foundry 계정 아래의 후보에 없습니다. 계정 변경 전 프로젝트나 다른 RG의 프로젝트를 사용할 수 없습니다."
-                },
-                {
                   "isValid": "[if(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), true)]",
-                  "message": "2단계는 1단계를 완료한 기존 RG를 선택해야 합니다. 새 RG나 빈 기반을 자동 생성하는 단계가 아닙니다."
+                  "message": "2단계는 1단계를 완료한 기존 RG를 선택하십시오. 단계는 자동으로 바꾸지 않습니다."
                 },
                 {
-                  "isValid": "[if(equals(basics('deploymentStage'), 'complete'), not(empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts'), equals(toLower(coalesce(r.name, '')), toLower(coalesce(if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName), ''))), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), ''))))))), not(not(empty(filter(coalesce(steps('names').existingResourcesApi.value, parse('[]')), (r) => and(equals(toLower(coalesce(r.type, '')), 'microsoft.cognitiveservices/accounts'), equals(toLower(coalesce(r.name, '')), toLower(coalesce(if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName), ''))), startsWith(toLower(coalesce(r.id, '')), toLower(coalesce(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/'), '')))))))))]",
-                  "message": "선택한 단계와 Foundry 계정 상태가 다릅니다. 기존 계정은 첫 탭에서 2단계를 선택하고, 2단계에서 계정이 없으면 1단계 기반을 먼저 준비하십시오. 단계를 자동 전환하거나 계정을 재생성하지 않습니다."
+                  "isValid": "[if(equals(basics('deploymentStage'), 'complete'), not(empty(filter(coalesce(steps('names').containerAppsApi.value, parse('[]')), (app) => and(equals(toLower(app.type), 'microsoft.app/containerapps'), equals(toLower(app.name), toLower(steps('names').containerAppName)))))), true)]",
+                  "message": "2단계의 기존 Container App을 확인하지 못했습니다. 1단계와 같은 RG·앱 이름을 입력하고 API 키를 새로 생성하지 마십시오."
+                },
+                {
+                  "isValid": "[not(or(equals(toLower(steps('names').foundryAccountName), toLower(steps('names').storageAccountName)), equals(toLower(steps('names').foundryAccountName), toLower(steps('names').cosmosAccountName)), equals(toLower(steps('names').foundryAccountName), toLower(steps('names').searchServiceName)), equals(toLower(steps('names').foundryAccountName), toLower(steps('names').containerAppsEnvironmentName)), equals(toLower(steps('names').storageAccountName), toLower(steps('names').cosmosAccountName)), equals(toLower(steps('names').storageAccountName), toLower(steps('names').searchServiceName)), equals(toLower(steps('names').storageAccountName), toLower(steps('names').containerAppsEnvironmentName)), equals(toLower(steps('names').cosmosAccountName), toLower(steps('names').searchServiceName)), equals(toLower(steps('names').cosmosAccountName), toLower(steps('names').containerAppsEnvironmentName)), equals(toLower(steps('names').searchServiceName), toLower(steps('names').containerAppsEnvironmentName))))]",
+                  "message": "Private Endpoint 이름(pe-대상명)이 겹치지 않도록 Foundry·Storage·Cosmos·Search·Environment 이름을 모두 다르게 입력하십시오."
+                },
+                {
+                  "isValid": "[if(equals(basics('deploymentStage'), 'complete'), and(empty(steps('names').containerAppsEnvironmentApi.error), equals(toLower(coalesce(steps('names').containerAppsEnvironmentApi.id, '')), toLower(concat(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name), '/providers/Microsoft.App/managedEnvironments/', steps('names').containerAppsEnvironmentName))), equals(steps('names').containerAppsEnvironmentApi.properties.vnetConfiguration.internal, true), equals(steps('names').containerAppsEnvironmentApi.properties.publicNetworkAccess, 'Disabled'), equals(steps('names').containerAppsEnvironmentApi.tags.deploymentProfile, 'kt-private-foundation'), equals(toLower(coalesce(steps('names').containerAppsEnvironmentApi.properties.vnetConfiguration.infrastructureSubnetId, '')), toLower(concat(steps('network').virtualNetwork.id, '/subnets/', steps('network').containerAppsSubnetName)))), true)]",
+                  "message": "입력한 기존 Environment의 읽기 결과 또는 사설망 조건을 확인하지 못했습니다. 1단계와 같은 RG·이름·VNet·Container Apps 서브넷, internal=true, PNA Disabled, KT 소유권과 읽기 권한을 확인하십시오. 이름이 같다는 이유로 삭제하지 마십시오."
                 },
                 {
                   "isValid": "[contains(map(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 0), lessOrEquals(int(last(split(s.prefix, '/'))), 28), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => s.name), steps('network').peSubnetName)]",
-                  "message": "Private Endpoint subnet을 유효한 목록에서 선택하십시오. 직접 선택 항목·다른 VNet의 이전 선택·주소/위임 불일치는 배포할 수 없습니다."
-                },
-                {
-                  "isValid": "[if(equals(basics('deploymentStage'), 'complete'), and(not(equals(coalesce(steps('network').privateEndpointsApi.value, false), false)), empty(steps('network').privateEndpointsApi.error), empty(steps('network').privateEndpointsApi.nextLink)), true)]",
-                  "message": "2단계 Private Endpoint subnet 연결 조회가 완료되지 않았거나 오류·다음 페이지가 있습니다. 누락된 조회를 리소스 부재로 간주하지 않습니다."
+                  "message": "Private Endpoint subnet을 유효한 목록에서 직접 선택하십시오. 2단계에도 주소·위임·예약 범위·서브넷 분리 조건은 유지합니다."
                 },
                 {
                   "isValid": "[contains(map(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), and(greaterOrEquals(int(last(split(s.prefix, '/'))), 12), greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 31)), false))))), (s) => s.name), steps('network').foundrySubnetName)]",
-                  "message": "Foundry 전용 subnet을 유효한 목록에서 선택하십시오. 직접 선택 항목·다른 VNet의 이전 선택·주소/위임 불일치는 배포할 수 없습니다."
-                },
-                {
-                  "isValid": "[if(equals(basics('deploymentStage'), 'complete'), and(not(equals(coalesce(steps('network').foundryAccountsApi.value, false), false)), empty(steps('network').foundryAccountsApi.error), empty(steps('network').foundryAccountsApi.nextLink)), true)]",
-                  "message": "2단계 Foundry 전용 subnet 연결 조회가 완료되지 않았거나 오류·다음 페이지가 있습니다. 누락된 조회를 리소스 부재로 간주하지 않습니다."
+                  "message": "Foundry 전용 subnet을 유효한 목록에서 직접 선택하십시오. 2단계에도 주소·위임·예약 범위·서브넷 분리 조건은 유지합니다."
                 },
                 {
                   "isValid": "[contains(map(filter(map(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => parse(concat('{\"name\":\"', s.name, '\",\"prefix\":\"', coalesce(s.properties.addressPrefix, if(equals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), first(s.properties.addressPrefixes), '')), '\",\"delegationCount\":', string(length(coalesce(s.properties.delegations, parse('[]')))), ',\"appDelegationCount\":', string(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments')))), '}'))), (s) => if(empty(s.prefix), false, and(not(equals(s.name, steps('network').foundrySubnetName)), equals(s.delegationCount, 1), equals(s.appDelegationCount, 1), lessOrEquals(int(last(split(s.prefix, '/'))), 27), or(and(startsWith(s.prefix, '10.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 8)), and(startsWith(s.prefix, '192.168.'), greaterOrEquals(int(last(split(s.prefix, '/'))), 16)), if(startsWith(s.prefix, '172.'), or(and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 16), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 23), greaterOrEquals(int(last(split(s.prefix, '/'))), 13)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 24), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 27), greaterOrEquals(int(last(split(s.prefix, '/'))), 14)), and(greaterOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 28), lessOrEquals(int(first(skip(split(first(split(s.prefix, '/')), '.'), 1))), 29), greaterOrEquals(int(last(split(s.prefix, '/'))), 15))), false))))), (s) => s.name), steps('network').containerAppsSubnetName)]",
-                  "message": "Container Apps 전용 subnet을 유효한 목록에서 선택하십시오. 직접 선택 항목·다른 VNet의 이전 선택·주소/위임 불일치는 배포할 수 없습니다."
-                },
-                {
-                  "isValid": "[if(equals(basics('deploymentStage'), 'complete'), and(not(equals(coalesce(steps('network').managedEnvironmentsApi.value, false), false)), empty(steps('network').managedEnvironmentsApi.error), empty(steps('network').managedEnvironmentsApi.nextLink)), true)]",
-                  "message": "2단계 Container Apps 전용 subnet 연결 조회가 완료되지 않았거나 오류·다음 페이지가 있습니다. 누락된 조회를 리소스 부재로 간주하지 않습니다."
+                  "message": "Container Apps 전용 subnet을 유효한 목록에서 직접 선택하십시오. 2단계에도 주소·위임·예약 범위·서브넷 분리 조건은 유지합니다."
                 },
                 {
                   "isValid": "[and(not(equals(coalesce(steps('network').virtualNetworkApi.properties.subnets, false), false)), empty(steps('network').virtualNetworkApi.error), equals(toLower(coalesce(steps('network').virtualNetworkApi.id, '')), toLower(coalesce(steps('network').virtualNetwork.id, ''))))]",
-                  "message": "현재 선택한 VNet의 서브넷 조회가 완료되지 않았거나 오류·이전 VNet의 응답이 남아 있습니다. 현재 VNet의 읽기 결과를 확인한 뒤 진행하십시오."
+                  "message": "현재 선택한 VNet의 서브넷 조회가 완료되지 않았거나 오류·이전 응답이 남아 있습니다. 현재 VNet의 읽기 결과를 확인하십시오."
                 }
               ]
             }
@@ -532,8 +338,14 @@
             "constraints": {
               "required": true,
               "allowedValues": [
-                { "label": "비공개 패키지 — 읽기 토큰 사용", "value": "Credentials" },
-                { "label": "Public 전환과 익명 다운로드를 확인한 패키지", "value": "Anonymous" }
+                {
+                  "label": "비공개 패키지 — 읽기 토큰 사용",
+                  "value": "Credentials"
+                },
+                {
+                  "label": "Public 전환과 익명 다운로드를 확인한 패키지",
+                  "value": "Anonymous"
+                }
               ]
             },
             "toolTip": "공개 패키지는 PAT 없이 다운로드합니다. 패키지의 Public 전환과 익명 다운로드를 확인한 뒤 진행하십시오. 비공개 접근이 필요한 경우에만 읽기 토큰 모드를 사용합니다."
@@ -544,7 +356,9 @@
             "label": "GHCR 읽기 토큰의 GitHub 사용자",
             "defaultValue": "Networkdog",
             "visible": "[equals(steps('options').registryAuthMode, 'Credentials')]",
-            "constraints": { "required": true }
+            "constraints": {
+              "required": true
+            }
           },
           {
             "name": "registryPassword",
@@ -555,8 +369,12 @@
             },
             "toolTip": "패키지 읽기 권한과 read:packages만 부여한 별도 토큰을 입력하십시오. 게시용 write:packages 토큰을 사용하지 마십시오. 값은 Container App secret으로 전달되며 배포 출력에 포함하지 않습니다.",
             "visible": "[equals(steps('options').registryAuthMode, 'Credentials')]",
-            "constraints": { "required": true },
-            "options": { "hideConfirmation": true }
+            "constraints": {
+              "required": true
+            },
+            "options": {
+              "hideConfirmation": true
+            }
           },
           {
             "name": "apiKeyNotice",
@@ -574,8 +392,14 @@
             "constraints": {
               "required": true,
               "allowedValues": [
-                { "label": "Basic — 낮은 초기 비용", "value": "basic" },
-                { "label": "Standard S1 — 공식 Foundry 샘플 기준", "value": "standard" }
+                {
+                  "label": "Basic — 낮은 초기 비용",
+                  "value": "basic"
+                },
+                {
+                  "label": "Standard S1 — 공식 Foundry 샘플 기준",
+                  "value": "standard"
+                }
               ]
             },
             "toolTip": "둘 다 replica 1 / partition 1입니다. Basic의 Capability Host·파일 검색·용량 적합성은 고객 환경에서 별도 검증해야 합니다."
@@ -603,8 +427,14 @@
             "constraints": {
               "required": true,
               "allowedValues": [
-                { "label": "자동 감지 — VNet 연결 zone 재사용, 없는 zone 생성", "value": "auto" },
-                { "label": "기존 중앙 DNS RG의 zone 일곱 개 재사용", "value": "existing" }
+                {
+                  "label": "자동 감지 — VNet 연결 zone 재사용, 없는 zone 생성",
+                  "value": "auto"
+                },
+                {
+                  "label": "기존 중앙 DNS RG의 zone 일곱 개 재사용",
+                  "value": "existing"
+                }
               ]
             },
             "toolTip": "자동 감지는 선택한 VNet에 이미 연결된 필수 namespace를 재사용하여 중복 zone link를 방지합니다. 다른 구독의 중앙 DNS는 기존 RG 방식을 사용하십시오."
@@ -659,7 +489,7 @@
             "type": "Microsoft.Common.InfoBox",
             "options": {
               "icon": "Info",
-              "text": "[concat('단계: ', if(equals(basics('deploymentStage'), 'complete'), '2단계', '1단계'), ' | VNet: ', coalesce(steps('network').virtualNetwork.name, ''), ' | PE subnet: ', steps('network').peSubnetName, ' | Foundry subnet: ', steps('network').foundrySubnetName, ' | ACA subnet: ', steps('network').containerAppsSubnetName, ' | 지역: ', coalesce(steps('network').virtualNetwork.location, ''), ' | Foundry: ', if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName), ' | App: ', steps('names').containerAppName, ' | Search: ', steps('options').searchSku)]"
+              "text": "[concat('단계: ', if(equals(basics('deploymentStage'), 'complete'), '2단계', '1단계'), ' | VNet: ', coalesce(steps('network').virtualNetwork.name, ''), ' | PE subnet: ', steps('network').peSubnetName, ' | Foundry subnet: ', steps('network').foundrySubnetName, ' | ACA subnet: ', steps('network').containerAppsSubnetName, ' | Foundry: ', steps('names').foundryAccountName, ' | App: ', steps('names').containerAppName, ' | Search: ', steps('options').searchSku)]"
             }
           },
           {
@@ -667,7 +497,10 @@
             "type": "Microsoft.Common.CheckBox",
             "label": "1단계가 성공했고 account Capability Host가 Succeeded이며, 같은 RG·이름·VNet·DNS 설정으로 진행함을 확인했습니다.",
             "visible": "[equals(basics('deploymentStage'), 'complete')]",
-            "constraints": { "required": true, "validationMessage": "계정 host 준비와 기존 입력을 확인하십시오." }
+            "constraints": {
+              "required": true,
+              "validationMessage": "계정 host 준비와 기존 입력을 확인하십시오."
+            }
           },
           {
             "name": "privateAnonymousWebUi",
@@ -690,7 +523,10 @@
             "name": "privateAnonymousReady",
             "type": "Microsoft.Common.CheckBox",
             "label": "승인된 사설 경로만 접속할 수 있음을 확인했고, 접속 가능한 모든 클라이언트의 관리 기능·데이터 접근을 임시로 허용하는 위험과 유휴 비용을 이해했습니다.",
-            "constraints": { "required": true, "validationMessage": "사설 접근 경계와 익명 관리자 접근의 위험을 확인하십시오." },
+            "constraints": {
+              "required": true,
+              "validationMessage": "사설 접근 경계와 익명 관리자 접근의 위험을 확인하십시오."
+            },
             "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').privateAnonymousWebUi)]"
           },
           {
@@ -724,10 +560,17 @@
           {
             "name": "adminSecret",
             "type": "Microsoft.Common.PasswordBox",
-            "label": { "password": "기존 Entra 앱 client secret 값", "confirmPassword": "Client secret 값 확인" },
+            "label": {
+              "password": "기존 Entra 앱 client secret 값",
+              "confirmPassword": "Client secret 값 확인"
+            },
             "toolTip": "Secret ID가 아니라 발급된 값입니다. Portal에 직접 입력하십시오. 채팅·소스·명령줄·배포 출력에 넣지 마십시오. Container App Secret에 저장되며 API 키·GHCR 토큰과 별도여야 합니다.",
-            "constraints": { "required": true },
-            "options": { "hideConfirmation": true },
+            "constraints": {
+              "required": true
+            },
+            "options": {
+              "hideConfirmation": true
+            },
             "visible": "[and(equals(basics('deploymentStage'), 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi)]"
           },
           {
@@ -758,26 +601,38 @@
             "name": "webPrerequisitesReady",
             "type": "Microsoft.Common.CheckBox",
             "label": "고객 테넌트의 승인된 Entra 앱·유효한 secret·Web callback 등록과 로그인 통신을 확인했으며, Blob 운영 권한과 실제 로그인 인수는 별도임을 확인했습니다.",
-            "constraints": { "required": true, "validationMessage": "기존 Entra 앱과 callback, secret 및 로그인 통신을 확인하십시오." },
+            "constraints": {
+              "required": true,
+              "validationMessage": "기존 Entra 앱과 callback, secret 및 로그인 통신을 확인하십시오."
+            },
             "visible": "[and(equals(basics('deploymentStage'), 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi)]"
           },
           {
             "name": "networkReady",
             "type": "Microsoft.Common.CheckBox",
             "label": "전용 서브넷의 점유자·IP 여유, DNS/NSG/UDR/egress, 고객 정책·권한·리전 지원을 검증했고 동시 네트워크 변경이 없음을 확인했습니다.",
-            "constraints": { "required": true, "validationMessage": "Portal의 주소·위임 확인만으로 모든 사전검사가 끝나지 않습니다." }
+            "constraints": {
+              "required": true,
+              "validationMessage": "Portal의 주소·위임 확인만으로 모든 사전검사가 끝나지 않습니다."
+            }
           },
           {
             "name": "ownershipReady",
             "type": "Microsoft.Common.CheckBox",
             "label": "리소스 이름·소유권과 이미지 접근을 확인했으며, 이미 운영 설정을 마친 앱에 초기 비활성 설정을 덮어쓰지 않습니다.",
-            "constraints": { "required": true, "validationMessage": "기존 리소스 보호와 이름 가용성을 확인하십시오." }
+            "constraints": {
+              "required": true,
+              "validationMessage": "기존 리소스 보호와 이름 가용성을 확인하십시오."
+            }
           },
           {
             "name": "scopeAccepted",
             "type": "Microsoft.Common.CheckBox",
             "label": "유휴 비용과 공유 Storage의 계정 범위 Foundry 권한을 확인했으며, Container App·Hosted Agent 운영 권한은 배포 후 직접 부여합니다. Entra 앱 등록과 모델·Agent 게시·운영 Job·메일·스케줄은 별도이며, 2단계 웹 인증 자동 구성도 운영 인수 완료는 아님을 확인했습니다.",
-            "constraints": { "required": true, "validationMessage": "비용과 인프라 초기 배포 범위를 확인하십시오." }
+            "constraints": {
+              "required": true,
+              "validationMessage": "비용과 인프라 초기 배포 범위를 확인하십시오."
+            }
           }
         ]
       }
@@ -789,12 +644,12 @@
       "peSubnetName": "[steps('network').peSubnetName]",
       "foundrySubnetName": "[steps('network').foundrySubnetName]",
       "containerAppsSubnetName": "[steps('network').containerAppsSubnetName]",
-      "foundryAccountName": "[if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryAccount))), steps('names').existingFoundryAccount, steps('names').foundryAccountName)]",
-      "storageAccountName": "[if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingStorageAccount))), steps('names').existingStorageAccount, steps('names').storageAccountName)]",
-      "cosmosAccountName": "[if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingCosmosAccount))), steps('names').existingCosmosAccount, steps('names').cosmosAccountName)]",
-      "searchServiceName": "[if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingSearchService))), steps('names').existingSearchService, steps('names').searchServiceName)]",
-      "projectName": "[if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingFoundryProject))), steps('names').existingFoundryProject, steps('names').projectName)]",
-      "containerAppsEnvironmentName": "[if(and(equals(resourceGroup().mode, 'Existing'), not(empty(steps('names').existingContainerAppsEnvironment))), steps('names').existingContainerAppsEnvironment, steps('names').containerAppsEnvironmentName)]",
+      "foundryAccountName": "[steps('names').foundryAccountName]",
+      "storageAccountName": "[steps('names').storageAccountName]",
+      "cosmosAccountName": "[steps('names').cosmosAccountName]",
+      "searchServiceName": "[steps('names').searchServiceName]",
+      "projectName": "[steps('names').projectName]",
+      "containerAppsEnvironmentName": "[steps('names').containerAppsEnvironmentName]",
       "containerAppName": "[steps('names').containerAppName]",
       "foundryHostedAgentName": "[steps('names').foundryHostedAgentName]",
       "reuseExistingApiKey": "[not(empty(filter(steps('names').containerAppsApi.value, (app) => and(equals(toLower(app.type), 'microsoft.app/containerapps'), equals(toLower(app.name), toLower(steps('names').containerAppName))))))]",

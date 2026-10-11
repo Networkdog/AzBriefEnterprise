@@ -233,20 +233,19 @@ built-in Policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a`의 표시 이름은 Publi
 이미 `internal=false`로 생성된 Environment는 이 프로필에서 인수하지 않습니다. accessibility
 level을 제자리에서 전환하지 말고, 앱·Private Endpoint·DNS·이미지의 롤백 정보를 기록한
 유지보수 창에서 기존 foundation을 명시적으로 제거한 뒤 내부 Environment로 다시 생성합니다.
-삭제는 자동화하지 않습니다. Portal 이름 단계는 같은 RG·이름의 기존 Environment를 Resource
-Graph로 조회하고 `internal=true`, PNA `Disabled`, KT 소유권 태그가 아니면 ARM validation 전에
+삭제는 자동화하지 않습니다. Portal 이름 단계는 2단계에서 직접 입력한 Environment를
+ARM `2026-01-01`로 읽고 `internal=true`, PNA `Disabled`, KT 소유권 태그가 아니면 ARM validation 전에
 진행을 막습니다. **2단계에서 같은 RG·이름의 1단계 Environment를 재사용하는 것은 정상**이며,
-세 조건을 만족하면 그대로 진행합니다. 기존 환경 감지는 오류가 아니라 안내로 표시하고,
-이름이 같다는 이유만으로 삭제·재생성을 요구하지 않습니다. 이름을 변경해 일치 항목이 없으면
-빈 결과에 `first()`를 적용하지 않고 비준수 일치 항목만 필터링합니다.
+세 조건과 입력한 infrastructure subnet이 일치하면 그대로 진행합니다.
+이름이 같다는 이유만으로 삭제·재생성을 요구하지 않습니다. 1단계·새 RG에는 존재하지 않는
+Environment를 GET하지 않고 RG 필터가 있는 목록 경로를 사용합니다.
 
 ARM에서 `internal=true`인 정상 환경도 Resource Graph `objectArray`의 `tobool(...)` 결과는
 숫자 `1`로 반환될 수 있습니다. CreateUiDefinition의 `equals()`는 타입도 비교하므로
-`equals(1, true)`는 `false`입니다. 조회 쿼리는 `tostring(tobool(...))`로 `"true"`/`"false"`를
-반환하고 폼도 문자열 `'true'`와 비교합니다. 알 수 없거나 누락된 값은 내부 환경으로 간주하지
-않습니다. 이전 폼에서 정상 환경이 차단됐다면 수정된 ARM/UI 페어를 게시한 뒤 배포 화면을
-새로 열고 1단계와 같은 값을 입력합니다. 이 수정은 입력 검증만 바꾸며 기존 Azure 리소스를
-변경하거나 실제 2단계 배포 성공을 보장하지 않습니다.
+`equals(1, true)`는 `false`입니다. 이는 이전 ARG 조회 폼의 교훈입니다. 현재 폼은
+타입이 보존된 직접 ARM 응답의 Boolean `true`를 확인하며 문자열·숫자·누락 값은 허용하지
+않습니다. 수정된 ARM/UI 페어를 게시한 뒤 새 배포 화면에서 1단계와 같은 값을 입력하십시오.
+로컬 입력 검증은 기존 Azure 설정이나 실제 2단계 배포 성공을 보장하지 않습니다.
 
 VNet injection만으로 모든 인터넷 egress가 차단되지는 않습니다. Foundry 플랫폼, Entra,
 ARM, 이미지 다운로드, 패키지 빌드, Microsoft Learn/RSS 등의 필요한 outbound 경로와 DNS를
@@ -263,8 +262,8 @@ KT 정책에 맞게 승인해야 합니다. 리소스가 ARM에서 성공해도 
 | 화면 | 제공 기능 |
 |---|---|
 | 기본 사항 | 배포 단계(1단계/2단계)를 먼저 결정하고 구독·RG·지역 선택. 선택한 단계의 범위 안내 |
-| 기존 네트워크 | 같은 구독·지역의 VNet 선택. CIDR·위임 조건을 유지하며 2단계는 실제 연결과 역할 키워드로 유일 후보를 추천 |
-| 리소스 이름 | 기존 RG의 Foundry·공유 Storage·Cosmos·Search·프로젝트·Environment 선택 목록, 후보가 없으면 새 이름 입력. Container App/Hosted 이름 편집과 다섯 PE 대상 이름 충돌 차단 |
+| 기존 네트워크 | 같은 구독·지역의 VNet과 역할별 서브넷을 직접 선택. CIDR·위임·예약 범위 검사는 유지, 자동 추천 없음 |
+| 리소스 이름 | 새 RG·기존 RG 모두 Foundry·Storage·Cosmos·Search·프로젝트·Environment·App 이름을 직접 입력. API 키 보호·사설 Environment·PE 이름 충돌 검증 |
 | 이미지·인증·DNS·로그 | GHCR 익명 다운로드 기본값·선택적 읽기 토큰, API 키 자동 관리 안내, ACA PE 자동 생성 선택(기본 해제), Search/DNS/기존 Log Analytics 선택 |
 | 검토·필수 확인 | 처음 선택한 단계와 실제 선택 요약, 웹 옵션, 사전검사·소유권·비용·bootstrap 범위 동의. 단계를 다시 선택하지 않음 |
 
@@ -278,83 +277,57 @@ IPv4 prefix, RFC1918 범위, 최소 크기, 위임 및 Container Apps 예약 범
 공식 `VirtualNetworkCombo`는 기존 VNet 안의 subnet 생성을 지원하지 않고 새 VNet도 제안하므로,
 이 UI는 existing-resource selector와 read-only API control을 사용합니다.
 
-#### 단계 선택과 2단계 서브넷 기본값
+#### 단계 선택과 서브넷 직접 지정
 
 첫 **기본 사항** 탭에서 `1단계 — 네트워크·저장소·계정 기반`(기본값) 또는
 `2단계 — 기존 기반 완성·설정 재적용`을 선택합니다. RG 종류와 단계는 별개입니다.
 기존 RG에서도 새 기반을 설치할 수 있지만, 2단계에는 1단계가 성공한 기존 RG와 Foundry
-계정이 필요합니다. 선택한 단계와 실제 계정 상태가 맞지 않으면 이유를 표시하고 차단하며
-나중에 단계를 자동 전환하지 않습니다. 기존 프로젝트가 없어도 2단계에서 새 이름을 입력해
+계정이 필요합니다. 자동 계정 탐색을 사용하지 않으므로 운영자가 1단계 출력과 실제 리소스를
+확인해야 합니다. 단계는 자동 전환하지 않습니다. 기존 프로젝트가 없어도 2단계에서 새 이름을 입력해
 프로젝트와 BYO 구성을 함께 생성할 수 있습니다.
 
-2단계의 네트워크 화면은 같은 RG의 Foundry 계정·Container Apps Environment·Private Endpoint
-목록을 ARM으로 조회하여 기본 서브넷을 제안합니다. 다음 순서를 적용합니다.
+선택적 기존 리소스 드롭다운과 실제 연결/키워드 기반 서브넷 기본값은 제거했습니다.
+고객 화면에서 `existingContainerAppsEnvironment` 요소 생성 실패와 의존 검증의 연쇄 오류가
+확인됐기 때문입니다. 1·2단계 모두 **서브넷을 직접 선택하십시오.**에서 역할별 유효한
+서브넷을 직접 선택합니다. 이름과 CIDR은 목록에서 확인하며 새 서브넷을 자동 생성하지 않습니다.
 
-1. **실제 연결 우선:** KT 소유 리소스의 네트워크 연결과 선택한 VNet의 유효한 서브넷이
-   유일하게 일치하면 이름과 무관하게 그 서브넷을 기본값으로 사용합니다. Foundry는 모든
-   network injection 중 `scenario=agent`를 확인합니다. 여러 PE가 같은 서브넷에 연결된
-   경우에도 서브넷 후보 하나로 처리합니다.
-2. **이름은 보조:** 해당 역할의 KT 소유 연결 리소스가 없을 때만 아래 키워드를 사용합니다.
-   대소문자를 구분하지 않고, 역할 키워드와 `AzBrief`가 함께 있는 유일한 후보를 우선합니다.
-   그런 후보가 없으면 역할 키워드만 있는 유일한 후보를 사용합니다.
-3. **확실하지 않으면 직접 선택:** 알려진 연결이 누락·부적합하거나 다른 VNet을 가리키는 경우,
-   조회가 실패·미완료인 경우, 또는 유효한 추천 후보가 여러 개인 경우에는 임의의 첫 항목을
-   고르지 않고 **서브넷을 직접 선택하십시오.**로 남깁니다. 2단계 조회 오류·다음 페이지는
-   배포 전 검증에서도 차단합니다.
-
-| 역할 | 보조 키워드 예 | 안전 조건 |
-|---|---|---|
-| Private Endpoint | `PE` 토큰, `Endpoint`/`privateEndpoint` | /28 이상, RFC1918, 위임 없음. `pepper` 같은 부분 문자열은 PE 토큰으로 간주하지 않음 |
-| Foundry | `Foundry` | /27 이상, `Microsoft.App/environments` 단독 위임. Container·PE 역할과 혼동하지 않음 |
-| Container Apps | `Container`, `ACA` 토큰 | /27 이상, 같은 위임·예약 범위 제외, 선택한 Foundry 서브넷과 다름 |
-
-`AzBrief`만 있는 이름으로 Foundry와 Container 역할을 임의 구분하지 않습니다.
-추천값은 변경 가능하고 직접 선택한 값이 실제 배포 파라미터에 전달됩니다. VNet·단계·
-선택을 변경하면 현재 후보 목록과 필수 조회 상태를 다시 검증합니다. 1단계에는 이름으로
-자동 추천하지 않으며 직접 선택합니다. 이름 추천은 점유자·IP 여유·내부/PNA·소유권·
-DNS·NSG·UDR·정책 검증이나 CLI 사전검사를 대신하지 않습니다.
-
-#### 기존 RG의 리소스 선택
-
-**기본 사항**에서 **기존 리소스 그룹**을 선택하면 “리소스 이름” 탭에 다음 목록이 표시됩니다.
-Foundry 계정·프로젝트의 기존 선택은 2단계에서 사용하며 1단계는 새 이름 입력을 사용합니다.
-
-| 기존 리소스 목록 | 후보 범위 |
+| 역할 | 유지하는 조건 |
 |---|---|
-| Foundry 계정 | 같은 RG·지역의 KT 소유 `AIServices` 계정 |
-| 공유 Storage Account | 같은 RG·지역의 KT 소유 `StorageV2` 계정 하나 |
-| Cosmos DB 계정 | 같은 RG·지역의 KT 소유 `GlobalDocumentDB`/NoSQL 계정 |
-| Azure AI Search | 같은 RG·지역의 KT 소유 Search 서비스 |
-| Foundry 프로젝트 | 선택한 Foundry 계정 바로 아래의 같은 지역 프로젝트 |
-| Container Apps Environment | 같은 RG·지역의 KT 소유 환경 중 `internal=true`, PNA `Disabled`를 확인한 후보 |
+| Private Endpoint | /28 이상, RFC1918, 서비스 위임 없음 |
+| Foundry | /27 이상, `Microsoft.App/environments` 단독 위임 |
+| Container Apps | /27 이상, 같은 위임·예약 범위 제외, Foundry 서브넷과 다름 |
 
-상위 리소스는 `deploymentProfile=kt-private-foundation` 태그로 소유권을 확인합니다.
-프로젝트는 별도 소유권 태그를 요구하지 않고 선택한 계정의 child ARM ID로 범위를 확인합니다.
-RG 목록은 ARM으로, 기존 계정의 프로젝트는 그 계정의 projects API로 읽습니다.
-새 계정·새 RG에는 존재하지 않는 경로를 조회하지 않도록 RG 필터가 있는 일반 인벤토리를
-사용합니다. 배포자에게 RG 리소스와 프로젝트의 읽기 권한이 필요합니다.
+2단계는 1단계 출력 `privateEndpointSubnetId`, `foundrySubnetId`, `containerAppsSubnetId`와
+같은 서브넷을 선택하십시오. 입력한 선택값이 그대로 배포에 전달됩니다. 다른 VNet의 이전
+응답이나 부적합한 서브넷은 차단하지만, 이 확인은 IP 여유·점유자·DNS·NSG·UDR·고객 정책
+인수를 대신하지 않습니다.
 
-목록의 선택값은 기존 Bicep **이름 파라미터**로 전달합니다. Foundry 프로젝트도 전체 ID나
-`계정/프로젝트` 문자열이 아니라 프로젝트 이름만 전달합니다. 해당 유형의 후보가 없거나
-새 리소스를 만들려면 **새 이름 입력**을 선택하고 표시되는 입력란을 사용합니다.
-Container App과 Hosted Agent 이름은 기존처럼 직접 입력합니다. **새 RG**에서는 기존 목록을
-숨기고 새 이름 입력만 표시하며, 이전에 남은 선택값은 배포에 반영하지 않습니다.
+#### 리소스 이름 직접 입력
 
-RG나 Foundry 계정을 바꾼 뒤 이전 선택이 새 목록에 없으면 진행을 차단합니다. 리소스·프로젝트의
-`value` 누락·오류·다음 페이지, Environment 조회의 누락·불완전 결과도 “리소스 없음”으로
-간주하지 않습니다. 정상적으로 빈 목록을 수신한 경우에만 새 이름 입력으로 진행합니다.
-선택한 Environment가 ARM 목록에는 있지만 사설 설정 근거에 없으면 재사용을 승인하지 않습니다.
+새 RG·기존 RG 모두 일곱 이름과 호출할 Hosted Agent 이름을 직접 입력합니다.
+제안된 기본값을 실제 1단계 이름으로 바꾸고 같은 RG·리전·VNet을 사용하십시오.
+1단계의 `ktFoundation` 또는 Azure Portal의 실제 리소스를 확인하여 이름을 입력하며,
+Foundry 프로젝트는 전체 ID나 `계정/프로젝트`가 아니라 프로젝트 이름만 입력합니다.
+이름 입력이 기존 데이터·권한을 다른 리소스로 이전하거나 BYO host를 자동 복구하지 않습니다.
 
-**기존 Foundry 계정을 재사용하려면 첫 탭에서 2단계를 선택**합니다. 1단계와 기존 계정의
-조합은 검증으로 차단하여 계정 PUT·custom subdomain 재등록을 막습니다. 기존 이름을 직접
-입력한 경우에도 같은 보호가 적용됩니다. 1단계의 출력에는 숨겨진 이전 계정·프로젝트 선택을
-사용하지 않습니다. account host 준비
-확인과 BYO 프로젝트/연결 검증은 생략하지 않습니다. 선택 기능은 다른 소유 리소스의 임의 인수,
-데이터 이동 또는 기존 host 복구가 아니며, 선택한 저장소·Cosmos·Search가 기존 BYO 연결과
-일치하는지 CLI 사전검사로 확인하십시오. 같은 이름의 재배포는 다른 기반 리소스를 갱신할 수 있습니다.
+일반 리소스·프로젝트 목록의 조회 의존성은 없앴지만 다음 안전 검사는 유지합니다.
 
-이 동작은 로컬 표현식·계약 테스트로 검증했습니다. 게시된 ARM/UI 조합을 새 Portal 화면에서
-열어 고객 RG의 실제 후보·계정 변경·혼합 선택을 확인하는 인수는 별도입니다.
+- **API 키 보호:** 현재 RG의 App 인벤토리가 완전하고 KT 소유인 경우에만 기존 키 재사용을
+  결정합니다. 2단계에 기존 App이 없거나 조회가 실패·미완료면 차단하며 키를 생성·회전하지 않습니다.
+- **Environment 검증:** 2단계에서 직접 입력한 이름의 ARM ID만 조회하여 internal Boolean
+  `true`, PNA `Disabled`, KT 태그와 선택한 Container Apps infrastructure subnet을 확인합니다.
+  잘못된 이름·권한 부족·다른 네트워크는 오류로 표시합니다.
+- **입력 보호:** PE 대상 이름 충돌, 필수 이름·정규식, VNet 응답 및 서브넷 적합성을 확인합니다.
+
+나머지 기존 리소스 소유권·account host 상태·BYO 연결은 **CLI 사전검사**와 운영자 확인으로
+검증하십시오. 기존 Foundry 계정에는 첫 탭에서 2단계를 선택해야 하며, 2단계의 Bicep는
+계정을 `existing`으로 참조하여 subdomain을 재등록하지 않습니다. 임의의 새 이름으로 문제를
+우회하거나 기존 계정·Environment를 삭제하지 마십시오.
+
+이 수정은 자동 인식의 UI 생성 오류를 제거하는 것이지 실제 ARM/RBAC/네트워크 오류를
+무시하는 기능이 아닙니다. 수정된 ARM/UI 페어를 게시하고 **새 배포 화면**으로 다시 열어
+2단계를 진행하십시오. 이전 화면의 캐시나 이전 템플릿의 Redeploy는 새 폼을 사용하지 않을 수
+있습니다. 로컬 계약 테스트와 실제 고객 Portal/배포 인수는 별개입니다.
 
 기본 DNS 모드는 선택한 구독에서 Resource Graph로 VNet의 기존 `virtualNetworkLinks`를 조회합니다.
 필수 namespace와 일치하는 zone은 RG와 이름에 관계없이 자동 재사용하고, 연결되지 않은
@@ -386,7 +359,7 @@ Private Endpoint의 zone group이 기존 zone을 참조하므로 Azure가 필요
 **같은 RG·이름·네트워크·DNS·이미지 인증 입력**으로 다시 열어
 첫 탭에서 **2단계 — 기존 기반 완성·설정 재적용**을 선택합니다. UI는 두 배포를 자동 실행하거나
 account host 준비를 기다리지 않습니다.
-기존 Foundry 계정의 재사용과 1단계 선택이 충돌하면 설정 변경을 요구하며 자동으로 2단계로 바꾸지 않습니다.
+기존 Foundry 계정의 재사용은 운영자가 2단계로 명시합니다. 폼이 단계를 자동으로 바꾸지 않습니다.
 
 2단계는 1단계의 Foundry 계정을 `existing` 리소스로만 참조합니다. 계정 AVM 모듈이나
 `customSubDomainName`을 다시 제출하지 않으므로 정상적인 동일 이름 재사용은 전역 subdomain

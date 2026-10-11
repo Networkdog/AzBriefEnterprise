@@ -323,25 +323,22 @@ Portal completeness checks must reference the returned `value`, `error` and `nex
 directly, not test keys on the whole API control. Accept an empty array only after a result arrives;
 null/empty error fields are not failures. Preserve error, pagination and ownership guards, and
 show only response state, error code and page presence, never error bodies or continuation URLs.
-The KT names tab uses existing-resource dropdowns only for an Existing RG: Foundry account,
-shared Storage, Cosmos, Search, project and Environment. Read the RG inventory through ARM;
-query projects only under a known existing selected account, otherwise use the filtered inventory
-without a missing-parent GET. Limit candidates to the selected subscription/RG/region, KT ownership
-and supported kinds; projects inherit the parent boundary. Keep new-name inputs and an optional
-new-name dropdown value. Effective names must feed outputs, lookups, summaries and guards,
-not hidden stale text or IDs. Recheck membership after RG/account changes, block failed/paged
-inventory and incomplete Environment evidence, and preserve endpoint-name uniqueness.
+The KT names tab is manual in both New and Existing RG modes. Remove optional existing-resource
+dropdowns, generic-resource/project discovery and automatic subnet defaults after the observed
+`existingContainerAppsEnvironment` control-creation failure. Do not restore those dependencies
+merely because local expression tests pass. Preserve direct name outputs, endpoint-name uniqueness,
+manual live-subnet eligibility and current VNet-response identity. Keep essential owned App/key
+inventory fail-closed, and read the exact typed Environment in stage two through the 2026-01-01
+ARM API. Verify internal=true, PNA Disabled, ownership and the selected infrastructure subnet.
+First-stage/New-RG paths must not GET an absent Environment. Other ownership/BYO investigation
+remains in read-only CLI preflight and operator confirmation, not success-shaped UI fallbacks.
 Select the KT stage in Basics and resolve it through `basics('deploymentStage')` everywhere;
 Review summarizes it without another selector. An Existing RG is not itself evidence of stage two.
-Block stage/account conflicts and stage two on a New RG rather than silently switching phases.
-Stage one must ignore hidden existing Foundry/project choices; never replay an account module as
-a name-selection side effect. Stage-two subnet defaults prefer unique actual KT-owned ARM
-bindings in the selected RG/VNet over unique role keywords, with AzBrief names favored. Check all
-agent injections, count shared PE subnet candidates once, and preserve the existing live subnet
-CIDR/delegation/reserved-range filters. Known-owner binding gaps or mismatches, incomplete reads
-and ambiguous keyword candidates must leave an explicit manual selection, not an arbitrary first
-value. Validate selected membership and read completeness before deployment; defaults are neither
-occupancy nor customer network acceptance. This is not arbitrary adoption, data migration or BYO repair.
+Block stage two on a New RG or without the existing App rather than silently switching phases.
+Stage two still omits the account module; manual name entry must not register a new subdomain.
+Require live-subnet membership and complete essential reads before deployment. Manual choice
+does not prove subnet occupancy or customer network acceptance and is not arbitrary adoption,
+data migration or BYO repair.
 Keep Container App/Hosted name inputs and all networking/identity protections unchanged.
 Distinguish actual Portal validation from offline expression tests or live ARM reads; a prior
 guard-only patch did not resolve the reported Portal symptom.
@@ -374,9 +371,10 @@ names/principal sets, API-key reuse, post-stage auth readback and credential red
 CLI may replace an uncustomized legacy hello-world app; the same pinned image must not permit
 overwriting promoted settings. Reuse the shared redactor for parameter/CLI diagnostics. These
 image changes do not create models, Agent versions, Entra apps, Jobs or email configuration.
-KT stage two reuses the stage-one Environment's RG/name. ARG can serialize boolean projections as
-numbers, so the Portal query emits `internal=tostring(tobool(...))` and validation compares to the
-string `'true'`, not Boolean `true`. Preserve PNA/ownership checks and reject unknown field values;
+KT stage two reuses the stage-one Environment's RG/name. The current typed ARM GET returns Boolean
+`internal`; validate it strictly with true and reject numeric/string/unknown substitutes. The old
+ARG normalization was a workaround for numeric objectArray projections, not the current read path.
+Preserve PNA/ownership checks and reject unknown field values;
 do not bypass validation for stage two or recommend deletion solely because the name exists.
 Do not create the Foundry project during KT stage one: the default project host can finalize
 before a later BYO request. Gate the project, agentBindings and capabilityHost together on
