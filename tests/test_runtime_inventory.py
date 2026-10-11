@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
+from azure.core.exceptions import HttpResponseError
 
 from src.services import runtime_inventory
 from src.services.runtime_inventory import RuntimeInventoryService
@@ -105,6 +106,21 @@ async def test_foundry_inventory_projects_only_safe_agent_metadata(monkeypatch):
         },
         "error": "",
     }
+
+
+@pytest.mark.asyncio
+async def test_foundry_inventory_exposes_safe_status_not_private_error_content(monkeypatch):
+    service = RuntimeInventoryService(credential=Credential())
+
+    def fail(_endpoint):
+        error = HttpResponseError(message="private tenant response must never appear")
+        error.status_code = 403
+        raise error
+
+    monkeypatch.setattr(service, "_list_foundry_agents_sync", fail)
+    result = await service.list_foundry_agents("https://account.test/project")
+    assert result == {"success": False, "data": {}, "error": "HTTP 403 (HttpResponseError)"}
+    assert "private tenant" not in str(result)
 
 
 def test_inventory_closes_only_its_owned_credential(monkeypatch):

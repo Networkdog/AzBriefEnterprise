@@ -87,6 +87,58 @@ param adminAllowedPrincipals string = ''
 @description('Optional comma-separated Archive reader Object IDs, UPNs or group IDs. Administrators are readers automatically.')
 param archiveAllowedPrincipals string = ''
 
+@description('Assign all configured control-plane UAMI roles in stage two: RG Reader, project Foundry User, state/archive Blob Contributor and optional service-scoped publishing roles. Requires roleAssignments/write. False is a CLI-only manual-RBAC exception; Hosted evidence roles are never granted.')
+param assignControlPlaneRoles bool = true
+
+@description('Existing exact-scope role assignment names discovered by the guarded CLI. Leave empty for deterministic new assignments; never provide names belonging to another principal or role.')
+param existingControlPlaneRoleAssignmentNames object = {}
+
+@description('Existing approved Foundry model deployment name, not model ID. This template does not select a model version, allocate quota or create model deployments.')
+param modelDeploymentName string = ''
+
+@description('Optional existing separate model deployment for the Azure MCP specialist.')
+param simpleModelDeploymentName string = ''
+
+@description('Expected six Prompt Agent names. Defaults use the first 47 project-name characters plus role suffixes, within the 64-character limit. Overrides must provide six distinct names. These are targets, not Agent versions.')
+param promptAgentNames object = {
+  coordinator: '${take(projectName, 47)}-coordinator'
+  resource_graph: '${take(projectName, 47)}-resource-graph'
+  azure_mcp: '${take(projectName, 47)}-azure-mcp'
+  azure_api: '${take(projectName, 47)}-azure-api'
+  report_writer: '${take(projectName, 47)}-report-writer'
+  quality_reviewer: '${take(projectName, 47)}-quality-reviewer'
+}
+
+@description('Create a stage-two scheduler Job using the same pinned App image and identity. It stays Manual; automatic email/schedules require separate acceptance.')
+param deploySchedulerJob bool = false
+
+@description('Name of the optional Manual scheduler Job. Preserve the name on subsequent deployments.')
+param schedulerJobName string = 'job-${containerAppName}'
+
+@description('Existing approved Azure Communication Services HTTPS endpoint. No ACS resource/domain or secret is created; sender permission and mail acceptance remain operator tasks.')
+param communicationServicesEndpoint string = ''
+
+@description('Existing ACS resource name in this deployment RG. Required for automatic email role assignment; its host must match communicationServicesEndpoint.')
+param communicationServicesName string = ''
+
+@description('GUID of an existing customer-approved minimum-permission ACS email sender role. Required for automatic email RBAC; no role definition, broad service-owner role or ACS keys are created.')
+param emailSenderRoleDefinitionId string = ''
+
+@description('Verified sender address on the existing ACS Email domain.')
+param emailSenderAddress string = ''
+
+@description('Approved digest recipient email address. Empty is allowed when no email setup is requested.')
+param emailRecipientAddress string = ''
+
+@description('Existing Entra-only Application Insights component in this RG. Empty retains the KT no-Insights profile. This never creates a component/workspace or changes its network/auth settings.')
+param applicationInsightsName string = ''
+
+@description('Read-only Azure MCP server HTTPS URL for the Agent publication handoff. Browser Anonymous does not disable MCP Entra authentication.')
+param azureMcpServerUrl string = ''
+
+@description('Existing Foundry project connection for the read-only Azure MCP server. Used by the separate Agent publication procedure.')
+param azureMcpProjectConnectionName string = ''
+
 @description('Compatibility parameter name for the pinned AzBrief control-plane image. Agent publication remains separate; stage two can configure authenticated Admin/Archive from an existing Entra app.')
 @allowed([
   'ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3'
@@ -139,6 +191,7 @@ var storageId = resourceId('Microsoft.Storage/storageAccounts', storageAccountNa
 var cosmosId = resourceId('Microsoft.DocumentDB/databaseAccounts', cosmosAccountName)
 var searchId = resourceId('Microsoft.Search/searchServices', searchServiceName)
 var environmentId = resourceId('Microsoft.App/managedEnvironments', containerAppsEnvironmentName)
+var controlPlaneIdentityId = resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', 'id-${containerAppName}')
 var foundryProjectEndpoint = 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${projectName}'
 var credentialRegistry = containerRegistryAuthMode == 'Credentials'
 var privateAnonymousWebUi = deployCapabilityHost && enablePrivateAnonymousWebUi
@@ -147,6 +200,8 @@ var adminUiEnabled = privateAnonymousWebUi || (adminAuthConfigured && !empty(tri
 var archiveUiEnabled = privateAnonymousWebUi || (adminAuthConfigured && (adminUiEnabled || !empty(trim(replace(archiveAllowedPrincipals, ',', '')))))
 var applicationUrl = 'https://${containerAppName}.${containerEnvironment.outputs.defaultDomain}'
 var adminConfigBlobUrl = adminUiEnabled ? '${storage.outputs.primaryBlobEndpoint}azbrief-state/admin-config.json' : ''
+var schedulerRequested = deployCapabilityHost && deploySchedulerJob
+var telemetryConfigured = deployCapabilityHost && !empty(applicationInsightsName)
 var adminReadinessSupportResources = [
   {
     id: 'managed_identity'
@@ -177,6 +232,24 @@ var adminReadinessSupportResources = [
     api_version: '2023-11-01'
   }
 ]
+var operationalEnv = [
+  { name: 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', value: deployCapabilityHost ? modelDeploymentName : '' }
+  { name: 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', value: deployCapabilityHost ? simpleModelDeploymentName : '' }
+  { name: 'ADMIN_READINESS_PROMPT_AGENTS', value: base64(string(promptAgentNames)) }
+  { name: 'ADMIN_READINESS_CONTAINER_JOBS', value: base64(string(schedulerRequested ? [schedulerJobName] : [])) }
+  { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: deployCapabilityHost ? communicationServicesEndpoint : '' }
+  { name: 'EMAIL_SENDER_ADDRESS', value: deployCapabilityHost ? emailSenderAddress : '' }
+  { name: 'EMAIL_RECIPIENT_ADDRESS', value: deployCapabilityHost ? emailRecipientAddress : '' }
+  { name: 'OTEL_ENABLED', value: toLower(string(telemetryConfigured)) }
+  { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: telemetryConfigured ? existingInsights!.properties.ConnectionString : '' }
+]
+var controlPlaneRegistry = credentialRegistry ? [
+  {
+    server: 'ghcr.io'
+    username: containerRegistryUsername
+    passwordSecretRef: 'ghcr-pull-token'
+  }
+] : []
 var webAuthConfig = {
   platform: {
     enabled: true
@@ -581,6 +654,46 @@ module capabilityHost 'capability-host.bicep' = if (deployCapabilityHost) {
 resource existingContainerApp 'Microsoft.App/containerApps@2026-01-01' existing = {
   name: containerAppName
 }
+resource existingInsights 'Microsoft.Insights/components@2020-02-02' existing = if (telemetryConfigured) {
+  name: applicationInsightsName
+}
+
+resource foundryMonitoringConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = if (telemetryConfigured) {
+  parent: project
+  name: 'azbrief-app-insights'
+  properties: {
+    category: 'AppInsights'
+    // 표준 Enterprise 프로필에서 검증한 인증 방식이다.
+    #disable-next-line BCP036
+    authType: 'ProjectManagedIdentity'
+    target: existingInsights!.id
+    isSharedToAll: true
+    metadata: {
+      ApiType: 'Azure'
+      ResourceId: existingInsights!.id
+      ApplicationInsightsConnectionString: existingInsights!.properties.ConnectionString
+      location: existingInsights!.location
+    }
+  }
+}
+
+module controlPlaneRoles 'control-plane-roles.bicep' = if (deployCapabilityHost && assignControlPlaneRoles) {
+  name: 'kt-control-plane-roles'
+  params: {
+    foundryAccountName: foundryAccountName
+    projectName: projectName
+    storageAccountName: storageAccountName
+    controlPlanePrincipalId: controlPlaneIdentity.outputs.principalId
+    applicationInsightsName: telemetryConfigured ? applicationInsightsName : ''
+    communicationServicesName: communicationServicesName
+    emailSenderRoleDefinitionId: emailSenderRoleDefinitionId
+    existingAssignmentNames: existingControlPlaneRoleAssignmentNames
+  }
+  dependsOn: [
+    project
+    storage
+  ]
+}
 
 var applicationApiSecret = reuseExistingApiKey
   ? filter(existingContainerApp.listSecrets().value, secret => secret.name == 'orchestrator-api-key')[0]
@@ -588,6 +701,75 @@ var applicationApiSecret = reuseExistingApiKey
       name: 'orchestrator-api-key'
       value: apiKey
     }
+var controlPlaneSecrets = concat(
+  [applicationApiSecret],
+  credentialRegistry ? [
+    {
+      name: 'ghcr-pull-token'
+      value: containerRegistryPassword
+    }
+  ] : []
+)
+var baseRuntimeEnv = [
+  { name: 'AZURE_TENANT_ID', value: tenant().tenantId }
+  { name: 'AZURE_SUBSCRIPTION_ID', value: subscription().subscriptionId }
+  { name: 'AZURE_CLIENT_ID', value: controlPlaneIdentity.outputs.clientId }
+  { name: 'FOUNDRY_PROJECT_ENDPOINT', value: foundryProjectEndpoint }
+  { name: 'FOUNDRY_HOSTED_AGENT_NAME', value: foundryHostedAgentName }
+  { name: 'API_KEY', secretRef: 'orchestrator-api-key' }
+  { name: 'ARCHIVE_BLOB_CONTAINER_URL', value: '${storage.outputs.primaryBlobEndpoint}azbrief-archive' }
+  { name: 'CHECKPOINT_BLOB_URL', value: '${storage.outputs.primaryBlobEndpoint}azbrief-state/checkpoint.json' }
+  { name: 'ADMIN_CONFIG_BLOB_URL', value: adminConfigBlobUrl }
+  { name: 'MAX_CONCURRENT_ANALYSES', value: '1' }
+]
+
+resource scheduler 'Microsoft.App/jobs@2026-01-01' = if (schedulerRequested) {
+  name: schedulerJobName
+  location: location
+  tags: tags
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${controlPlaneIdentityId}': {}
+    }
+  }
+  properties: {
+    environmentId: containerEnvironment.outputs.resourceId
+    workloadProfileName: 'Consumption'
+    configuration: {
+      triggerType: 'Manual'
+      replicaTimeout: 43200
+      replicaRetryLimit: 0
+      manualTriggerConfig: {
+        parallelism: 1
+        replicaCompletionCount: 1
+      }
+      registries: controlPlaneRegistry
+      secrets: controlPlaneSecrets
+    }
+    template: {
+      containers: [
+        {
+          name: 'azbrief-scheduler'
+          image: bootstrapImage
+          command: ['python', '-m', 'src.scheduler']
+          resources: {
+            cpu: json('1.0')
+            memory: '2Gi'
+          }
+          env: concat(baseRuntimeEnv, operationalEnv, [
+            { name: 'SCHEDULE_DISPATCH_ENABLED', value: 'true' }
+            { name: 'RUN_TIME_BUDGET_S', value: '39600' }
+          ])
+        }
+      ]
+    }
+  }
+  dependsOn: [
+    privateEndpoints
+    controlPlaneRoles
+  ]
+}
 
 module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
   name: 'kt-container-app'
@@ -605,21 +787,9 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
     activeRevisionsMode: 'Single'
     // Incremental 배포의 null은 기존 인증을 제거하지 않으므로 익명 모드는 명시적으로 비활성화한다.
     authConfig: privateAnonymousWebUi ? anonymousWebConfig : (adminAuthConfigured ? webAuthConfig : null)
-    registries: credentialRegistry ? [
-      {
-        server: 'ghcr.io'
-        username: containerRegistryUsername
-        passwordSecretRef: 'ghcr-pull-token'
-      }
-    ] : []
+    registries: controlPlaneRegistry
     secrets: concat(
-      [applicationApiSecret],
-      credentialRegistry ? [
-        {
-          name: 'ghcr-pull-token'
-          value: containerRegistryPassword
-        }
-      ] : [],
+      controlPlaneSecrets,
       adminAuthConfigured ? [
         {
           name: 'microsoft-provider-authentication-secret'
@@ -650,8 +820,8 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
           { name: 'CHECKPOINT_BLOB_URL', value: '${storage.outputs.primaryBlobEndpoint}azbrief-state/checkpoint.json' }
           { name: 'ADMIN_CONFIG_BLOB_URL', value: adminConfigBlobUrl }
           { name: 'ARCHIVE_BASE_URL', value: archiveUiEnabled ? applicationUrl : '' }
-          { name: 'ADMIN_UI_ENABLED', value: string(adminUiEnabled) }
-          { name: 'ADMIN_REQUIRE_AUTH', value: string(!privateAnonymousWebUi) }
+          { name: 'ADMIN_UI_ENABLED', value: toLower(string(adminUiEnabled)) }
+          { name: 'ADMIN_REQUIRE_AUTH', value: toLower(string(!privateAnonymousWebUi)) }
           { name: 'ADMIN_ALLOWED_PRINCIPALS', value: adminAuthConfigured && adminUiEnabled ? adminAllowedPrincipals : '' }
           { name: 'ADMIN_READINESS_RESOURCE_GROUP', value: resourceGroup().name }
           { name: 'ADMIN_READINESS_FOUNDRY_ACCOUNT', value: foundryAccountName }
@@ -659,11 +829,20 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
           { name: 'ADMIN_READINESS_CONTAINER_ENVIRONMENTS', value: base64(string([containerAppsEnvironmentName])) }
           { name: 'ADMIN_READINESS_CONTAINER_APPS', value: base64(string([containerAppName])) }
           { name: 'ADMIN_READINESS_SUPPORT_RESOURCES', value: base64(string(adminReadinessSupportResources)) }
-          { name: 'ARCHIVE_UI_ENABLED', value: string(archiveUiEnabled) }
-          { name: 'ARCHIVE_REQUIRE_AUTH', value: string(!privateAnonymousWebUi) }
+          { name: 'ARCHIVE_UI_ENABLED', value: toLower(string(archiveUiEnabled)) }
+          { name: 'ARCHIVE_REQUIRE_AUTH', value: toLower(string(!privateAnonymousWebUi)) }
           { name: 'ARCHIVE_ALLOWED_PRINCIPALS', value: adminAuthConfigured && archiveUiEnabled ? archiveAllowedPrincipals : '' }
           { name: 'FEEDBACK_UI_ENABLED', value: 'false' }
           { name: 'MAX_CONCURRENT_ANALYSES', value: '1' }
+          { name: 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', value: deployCapabilityHost ? modelDeploymentName : '' }
+          { name: 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', value: deployCapabilityHost ? simpleModelDeploymentName : '' }
+          { name: 'ADMIN_READINESS_PROMPT_AGENTS', value: base64(string(promptAgentNames)) }
+          { name: 'ADMIN_READINESS_CONTAINER_JOBS', value: base64(string(schedulerRequested ? [schedulerJobName] : [])) }
+          { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: deployCapabilityHost ? communicationServicesEndpoint : '' }
+          { name: 'EMAIL_SENDER_ADDRESS', value: deployCapabilityHost ? emailSenderAddress : '' }
+          { name: 'EMAIL_RECIPIENT_ADDRESS', value: deployCapabilityHost ? emailRecipientAddress : '' }
+          { name: 'OTEL_ENABLED', value: toLower(string(telemetryConfigured)) }
+          { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: telemetryConfigured ? existingInsights!.properties.ConnectionString : '' }
         ]
         probes: [
           {
@@ -683,6 +862,7 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
   }
   dependsOn: [
     privateEndpoints
+    controlPlaneRoles
   ]
 }
 
@@ -729,4 +909,23 @@ output ktFoundation object = {
   controlPlanePrincipalId: controlPlaneIdentity.outputs.principalId
   controlPlaneClientId: controlPlaneIdentity.outputs.clientId
   logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceResourceId
+  controlPlaneRolesRequested: deployCapabilityHost && assignControlPlaneRoles
+  schedulerJobRequested: schedulerRequested
+  runtimeSetup: {
+    schemaVersion: 1
+    foundryAccountName: foundryAccountName
+    projectName: projectName
+    projectResourceId: resourceId('Microsoft.CognitiveServices/accounts/projects', foundryAccountName, projectName)
+    projectEndpoint: foundryProjectEndpoint
+    hostedAgentName: foundryHostedAgentName
+    modelDeploymentName: deployCapabilityHost ? modelDeploymentName : ''
+    simpleModelDeploymentName: deployCapabilityHost ? simpleModelDeploymentName : ''
+    promptAgentNames: promptAgentNames
+    azureMcpServerUrl: azureMcpServerUrl
+    azureMcpProjectConnectionName: azureMcpProjectConnectionName
+    schedulerJobName: schedulerRequested ? schedulerJobName : ''
+    applicationInsightsName: telemetryConfigured ? applicationInsightsName : ''
+    publicationRequired: true
+    scheduledRunsEnabled: false
+  }
 }

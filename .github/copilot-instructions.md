@@ -373,7 +373,7 @@ Keep global `AllowAnonymous`
 for health/API-key routes, application-level authorization, HTTPS and same-origin redirects.
 Store the Entra value only as an App secret; bind Admin config in `azbrief-state/admin-config.json`,
 Archive links and readiness targets. Admin activation sets minReplicas=1 with disclosed idle cost.
-Do not create Entra registrations, issue secrets, assign runtime RBAC or mark applicationReady=true.
+Do not create Entra registrations, issue secrets or mark applicationReady=true from web setup alone.
 Operators register the exact Web callback and accept actual login, refusal and Blob access.
 CLI `--stage complete` requires the existing foundation and avoids account replay. It may reuse
 only matching known web settings; default `both`/`foundation` must reject an authenticated or
@@ -400,19 +400,50 @@ Keep Incremental replay and matching BYO connections. CLI rejects pre-existing p
 unready or mismatched hosts before touching connections; never delete/reset them automatically.
 Old installations need separately approved, data-loss-aware recovery. Do not move Korea Central
 to capabilitySettings preview based on documentation for other regions, or invent a BYO grace period.
-KT runtime RBAC for Container App/Job and Hosted Agent identities is operator-managed after
-deployment. Keep principal outputs and `applicationReady=false`, but do not emit control-plane
-Storage/Archive/Foundry role assignments or add automatic Hosted evidence grants. Preserve the
-distinct project identity's BYO provisioning/data roles; they are not runtime evidence permissions.
-Incremental omission leaves old assignments intact; never delete them or expand scope implicitly.
+KT stage two automatically assigns the control-plane UAMI RG Reader, project Foundry User and
+Blob Data Contributor on each application container. Existing approved Insights/email inputs add
+only component-scoped Monitoring Metrics Publisher or the supplied minimum ACS sender role.
+Require deployment roleAssignments/write; Portal confirms this and always enables the stage-two
+grants. `assignControlPlaneRoles=false` remains an advanced CLI-only manual exception. Preserve
+principal outputs, `applicationReady=false`, distinct project BYO permissions and operator-managed
+Hosted evidence/data roles. Never give the control plane tenant evidence scope, account-wide Blob
+access, ACS deletion/key-management rights or an automatic custom role definition. CLI derives
+existing assignment names from fresh exact principal/role/scope inventory; failures and conditional
+assignments block, never become an empty create plan. Portal deterministic names do not adopt
+different legacy manual names; use CLI for those. Never delete or expand old grants implicitly.
 KT Admin readiness binds actual Environment/App names and UAMI/Storage/Cosmos/Search descriptors
 through the existing Base64-JSON settings. Preserve legacy App projections in CLI preflight and
 reject redirected, extended or malformed metadata; descriptor keys remain case-sensitive.
-These are non-secret lookup targets, not new resources or automatic role assignments. Account/
+These descriptors themselves are non-secret lookup targets, not new resources or permissions. Account/
 project ARM 403s concern the control-plane UAMI's scoped reads, while Agent listing requires project
 data permissions and private reachability. A failed Agent listing cannot prove an absent Hosted
-version; 0/6 role mappings and unset model names are not inventory results. Model/Agent publication,
-Job/email setup and optional telemetry remain separate operator work. Keep actual failures explicit;
+version; 0/6 mappings and unset model names are not inventory results. Stage two wires approved
+existing model aliases and six distinct names (47-character project prefix plus role suffix, maximum
+64 characters without changing the project name), an opt-in same-image Manual Job, existing ACS email,
+and existing Entra-only Insights with its project AppInsights connection. Guard existing runtime
+bindings, Job identity/command/limits/secret refs and telemetry destination; do not reset a Schedule
+Job to Manual or drop customized settings. Models and Prompt/Hosted versions are not created by ARM.
+Normalize only the documented ARM-injected ephemeralStorage default (App 1Gi, Job 4Gi), never
+ignore other resource drift. Runtime inventory keeps a typed lazy TokenCredential and safe status
+diagnostics; denied reads remain errors.
+Accept existing ARM True/False casing semantically and emit lowercase boolean env values.
+This normalization must not permit auth-mode downgrades or bypass other projection checks.
+`scripts/setup_kt_agents.ps1` uses only successful exact-scope ktFoundation.runtimeSetup outputs,
+a clean customer clone, matching default CLI login and an isolated named azd environment for
+Configure/Publish/Check. Set the local user agent before every azd call; restore process variables
+and any previous azd default on failure or success. Keep import/full tests, roster, guarded Hosted
+deployment/smoke and intended-name ACTIVE checks.
+Guarded initial Hosted publication permits explicit not_deployed metadata, never denied/malformed
+lookups; existing and newly active names must match the declared target.
+Both publication scripts disable OTel SDK export only around local pytest and restore it in finally;
+never persist that flag.
+Windows deployment-test assertions normalize only PowerShell ANSI/continuation presentation;
+retain the exact refusal message, nonzero exit, no-secret and no-mutation checks rather than
+skipping the suite to pass publication.
+Existing Insights connection metadata is validated without exposing its value or redeclaring the Hosted-reserved
+APPLICATIONINSIGHTS_CONNECTION_STRING. Project/Hosted publishers, MCP permission/routing, approved
+model capabilities, mail/domain/recipient, and schedule acceptance remain explicit operator work.
+Keep actual failures explicit and report only completed live validation;
 Configured endpoint/identity/checkpoint/Archive checks are not live analysis or storage acceptance.
 Do not turn intentionally absent Jobs/Insights or unpublished names into fabricated Ready status.
 For Private Endpoint failures, compare the exact customer deployment operations and resource

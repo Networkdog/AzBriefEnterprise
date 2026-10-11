@@ -250,6 +250,32 @@ async def test_readiness_report_keeps_partial_failures_actionable():
 
 
 @pytest.mark.asyncio
+async def test_unconfigured_models_and_failed_agent_inventory_are_not_absence():
+    class DeniedInventory(Inventory):
+        async def list_foundry_agents(self, _endpoint):
+            return {"success": False, "data": {}, "error": "HTTP 403 (HttpResponseError)"}
+
+    collector = AdminReadinessCollector(
+        settings=_settings(admin_readiness_foundry_model_deployment=None),
+        inventory=DeniedInventory(),
+        configuration=Configuration(),
+        runtime_ready=lambda: True,
+    )
+    report = await collector.collect()
+    checks = {check.id: check for section in report.sections for check in section.checks}
+    assert checks["foundry_model_deployment"].ok is False
+    assert "no model lookup was attempted" in checks["foundry_model_deployment"].detail
+    assert "UnknownError" not in checks["foundry_model_deployment"].detail
+    assert checks["foundry_data_plane"].ok is False
+    assert "HTTP 403" in checks["foundry_data_plane"].detail
+    assert "status unknown" in checks["hosted_agent"].detail
+    assert "vnone" not in checks["hosted_agent"].detail
+    assert checks["hosted_agent"].ok is False
+    assert all(not check.ok for key, check in checks.items() if key.startswith("prompt_agent_"))
+    assert report.ok is False
+
+
+@pytest.mark.asyncio
 async def test_readiness_rejects_wrong_agent_kind_and_inactive_version():
     inventory = Inventory()
     inventory.agents["hosted"]["kind"] = "PromptAgentDefinition"

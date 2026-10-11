@@ -11,6 +11,8 @@ entry point입니다.
 | Module | 용도 | 부작용 |
 |---|---|---|
 | [setup_customer.ps1](setup_customer.ps1) | ARM 출력 기반 고객 환경 구성, MCP/Agent 게시, 초기 이미지 전환, 준비 검사·스케줄 활성화 | 단계별 로컬/원격 변경. 일반 `-WhatIf`도 ARM은 조회하며 완전 오프라인은 `-SetupFile ... -WhatIf`만 해당. `Verify`는 읽기 전용이며 모델·이메일 호출 없음 |
+| [deploy_kt.py](deploy_kt.py) | KT 기반/2단계 배포의 읽기 전용 사전검사, 기존 역할 이름 재사용 및 ARM 배포/검증 | deploy만 원격 변경. 2단계 UAMI 필수 역할 자동 구성, 명시적 기존 서비스 연결, 선택적 Manual Job; 기존 스케줄/설정/권한을 삭제하거나 확대하지 않음 |
+| [setup_kt_agents.ps1](setup_kt_agents.ps1) | 성공한 KT `runtimeSetup` 출력으로 Configure/Publish/Check | Configure는 지정한 로컬 azd binding 변경, Publish는 여섯 Prompt/Hosted 게시·smoke, Check는 원격 읽기만 수행. WhatIf는 출력 조회만, 모델·MCP·메일·스케줄 생성 없음 |
 | [deploy_dev.ps1](deploy_dev.ps1) | 이미 기동한 App/Job의 동일 digest 업그레이드와 실패 시 되돌림 | 기본 ACR 빌드 또는 `-PrebuiltImage`의 승인된 digest로 두 이미지 갱신. 새 설치의 포트 전환에는 사용하지 않음 |
 | [deploy_hosted_agent.ps1](deploy_hosted_agent.ps1) | 검토된 Hosted 패키지의 검사·게시·smoke | Foundry 버전 생성 및 명시적 모델 smoke 호출 |
 | [`test_local.py`](test_local.py) | 설정, RSS, resource 요약, 단건/기간 분석 | Azure/Foundry 조회; `--jsonl` 없으면 이메일 경로 사용 가능 |
@@ -33,6 +35,15 @@ entry point입니다.
 로컬 pytest 실행 구간에만 `OTEL_SDK_DISABLED=true`를 설정하고 성공·실패 후 기존 프로세스
 환경값을 복원합니다. 닫힌 pytest 출력 스트림에 exporter가 쓰는 오류를 방지하며, Azure
 리소스의 계측 설정이나 `.env`는 변경하지 않습니다.
+
+KT Agent handoff와 guarded Hosted 게시도 로컬 pytest 구간에만 같은 OTel export 제한을
+적용하고 기존 값을 복원합니다. KT handoff는 성공한 정확한 범위의 배포 출력과 기존 모델/MCP
+binding을 요구하며 개발 `.env`나 다른 고객의 azd 환경을 거부합니다. 기본 여섯 역할 이름은
+프로젝트 이름의 앞 47자와 접미사로 64자 이내를 유지합니다. 모델/Agent 게시나 실제 인수 없이
+구성값만으로 운영 준비 완료를 표시하지 않습니다.
+Windows의 PowerShell 오류 표시에서 ANSI와 자동 줄바꿈만 정규화해 배포 차단 메시지를
+검사합니다. 비정상 종료·비밀 미노출·원격 변경 없음의 회귀 검사는 그대로 유지하며 게시 시
+실패 테스트를 제외하지 않습니다.
 
 외부 테넌트의 ACR은 기반 배포의 `containerRegistryAuthMode=Credentials`와 고객별 pull-only
 토큰으로 연결합니다. 비밀번호는 고객사 Key Vault에만 저장하며 설치 스크립트는 값을 읽지

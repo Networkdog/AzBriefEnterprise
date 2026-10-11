@@ -7,6 +7,7 @@ import threading
 from typing import Any
 
 import httpx
+from azure.core.credentials import TokenCredential
 from structlog import get_logger
 
 from src.config import get_azure_credential
@@ -21,16 +22,17 @@ _REQUEST_TIMEOUT_S = 15.0
 class RuntimeInventoryService:
     """Fetch safe runtime metadata without making readiness decisions."""
 
-    def __init__(self, credential: Any = None) -> None:
+    def __init__(self, credential: TokenCredential | None = None) -> None:
         self._credential = credential
         self._owns_credential = credential is None
         self._credential_lock = threading.Lock()
 
-    def _get_credential(self):
+    def _get_credential(self) -> TokenCredential:
         if self._credential is None:
             with self._credential_lock:
                 if self._credential is None:
-                    self._credential = get_azure_credential()
+                    credential: TokenCredential = get_azure_credential()
+                    self._credential = credential
         return self._credential
 
     async def get_arm_resources(
@@ -103,8 +105,16 @@ class RuntimeInventoryService:
             )
             return {"success": True, "data": agents, "error": ""}
         except Exception as exc:
-            error = type(exc).__name__
-            logger.warning("admin_readiness_foundry_agents_failed", error=error)
+            error_type = type(exc).__name__
+            status_code = getattr(exc, "status_code", None)
+            error = (
+                f"HTTP {status_code} ({error_type})" if isinstance(status_code, int) else error_type
+            )
+            logger.warning(
+                "admin_readiness_foundry_agents_failed",
+                error_type=error_type,
+                status_code=status_code,
+            )
             return {"success": False, "data": {}, "error": error}
 
     def _list_foundry_agents_sync(self, project_endpoint: str) -> dict[str, dict[str, str]]:

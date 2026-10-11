@@ -714,10 +714,39 @@ Environment가 정상이고 PE만 실패했다면 전체 RG, Foundry/Capability 
 [Azure MCP 템플릿](../azure-mcp-server/README.md)은 공유 Application Insights를 전제로 합니다.
 `ktFoundation`을 `customerSetup`으로 변환해 넘기거나 그 스크립트의 검증을 생략하지 마십시오.
 
-### 배포 후 수동 운영 권한
+### 2단계 운영 설정 자동 구성
 
-운영자는 다음 최소 권한 예시를 기준으로 실제 사용할 역할과 scope를 결정하여 직접 부여합니다.
-이 표는 템플릿의 자동 부여 목록이 아닙니다. Container App의 대상은 배포 출력
+2단계는 제어면 UAMI의 필수 역할을 **기본 자동 구성**합니다. Portal의 확인란은
+권한·scope 확인용이며 역할 부여를 선택적으로 켜는 스위치가 아닙니다. 배포자에게 각 대상의
+`Microsoft.Authorization/roleAssignments/write`가 필요합니다. Contributor만으로는 부족합니다.
+승인된 기존 모델과 서비스가 준비되어 있으면 아래 설정도 같은 배포에서 연결합니다.
+
+| 입력 | 2단계 동작 | 자동 처리하지 않는 부분 |
+|---|---|---|
+| `modelDeploymentName`, 선택적 `simpleModelDeploymentName` | 실제 모델 **배포 이름**을 진단 대상으로 설정 | 모델 ID/버전/SKU 선택, 모델 생성, quota·기능 검증 |
+| `promptAgentNames` | 프로젝트 이름 앞 47자와 역할 접미사로 64자 이내의 여섯 고유 이름을 매핑. 프로젝트 이름 자체는 변경하지 않음. 기존 이름이 다르면 보호된 CLI parameter 파일로 지정 | Prompt/Hosted 데이터-plane 버전 게시 |
+| `azureMcpServerUrl`, `azureMcpProjectConnectionName` | 기존 Entra 인증 read-only MCP의 게시용 handoff | MCP App·identity·디렉터리 권한·프로젝트 연결 생성과 사설 경로 인수 |
+| `deploySchedulerJob=true` | 동일 digest·UAMI·Environment의 Manual Job 준비. 12h timeout, retry 0, 동시성 1 | 자동 스케줄 활성화, 메일 발송, 미완료 실행 재개 |
+| ACS endpoint·발신/수신 주소, `communicationServicesName`, `emailSenderRoleDefinitionId` | 같은 RG의 기존 ACS 설정과 승인된 최소 발신 역할을 연결 | ACS/도메인/역할 정의 생성, DNS 검증, 승인된 수신자 결정, 실제 발송 |
+| `applicationInsightsName` | 기존 Entra-only 컴포넌트를 App/Job과 프로젝트 `AppInsights`에 연결 | 컴포넌트/workspace 생성, 프로젝트·Hosted publisher 부여, 네트워크·실제 로그 인수 |
+
+메일 역할은 고객 권한 관리자가 준비한 기존 custom role의 GUID를 사용합니다. CLI는
+`Microsoft.Communication/CommunicationServices/read`, `.../write`,
+`Microsoft.Communication/EmailServices/write`를 확인하고 wildcard·삭제·키 관리 권한을
+거부합니다. [공식 최소 권한 구성 예시](https://learn.microsoft.com/azure/communication-services/quickstarts/email/send-email-smtp/smtp-authentication#assign-a-role-to-the-microsoft-entra-application)를
+참고하되, 이 정의 검사만으로 실제 SDK 발송 성공을 주장하지 마십시오.
+기존 ACS의 host와 endpoint도 일치해야 합니다. 광범위한
+Communication and Email Service Owner를 대신 부여하거나 액세스 키를 읽지 않습니다.
+
+1단계에서는 역할 모듈·운영 Job·메일/계측 활성화를 실행하지 않습니다. 모델·역할 이름은
+예정 대상일 뿐 Agent가 생성됐다는 뜻이 아닙니다. 이미 사용 중인 설정, Job의 identity/명령/
+timeout/동시성/비밀 참조나 Schedule 상태는 CLI가 임의로 덮어쓰지 않습니다.
+`assignControlPlaneRoles=false`는 직접 CLI에서만 선택하는 수동 RBAC 예외입니다.
+
+### 제어면 자동 권한과 별도 identity 권한
+
+다음 제어면 역할은 2단계에서 자동 부여하며 Hosted 역할은 게시 후 별도로 승인합니다.
+Container App의 대상은 배포 출력
 `controlPlanePrincipalId`이며, `controlPlaneClientId`나 `foundryProjectPrincipalId`와 혼동하지 마십시오.
 Hosted Agent는 게시 후 생성되는 **별도의 identity object ID**를 확인해야 합니다.
 
@@ -726,6 +755,8 @@ Hosted Agent는 게시 후 생성되는 **별도의 identity object ID**를 확�
 | Container App 제어면 UAMI | Admin의 ARM 기반 계정·프로젝트·모델·Environment·App·지원 서비스 진단 | Reader, 실제 검사할 리소스 또는 KT 배포 RG 범위. 분석 대상 구독 전체의 읽기 권한과는 별개 |
 | Container App 제어면 UAMI | 상태·체크포인트 및 분석 archive 저장 | Storage Blob Data Contributor, `azbrief-state`와 `azbrief-archive` 각각의 컨테이너 범위 |
 | Container App 제어면 UAMI | 배포된 Hosted Agent 호출과 Admin Agent 목록 조회 | Foundry User, 대상 Foundry 프로젝트 범위. 프로젝트에만 부여한 역할은 부모 계정 ARM 조회 권한을 대신하지 않음 |
+| Container App/Job 제어면 UAMI | 선택한 Entra-only Insights의 로그 발행 | Monitoring Metrics Publisher, 선택한 컴포넌트 범위 |
+| Container App/Job 제어면 UAMI | 선택한 기존 ACS로 발송 | 승인된 최소 sender custom role, 해당 ACS 리소스 범위 |
 | Hosted Agent 전용 ID | Azure 리소스 근거 조회 | 필요한 읽기 역할을 실제 분석 대상 구독·관리 그룹·RG에 한정. 제어면·프로젝트 ID에 대신 부여하지 않음 |
 | Hosted Agent 전용 ID | 프로젝트 Responses/네이티브 도구 사용 | Foundry User, 대상 Foundry 프로젝트 범위 |
 
@@ -736,6 +767,50 @@ Billing 등 추가 기능의 권한도 사용 여부와 서비스별 범위에 �
 이 변경은 기존 Azure 권한을 회수하지 않습니다. Incremental 배포에서 생략한 기존 역할 할당은
 유지되며 정리·범위 조정은 운영자가 별도로 승인합니다. Foundry **프로젝트 ID**에 대한 BYO
 초기화 권한은 템플릿에 남으므로, 배포자는 그 권한을 부여할 수 있는 접근 권한이 여전히 필요합니다.
+CLI는 최신 principal/role/scope 조회에서 정확히 일치하는 기존 할당 GUID를 재사용합니다.
+조건부·중복·읽기 실패는 새 역할로 우회하지 않습니다. Portal은 안정적인 GUID를 사용하므로,
+과거 수동 할당이 다른 GUID로 존재하면 CLI 경로로 검사하십시오. 자동 부여를 피하려고 기존
+역할을 삭제하거나 범위를 넓히지 마십시오. App에는 Cosmos/Search 데이터 권한이나 Hosted의
+tenant evidence Reader를 부여하지 않습니다.
+CLI는 Azure가 반환하는 [ephemeral storage 기본값](https://learn.microsoft.com/azure/container-apps/storage-mounts#ephemeral-storage)
+(0.25 vCPU App의 `1Gi`, 1 vCPU Job의 `4Gi`)을 사용자 지정으로 오인하지 않습니다.
+다른 CPU/메모리·알 수 없는 storage 값·추가 리소스 설정은 차단합니다.
+실제 ARM이 `True`/`False`로 반환한 기존 웹/계측 flag는 소문자와 같은 의미로 비교하며,
+새 배포 값은 명시적으로 소문자로 변환합니다. 인증 모드와 스케줄 보호는 그대로 유지합니다.
+
+### KT Agent 게시 handoff
+
+새 `ktFoundation.runtimeSetup` 출력은 모델 배포 이름·프로젝트·Hosted 이름과 여섯 역할 및
+MCP 연결을 포함합니다. **승인된 사설망 호스트의 깨끗한 고객 clone**에서 실행하십시오.
+개발 `.env`가 있는 clone, 다른 기본 Azure CLI 로그인이나 다른 고객의 azd 환경은 거부합니다.
+기존 stage-two 출력에 `runtimeSetup`이 없으면 새 ARM/UI를 먼저 2단계로 적용해야 합니다.
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+pwsh -File .\scripts\setup_kt_agents.ps1 -SubscriptionId "<subscription-guid>" `
+  -ResourceGroup "<customer-rg>" -DeploymentName "<successful-stage-two>" `
+  -Environment "kt-customer" -Stage Configure -WhatIf
+pwsh -File .\scripts\setup_kt_agents.ps1 -SubscriptionId "<subscription-guid>" `
+  -ResourceGroup "<customer-rg>" -DeploymentName "<successful-stage-two>" `
+  -Environment "kt-customer" -Stage Configure
+pwsh -File .\scripts\setup_kt_agents.ps1 -SubscriptionId "<subscription-guid>" `
+  -ResourceGroup "<customer-rg>" -DeploymentName "<successful-stage-two>" `
+  -Environment "kt-customer" -Stage Publish
+pwsh -File .\scripts\setup_kt_agents.ps1 -SubscriptionId "<subscription-guid>" `
+  -ResourceGroup "<customer-rg>" -DeploymentName "<successful-stage-two>" `
+  -Environment "kt-customer" -Stage Check
+```
+
+Configure는 지정한 환경에 비밀이 아닌 binding을 기록하고 기존 기본 환경을 보존합니다.
+Publish는 import/full pytest → 여섯 Prompt 게시 → roster `--check` →
+기존 guarded Hosted 게시·smoke → 정확한 Hosted 이름의 ACTIVE 버전을 확인합니다.
+최초 게시의 명시적 `not_deployed` 상태는 지원하지만 조회 거부/잘못된 ACTIVE 메타데이터를
+그 상태로 바꾸지 않습니다. 기존 Agent 이름이 선언한 대상과 다르면 게시 전에 중단합니다.
+Check는 원격 게시 없이 roster/Hosted 상태를 검사합니다. WhatIf는 배포 출력만 조회하고
+azd/Python/게시를 실행하지 않습니다. 호출자의 프로세스 환경은 성공·실패 후 복원하며,
+로컬 pytest에만 `OTEL_SDK_DISABLED=true`를 적용합니다. 테스트 실패는 게시 중단 사유이지
+skip 옵션을 추가할 이유가 아닙니다.
+이 스크립트는 모델, MCP, Hosted identity 권한이나 스케줄을 자동 만들지 않습니다.
 
 ### Configuration status 진단
 
@@ -747,12 +822,12 @@ Admin **Overview → Configuration status**는 그보다 넓은 운영 구성을
 |---|---|
 | 계정·프로젝트 `lookup failed (HTTP 403)` | Admin 조회를 실행하는 **Container App UAMI**의 ARM 읽기 권한을 확인. 점프박스 사용자나 배포자의 Owner 권한은 앱에 전달되지 않음 |
 | Agent data plane `HttpResponseError` | 같은 UAMI의 프로젝트 Foundry User와 앱에서의 프로젝트 DNS/사설 연결 확인. 예외 종류만으로 RBAC와 네트워크 중 하나를 단정하지 않음 |
-| Hosted Agent `vnone`, `no kind`, `no status` | 앞선 목록 조회가 실패하면 버전 존재 여부를 확인할 수 없음. 데이터 조회 성공 후 정확한 이름·`HostedAgentDefinition`·ACTIVE 버전 확인 |
+| Hosted Agent의 버전·kind·status를 확인하지 못함 | 앞선 목록 조회 실패는 존재 여부 미확인. 새 이미지의 진단은 `Status unknown`으로 구분하며 데이터 조회 성공 후 정확한 이름·`HostedAgentDefinition`·ACTIVE 버전 확인 |
 | Prompt roster `0/6 roles` | **진단용 역할 이름 매핑이 비어 있음**. 실제 프로젝트의 Agent 수가 0이라는 증거가 아님. 게시한 여섯 Agent와 역할 매핑을 함께 확인 |
-| 모델 `Not configured · UnknownError` | 진단용 모델 배포 이름이 없음. 해당 ARM 요청이 생성되지 않아 발생하는 표시이며 모델 배포가 실패했다는 증거가 아님 |
+| 모델 `Not configured` | 진단용 모델 배포 이름이 없으면 조회를 시도하지 않음. 새 이미지에서는 UnknownError와 구분. 실제 계정의 모델 목록도 별도로 확인 |
 | Environment·App·지원 서비스 `No expected ... configured` | 이전 KT 템플릿의 진단 대상 누락. 새 템플릿의 대상 메타데이터를 적용한 뒤 실제 조회 권한·상태 확인 |
 | Admin store `HTTPStatusError` | `ADMIN_CONFIG_BLOB_URL`, UAMI의 state 컨테이너 데이터 권한, Storage 사설 DNS/접근 확인. 정상 404의 아직 없는 설정 Blob은 빈 초기 상태로 처리하므로 임의 파일 생성으로 우회하지 않음 |
-| Job·메일·Application Insights 미구성 | KT 기반 템플릿의 의도적인 제외 또는 후속 운영 작업. 이번 수정은 리소스·자격 증명·스케줄을 자동 생성하지 않음 |
+| Job·메일·Application Insights 미구성 | 위의 선택적 운영 입력/실제 서비스가 필요함. Manual Job과 비활성 계측은 Attention을 유지하며 스케줄/자격 증명으로 우회하지 않음 |
 
 새 템플릿은 다음 세 환경 변수를 **실제로 배포한 이름에서 생성한 Base64 JSON**으로 연결합니다.
 
@@ -770,15 +845,14 @@ Secret·Blob 데이터·tenant evidence나 운영 권한은 이 메타데이터�
 
 배포 후 운영자는 필요한 기능을 다음 순서로 준비합니다.
 
-1. 실제 App의 UAMI `controlPlanePrincipalId`를 확인하여 위의 범위가 제한된 ARM Reader,
-   프로젝트 Foundry User와 두 컨테이너 Blob 역할을 직접 부여하고 전파 후 다시 검사합니다.
+1. 실제 App의 UAMI `controlPlanePrincipalId`와 2단계의 자동 RG Reader,
+   프로젝트 Foundry User 및 두 컨테이너 Blob 역할을 확인하고 전파 후 다시 검사합니다.
    `controlPlaneClientId`, Foundry project principal, Hosted principal은 서로 다른 대상입니다.
    [Foundry User의 공식 권한](https://learn.microsoft.com/azure/role-based-access-control/built-in-roles/ai-machine-learning#foundry-user)
    과 ARM/Blob 데이터 권한을 구분하며 Contributor/Owner나 계정 전체 Blob 권한으로 확대하지 않습니다.
-2. 승인된 모델을 별도로 배포하고 `ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT`에 **배포 이름**을
-   설정합니다. 모델 ID와 다릅니다. 두 번째 모델이 있으면
-   `ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT`도 설정합니다.
-3. 고유한 여섯 Prompt Agent를 게시하고 `ADMIN_READINESS_PROMPT_AGENTS`에 JSON 객체로 실제
+2. 승인된 모델을 먼저 배포하고 2단계에 `modelDeploymentName`과 선택적
+   `simpleModelDeploymentName`을 입력합니다. 모델 ID가 아니라 배포 이름입니다.
+3. 위의 handoff로 고유한 여섯 Prompt Agent를 게시합니다. `ADMIN_READINESS_PROMPT_AGENTS`의
    `coordinator`, `resource_graph`, `azure_mcp`, `azure_api`, `report_writer`, `quality_reviewer`
    이름을 매핑합니다. 이 값은 **조회 대상만** 지정합니다. Hosted runtime의 여섯 역할 설정,
    MCP 연결·도구·스키마와 roster `--check`도 별도로 일치해야 합니다.
@@ -788,12 +862,13 @@ Secret·Blob 데이터·tenant evidence나 운영 권한은 이 메타데이터�
 5. 메일이 필요하면 `COMMUNICATION_SERVICES_ENDPOINT`(MI 접근) 또는 보호된 connection string,
    `EMAIL_SENDER_ADDRESS`, `EMAIL_RECIPIENT_ADDRESS` 또는 Admin 구독자를 구성하고 실제 발송을
    인수합니다. 분석 시험은 먼저 이메일 없이 수행할 수 있습니다.
-6. 자동 실행이 필요하면 별도 scheduler Job과 그 이름의 `ADMIN_READINESS_CONTAINER_JOBS`를
-   구성합니다. 초기에는 Manual과 동시성 1로 검증하고 이후 스케줄을 승인합니다. 현재 진단의
+6. 자동 실행이 필요하면 `deploySchedulerJob=true`로 Manual Job과 진단 대상을 구성합니다.
+   동시성 1로 실제 실행을 인수한 뒤 스케줄을 별도로 승인합니다. 현재 진단의
    Job 검사는 Schedule/cron까지 요구하므로 Manual 시험 중에는 Attention이 정상입니다.
-7. Application Insights는 현재 KT 구성에서 배포하지 않습니다. 해당 Attention을 제거하기 위해
-   임의 리소스·외부 exporter·광범위 권한을 추가하지 마십시오. 선택적 도입은 별도 승인·
-   네트워크 인수가 필요하며, 미도입 시 제외 내역으로 기록합니다. 일반 진단의 전체 `ok`는
+7. Application Insights 컴포넌트는 새로 배포하지 않습니다. 기존 Entra-only 컴포넌트를
+   명시적으로 선택한 경우에만 설정/프로젝트 연결/제어면 publisher를 추가합니다.
+   프로젝트와 게시 후 Hosted identity의 컴포넌트 publisher는 별도로 부여하고 실제 로그를
+   인수하십시오. 미도입 시 제외 내역으로 기록합니다. 일반 진단의 전체 `ok`는
    이런 항목이 빠져 있으면 false로 남습니다.
 
 **Configured와 실제 성공은 다릅니다.** endpoint·identity·checkpoint·Archive의 일부 Ready는
@@ -806,13 +881,15 @@ Secret·Blob 데이터·tenant evidence나 운영 권한은 이 메타데이터�
 
 1. 승인된 모델 ID/버전/SKU/처리량을 배포하고 여섯 specialist를 고유 이름으로 게시합니다.
    KT 전용 azd 환경과 배포 패키지를 사용하고 개발 `.env`는 재사용하지 않습니다.
-2. 인증된 read-only Azure MCP를 이 Environment에 별도 App/ID로 구성합니다. Insights 리소스나
-   `AppInsights` 프로젝트 연결을 만들지 않습니다. Hosted에 `APPLICATIONINSIGHTS_CONNECTION_STRING`을
-   수동 선언하지 않으며 KT용 runtime은 Insights exporter를 사용하지 않도록 설정합니다.
+2. 인증된 read-only Azure MCP를 이 Environment에 별도 App/ID로 구성합니다. 선택한
+   Insights는 새로 만들지 않고 기존 컴포넌트만 연결합니다. Hosted의
+   `APPLICATIONINSIGHTS_CONNECTION_STRING`은 예약 변수이므로 manifest에 수동 선언하지 않습니다.
+   프로젝트 AppInsights 연결과 publisher 권한을 통해 주입·발행을 확인하며 미도입 상태는
+   실제 계측 수신으로 주장하지 않습니다.
 3. Hosted Agent를 게시하고 **그 ID**에 evidence 및 프로젝트 데이터 역할을 직접 부여합니다.
    제어면/프로젝트 ID에 tenant evidence Reader를 대신 부여하지 않습니다.
 4. App에 배포된 GHCR digest와 8000 `/health` 설정을 확인하고, 후속 scheduler Job에도 같은
-  승인 digest·레지스트리 인증을 적용합니다. 제어면 ID에 필요한 운영 역할을 직접 부여하고
+  승인 digest·레지스트리 인증을 적용합니다. 제어면 ID의 자동 운영 역할을 확인하고
   저장소·Foundry 호출을 검증합니다. [2단계 웹 인증 자동 구성](#2단계-웹-인증-자동-구성)을
    사용하고 실제 로그인·허용 목록 거부를 확인한 뒤 초기 API 키·private archive/checkpoint·
    관리자 설정 저장·이메일을 인수합니다.

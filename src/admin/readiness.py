@@ -216,6 +216,10 @@ class AdminReadinessCollector:
         label: str,
         action: str,
     ) -> ReadinessCheck:
+        if name == "Not configured":
+            return _check(
+                check_id, label, False, "Not configured; no lookup was attempted.", action
+            )
         if not envelope.get("success"):
             error = envelope.get("error", "UnknownError")
             return _check(check_id, label, False, f"{name} · lookup failed ({error})", action)
@@ -282,13 +286,19 @@ class AdminReadinessCollector:
             model_state = str(model_properties.get("provisioningState", "") or "")
             model = model_properties.get("model", {}) or {}
             sku = model_data.get("sku", {}) or {}
-            model_ok = bool(model_envelope.get("success") and model_state.casefold() == "succeeded")
+            model_ok = bool(
+                model_name != "Not configured"
+                and model_envelope.get("success")
+                and model_state.casefold() == "succeeded"
+            )
             model_detail = (
                 f"{model_name} · {model_state or 'no status'} · "
                 f"{model.get('name', 'no model')} {model.get('version', '')} · "
                 f"{sku.get('name', 'no SKU')} capacity {sku.get('capacity', 'none')}"
             )
-            if not model_envelope.get("success"):
+            if model_name == "Not configured":
+                model_detail = "Not configured; no model lookup was attempted."
+            elif not model_envelope.get("success"):
                 model_detail = (
                     f"{model_name} · lookup failed "
                     f"({model_envelope.get('error', 'UnknownError')})"
@@ -327,7 +337,11 @@ class AdminReadinessCollector:
                 "hosted_agent",
                 "Hosted Agent",
                 hosted_ok,
-                _agent_detail(hosted_name, hosted),
+                (
+                    _agent_detail(hosted_name, hosted)
+                    if data_plane_ok
+                    else f"{hosted_name or 'Not configured'} · status unknown: Agent listing failed"
+                ),
                 "Check the Hosted Agent name and the latest version's "
                 "HostedAgentDefinition/ACTIVE status.",
             )
@@ -359,7 +373,11 @@ class AdminReadinessCollector:
                     f"prompt_agent_{role}",
                     _ROLE_LABELS[role],
                     agent_ok,
-                    _agent_detail(agent_name, agent),
+                    (
+                        _agent_detail(agent_name, agent)
+                        if data_plane_ok or not agent_name
+                        else f"{agent_name} · status unknown: Agent listing failed"
+                    ),
                     f"Check the {role} Agent's PromptAgentDefinition/ACTIVE latest "
                     "version and readiness name.",
                 )

@@ -930,7 +930,9 @@ def test_external_registry_drift_blocks_mutation(
     result, calls = run_mock_stage(tmp_path, credentials_setup_contract, stage, scenario)
 
     assert result.returncode != 0
-    assert "BOTH resources" in result.stderr
+    stderr = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stderr)
+    stderr = re.sub(r"\r?\n[ \t]*\|[ \t]*", " ", stderr)
+    assert "BOTH resources" in stderr
     assert "must-not-leak" not in result.stdout + result.stderr
     assert not any("update" in call or call[:2] == ["az", "rest"] for call in calls)
 

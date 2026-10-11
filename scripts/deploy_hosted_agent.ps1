@@ -78,6 +78,17 @@ function Get-AgentState {
         "--output", "json"
     )
 
+    if ($state.status -ceq "not_deployed") {
+        $name = $state.PSObject.Properties["name"]
+        return [pscustomobject]@{
+            Name = if ($name) { [string]$name.Value } else { "" }
+            Version = ""
+            Status = "not_deployed"
+            ContentHash = ""
+            PlaygroundUrl = ""
+        }
+    }
+
     return [pscustomobject]@{
         Name = [string]$state.name
         Version = [string]$state.version
@@ -211,9 +222,14 @@ try {
     Invoke-NativeChecked -FilePath "python" -ArgumentList @("-c", "import src")
 
     if (-not $SkipTests) {
-        Invoke-NativeChecked -FilePath "python" -ArgumentList @(
-            "-m", "pytest", "tests/", "-o", "addopts=", "-x"
-        )
+        $previousOtel = $env:OTEL_SDK_DISABLED
+        try {
+            $env:OTEL_SDK_DISABLED = "true"
+            Invoke-NativeChecked -FilePath "python" -ArgumentList @(
+                "-m", "pytest", "tests/", "-o", "addopts=", "-x"
+            )
+        }
+        finally { $env:OTEL_SDK_DISABLED = $previousOtel }
     }
 
     if (-not $SkipRosterCheck) {
@@ -259,6 +275,10 @@ try {
     }
 
     $before = Get-AgentState
+    if ($env:FOUNDRY_HOSTED_AGENT_NAME -and $before.Status -cne "not_deployed" -and
+        $before.Name -cne $env:FOUNDRY_HOSTED_AGENT_NAME) {
+        throw "The existing Hosted Agent does not match the configured target; no deployment was started."
+    }
     Write-Host "Before deployment: version=$($before.Version), status=$($before.Status)"
 
     if (-not $PSCmdlet.ShouldProcess(
@@ -279,8 +299,9 @@ try {
     Sync-AzdEnvironmentFromStaging -StagingPath $deploymentStagingPath
     Import-AzdEnvironment
     $after = Get-AgentState
-    if ($after.Status -ne "active") {
-        throw "Hosted Agent deployment did not become active (status=$($after.Status))"
+    if ($after.Status -ne "active" -or
+        ($env:FOUNDRY_HOSTED_AGENT_NAME -and $after.Name -cne $env:FOUNDRY_HOSTED_AGENT_NAME)) {
+        throw "Hosted Agent deployment did not activate the configured target (status=$($after.Status))"
     }
 
     if (-not $SkipDoctor) {

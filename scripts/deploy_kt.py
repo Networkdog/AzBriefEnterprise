@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -12,6 +14,7 @@ from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv4Network, ip_network
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import structlog
@@ -65,6 +68,34 @@ READINESS_ENV_NAMES = frozenset(
         "ADMIN_READINESS_SUPPORT_RESOURCES",
     }
 )
+RUNTIME_SETUP_ENV_NAMES = frozenset(
+    {
+        "ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT",
+        "ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT",
+        "ADMIN_READINESS_PROMPT_AGENTS",
+        "ADMIN_READINESS_CONTAINER_JOBS",
+        "COMMUNICATION_SERVICES_ENDPOINT",
+        "EMAIL_SENDER_ADDRESS",
+        "EMAIL_RECIPIENT_ADDRESS",
+        "OTEL_ENABLED",
+        "APPLICATIONINSIGHTS_CONNECTION_STRING",
+    }
+)
+_ROLE_NAME_SUFFIXES = {
+    "coordinator": "coordinator",
+    "resource_graph": "resource-graph",
+    "azure_mcp": "azure-mcp",
+    "azure_api": "azure-api",
+    "report_writer": "report-writer",
+    "quality_reviewer": "quality-reviewer",
+}
+EMAIL_SENDER_ACTIONS = frozenset(
+    {
+        "microsoft.communication/communicationservices/read",
+        "microsoft.communication/communicationservices/write",
+        "microsoft.communication/emailservices/write",
+    }
+)
 PRIVATE_RANGES = tuple(
     IPv4Network(cidr) for cidr in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")
 )
@@ -96,6 +127,7 @@ INTERNAL_PARAMETERS = {row[3] for row in SUBNETS} | {
     "deployCapabilityHost",
     "linkedPrivateDnsZones",
     "reuseExistingApiKey",
+    "existingControlPlaneRoleAssignmentNames",
 }
 
 
@@ -228,6 +260,13 @@ def load_parameters(path: Path) -> dict[str, Any]:
         if "allowedValues" in definition and value not in definition["allowedValues"]:
             raise ValueError(f"Unsupported value for {name}")
         values[name] = value
+    if "promptAgentNames" not in supplied:
+        values["promptAgentNames"] = {
+            role: f"{values['projectName'][:47]}-{suffix}"
+            for role, suffix in _ROLE_NAME_SUFFIXES.items()
+        }
+    if "schedulerJobName" not in supplied:
+        values["schedulerJobName"] = f"job-{values['containerAppName']}"
     if not isinstance(values["existingPrivateDnsZoneIds"], dict):
         raise ValueError("existingPrivateDnsZoneIds must be an object")
     if not isinstance(values["tags"], dict) or values["tags"].get("deploymentProfile") != PROFILE:
@@ -279,7 +318,142 @@ def load_parameters(path: Path) -> dict[str, Any]:
             raise ValueError("adminEntraClientSecret must not contain whitespace")
         if secret in (api_key, values["containerRegistryPassword"]):
             raise ValueError("Entra client secret, API key and GHCR token must be different")
+    validate_runtime_setup(values)
     return values
+
+
+def validate_runtime_setup(values: dict[str, Any]) -> None:
+    """Reject partial or incompatible runtime bindings before any Azure write."""
+    agents = values["promptAgentNames"]
+    if not isinstance(agents, dict) or set(agents) != set(_ROLE_NAME_SUFFIXES):
+        raise ValueError("promptAgentNames must declare exactly the six specialist roles")
+    if (
+        any(
+            not isinstance(name, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,62}[A-Za-z0-9]", name)
+            for name in agents.values()
+        )
+        or len({name.casefold() for name in agents.values()}) != 6
+        or values["foundryHostedAgentName"].casefold()
+        in {name.casefold() for name in agents.values()}
+    ):
+        raise ValueError("promptAgentNames must contain six distinct valid 2-64 character names")
+    for name in ("modelDeploymentName", "simpleModelDeploymentName"):
+        if values[name] and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", values[name]):
+            raise ValueError(f"{name} must be a model deployment name, not an endpoint")
+    if values["simpleModelDeploymentName"] and (
+        not values["modelDeploymentName"]
+        or values["simpleModelDeploymentName"].casefold()
+        == values["modelDeploymentName"].casefold()
+    ):
+        raise ValueError("A simple model needs a separate, configured core model deployment")
+    if not re.fullmatch(r"[a-z][a-z0-9-]{0,58}[a-z0-9]", values["schedulerJobName"]):
+        raise ValueError("schedulerJobName must be a valid 2-60 character Container Apps Job name")
+    email_fields = ("communicationServicesEndpoint", "emailSenderAddress", "emailRecipientAddress")
+    if any(values[name] for name in email_fields):
+        if not all(values[name] for name in email_fields):
+            raise ValueError(
+                "Email setup needs an ACS endpoint, verified sender and approved recipient"
+            )
+        try:
+            endpoint = urlsplit(values["communicationServicesEndpoint"])
+            port = endpoint.port
+        except ValueError:
+            raise ValueError(
+                "communicationServicesEndpoint must be an Azure ACS HTTPS origin"
+            ) from None
+        if (
+            endpoint.scheme != "https"
+            or not (endpoint.hostname or "").endswith(".communication.azure.com")
+            or endpoint.username
+            or endpoint.password
+            or endpoint.query
+            or endpoint.fragment
+            or port is not None
+            or endpoint.path not in ("", "/")
+        ):
+            raise ValueError("communicationServicesEndpoint must be an Azure ACS HTTPS origin")
+        from src.feedback.models import FeedbackRequest
+
+        for name in ("emailSenderAddress", "emailRecipientAddress"):
+            try:
+                FeedbackRequest.validate_contact_email(values[name])
+                if len(values[name]) > 254:
+                    raise ValueError("email length")
+            except ValueError:
+                raise ValueError(f"{name} must be a valid email address") from None
+        if values["assignControlPlaneRoles"] and (
+            not values["communicationServicesName"] or not values["emailSenderRoleDefinitionId"]
+        ):
+            raise ValueError(
+                "Automatic email RBAC needs the existing ACS name and approved sender role GUID"
+            )
+    elif values["communicationServicesName"] or values["emailSenderRoleDefinitionId"]:
+        raise ValueError("An email role cannot be assigned without complete email configuration")
+    if values["communicationServicesName"] and not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]", values["communicationServicesName"]
+    ):
+        raise ValueError("communicationServicesName must identify the existing ACS resource")
+    if values["emailSenderRoleDefinitionId"]:
+        try:
+            UUID(values["emailSenderRoleDefinitionId"])
+        except ValueError:
+            raise ValueError("emailSenderRoleDefinitionId must be an existing role GUID") from None
+    if bool(values["azureMcpServerUrl"]) != bool(values["azureMcpProjectConnectionName"]):
+        raise ValueError("Azure MCP publication needs both server URL and project connection name")
+    if values["azureMcpServerUrl"]:
+        try:
+            endpoint = urlsplit(values["azureMcpServerUrl"])
+            port = endpoint.port
+        except ValueError:
+            raise ValueError("azureMcpServerUrl must be a valid HTTPS server URL") from None
+        if (
+            endpoint.scheme != "https"
+            or not endpoint.hostname
+            or endpoint.username
+            or endpoint.password
+            or endpoint.query
+            or endpoint.fragment
+            or (port is not None and not 1 <= port <= 65535)
+        ):
+            raise ValueError("azureMcpServerUrl must be a valid HTTPS server URL")
+        if not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", values["azureMcpProjectConnectionName"]
+        ):
+            raise ValueError("azureMcpProjectConnectionName must be a project connection name")
+    if values["applicationInsightsName"] and not re.fullmatch(
+        r"[A-Za-z0-9][A-Za-z0-9_.()-]{0,254}", values["applicationInsightsName"]
+    ):
+        raise ValueError("applicationInsightsName must identify an existing component in this RG")
+
+
+def runtime_setup_env(values: dict[str, Any]) -> dict[str, str]:
+    """Resolve non-secret stage-two runtime inputs with the same gates as Bicep."""
+    stage_two = values["deployCapabilityHost"] is True
+
+    def encoded(data: object) -> str:
+        return base64.b64encode(json.dumps(data, separators=(",", ":")).encode("utf-8")).decode(
+            "ascii"
+        )
+
+    return {
+        "ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT": (
+            values["modelDeploymentName"] if stage_two else ""
+        ),
+        "ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT": (
+            values["simpleModelDeploymentName"] if stage_two else ""
+        ),
+        "ADMIN_READINESS_PROMPT_AGENTS": encoded(values["promptAgentNames"]),
+        "ADMIN_READINESS_CONTAINER_JOBS": encoded(
+            [values["schedulerJobName"]] if stage_two and values["deploySchedulerJob"] else []
+        ),
+        "COMMUNICATION_SERVICES_ENDPOINT": (
+            values["communicationServicesEndpoint"] if stage_two else ""
+        ),
+        "EMAIL_SENDER_ADDRESS": values["emailSenderAddress"] if stage_two else "",
+        "EMAIL_RECIPIENT_ADDRESS": values["emailRecipientAddress"] if stage_two else "",
+        "OTEL_ENABLED": str(stage_two and bool(values["applicationInsightsName"])).lower(),
+    }
 
 
 def _web_ui_flags(values: dict[str, Any]) -> tuple[bool, bool]:
@@ -303,6 +477,11 @@ def _web_ui_flags(values: dict[str, Any]) -> tuple[bool, bool]:
 def _private_anonymous_web_ui(values: dict[str, Any]) -> bool:
     """Require an explicit opt-in and stage two for the KT private exception."""
     return values["deployCapabilityHost"] is True and values["enablePrivateAnonymousWebUi"] is True
+
+
+def _matches_bool_setting(value: object, expected: bool) -> bool:
+    """Compare declared boolean strings without changing their authentication meaning."""
+    return isinstance(value, str) and value.casefold() == str(expected).lower()
 
 
 class AzureCli:
@@ -406,6 +585,198 @@ def _same_id(left: str, right: str) -> bool:
     return left.rstrip("/").casefold() == right.rstrip("/").casefold()
 
 
+def control_plane_role_targets(values: dict[str, Any], group_id: str) -> dict[str, tuple[str, str]]:
+    """Declare only the configured UAMI permissions, never Hosted evidence grants."""
+    if not (values["deployCapabilityHost"] and values["assignControlPlaneRoles"]):
+        return {}
+    storage = (
+        f"{group_id}/providers/Microsoft.Storage/storageAccounts/{values['storageAccountName']}"
+    )
+    targets = {
+        "reader": (group_id, "acdd72a7-3385-48ef-bd42-f606fba81ae7"),
+        "foundryUser": (
+            f"{group_id}/providers/Microsoft.CognitiveServices/accounts/"
+            f"{values['foundryAccountName']}/projects/{values['projectName']}",
+            "53ca6127-db72-4b80-b1b0-d745d6d5456d",
+        ),
+        "stateContributor": (
+            f"{storage}/blobServices/default/containers/azbrief-state",
+            "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+        ),
+        "archiveContributor": (
+            f"{storage}/blobServices/default/containers/azbrief-archive",
+            "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+        ),
+    }
+    if values["applicationInsightsName"]:
+        targets["telemetryPublisher"] = (
+            f"{group_id}/providers/Microsoft.Insights/components/{values['applicationInsightsName']}",
+            "3913510d-42f4-4e42-8a64-420c390055eb",
+        )
+    if values["communicationServicesName"] and values["emailSenderRoleDefinitionId"]:
+        targets["emailSender"] = (
+            f"{group_id}/providers/Microsoft.Communication/communicationServices/"
+            f"{values['communicationServicesName']}",
+            values["emailSenderRoleDefinitionId"],
+        )
+    return targets
+
+
+def existing_control_plane_roles(
+    cli: AzureCli, values: dict[str, Any], principal_id: str
+) -> dict[str, str]:
+    """Reuse only exact unconditioned principal/role/scope assignments from live inventory."""
+    targets = control_plane_role_targets(values, cli.group_id)
+    if not targets:
+        return {}
+    UUID(principal_id)
+    rows = cli.json(
+        "role",
+        "assignment",
+        "list",
+        "--assignee",
+        principal_id,
+        "--all",
+        "--fill-principal-name",
+        "false",
+        "--subscription",
+        cli.subscription,
+    )
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise ValueError("Role assignment inventory did not return a complete array")
+    names: dict[str, str] = {}
+    for key, (scope, role) in targets.items():
+        matches = [
+            row
+            for row in rows
+            if row.get("principalId", "").casefold() == principal_id.casefold()
+            and _same_id(row.get("scope", ""), scope)
+            and row.get("roleDefinitionId", "").split("/")[-1].casefold() == role.casefold()
+        ]
+        if not matches:
+            continue
+        if len(matches) != 1 or matches[0].get("condition"):
+            raise ValueError(f"Existing UAMI assignment is ambiguous or conditional: {key}")
+        name = matches[0]["name"]
+        UUID(name)
+        names[key] = name
+    return names
+
+
+def _matches_container_resources(
+    resources: object, cpu: float, memory: str, ephemeral_storage: str
+) -> bool:
+    """Accept the documented ARM-injected storage size, not arbitrary resource drift."""
+    return (
+        isinstance(resources, dict)
+        and set(resources) <= {"cpu", "memory", "ephemeralStorage"}
+        and resources.get("cpu") == cpu
+        and resources.get("memory") == memory
+        and resources.get("ephemeralStorage", ephemeral_storage) == ephemeral_storage
+    )
+
+
+def validate_scheduler_projection(
+    document: dict[str, Any],
+    values: dict[str, Any],
+    group_id: str,
+    client_id: str,
+    telemetry_connection: str,
+) -> None:
+    """Reject changes to an owned Job's identity, credentials or bounded Manual runtime."""
+    props = document["properties"]
+    identity_id = (
+        f"{group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+        f"id-{values['containerAppName']}"
+    )
+    identity = document.get("identity", {})
+    identities = identity.get("userAssignedIdentities", {})
+    config = props.get("configuration", {})
+    template = props.get("template", {})
+    containers = template.get("containers", [])
+    if (
+        identity.get("type") != "UserAssigned"
+        or not isinstance(identities, dict)
+        or {key.casefold() for key in identities} != {identity_id.casefold()}
+        or config.get("triggerType") != "Manual"
+        or config.get("replicaTimeout") != 43200
+        or config.get("replicaRetryLimit") != 0
+        or config.get("manualTriggerConfig") != {"parallelism": 1, "replicaCompletionCount": 1}
+        or props.get("workloadProfileName") != "Consumption"
+        or not _same_id(
+            props.get("environmentId", ""), endpoint_specs(values, group_id)[4]["target"]
+        )
+        or template.get("volumes")
+        or not isinstance(containers, list)
+        or len(containers) != 1
+    ):
+        raise ValueError("Refusing to overwrite an operational or foreign scheduler Job")
+    container = containers[0]
+    if (
+        container.get("name") != "azbrief-scheduler"
+        or container.get("image") != values["bootstrapImage"]
+        or container.get("command") != ["python", "-m", "src.scheduler"]
+        or container.get("args")
+        or container.get("volumeMounts")
+        or not _matches_container_resources(container.get("resources"), 1, "2Gi", "4Gi")
+    ):
+        raise ValueError("Refusing to overwrite customized scheduler execution settings")
+    admin_ui, _ = _web_ui_flags(values)
+    blob = f"https://{values['storageAccountName']}.blob.core.windows.net"
+    expected_env = {
+        **runtime_setup_env(values),
+        "APPLICATIONINSIGHTS_CONNECTION_STRING": telemetry_connection,
+        "AZURE_TENANT_ID": values["tenantId"],
+        "AZURE_SUBSCRIPTION_ID": group_id.split("/")[2],
+        "AZURE_CLIENT_ID": client_id,
+        "FOUNDRY_PROJECT_ENDPOINT": (
+            f"https://{values['foundryAccountName']}.services.ai.azure.com/"
+            f"api/projects/{values['projectName']}"
+        ),
+        "FOUNDRY_HOSTED_AGENT_NAME": values["foundryHostedAgentName"],
+        "ARCHIVE_BLOB_CONTAINER_URL": f"{blob}/azbrief-archive",
+        "CHECKPOINT_BLOB_URL": f"{blob}/azbrief-state/checkpoint.json",
+        "ADMIN_CONFIG_BLOB_URL": f"{blob}/azbrief-state/admin-config.json" if admin_ui else "",
+        "MAX_CONCURRENT_ANALYSES": "1",
+        "SCHEDULE_DISPATCH_ENABLED": "true",
+        "RUN_TIME_BUDGET_S": "39600",
+    }
+    entries = container.get("env", [])
+    if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+        raise ValueError("Scheduler environment must be an array of named settings")
+    env = {entry["name"]: entry for entry in entries}
+    if len(env) != len(entries) or set(env) != set(expected_env) | {"API_KEY"}:
+        raise ValueError("Refusing to overwrite customized scheduler environment")
+    if env["API_KEY"] != {"name": "API_KEY", "secretRef": "orchestrator-api-key"} or any(
+        env[name] != {"name": name, "value": expected} for name, expected in expected_env.items()
+    ):
+        raise ValueError("Scheduler runtime bindings do not match the approved App settings")
+    credential_registry = values["containerRegistryAuthMode"] == "Credentials"
+    expected_registry = (
+        [
+            {
+                "server": "ghcr.io",
+                "username": values["containerRegistryUsername"],
+                "passwordSecretRef": "ghcr-pull-token",
+            }
+        ]
+        if credential_registry
+        else []
+    )
+    secrets = config.get("secrets") or []
+    if (
+        (config.get("registries") or []) != expected_registry
+        or {secret["name"] for secret in secrets}
+        != (
+            {"orchestrator-api-key", "ghcr-pull-token"}
+            if credential_registry
+            else {"orchestrator-api-key"}
+        )
+        or any(secret.get("keyVaultUrl") for secret in secrets)
+    ):
+        raise ValueError("Scheduler secret references or registry bindings are customized")
+
+
 def endpoint_specs(values: dict[str, Any], group_id: str) -> list[dict[str, Any]]:
     """Describe all five targets and which private endpoints the template manages."""
     return [
@@ -482,11 +853,25 @@ def validate_existing_host(cli: AzureCli, account_id: str, values: dict[str, Any
             connection.get("metadata", {}).get("ResourceId", ""), target
         ):
             raise ValueError(f"Refusing to redirect an existing Capability Host connection: {name}")
+    if values["applicationInsightsName"] and "azbrief-app-insights" in connections:
+        connection = connections["azbrief-app-insights"]
+        target = (
+            f"{cli.group_id}/providers/Microsoft.Insights/components/"
+            f"{values['applicationInsightsName']}"
+        )
+        if (
+            connection.get("category") != "AppInsights"
+            or connection.get("authType") != "ProjectManagedIdentity"
+            or not _same_id(connection.get("target", ""), target)
+            or not _same_id(connection.get("metadata", {}).get("ResourceId", ""), target)
+        ):
+            raise ValueError("Refusing to redirect an existing Foundry telemetry connection")
 
 
 def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
     """Inventory live resources and derive create flags without modifying existing subnets."""
     cli.assert_context()
+    validate_runtime_setup(values)
     vnet_id = (
         f"/subscriptions/{cli.subscription}/resourceGroups/{values['virtualNetworkResourceGroupName']}"
         f"/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
@@ -514,6 +899,31 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
         f"{cli.group_id}/providers/Microsoft.App/containerApps/{values['containerAppName']}",
         f"{cli.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-{values['containerAppName']}",
     ]
+    job_id = f"{cli.group_id}/providers/Microsoft.App/jobs/{values['schedulerJobName']}"
+    telemetry_connection = ""
+    if values["deployCapabilityHost"] and values["applicationInsightsName"]:
+        insights_id = f"{cli.group_id}/providers/Microsoft.Insights/components/{values['applicationInsightsName']}"
+        props = cli.get(insights_id, "2020-02-02")["properties"]
+        if props.get("DisableLocalAuth") is not True or not props.get("ConnectionString"):
+            raise ValueError(
+                "Existing Application Insights must be Entra-only with a connection string"
+            )
+        telemetry_connection = props["ConnectionString"]
+    if (
+        values["deployCapabilityHost"]
+        and values["deploySchedulerJob"]
+        and job_id.casefold() in by_id
+    ):
+        if (by_id[job_id.casefold()].get("tags") or {}).get("deploymentProfile") != PROFILE:
+            raise ValueError("Refusing to overwrite an operational or foreign scheduler Job")
+        job_identity = cli.get(planned_ids[-1], "2023-01-31")["properties"]
+        validate_scheduler_projection(
+            cli.get(job_id, CONTAINER_ENV_API),
+            {**values, "tenantId": cli.tenant},
+            cli.group_id,
+            job_identity["clientId"],
+            telemetry_connection,
+        )
     for resource_id in planned_ids:
         existing = by_id.get(resource_id.casefold())
         if (
@@ -529,6 +939,58 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(
             "Stage two requires a complete existing KT foundation; run stage one first"
         )
+    role_names: dict[str, str] = {}
+    if control_plane_role_targets(values, cli.group_id):
+        identity = cli.get(planned_ids[-1], "2023-01-31")["properties"]
+        role_names = existing_control_plane_roles(cli, values, identity["principalId"])
+        if values["communicationServicesName"]:
+            acs_id = (
+                f"{cli.group_id}/providers/Microsoft.Communication/communicationServices/"
+                f"{values['communicationServicesName']}"
+            )
+            acs = cli.get(acs_id, "2023-03-31")["properties"]
+            if (
+                acs.get("provisioningState") != "Succeeded"
+                or (urlsplit(values["communicationServicesEndpoint"]).hostname or "").casefold()
+                != str(acs.get("hostName", "")).casefold()
+            ):
+                raise ValueError("Existing ACS must be ready and match the configured endpoint")
+            definition = cli.get(
+                f"/subscriptions/{cli.subscription}/providers/Microsoft.Authorization/"
+                f"roleDefinitions/{values['emailSenderRoleDefinitionId']}",
+                "2022-04-01",
+            )["properties"]
+            permissions = definition.get("permissions", [])
+            actions = {
+                action.casefold()
+                for permission in permissions
+                for action in permission.get("actions", [])
+            }
+            allowed = EMAIL_SENDER_ACTIONS | {
+                "microsoft.communication/emailservices/read",
+                "microsoft.communication/operations/read",
+            }
+            if (
+                definition.get("type") != "CustomRole"
+                or not EMAIL_SENDER_ACTIONS <= actions <= allowed
+                or any(
+                    permission.get(key)
+                    for permission in permissions
+                    for key in ("notActions", "dataActions", "notDataActions")
+                )
+                or not any(
+                    _same_id(scope, f"/subscriptions/{cli.subscription}")
+                    or _same_id(scope, cli.group_id)
+                    or _same_id(scope, acs_id)
+                    for scope in definition.get("assignableScopes", [])
+                )
+            ):
+                raise ValueError(
+                    "Email sender role must be an approved minimal ACS custom role; "
+                    "wildcards, deletion and key management are not granted automatically"
+                )
+    if specs[0]["target"].casefold() in by_id:
+        validate_existing_host(cli, specs[0]["target"], values)
     app_id = planned_ids[-2]
     reuse_existing_api_key = False
     if app_id.casefold() in by_id:
@@ -558,20 +1020,20 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
             env = {entry["name"]: entry for entry in entries}
             admin_ui, archive_ui = _web_ui_flags(values)
             matches_web_request = (admin_ui or archive_ui) and all(
-                env.get(name, {}).get("value") == str(enabled).lower()
+                _matches_bool_setting(env.get(name, {}).get("value"), enabled)
                 for name, enabled in (
                     ("ADMIN_UI_ENABLED", admin_ui),
                     ("ARCHIVE_UI_ENABLED", archive_ui),
                 )
             )
             current_private_anonymous = matches_web_request and all(
-                env.get(name, {}).get("value") == "false"
+                _matches_bool_setting(env.get(name, {}).get("value"), False)
                 for name in ("ADMIN_REQUIRE_AUTH", "ARCHIVE_REQUIRE_AUTH")
             )
             if (
                 _private_anonymous_web_ui(values)
                 and any(
-                    env.get(name, {}).get("value") == "true"
+                    _matches_bool_setting(env.get(name, {}).get("value"), True)
                     for name in ("ADMIN_UI_ENABLED", "ARCHIVE_UI_ENABLED")
                 )
                 and not current_private_anonymous
@@ -704,12 +1166,55 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                     raise ValueError(
                         f"Foundation cannot overwrite customized readiness metadata: {name}"
                     )
+            expected_setup = {
+                **runtime_setup_env(values),
+                "APPLICATIONINSIGHTS_CONNECTION_STRING": telemetry_connection,
+            }
+            for name, expected_value in expected_setup.items():
+                if name not in env:
+                    continue
+                actual_value = env[name].get("value")
+                if not isinstance(actual_value, str):
+                    raise ValueError(f"{name} requires a string")
+                if values["deployCapabilityHost"] and actual_value == "":
+                    continue
+                if (
+                    name == "OTEL_ENABLED"
+                    and values["deployCapabilityHost"]
+                    and _matches_bool_setting(actual_value, False)
+                ):
+                    continue
+                if name in {"ADMIN_READINESS_PROMPT_AGENTS", "ADMIN_READINESS_CONTAINER_JOBS"}:
+                    if actual_value == expected_value:
+                        continue
+                    actual_data = Settings._decode_readiness_json(actual_value)
+                    expected_data = Settings._decode_readiness_json(expected_value)
+                    if values["deployCapabilityHost"] and actual_data in ({}, []):
+                        continue
+                    if actual_data != expected_data:
+                        raise ValueError(
+                            f"Foundation cannot overwrite configured runtime targets: {name}"
+                        )
+                elif (
+                    not _matches_bool_setting(actual_value, expected_value == "true")
+                    if name == "OTEL_ENABLED"
+                    else actual_value != expected_value
+                ):
+                    raise ValueError(
+                        f"Foundation cannot overwrite configured runtime settings: {name}"
+                    )
             legacy_web_env_names = FOUNDATION_ENV_NAMES | WEB_ENV_NAMES
-            full_env_names = legacy_web_env_names | READINESS_ENV_NAMES
+            legacy_readiness_env_names = legacy_web_env_names | READINESS_ENV_NAMES
+            full_env_names = legacy_readiness_env_names | RUNTIME_SETUP_ENV_NAMES
             permitted_env_names = (
-                (legacy_web_env_names, full_env_names)
+                (legacy_web_env_names, legacy_readiness_env_names, full_env_names)
                 if matches_web_request
-                else (FOUNDATION_ENV_NAMES, legacy_web_env_names, full_env_names)
+                else (
+                    FOUNDATION_ENV_NAMES,
+                    legacy_web_env_names,
+                    legacy_readiness_env_names,
+                    full_env_names,
+                )
             )
             permitted_secrets = {"orchestrator-api-key", "ghcr-pull-token"}
             if matches_web_request and not current_private_anonymous:
@@ -718,14 +1223,23 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                 container.get("name") != "azbrief"
                 or set(env) not in permitted_env_names
                 or len(entries) != len(env)
-                or any(env[name].get("value") != value for name, value in flags.items())
+                or any(
+                    (
+                        not _matches_bool_setting(env[name].get("value"), value == "true")
+                        if value in {"true", "false"}
+                        else env[name].get("value") != value
+                    )
+                    for name, value in flags.items()
+                )
                 or not web_env_matches
                 or env["API_KEY"].get("secretRef") != "orchestrator-api-key"
                 or env["API_KEY"].get("value")
                 or app.get("template", {}).get("scale", {}).get("minReplicas")
                 != (1 if admin_ui and matches_web_request else 0)
                 or app.get("template", {}).get("scale", {}).get("maxReplicas") != 1
-                or container.get("resources") != {"cpu": 0.25, "memory": "0.5Gi"}
+                or not _matches_container_resources(
+                    container.get("resources"), 0.25, "0.5Gi", "1Gi"
+                )
                 or configuration.get("activeRevisionsMode") != "Single"
                 or configuration.get("ingress", {}).get("targetPort") != 8000
                 or any(
@@ -757,8 +1271,6 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                     "Existing AzBrief API key is missing or ambiguous; refusing automatic rotation"
                 )
             reuse_existing_api_key = True
-    if specs[0]["target"].casefold() in by_id:
-        validate_existing_host(cli, specs[0]["target"], values)
     existing_subnets = {
         subnet["name"].casefold(): subnet for subnet in vnet["properties"]["subnets"]
     }
@@ -929,6 +1441,7 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
         values,
         existingPrivateDnsZoneIds=reuse,
         reuseExistingApiKey=reuse_existing_api_key,
+        existingControlPlaneRoleAssignmentNames=role_names,
     )
     for plan in plans:
         prepared[plan.create_parameter] = plan.create
@@ -976,6 +1489,12 @@ def wait_for_host(cli: AzureCli, scope: str, expected_name: str | None = None) -
 def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
     """Read back public-network controls and all approved endpoint/DNS bindings."""
     prepared = prepare(cli, values)
+    missing_roles = (
+        control_plane_role_targets(values, cli.group_id).keys()
+        - prepared["existingControlPlaneRoleAssignmentNames"].keys()
+    )
+    if missing_roles:
+        raise RuntimeError(f"Required UAMI role assignments are missing: {sorted(missing_roles)}")
     if any(prepared[row[3]] for row in SUBNETS):
         raise RuntimeError("A required subnet is absent after deployment")
     versions = (
@@ -1007,12 +1526,41 @@ def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
                 "Inspect deployment operations before retrying or deleting resources."
             )
     admin_ui, archive_ui = _web_ui_flags(values)
-    if admin_ui or archive_ui:
+    if values["deployCapabilityHost"] and values["deploySchedulerJob"]:
+        job = cli.get(
+            f"{cli.group_id}/providers/Microsoft.App/jobs/{values['schedulerJobName']}",
+            CONTAINER_ENV_API,
+        )
+        if job["properties"].get("provisioningState") != "Succeeded":
+            raise RuntimeError("Scheduler Job provisioning did not succeed")
+        job_identity = cli.get(
+            f"{cli.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+            f"id-{values['containerAppName']}",
+            "2023-01-31",
+        )["properties"]
+        telemetry_connection = ""
+        if values["applicationInsightsName"]:
+            telemetry_connection = cli.get(
+                f"{cli.group_id}/providers/Microsoft.Insights/components/{values['applicationInsightsName']}",
+                "2020-02-02",
+            )["properties"]["ConnectionString"]
+        validate_scheduler_projection(
+            job,
+            {**values, "tenantId": cli.tenant},
+            cli.group_id,
+            job_identity["clientId"],
+            telemetry_connection,
+        )
+    if values["deployCapabilityHost"]:
         app_id = (
             f"{cli.group_id}/providers/Microsoft.App/containerApps/{values['containerAppName']}"
         )
         app = cli.get(app_id, CONTAINER_ENV_API)["properties"]
         env = {entry["name"]: entry for entry in app["template"]["containers"][0]["env"]}
+        for name, expected in runtime_setup_env(values).items():
+            if env.get(name, {}).get("value") != expected:
+                raise RuntimeError(f"Stage-two runtime setting was not applied: {name}")
+    if admin_ui or archive_ui:
         anonymous = _private_anonymous_web_ui(values)
         expected_flags = {
             "ADMIN_UI_ENABLED": str(admin_ui).lower(),

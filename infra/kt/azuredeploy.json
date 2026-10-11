@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "17098730570293586418"
+      "templateHash": "14546231140512536152"
     }
   },
   "parameters": {
@@ -204,6 +204,118 @@
         "description": "Optional comma-separated Archive reader Object IDs, UPNs or group IDs. Administrators are readers automatically."
       }
     },
+    "assignControlPlaneRoles": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Assign all configured control-plane UAMI roles in stage two: RG Reader, project Foundry User, state/archive Blob Contributor and optional service-scoped publishing roles. Requires roleAssignments/write. False is a CLI-only manual-RBAC exception; Hosted evidence roles are never granted."
+      }
+    },
+    "existingControlPlaneRoleAssignmentNames": {
+      "type": "object",
+      "defaultValue": {},
+      "metadata": {
+        "description": "Existing exact-scope role assignment names discovered by the guarded CLI. Leave empty for deterministic new assignments; never provide names belonging to another principal or role."
+      }
+    },
+    "modelDeploymentName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing approved Foundry model deployment name, not model ID. This template does not select a model version, allocate quota or create model deployments."
+      }
+    },
+    "simpleModelDeploymentName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Optional existing separate model deployment for the Azure MCP specialist."
+      }
+    },
+    "promptAgentNames": {
+      "type": "object",
+      "defaultValue": {
+        "coordinator": "[format('{0}-coordinator', take(parameters('projectName'), 47))]",
+        "resource_graph": "[format('{0}-resource-graph', take(parameters('projectName'), 47))]",
+        "azure_mcp": "[format('{0}-azure-mcp', take(parameters('projectName'), 47))]",
+        "azure_api": "[format('{0}-azure-api', take(parameters('projectName'), 47))]",
+        "report_writer": "[format('{0}-report-writer', take(parameters('projectName'), 47))]",
+        "quality_reviewer": "[format('{0}-quality-reviewer', take(parameters('projectName'), 47))]"
+      },
+      "metadata": {
+        "description": "Expected six Prompt Agent names. Defaults use the first 47 project-name characters plus role suffixes, within the 64-character limit. Overrides must provide six distinct names. These are targets, not Agent versions."
+      }
+    },
+    "deploySchedulerJob": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Create a stage-two scheduler Job using the same pinned App image and identity. It stays Manual; automatic email/schedules require separate acceptance."
+      }
+    },
+    "schedulerJobName": {
+      "type": "string",
+      "defaultValue": "[format('job-{0}', parameters('containerAppName'))]",
+      "metadata": {
+        "description": "Name of the optional Manual scheduler Job. Preserve the name on subsequent deployments."
+      }
+    },
+    "communicationServicesEndpoint": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing approved Azure Communication Services HTTPS endpoint. No ACS resource/domain or secret is created; sender permission and mail acceptance remain operator tasks."
+      }
+    },
+    "communicationServicesName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing ACS resource name in this deployment RG. Required for automatic email role assignment; its host must match communicationServicesEndpoint."
+      }
+    },
+    "emailSenderRoleDefinitionId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "GUID of an existing customer-approved minimum-permission ACS email sender role. Required for automatic email RBAC; no role definition, broad service-owner role or ACS keys are created."
+      }
+    },
+    "emailSenderAddress": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Verified sender address on the existing ACS Email domain."
+      }
+    },
+    "emailRecipientAddress": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Approved digest recipient email address. Empty is allowed when no email setup is requested."
+      }
+    },
+    "applicationInsightsName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing Entra-only Application Insights component in this RG. Empty retains the KT no-Insights profile. This never creates a component/workspace or changes its network/auth settings."
+      }
+    },
+    "azureMcpServerUrl": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Read-only Azure MCP server HTTPS URL for the Agent publication handoff. Browser Anonymous does not disable MCP Entra authentication."
+      }
+    },
+    "azureMcpProjectConnectionName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing Foundry project connection for the read-only Azure MCP server. Used by the separate Agent publication procedure."
+      }
+    },
     "bootstrapImage": {
       "type": "string",
       "defaultValue": "ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3",
@@ -281,12 +393,15 @@
     "cosmosId": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
     "searchId": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
     "environmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
+    "controlPlaneIdentityId": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('id-{0}', parameters('containerAppName')))]",
     "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('foundryAccountName'), parameters('projectName'))]",
     "credentialRegistry": "[equals(parameters('containerRegistryAuthMode'), 'Credentials')]",
     "privateAnonymousWebUi": "[and(parameters('deployCapabilityHost'), parameters('enablePrivateAnonymousWebUi'))]",
     "adminAuthConfigured": "[and(and(and(parameters('deployCapabilityHost'), not(variables('privateAnonymousWebUi'))), not(empty(trim(parameters('adminEntraClientId'))))), not(empty(trim(parameters('adminEntraClientSecret')))))]",
     "adminUiEnabled": "[or(variables('privateAnonymousWebUi'), and(variables('adminAuthConfigured'), not(empty(trim(replace(parameters('adminAllowedPrincipals'), ',', ''))))))]",
     "archiveUiEnabled": "[or(variables('privateAnonymousWebUi'), and(variables('adminAuthConfigured'), or(variables('adminUiEnabled'), not(empty(trim(replace(parameters('archiveAllowedPrincipals'), ',', '')))))))]",
+    "schedulerRequested": "[and(parameters('deployCapabilityHost'), parameters('deploySchedulerJob'))]",
+    "telemetryConfigured": "[and(parameters('deployCapabilityHost'), not(empty(parameters('applicationInsightsName'))))]",
     "adminReadinessSupportResources": [
       {
         "id": "managed_identity",
@@ -317,6 +432,7 @@
         "api_version": "2023-11-01"
       }
     ],
+    "controlPlaneRegistry": "[if(variables('credentialRegistry'), createArray(createObject('server', 'ghcr.io', 'username', parameters('containerRegistryUsername'), 'passwordSecretRef', 'ghcr-pull-token')), createArray())]",
     "dnsZoneNames": [
       "privatelink.cognitiveservices.azure.com",
       "privatelink.openai.azure.com",
@@ -398,6 +514,90 @@
       "type": "Microsoft.App/containerApps",
       "apiVersion": "2026-01-01",
       "name": "[parameters('containerAppName')]"
+    },
+    "existingInsights": {
+      "condition": "[variables('telemetryConfigured')]",
+      "existing": true,
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2020-02-02",
+      "name": "[parameters('applicationInsightsName')]"
+    },
+    "foundryMonitoringConnection": {
+      "condition": "[variables('telemetryConfigured')]",
+      "type": "Microsoft.CognitiveServices/accounts/projects/connections",
+      "apiVersion": "2025-06-01",
+      "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'azbrief-app-insights')]",
+      "properties": {
+        "category": "AppInsights",
+        "authType": "ProjectManagedIdentity",
+        "target": "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
+        "isSharedToAll": true,
+        "metadata": {
+          "ApiType": "Azure",
+          "ResourceId": "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
+          "ApplicationInsightsConnectionString": "[reference('existingInsights').ConnectionString]",
+          "location": "[reference('existingInsights', '2020-02-02', 'full').location]"
+        }
+      },
+      "dependsOn": [
+        "existingInsights",
+        "project"
+      ]
+    },
+    "scheduler": {
+      "condition": "[variables('schedulerRequested')]",
+      "type": "Microsoft.App/jobs",
+      "apiVersion": "2026-01-01",
+      "name": "[parameters('schedulerJobName')]",
+      "location": "[parameters('location')]",
+      "tags": "[parameters('tags')]",
+      "identity": {
+        "type": "UserAssigned",
+        "userAssignedIdentities": {
+          "[format('{0}', variables('controlPlaneIdentityId'))]": {}
+        }
+      },
+      "properties": {
+        "environmentId": "[reference('containerEnvironment').outputs.resourceId.value]",
+        "workloadProfileName": "Consumption",
+        "configuration": {
+          "triggerType": "Manual",
+          "replicaTimeout": 43200,
+          "replicaRetryLimit": 0,
+          "manualTriggerConfig": {
+            "parallelism": 1,
+            "replicaCompletionCount": 1
+          },
+          "registries": "[variables('controlPlaneRegistry')]",
+          "secrets": "[concat(createArray(if(parameters('reuseExistingApiKey'), filter(listSecrets('existingContainerApp', '2026-01-01').value, lambda('secret', equals(lambdaVariables('secret').name, 'orchestrator-api-key')))[0], createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey')))), if(variables('credentialRegistry'), createArray(createObject('name', 'ghcr-pull-token', 'value', parameters('containerRegistryPassword'))), createArray()))]"
+        },
+        "template": {
+          "containers": [
+            {
+              "name": "azbrief-scheduler",
+              "image": "[parameters('bootstrapImage')]",
+              "command": [
+                "python",
+                "-m",
+                "src.scheduler"
+              ],
+              "resources": {
+                "cpu": "[json('1.0')]",
+                "memory": "2Gi"
+              },
+              "env": "[concat(createArray(createObject('name', 'AZURE_TENANT_ID', 'value', tenant().tenantId), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_CLIENT_ID', 'value', reference('controlPlaneIdentity').outputs.clientId.value), createObject('name', 'FOUNDRY_PROJECT_ENDPOINT', 'value', variables('foundryProjectEndpoint')), createObject('name', 'FOUNDRY_HOSTED_AGENT_NAME', 'value', parameters('foundryHostedAgentName')), createObject('name', 'API_KEY', 'secretRef', 'orchestrator-api-key'), createObject('name', 'ARCHIVE_BLOB_CONTAINER_URL', 'value', format('{0}azbrief-archive', reference('storage').outputs.primaryBlobEndpoint.value)), createObject('name', 'CHECKPOINT_BLOB_URL', 'value', format('{0}azbrief-state/checkpoint.json', reference('storage').outputs.primaryBlobEndpoint.value)), createObject('name', 'ADMIN_CONFIG_BLOB_URL', 'value', if(variables('adminUiEnabled'), format('{0}azbrief-state/admin-config.json', reference('storage').outputs.primaryBlobEndpoint.value), '')), createObject('name', 'MAX_CONCURRENT_ANALYSES', 'value', '1')), createArray(createObject('name', 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', 'value', if(parameters('deployCapabilityHost'), parameters('modelDeploymentName'), '')), createObject('name', 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', 'value', if(parameters('deployCapabilityHost'), parameters('simpleModelDeploymentName'), '')), createObject('name', 'ADMIN_READINESS_PROMPT_AGENTS', 'value', base64(string(parameters('promptAgentNames')))), createObject('name', 'ADMIN_READINESS_CONTAINER_JOBS', 'value', base64(string(if(variables('schedulerRequested'), createArray(parameters('schedulerJobName')), createArray())))), createObject('name', 'COMMUNICATION_SERVICES_ENDPOINT', 'value', if(parameters('deployCapabilityHost'), parameters('communicationServicesEndpoint'), '')), createObject('name', 'EMAIL_SENDER_ADDRESS', 'value', if(parameters('deployCapabilityHost'), parameters('emailSenderAddress'), '')), createObject('name', 'EMAIL_RECIPIENT_ADDRESS', 'value', if(parameters('deployCapabilityHost'), parameters('emailRecipientAddress'), '')), createObject('name', 'OTEL_ENABLED', 'value', toLower(string(variables('telemetryConfigured')))), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', if(variables('telemetryConfigured'), reference('existingInsights').ConnectionString, ''))), createArray(createObject('name', 'SCHEDULE_DISPATCH_ENABLED', 'value', 'true'), createObject('name', 'RUN_TIME_BUDGET_S', 'value', '39600')))]"
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "containerEnvironment",
+        "controlPlaneIdentity",
+        "controlPlaneRoles",
+        "existingInsights",
+        "privateEndpoints",
+        "storage"
+      ]
     },
     "peSubnet": {
       "condition": "[parameters('createPESubnet')]",
@@ -28723,6 +28923,155 @@
         "project"
       ]
     },
+    "controlPlaneRoles": {
+      "condition": "[and(parameters('deployCapabilityHost'), parameters('assignControlPlaneRoles'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "kt-control-plane-roles",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "foundryAccountName": {
+            "value": "[parameters('foundryAccountName')]"
+          },
+          "projectName": {
+            "value": "[parameters('projectName')]"
+          },
+          "storageAccountName": {
+            "value": "[parameters('storageAccountName')]"
+          },
+          "controlPlanePrincipalId": {
+            "value": "[reference('controlPlaneIdentity').outputs.principalId.value]"
+          },
+          "applicationInsightsName": "[if(variables('telemetryConfigured'), createObject('value', parameters('applicationInsightsName')), createObject('value', ''))]",
+          "communicationServicesName": {
+            "value": "[parameters('communicationServicesName')]"
+          },
+          "emailSenderRoleDefinitionId": {
+            "value": "[parameters('emailSenderRoleDefinitionId')]"
+          },
+          "existingAssignmentNames": {
+            "value": "[parameters('existingControlPlaneRoleAssignmentNames')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "6664501714431692752"
+            }
+          },
+          "parameters": {
+            "foundryAccountName": {
+              "type": "string"
+            },
+            "projectName": {
+              "type": "string"
+            },
+            "storageAccountName": {
+              "type": "string"
+            },
+            "controlPlanePrincipalId": {
+              "type": "string"
+            },
+            "applicationInsightsName": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "communicationServicesName": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "emailSenderRoleDefinitionId": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "existingAssignmentNames": {
+              "type": "object",
+              "defaultValue": {}
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[coalesce(tryGet(parameters('existingAssignmentNames'), 'reader'), guid(resourceGroup().id, parameters('controlPlanePrincipalId'), 'acdd72a7-3385-48ef-bd42-f606fba81ae7'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                "principalId": "[parameters('controlPlanePrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
+              "name": "[coalesce(tryGet(parameters('existingAssignmentNames'), 'foundryUser'), guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), parameters('controlPlanePrincipalId'), '53ca6127-db72-4b80-b1b0-d745d6d5456d'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
+                "principalId": "[parameters('controlPlanePrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-state')]",
+              "name": "[coalesce(tryGet(parameters('existingAssignmentNames'), 'stateContributor'), guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-state'), parameters('controlPlanePrincipalId'), 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+                "principalId": "[parameters('controlPlanePrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-archive')]",
+              "name": "[coalesce(tryGet(parameters('existingAssignmentNames'), 'archiveContributor'), guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-archive'), parameters('controlPlanePrincipalId'), 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+                "principalId": "[parameters('controlPlanePrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[not(empty(parameters('applicationInsightsName')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[coalesce(tryGet(parameters('existingAssignmentNames'), 'telemetryPublisher'), guid(resourceId('Microsoft.Insights/components', parameters('applicationInsightsName')), parameters('controlPlanePrincipalId'), '3913510d-42f4-4e42-8a64-420c390055eb'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')]",
+                "principalId": "[parameters('controlPlanePrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[and(not(empty(parameters('communicationServicesName'))), not(empty(parameters('emailSenderRoleDefinitionId'))))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[coalesce(tryGet(parameters('existingAssignmentNames'), 'emailSender'), guid(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), parameters('controlPlanePrincipalId'), parameters('emailSenderRoleDefinitionId')))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('emailSenderRoleDefinitionId'))]",
+                "principalId": "[parameters('controlPlanePrincipalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "controlPlaneIdentity",
+        "project",
+        "storage"
+      ]
+    },
     "containerApp": {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -28765,9 +29114,11 @@
             "value": "Single"
           },
           "authConfig": "[if(variables('privateAnonymousWebUi'), createObject('value', createObject('platform', createObject('enabled', false()), 'globalValidation', createObject('unauthenticatedClientAction', 'AllowAnonymous'), 'httpSettings', createObject('requireHttps', true()), 'identityProviders', createObject('azureActiveDirectory', createObject('enabled', false())), 'login', createObject('allowedExternalRedirectUrls', createArray(format('https://{0}.{1}', parameters('containerAppName'), reference('containerEnvironment').outputs.defaultDomain.value)), 'preserveUrlFragmentsForLogins', false()))), if(variables('adminAuthConfigured'), createObject('value', createObject('platform', createObject('enabled', true()), 'globalValidation', createObject('unauthenticatedClientAction', 'AllowAnonymous'), 'httpSettings', createObject('requireHttps', true()), 'identityProviders', createObject('azureActiveDirectory', createObject('enabled', true(), 'registration', createObject('clientId', trim(parameters('adminEntraClientId')), 'clientSecretSettingName', 'microsoft-provider-authentication-secret', 'openIdIssuer', format('{0}{1}/v2.0', environment().authentication.loginEndpoint, tenant().tenantId)), 'validation', createObject('allowedAudiences', createArray(format('api://{0}', trim(parameters('adminEntraClientId'))), trim(parameters('adminEntraClientId')))))), 'login', createObject('allowedExternalRedirectUrls', createArray(format('https://{0}.{1}', parameters('containerAppName'), reference('containerEnvironment').outputs.defaultDomain.value)), 'preserveUrlFragmentsForLogins', false()))), createObject('value', null())))]",
-          "registries": "[if(variables('credentialRegistry'), createObject('value', createArray(createObject('server', 'ghcr.io', 'username', parameters('containerRegistryUsername'), 'passwordSecretRef', 'ghcr-pull-token'))), createObject('value', createArray()))]",
+          "registries": {
+            "value": "[variables('controlPlaneRegistry')]"
+          },
           "secrets": {
-            "value": "[concat(createArray(if(parameters('reuseExistingApiKey'), filter(listSecrets('existingContainerApp', '2026-01-01').value, lambda('secret', equals(lambdaVariables('secret').name, 'orchestrator-api-key')))[0], createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey')))), if(variables('credentialRegistry'), createArray(createObject('name', 'ghcr-pull-token', 'value', parameters('containerRegistryPassword'))), createArray()), if(variables('adminAuthConfigured'), createArray(createObject('name', 'microsoft-provider-authentication-secret', 'value', parameters('adminEntraClientSecret'))), createArray()))]"
+            "value": "[concat(concat(createArray(if(parameters('reuseExistingApiKey'), filter(listSecrets('existingContainerApp', '2026-01-01').value, lambda('secret', equals(lambdaVariables('secret').name, 'orchestrator-api-key')))[0], createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey')))), if(variables('credentialRegistry'), createArray(createObject('name', 'ghcr-pull-token', 'value', parameters('containerRegistryPassword'))), createArray())), if(variables('adminAuthConfigured'), createArray(createObject('name', 'microsoft-provider-authentication-secret', 'value', parameters('adminEntraClientSecret'))), createArray()))]"
           },
           "scaleSettings": {
             "value": {
@@ -28827,11 +29178,11 @@
                   },
                   {
                     "name": "ADMIN_UI_ENABLED",
-                    "value": "[string(variables('adminUiEnabled'))]"
+                    "value": "[toLower(string(variables('adminUiEnabled')))]"
                   },
                   {
                     "name": "ADMIN_REQUIRE_AUTH",
-                    "value": "[string(not(variables('privateAnonymousWebUi')))]"
+                    "value": "[toLower(string(not(variables('privateAnonymousWebUi'))))]"
                   },
                   {
                     "name": "ADMIN_ALLOWED_PRINCIPALS",
@@ -28863,11 +29214,11 @@
                   },
                   {
                     "name": "ARCHIVE_UI_ENABLED",
-                    "value": "[string(variables('archiveUiEnabled'))]"
+                    "value": "[toLower(string(variables('archiveUiEnabled')))]"
                   },
                   {
                     "name": "ARCHIVE_REQUIRE_AUTH",
-                    "value": "[string(not(variables('privateAnonymousWebUi')))]"
+                    "value": "[toLower(string(not(variables('privateAnonymousWebUi'))))]"
                   },
                   {
                     "name": "ARCHIVE_ALLOWED_PRINCIPALS",
@@ -28880,6 +29231,42 @@
                   {
                     "name": "MAX_CONCURRENT_ANALYSES",
                     "value": "1"
+                  },
+                  {
+                    "name": "ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT",
+                    "value": "[if(parameters('deployCapabilityHost'), parameters('modelDeploymentName'), '')]"
+                  },
+                  {
+                    "name": "ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT",
+                    "value": "[if(parameters('deployCapabilityHost'), parameters('simpleModelDeploymentName'), '')]"
+                  },
+                  {
+                    "name": "ADMIN_READINESS_PROMPT_AGENTS",
+                    "value": "[base64(string(parameters('promptAgentNames')))]"
+                  },
+                  {
+                    "name": "ADMIN_READINESS_CONTAINER_JOBS",
+                    "value": "[base64(string(if(variables('schedulerRequested'), createArray(parameters('schedulerJobName')), createArray())))]"
+                  },
+                  {
+                    "name": "COMMUNICATION_SERVICES_ENDPOINT",
+                    "value": "[if(parameters('deployCapabilityHost'), parameters('communicationServicesEndpoint'), '')]"
+                  },
+                  {
+                    "name": "EMAIL_SENDER_ADDRESS",
+                    "value": "[if(parameters('deployCapabilityHost'), parameters('emailSenderAddress'), '')]"
+                  },
+                  {
+                    "name": "EMAIL_RECIPIENT_ADDRESS",
+                    "value": "[if(parameters('deployCapabilityHost'), parameters('emailRecipientAddress'), '')]"
+                  },
+                  {
+                    "name": "OTEL_ENABLED",
+                    "value": "[toLower(string(variables('telemetryConfigured')))]"
+                  },
+                  {
+                    "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                    "value": "[if(variables('telemetryConfigured'), reference('existingInsights').ConnectionString, '')]"
                   }
                 ],
                 "probes": [
@@ -30471,6 +30858,8 @@
       "dependsOn": [
         "containerEnvironment",
         "controlPlaneIdentity",
+        "controlPlaneRoles",
+        "existingInsights",
         "privateEndpoints",
         "storage"
       ]
@@ -30521,7 +30910,26 @@
         "controlPlaneIdentityResourceId": "[reference('controlPlaneIdentity').outputs.resourceId.value]",
         "controlPlanePrincipalId": "[reference('controlPlaneIdentity').outputs.principalId.value]",
         "controlPlaneClientId": "[reference('controlPlaneIdentity').outputs.clientId.value]",
-        "logAnalyticsWorkspaceResourceId": "[parameters('logAnalyticsWorkspaceResourceId')]"
+        "logAnalyticsWorkspaceResourceId": "[parameters('logAnalyticsWorkspaceResourceId')]",
+        "controlPlaneRolesRequested": "[and(parameters('deployCapabilityHost'), parameters('assignControlPlaneRoles'))]",
+        "schedulerJobRequested": "[variables('schedulerRequested')]",
+        "runtimeSetup": {
+          "schemaVersion": 1,
+          "foundryAccountName": "[parameters('foundryAccountName')]",
+          "projectName": "[parameters('projectName')]",
+          "projectResourceId": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
+          "projectEndpoint": "[variables('foundryProjectEndpoint')]",
+          "hostedAgentName": "[parameters('foundryHostedAgentName')]",
+          "modelDeploymentName": "[if(parameters('deployCapabilityHost'), parameters('modelDeploymentName'), '')]",
+          "simpleModelDeploymentName": "[if(parameters('deployCapabilityHost'), parameters('simpleModelDeploymentName'), '')]",
+          "promptAgentNames": "[parameters('promptAgentNames')]",
+          "azureMcpServerUrl": "[parameters('azureMcpServerUrl')]",
+          "azureMcpProjectConnectionName": "[parameters('azureMcpProjectConnectionName')]",
+          "schedulerJobName": "[if(variables('schedulerRequested'), parameters('schedulerJobName'), '')]",
+          "applicationInsightsName": "[if(variables('telemetryConfigured'), parameters('applicationInsightsName'), '')]",
+          "publicationRequired": true,
+          "scheduledRunsEnabled": false
+        }
       }
     }
   }

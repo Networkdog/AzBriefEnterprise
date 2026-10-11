@@ -26,6 +26,7 @@ Private Endpoints, or supporting data services into the KT environment.
 - Compiled Portal artifact: [`infra/kt/azuredeploy.json`](../../../infra/kt/azuredeploy.json)
 - Portal UI: [`infra/kt/createUiDefinition.json`](../../../infra/kt/createUiDefinition.json)
 - Read-only preflight/deploy CLI: [`scripts/deploy_kt.py`](../../../scripts/deploy_kt.py)
+- Guarded Agent handoff: [`scripts/setup_kt_agents.ps1`](../../../scripts/setup_kt_agents.ps1)
 - Contract tests: [`tests/test_kt_deployment.py`](../../../tests/test_kt_deployment.py)
 
 Never hand-edit the compiled ARM JSON. Change Bicep, compile with the pinned compiler, and keep
@@ -50,15 +51,15 @@ contract expects two standard Enterprise Portal links and one KT Portal link in 
 | Optional ACA logs | Pass `null` when no Log Analytics workspace is selected. AVM `0.16.0` accepts only `azure-monitor` or `log-analytics`, not `none`. |
 | Resource exposure | Disable public network access on Foundry, storage, Cosmos DB, Search, and the Container Apps Environment at creation. |
 | Initial application | Use the pinned GHCR AzBrief image on 8000 `/health`, not hello-world. Stage one keeps Admin/Archive off and auth required. Image startup is not operational readiness. |
-| Stage-two web setup | Accept an existing customer-tenant Entra client ID, secure secret and explicit administrator allow-list; Archive readers are optional. Configure EasyAuth, protected UI flags, Admin config/readiness and Archive links. Admin uses minReplicas=1 with disclosed idle cost. Never create a directory app, issue a secret or grant runtime RBAC implicitly. |
+| Stage-two web setup | Accept an existing customer-tenant Entra client ID, secure secret and explicit administrator allow-list; Archive readers are optional. Configure EasyAuth, protected UI flags, Admin config/readiness and Archive links. Admin uses minReplicas=1 with disclosed idle cost. Never create a directory app or issue a secret; control-plane roles follow the explicit stage-two contract below. |
 | Temporary anonymous exception | `enablePrivateAnonymousWebUi` is false by ARM default and acts only in stage two. The Portal offers it with mandatory risk acknowledgement and Entra off by default. Explicitly disable EasyAuth and both UI auth requirements only inside the internal/PNA-disabled KT profile; retain API/MCP keys, MI, HTTPS and minReplicas=1. Every reachable private client can manage/read; no user-level audit or production-auth claim. |
 | Project timing | Stage one creates the Foundry account but not the project, its connections or project roles. After the account host is ready, stage two references the account as `existing` without replaying its custom subdomain, then creates the project, role/connection bindings and BYO host together. Stage-one project IDs are planned; its principal is empty. |
 | Application image | Use an approved immutable digest and matching registry authentication. Do not deploy `latest`. |
 | GHCR credentials | Default Anonymous after verifying Public visibility and anonymous layer downloads. Explicit Credentials accepts only a read-only PAT via App secret. Never grant GHCR an Azure identity role or deploy the publisher token. |
 | API key lifecycle | No Portal key input. ARM generates the initial secure random key; complete Portal/CLI ARM inventory selects existing-secret reuse. Read failures or missing keys never trigger rotation. Keep API authentication. |
 | Identities | Keep Container Apps control-plane, Foundry project, Hosted Agent, and Azure MCP identities distinct. |
-| Runtime roles | Operators choose and grant Container App/Job and Hosted Agent runtime permissions after deployment. Preserve principal outputs; no automatic control-plane/evidence grants or deletion of existing grants. |
-| Storage | One `storageAccountName` and one Blob PE. Keep app state/archive separate and document container-scoped operator grants. Retain project-ID BYO provisioning/data roles; these share the trust boundary, not hard account isolation. |
+| Runtime roles | Stage two automatically assigns UAMI RG Reader, project Foundry User and state/archive container Blob Contributor, plus configured resource-scoped email/Insights publishers. Require roleAssignments/write; never grant Hosted evidence roles, create a broad role definition or delete old assignments. CLI-only false is a manual exception. |
+| Storage | One `storageAccountName` and one Blob PE. Keep app state/archive separate and App/Job grants container-scoped. Retain project-ID BYO provisioning/data roles; these share the trust boundary, not hard account isolation. |
 
 Built-in policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` is named “Container Apps environment should
 disable public network access,” but its actual rule denies a missing or false
@@ -197,7 +198,7 @@ The preflight must remain read-only and rerun immediately before validate, what-
     Final readback checks these plus UI activation; it does not prove a real sign-in or Blob access.
     The Portal hides and clears auth outputs outside opted-in stage two, and requires operator
     confirmation of an existing app/valid secret/Web callback/login connectivity. Registration,
-    callback updates, runtime roles and private-path acceptance stay manual.
+    callback updates, Hosted roles and private-path acceptance stay manual.
 12. The requested temporary private-anonymous option must clear all Entra outputs and reject
     unused Entra inputs in CLI files. Stage one stays disabled/auth-required; stage two explicitly
     submits `platform.enabled=false` and a disabled Entra provider, because null/Incremental
@@ -209,13 +210,38 @@ The preflight must remain read-only and rerun immediately before validate, what-
     Verify actual private reachability and Blob permissions. Existing non-auth runtime principal
     names remain `local-development`, not a verified human operator.
 13. Wire Admin's existing readiness settings to actual Environment/App and UAMI/shared Storage/
-    Cosmos/Search descriptors, encoded as Base64 JSON. This does not grant reads or provision
-    models, Agents, Jobs, mail or Insights. Reuse legacy projections when adding these metadata
+    Cosmos/Search descriptors, encoded as Base64 JSON. The metadata itself does not grant reads or provision
+    models or Agents. Reuse legacy projections when adding these metadata
     keys; keep descriptor keys canonical and reject malformed, redirected or extended targets.
     Explain scoped ARM Reader versus project Foundry User versus container Blob data access for
     the control-plane UAMI. 403/listing failure is not resource absence, 0/6 mappings is not a live
     Agent count, and Configured is not an invocation/storage result. Preserve real errors and
-    explicit post-deployment work; never add capabilities or role grants merely to green the total.
+    explicit post-deployment work; never fabricate success to green the total.
+14. Stage-two UAMI grants default on and the Portal requires scope/permission acknowledgement.
+    Match the actual principal Object ID, not client ID or project/Hosted identity. CLI reads fresh
+    exact principal/role/scope assignments and preserves existing names; failures, invalid names,
+    duplicate or conditional assignments block before writes.
+    Accept only the documented service-injected ephemeralStorage default (App 1Gi/Job 4Gi);
+    CPU/memory, unknown storage sizes and other execution/configuration drift remain blocking.
+    Accept legacy ARM True/False casing without changing boolean meaning; emit lowercase env
+    flags and retain the Entra-to-anonymous downgrade guard.
+    Deterministic Portal names cannot
+    adopt other legacy names; use the CLI for those instead of deleting old grants. Optional ACS
+    assignment needs the ready same-RG service, matching HTTPS endpoint and an approved existing
+    minimal custom role; reject wildcard, delete/key permissions and foreign assignable scopes.
+    Insights must be existing and Entra-only. Its project AppInsights connection must not redirect
+    a different destination; project/Hosted publisher permissions and actual ingestion remain separate.
+15. Models/Agent versions are not ARM metadata. Bind the existing model aliases and six distinct
+    names (project prefix capped at 47 characters, Agent names at 64), then use setup_kt_agents.ps1
+    only with a successful exact-scope runtimeSetup output,
+    matching CLI login and isolated named azd environment from a clean customer clone. WhatIf only
+    reads the handoff; Publish retains import/full pytest, roster, guarded Hosted/smoke and exact
+    intended-name ACTIVE gates. Set the local user agent before every azd call and restore caller
+    environment/default state. Disable OTel export only during local pytest and restore it even on
+    failure. Never bypass a failing publication gate. The optional scheduler stays Manual with the
+    same image, UAMI, credentials, bounded limits and runtime bindings; reject customization or a
+    Schedule reset. Existing email/telemetry inputs, Host identity grants, mail/domain/recipient,
+    network and scheduling acceptance are not invented to make 25/28 checks pass.
 
 Never infer that a same-name zone in the deployment resource group is the linked canonical zone.
 Compare full ARM IDs.

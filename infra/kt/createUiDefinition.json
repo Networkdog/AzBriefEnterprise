@@ -501,6 +501,192 @@
             }
           },
           {
+            "name": "runtimeSetupNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": "[equals(basics('deploymentStage'), 'complete')]",
+            "options": {
+              "icon": "Info",
+              "text": "운영 설정을 이번 배포에 함께 연결할 수 있습니다. 모델은 먼저 승인된 배포를 준비하고 아래에 배포 이름을 입력하십시오. 여섯 Prompt Agent 이름은 프로젝트 이름의 앞 47자에 coordinator/resource-graph/azure-mcp/azure-api/report-writer/quality-reviewer 접미사를 붙여 자동 매핑하지만 버전 게시를 대신하지 않습니다. Hosted/Prompt 실제 게시, read-only Azure MCP, 메일 검증·스케줄 활성화는 별도입니다. Ready 수치를 만들기 위해 미배포 기능을 정상 처리하지 않습니다."
+            }
+          },
+          {
+            "name": "assignControlPlaneRoles",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "2단계 UAMI 필수 역할 자동 구성을 확인했습니다.",
+            "defaultValue": true,
+            "toolTip": "2단계는 이 RG의 Reader, 프로젝트 Foundry User, state/archive 컨테이너별 Blob Data Contributor를 자동 부여합니다. 기존 Insights 연결 시 해당 컴포넌트 Monitoring Metrics Publisher, 메일 연결 시 승인된 ACS 발신 역할도 부여합니다. Hosted 근거 권한이나 기존 권한 삭제는 실행하지 않습니다.",
+            "constraints": {
+              "required": true,
+              "validationMessage": "2단계 역할 구성을 승인하고 roleAssignments/write 권한을 확인하십시오. Contributor만으로는 역할을 부여할 수 없습니다."
+            },
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
+            "name": "modelDeploymentName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "승인된 기존 core 모델 배포 이름 (선택)",
+            "defaultValue": "",
+            "constraints": {
+              "required": false,
+              "regex": "^(?:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63})?$",
+              "validationMessage": "모델 ID나 endpoint가 아닌 실제 배포 이름을 입력하십시오."
+            },
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
+            "name": "simpleModelDeploymentName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "승인된 기존 simple 모델 배포 이름 (선택)",
+            "defaultValue": "",
+            "toolTip": "별도 모델 tier를 사용하는 경우 입력합니다. 모델 버전·SKU·리전·quota·strict JSON/tool 지원은 배포 전에 검증해야 합니다.",
+            "constraints": {
+              "required": false,
+              "validations": [
+                {
+                  "regex": "^(?:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63})?$",
+                  "message": "실제 simple 모델 배포 이름을 입력하거나 비워 두십시오."
+                },
+                {
+                  "isValid": "[or(empty(steps('review').simpleModelDeploymentName), and(not(empty(steps('review').modelDeploymentName)), not(equals(toLower(steps('review').simpleModelDeploymentName), toLower(steps('review').modelDeploymentName)))))]",
+                  "message": "Simple 모델은 core 모델이 설정되어 있고 서로 다른 배포 이름이어야 합니다."
+                }
+              ]
+            },
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
+            "name": "azureMcpServerUrl",
+            "type": "Microsoft.Common.TextBox",
+            "label": "기존 read-only Azure MCP HTTPS URL (Agent 게시용, 선택)",
+            "defaultValue": "",
+            "constraints": {
+              "required": false,
+              "validations": [
+                {
+                  "regex": "^(?:https://[a-zA-Z0-9.-]+(?::[0-9]{1,5})?(?:/[^\\s?#]*)?)?$",
+                  "message": "인증 정보·query·fragment가 없는 기존 HTTPS MCP URL을 입력하십시오."
+                },
+                {
+                  "isValid": "[equals(empty(steps('review').azureMcpServerUrl), empty(steps('review').azureMcpProjectConnectionName))]",
+                  "message": "Azure MCP URL과 프로젝트 연결 이름을 함께 지정하십시오."
+                }
+              ]
+            },
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
+            "name": "azureMcpProjectConnectionName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "기존 Azure MCP 프로젝트 연결 이름 (선택)",
+            "defaultValue": "",
+            "constraints": {
+              "required": false,
+              "regex": "^(?:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63})?$",
+              "validationMessage": "승인된 Entra 인증 read-only MCP 프로젝트 연결 이름을 입력하십시오."
+            },
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
+            "name": "deploySchedulerJob",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "동일 App 이미지의 수동 scheduler Job 준비",
+            "defaultValue": false,
+            "toolTip": "job-ContainerApp이름으로 Manual Job을 생성합니다. 스케줄 실행이나 이메일을 자동 시작하지 않습니다. 현재 readiness는 스케줄 인수까지 요구하므로 Manual이면 Attention이며, 스케줄 활성화는 실제 Agent·분석·저장·메일 인수 후 별도입니다.",
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
+            "name": "configureEmail",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "검증된 기존 ACS 이메일 설정 연결",
+            "defaultValue": false,
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
+            "name": "communicationServicesName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "이 RG의 기존 Azure Communication Services 리소스 이름",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}[a-zA-Z0-9]$",
+              "validationMessage": "동일 RG의 기존 ACS 리소스 이름을 입력하십시오."
+            },
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail)]"
+          },
+          {
+            "name": "emailSenderRoleDefinitionId",
+            "type": "Microsoft.Common.TextBox",
+            "label": "승인된 기존 ACS 최소 발신 역할 definition GUID",
+            "toolTip": "고객 권한 관리자가 준비한 최소 권한 custom role을 이 ACS 리소스 범위에만 부여합니다. Communication and Email Service Owner의 삭제·키 조회/재생성 권한을 자동 부여하지 않습니다. 실제 SDK 발송은 별도로 인수하십시오.",
+            "constraints": {
+              "required": true,
+              "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+              "validationMessage": "승인된 기존 custom role의 GUID를 입력하십시오."
+            },
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail)]"
+          },
+          {
+            "name": "communicationServicesEndpoint",
+            "type": "Microsoft.Common.TextBox",
+            "label": "기존 Azure Communication Services HTTPS endpoint",
+            "constraints": {
+              "required": true,
+              "regex": "^https://[a-zA-Z0-9-]+\\.communication\\.azure\\.com/?$",
+              "validationMessage": "기존 ACS HTTPS origin을 입력하십시오."
+            },
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail)]"
+          },
+          {
+            "name": "emailSenderAddress",
+            "type": "Microsoft.Common.TextBox",
+            "label": "ACS의 검증된 발신 주소",
+            "constraints": {
+              "required": true,
+              "regex": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+              "validationMessage": "도메인 검증이 완료된 발신 주소를 입력하십시오."
+            },
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail)]"
+          },
+          {
+            "name": "emailRecipientAddress",
+            "type": "Microsoft.Common.TextBox",
+            "label": "승인된 수신 주소",
+            "constraints": {
+              "required": true,
+              "regex": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+              "validationMessage": "승인된 수신 이메일 주소를 입력하십시오."
+            },
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail)]"
+          },
+          {
+            "name": "configureTelemetry",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "승인된 기존 Entra-only Application Insights 연결",
+            "defaultValue": false,
+            "toolTip": "새 컴포넌트나 workspace를 만들지 않습니다. 동일 RG의 기존 리소스와 실제 egress·Entra publishing을 승인한 경우만 선택합니다. 선택하지 않으면 KT의 no-Insights 프로필과 Attention을 유지합니다.",
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
+            "name": "applicationInsightsName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "이 RG의 기존 Application Insights 컴포넌트 이름",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9_.()-]{0,254}$",
+              "validationMessage": "승인된 기존 Application Insights 이름을 입력하십시오."
+            },
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureTelemetry)]"
+          },
+          {
+            "name": "telemetryApproved",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "Insights가 Entra-only이고 고객의 네트워크·로그·출력 범위 승인을 받았음을 확인했습니다. 실제 수집은 별도로 인수합니다.",
+            "constraints": {
+              "required": true,
+              "validationMessage": "고객의 선택적 계측 승인을 확인하십시오."
+            },
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureTelemetry)]"
+          },
+          {
             "name": "privateAnonymousWebUi",
             "type": "Microsoft.Common.CheckBox",
             "label": "임시 Anonymous Admin·Archive 접근 (KT 사설망 한정, 최소 replica 1)",
@@ -626,7 +812,7 @@
           {
             "name": "scopeAccepted",
             "type": "Microsoft.Common.CheckBox",
-            "label": "유휴 비용과 공유 Storage의 계정 범위 Foundry 권한을 확인했으며, Container App·Hosted Agent 운영 권한은 배포 후 직접 부여합니다. Entra 앱 등록과 모델·Agent 게시·운영 Job·메일·스케줄은 별도이며, 2단계 웹 인증 자동 구성도 운영 인수 완료는 아님을 확인했습니다.",
+            "label": "유휴 비용과 공유 Storage의 계정 범위 Foundry 권한을 확인했습니다. 2단계 UAMI 필수 역할은 자동 구성되며 Hosted Agent 전용 권한은 게시 후 별도입니다. 모델·Agent 게시, 메일 도메인/발송 및 스케줄 인수는 배포 성공과 별도임을 확인했습니다.",
             "constraints": {
               "required": true,
               "validationMessage": "비용과 인프라 초기 배포 범위를 확인하십시오."
@@ -661,6 +847,18 @@
       "linkedPrivateDnsZones": "[if(equals(steps('options').dnsMode, 'auto'), coalesce(steps('network').linkedPrivateDnsZonesApi.data, parse('[]')), parse('[]'))]",
       "searchSku": "[steps('options').searchSku]",
       "deployCapabilityHost": "[equals(basics('deploymentStage'), 'complete')]",
+      "assignControlPlaneRoles": "[equals(basics('deploymentStage'), 'complete')]",
+      "modelDeploymentName": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').modelDeploymentName, '')]",
+      "simpleModelDeploymentName": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').simpleModelDeploymentName, '')]",
+      "azureMcpServerUrl": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').azureMcpServerUrl, '')]",
+      "azureMcpProjectConnectionName": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').azureMcpProjectConnectionName, '')]",
+      "deploySchedulerJob": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').deploySchedulerJob)]",
+      "communicationServicesEndpoint": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail), steps('review').communicationServicesEndpoint, '')]",
+      "communicationServicesName": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail), steps('review').communicationServicesName, '')]",
+      "emailSenderRoleDefinitionId": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail), steps('review').emailSenderRoleDefinitionId, '')]",
+      "emailSenderAddress": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail), steps('review').emailSenderAddress, '')]",
+      "emailRecipientAddress": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail), steps('review').emailRecipientAddress, '')]",
+      "applicationInsightsName": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureTelemetry), steps('review').applicationInsightsName, '')]",
       "enablePrivateAnonymousWebUi": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').privateAnonymousWebUi)]",
       "adminEntraClientId": "[if(and(equals(basics('deploymentStage'), 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi), steps('review').adminClientId, '')]",
       "adminEntraClientSecret": "[if(and(equals(basics('deploymentStage'), 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi), steps('review').adminSecret, '')]",

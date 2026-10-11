@@ -61,7 +61,7 @@ this is not read-only or production authentication. The Environment remains inte
 network access disabled; Azure access still uses Managed Identity and API/MCP keys stay required.
 Both web modes bind durable Admin configuration and use minimum replicas one (additional idle
 cost). Entra can be configured later from an existing customer app; registration, callback and
-runtime RBAC remain operator-managed. See
+Hosted identity permissions remain operator-managed. See
 [stage-two web setup](infra/kt/README.md#2단계-웹-인증-자동-구성). Image publication alone does not
 update existing apps. CLI `--stage complete` applies stage two without replaying the foundation.
 Stage two reuses the stage-one Environment's RG/name. The Portal normalizes the ARG internal flag
@@ -74,15 +74,37 @@ Stage two references the stage-one Foundry account as an existing resource and d
 account module or resubmit its globally unique custom subdomain. A same-name stage-two
 `CustomDomainInUse` therefore indicates a stale ARM/UI pair, not a reason to delete or purge the
 live stage-one account.
-KT does not assign Container App or Hosted Agent runtime roles. Operators grant these after
-deployment using the distinct identities; only project-identity permissions required for BYO
-provisioning remain in the template. Existing assignments are not deleted by Incremental replay.
+KT stage two automatically grants the control-plane UAMI RG Reader, project-scoped Foundry User
+and Blob Data Contributor on each application container. Existing approved Insights and email
+bindings add only their component/resource-scoped publishing roles. The deployer needs
+`roleAssignments/write`; no Hosted evidence permissions, account-wide application Blob role,
+role definition or secret is created. CLI preflight reuses existing exact principal/role/scope
+assignment names rather than deleting them or duplicating manually assigned roles. Portal uses
+stable assignment names; use CLI preflight for legacy assignments with different names.
+Preflight accepts Azure's documented injected ephemeral-storage sizes (App 1 GiB, Manual Job
+4 GiB) without treating those read-only defaults as customization; CPU/memory and other drift
+remain blocking.
+Legacy ARM `True`/`False` web flags are compared semantically, while new writes use lowercase
+boolean strings; this never authorizes an Entra-to-anonymous downgrade.
+`assignControlPlaneRoles=false` is an advanced CLI-only manual-RBAC exception, not the Portal
+default. Project-identity BYO permissions remain separate; Incremental replay never removes old grants.
 The KT template binds Admin readiness to its actual Environment, Container App, UAMI and shared
 Storage/Cosmos/Search resources. These non-secret descriptors do not grant read access. The
-control-plane identity needs scoped ARM Reader, project Foundry User and container-scoped Blob
-permissions separately. Models, six Prompt Agents and the Hosted Agent, mail, scheduled Job and
-optional telemetry remain post-deployment work. A configured endpoint or Archive URL is not a
-successful live call; see [configuration-status triage](infra/kt/README.md#configuration-status-진단).
+control-plane identity receives its required scoped permissions in stage two. The same deployment
+can bind approved existing model aliases and six distinct Prompt Agent names, prepare an opt-in
+same-image **Manual** Job, and connect existing ACS/Entra-only Insights configuration.
+Default specialist names use at most 47 project-name characters plus the role suffix, never
+renaming the project or exceeding the 64-character Agent-name limit.
+Email automation requires the existing ACS name and a customer-approved minimum sender role GUID.
+Insights also creates the project `AppInsights` connection; project and Hosted telemetry
+publisher permissions still need separate acceptance. No model or Prompt/Hosted Agent version is
+created by these ARM settings. Use [setup_kt_agents.ps1](scripts/setup_kt_agents.ps1) on an approved
+private-network host for the guarded `Configure`, `Publish`, and `Check` handoff from
+`ktFoundation.runtimeSetup`, with a clean customer clone and explicit named azd environment.
+Agent publication, verified mail/domain/recipient, Hosted permissions and schedule activation
+remain necessary inputs/acceptance steps. Manual Jobs and disabled telemetry remain Attention;
+the total is not fixed at 25/28 and is never forced green. A configured endpoint or Archive URL is
+not a successful live call; see [configuration-status triage](infra/kt/README.md#configuration-status-진단).
 KT temporarily defaults `deployContainerAppsPrivateEndpoint=false` for manual diagnosis: the
 Environment and four other PEs still deploy, while the ACA PE and its DNS zone group are skipped.
 Existing PEs are not deleted; internal/PNA restrictions and manual DNS/HTTPS acceptance still apply.

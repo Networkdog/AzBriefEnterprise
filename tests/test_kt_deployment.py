@@ -9,6 +9,7 @@ import subprocess
 from itertools import combinations
 from pathlib import Path
 from typing import Any
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
@@ -42,6 +43,8 @@ WEB_INPUTS = {
     "archiveAllowedPrincipals": "",
 }
 EXISTING_API_KEY = "existing-test-only-api-key-0123456789abcdef0123456789abcdef"
+UAMI_PRINCIPAL = "55555555-5555-5555-5555-555555555555"
+EMAIL_ROLE = "66666666-6666-6666-6666-666666666666"
 
 
 @pytest.fixture(scope="module")
@@ -72,6 +75,10 @@ def values(template: dict) -> dict:
         containerRegistryAuthMode="Credentials",
         containerRegistryPassword="test-only-ghcr-read-token",
     )
+    result["promptAgentNames"] = {
+        role: f"{result['projectName']}-{suffix}" for role, suffix in kt._ROLE_NAME_SUFFIXES.items()
+    }
+    result["schedulerJobName"] = f"job-{result['containerAppName']}"
     return result
 
 
@@ -149,7 +156,15 @@ def test_network_and_key_reuse_decision_are_required(template: dict):
         and not key.startswith("virtualNetwork")
         and "defaultValue" in definition
     }
-    assert defaulted_name_parameters == set(RESOURCE_NAME_DEFAULTS) | {"foundryHostedAgentName"}
+    assert defaulted_name_parameters == set(RESOURCE_NAME_DEFAULTS) | {
+        "foundryHostedAgentName",
+        "schedulerJobName",
+        "modelDeploymentName",
+        "simpleModelDeploymentName",
+        "applicationInsightsName",
+        "azureMcpProjectConnectionName",
+        "communicationServicesName",
+    }
 
 
 def test_cli_resolves_prefilled_names_from_network_and_authentication_inputs(
@@ -192,6 +207,42 @@ def test_cli_requires_explicit_subnet_role_names(tmp_path: Path, values: dict):
     path.write_text(json.dumps({"parameters": parameters}), encoding="utf-8")
     with pytest.raises(ValueError, match="Missing required parameter: peSubnetName"):
         kt.load_parameters(path)
+
+
+def test_default_runtime_names_fit_legal_long_resource_names(
+    tmp_path: Path, values: dict, wizard: dict
+):
+    project_name = "p" * 63
+    app_name = "a" * 28 + "z" * 4
+    controls = _ui_controls(wizard, "names")
+    assert re.fullmatch(_ui_regex(controls["projectName"]), project_name)
+    assert re.fullmatch(_ui_regex(controls["containerAppName"]), app_name)
+    parameters = {
+        key: {"value": values[key]}
+        for key in (
+            "location",
+            "virtualNetworkResourceGroupName",
+            "virtualNetworkName",
+            *SUBNET_NAMES,
+        )
+    }
+    parameters["projectName"] = {"value": project_name}
+    parameters["containerAppName"] = {"value": app_name}
+    path = tmp_path / "parameters.json"
+    path.write_text(json.dumps({"parameters": parameters}), encoding="utf-8")
+    loaded = kt.load_parameters(path)
+    assert loaded["projectName"] == project_name
+    assert loaded["containerAppName"] == app_name
+    template = json.loads(kt.TEMPLATE.read_text(encoding="utf-8"))
+    arm_names = {
+        role: _evaluate_ui_expression(expression, {}, parameters=loaded)
+        for role, expression in template["parameters"]["promptAgentNames"]["defaultValue"].items()
+    }
+    assert arm_names == loaded["promptAgentNames"]
+    assert len(set(loaded["promptAgentNames"].values())) == 6
+    assert max(map(len, loaded["promptAgentNames"].values())) <= 64
+    assert len(loaded["schedulerJobName"]) <= 60
+    assert loaded["schedulerJobName"].endswith("z")
 
 
 def test_cli_keeps_explicit_name_overrides(tmp_path: Path, values: dict):
@@ -411,6 +462,8 @@ def _evaluate_ui_expression(
             return arguments[0].replace(arguments[1], arguments[2])
         if function == "string":
             assert len(arguments) == 1
+            if type(arguments[0]) is bool and parameters is not None:
+                return str(arguments[0])
             return json.dumps(arguments[0], ensure_ascii=False, separators=(",", ":"))
         if function == "base64":
             assert len(arguments) == 1 and isinstance(arguments[0], str)
@@ -450,7 +503,7 @@ def _evaluate_ui_expression(
             assert type(arguments[1]) is int
             return arguments[0][arguments[1] :]
         if function == "take":
-            assert len(arguments) == 2 and isinstance(arguments[0], list)
+            assert len(arguments) == 2 and isinstance(arguments[0], (list, str))
             assert type(arguments[1]) is int
             return arguments[0][: arguments[1]]
         if function == "int":
@@ -1333,7 +1386,8 @@ def test_wizard_exposes_low_cost_dns_logs_and_explicit_stage(wizard: dict):
         "[not(steps('options').deployContainerAppsPrivateEndpoint)]"
     )
     assert "공유 Storage의 계정 범위 Foundry 권한" in review["scopeAccepted"]["label"]
-    assert "운영 권한은 배포 후 직접 부여" in review["scopeAccepted"]["label"]
+    assert "UAMI 필수 역할은 자동 구성" in review["scopeAccepted"]["label"]
+    assert "Hosted Agent 전용 권한은 게시 후 별도" in review["scopeAccepted"]["label"]
     assert {v["value"] for v in options["searchSku"]["constraints"]["allowedValues"]} == {
         "basic",
         "standard",
@@ -1407,7 +1461,10 @@ def test_compiled_template_has_no_vnet_or_insights_and_fits_arm_limit(template: 
     assert "microsoft.network/virtualnetworks" not in types
     assert "microsoft.insights/components" not in types
     assert "microsoft.operationalinsights/workspaces" not in types
-    assert "microsoft.app/jobs" not in types
+    assert template["resources"]["scheduler"]["condition"] == "[variables('schedulerRequested')]"
+    assert (
+        template["resources"]["scheduler"]["properties"]["configuration"]["triggerType"] == "Manual"
+    )
     assert kt.TEMPLATE.stat().st_size < 4 * 1024 * 1024
     assert template["outputs"]["ktFoundation"]["value"]["applicationReady"] is False
     assert "customerSetup" not in template["outputs"]
@@ -1549,7 +1606,7 @@ def test_one_private_storage_account_uses_separate_application_containers(templa
         assert container in output[field]
 
 
-def test_runtime_permissions_are_assigned_by_the_operator(template: dict):
+def test_runtime_permissions_are_confined_to_the_stage_two_role_module(template: dict):
     resources = template["resources"]
     assert (
         not {"controlPlaneStorageRole", "controlPlaneArchiveRole", "controlPlaneFoundryRole"}
@@ -1639,7 +1696,12 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
     assert template["parameters"]["bootstrapImage"]["allowedValues"] == [image]
     assert container["probes"][0]["httpGet"] == {"path": "/health", "port": 8000}
     env = {entry["name"]: entry for entry in container["env"]}
-    assert set(env) == kt.FOUNDATION_ENV_NAMES | kt.WEB_ENV_NAMES | kt.READINESS_ENV_NAMES
+    assert set(env) == (
+        kt.FOUNDATION_ENV_NAMES
+        | kt.WEB_ENV_NAMES
+        | kt.READINESS_ENV_NAMES
+        | kt.RUNTIME_SETUP_ENV_NAMES
+    )
     assert env["AZURE_TENANT_ID"]["value"] == "[tenant().tenantId]"
     assert env["AZURE_SUBSCRIPTION_ID"]["value"] == "[subscription().subscriptionId]"
     assert "controlPlaneIdentity" in env["AZURE_CLIENT_ID"]["value"]
@@ -1648,13 +1710,15 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
     assert env["API_KEY"] == {"name": "API_KEY", "secretRef": "orchestrator-api-key"}
     assert "azbrief-archive" in env["ARCHIVE_BLOB_CONTAINER_URL"]["value"]
     assert "azbrief-state/checkpoint.json" in env["CHECKPOINT_BLOB_URL"]["value"]
-    assert env["ADMIN_UI_ENABLED"]["value"] == "[string(variables('adminUiEnabled'))]"
-    assert env["ARCHIVE_UI_ENABLED"]["value"] == "[string(variables('archiveUiEnabled'))]"
+    assert env["ADMIN_UI_ENABLED"]["value"] == "[toLower(string(variables('adminUiEnabled')))]"
+    assert env["ARCHIVE_UI_ENABLED"]["value"] == "[toLower(string(variables('archiveUiEnabled')))]"
     assert env["FEEDBACK_UI_ENABLED"]["value"] == "false"
     for name in ("ADMIN_REQUIRE_AUTH", "ARCHIVE_REQUIRE_AUTH"):
-        assert env[name]["value"] == "[string(not(variables('privateAnonymousWebUi')))]"
+        assert env[name]["value"] == "[toLower(string(not(variables('privateAnonymousWebUi'))))]"
     assert env["MAX_CONCURRENT_ANALYSES"]["value"] == "1"
-    assert "APPLICATIONINSIGHTS_CONNECTION_STRING" not in env
+    assert (
+        "variables('telemetryConfigured')" in env["APPLICATIONINSIGHTS_CONNECTION_STRING"]["value"]
+    )
     assert "OTEL_SDK_DISABLED" not in env
     assert "containerRegistryPassword" not in json.dumps(env)
     assert template["parameters"]["apiKey"]["type"].casefold() == "securestring"
@@ -1669,9 +1733,9 @@ def test_container_app_uses_published_image_with_fail_closed_startup(template: d
     assert "parameters('apiKey')" in api_secret
     assert "parameters('containerRegistryPassword')" in app["secrets"]
     assert "parameters('adminEntraClientSecret')" in app["secrets"]
-    assert "ghcr.io" in app["registries"]
-    assert "ghcr-pull-token" in app["registries"]
-    assert "variables('credentialRegistry')" in app["registries"]
+    assert app["registries"] == "[variables('controlPlaneRegistry')]"
+    assert "ghcr.io" in json.dumps(template["variables"]["controlPlaneRegistry"])
+    assert "ghcr-pull-token" in json.dumps(template["variables"]["controlPlaneRegistry"])
     assert "managedIdentity" not in app["registries"]
     app_template = template["resources"]["containerApp"]["properties"]["template"]
     assert app_template["parameters"]["secrets"]["items"]["$ref"] == "#/definitions/secretType"
@@ -1753,19 +1817,462 @@ def test_kt_readiness_metadata_resolves_to_deployed_resources(template: dict, va
             resource["api_version"],
         )
     assert len(requests) == 8
-    assert (
-        not {
-            "ADMIN_READINESS_CONTAINER_JOBS",
-            "ADMIN_READINESS_PROMPT_AGENTS",
-            "ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT",
-            "APPLICATIONINSIGHTS_CONNECTION_STRING",
-        }
-        & environment.keys()
-    )
+    assert kt.RUNTIME_SETUP_ENV_NAMES <= environment.keys()
     assert template["outputs"]["ktFoundation"]["value"]["applicationReady"] is False
     assert template["outputs"]["ktFoundation"]["value"]["adminReadinessSupportResources"] == (
         "[variables('adminReadinessSupportResources')]"
     )
+
+
+@pytest.mark.parametrize("stage_two", [False, True])
+@pytest.mark.parametrize("approve_roles", [False, True])
+def test_control_plane_role_grants_default_on_and_remain_stage_two_only(
+    template: dict, values: dict, stage_two: bool, approve_roles: bool
+):
+    values.update(deployCapabilityHost=stage_two, assignControlPlaneRoles=approve_roles)
+    module = template["resources"]["controlPlaneRoles"]
+    assert template["parameters"]["assignControlPlaneRoles"]["defaultValue"] is True
+    assert _evaluate_ui_expression(module["condition"], {}, parameters=values) is (
+        stage_two and approve_roles
+    )
+    assignments = [
+        resource
+        for resource in _resources(module["properties"]["template"])
+        if resource["type"] == "Microsoft.Authorization/roleAssignments"
+    ]
+    assert len(assignments) == 6
+    reader = next(
+        resource for resource in assignments if "guid(resourceGroup()" in resource["name"]
+    )
+    assert "scope" not in reader
+    for assignment in assignments:
+        props = assignment["properties"]
+        assert props["principalId"] == "[parameters('controlPlanePrincipalId')]"
+        assert props["principalType"] == "ServicePrincipal"
+        assert "guid(" in assignment["name"]
+    roles = {resource["properties"]["roleDefinitionId"] for resource in assignments}
+    assert all(
+        role in " ".join(roles)
+        for role in (
+            "acdd72a7-3385-48ef-bd42-f606fba81ae7",
+            "53ca6127-db72-4b80-b1b0-d745d6d5456d",
+            "ba92f5b4-2d11-453d-a403-e96b0029c9fe",
+            "3913510d-42f4-4e42-8a64-420c390055eb",
+        )
+    )
+    blob = [r for r in assignments if "ba92f5b4" in r["properties"]["roleDefinitionId"]]
+    assert len(blob) == 2
+    assert all("/blobServices/containers" in r["scope"] for r in blob)
+    project = next(r for r in assignments if "53ca6127" in r["properties"]["roleDefinitionId"])
+    assert "/projects" in project["scope"]
+    assert "Hosted" not in json.dumps(_params(template, "controlPlaneRoles"))
+    assert not {"Owner", "Contributor", "Delete"} & roles
+
+
+@pytest.mark.parametrize("stage_two", [False, True])
+@pytest.mark.parametrize("job_requested", [False, True])
+def test_scheduler_job_is_opt_in_manual_and_shares_the_control_plane(
+    template: dict, values: dict, stage_two: bool, job_requested: bool
+):
+    values.update(deployCapabilityHost=stage_two, deploySchedulerJob=job_requested)
+    scheduler = template["resources"]["scheduler"]
+    assert _evaluate_ui_expression(
+        scheduler["condition"], {}, parameters=values, variables=template["variables"]
+    ) is (stage_two and job_requested)
+    configuration = scheduler["properties"]["configuration"]
+    assert configuration["triggerType"] == "Manual"
+    assert configuration["replicaTimeout"] == 43200
+    assert configuration["replicaRetryLimit"] == 0
+    assert configuration["manualTriggerConfig"] == {"parallelism": 1, "replicaCompletionCount": 1}
+    assert "scheduleTriggerConfig" not in configuration
+    container = scheduler["properties"]["template"]["containers"][0]
+    assert container["image"] == _params(template, "containerApp")["containers"][0]["image"]
+    assert container["command"] == ["python", "-m", "src.scheduler"]
+    assert "RUN_TIME_BUDGET_S" in container["env"]
+    assert "39600" in container["env"]
+    assert "SCHEDULE_DISPATCH_ENABLED" in container["env"]
+    assert "controlPlaneRoles" in scheduler["dependsOn"]
+    assert configuration["registries"] == _params(template, "containerApp")["registries"]
+    assert scheduler["identity"]["type"] == "UserAssigned"
+
+
+@pytest.mark.parametrize("stage_two", [False, True])
+def test_runtime_names_and_email_inputs_resolve_in_the_application(
+    template: dict, values: dict, stage_two: bool
+):
+    values.update(
+        deployCapabilityHost=stage_two,
+        deploySchedulerJob=True,
+        modelDeploymentName="approved-core",
+        simpleModelDeploymentName="approved-simple",
+        communicationServicesEndpoint="https://approved.communication.azure.com",
+        communicationServicesName="approved-acs",
+        emailSenderRoleDefinitionId=EMAIL_ROLE,
+        emailSenderAddress="sender@example.invalid",
+        emailRecipientAddress="operator@example.invalid",
+    )
+    env = {e["name"]: e for e in _params(template, "containerApp")["containers"][0]["env"]}
+    resolved = {
+        name: _evaluate_ui_expression(
+            env[name]["value"], {}, parameters=values, variables=template["variables"]
+        )
+        for name in kt.runtime_setup_env(values)
+    }
+    assert resolved == kt.runtime_setup_env(values)
+    settings = Settings(
+        _env_file=None,
+        azure_tenant_id=TENANT,
+        **{name.lower(): value for name, value in resolved.items()},
+    )
+    assert settings.get_admin_readiness_prompt_agents() == values["promptAgentNames"]
+    assert len(set(settings.get_admin_readiness_prompt_agents().values())) == 6
+    assert settings.admin_readiness_foundry_model_deployment == (
+        "approved-core" if stage_two else ""
+    )
+    assert settings.use_email is stage_two
+    assert settings.get_admin_readiness_container_jobs() == (
+        [values["schedulerJobName"]] if stage_two else []
+    )
+    assert settings.otel_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("overrides", "error"),
+    [
+        ({"promptAgentNames": {}}, "exactly the six"),
+        ({"promptAgentNames": {role: "duplicate" for role in kt._ROLE_NAME_SUFFIXES}}, "distinct"),
+        ({"modelDeploymentName": "https://unapproved.invalid"}, "deployment name"),
+        ({"simpleModelDeploymentName": "simple"}, "separate, configured core"),
+        ({"modelDeploymentName": "same", "simpleModelDeploymentName": "SAME"}, "separate"),
+        ({"deploySchedulerJob": "true"}, "boolean"),
+        ({"assignControlPlaneRoles": "true"}, "boolean"),
+        (
+            {"communicationServicesEndpoint": "https://x.communication.azure.com"},
+            "Email setup needs",
+        ),
+        (
+            {
+                "communicationServicesEndpoint": "http://x.communication.azure.com",
+                "emailSenderAddress": "sender@example.com",
+                "emailRecipientAddress": "to@example.com",
+            },
+            "ACS HTTPS origin",
+        ),
+        (
+            {
+                "communicationServicesEndpoint": "https://x.communication.azure.com:invalid",
+                "emailSenderAddress": "sender@example.com",
+                "emailRecipientAddress": "to@example.com",
+            },
+            "ACS HTTPS origin",
+        ),
+        (
+            {
+                "communicationServicesEndpoint": "https://x.communication.azure.com",
+                "emailSenderAddress": "not-email",
+                "emailRecipientAddress": "to@example.com",
+            },
+            "valid email",
+        ),
+        ({"azureMcpServerUrl": "https://mcp.example.com"}, "both server URL"),
+        (
+            {
+                "azureMcpServerUrl": "https://mcp.example.com:99999/mcp",
+                "azureMcpProjectConnectionName": "approved-mcp",
+            },
+            "valid HTTPS server URL",
+        ),
+        (
+            {
+                "azureMcpServerUrl": "https://mcp.example.com:invalid/mcp",
+                "azureMcpProjectConnectionName": "approved-mcp",
+            },
+            "valid HTTPS server URL",
+        ),
+        (
+            {
+                "azureMcpServerUrl": "https://mcp.example.com:0/mcp",
+                "azureMcpProjectConnectionName": "approved-mcp",
+            },
+            "valid HTTPS server URL",
+        ),
+    ],
+)
+def test_invalid_runtime_setup_stops_before_deployment(
+    tmp_path: Path, values: dict, overrides: dict, error: str
+):
+    values.update(overrides)
+    parameters = {
+        name: {"value": value}
+        for name, value in values.items()
+        if name not in kt.INTERNAL_PARAMETERS
+    }
+    path = tmp_path / "parameters.json"
+    path.write_text(json.dumps({"parameters": parameters}), encoding="utf-8")
+    with pytest.raises(ValueError, match=error):
+        kt.load_parameters(path)
+
+
+def test_legacy_application_can_receive_runtime_bindings_and_the_manual_job(
+    values: dict, vnet: dict
+):
+    values["enablePrivateAnonymousWebUi"] = True
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.application is not None
+    container = cli.application["template"]["containers"][0]
+    container["env"] = [e for e in container["env"] if e["name"] not in kt.RUNTIME_SETUP_ENV_NAMES]
+    requested = {
+        **values,
+        "deploySchedulerJob": True,
+        "modelDeploymentName": "approved-core",
+        "communicationServicesEndpoint": "https://approved.communication.azure.com",
+        "communicationServicesName": "approved-acs",
+        "emailSenderRoleDefinitionId": EMAIL_ROLE,
+        "emailSenderAddress": "sender@example.com",
+        "emailRecipientAddress": "to@example.com",
+    }
+    cli.deployments.clear()
+    kt.run(cli, requested, "deploy", "complete")
+    assert len(cli.deployments) == 1 and cli.deployments[0]["reuseExistingApiKey"] is True
+    assert cli.scheduler is not None and cli.scheduler["configuration"]["triggerType"] == "Manual"
+    assert cli.application is not None
+    env = {e["name"]: e for e in cli.application["template"]["containers"][0]["env"]}
+    assert env["ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT"]["value"] == "approved-core"
+    assert (
+        env["COMMUNICATION_SERVICES_ENDPOINT"]["value"]
+        == "https://approved.communication.azure.com"
+    )
+    kt.run(cli, requested, "deploy", "complete")
+
+
+def test_stage_two_cannot_reset_existing_scheduler_schedule(values: dict, vnet: dict):
+    values.update(deploySchedulerJob=True, enablePrivateAnonymousWebUi=True)
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.scheduler is not None
+    cli.scheduler["configuration"]["triggerType"] = "Schedule"
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="operational or foreign scheduler"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
+
+
+def test_stage_two_reuses_exact_existing_uami_role_assignment_names(values: dict, vnet: dict):
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    requested = {**values, "deployCapabilityHost": True}
+    targets = kt.control_plane_role_targets(requested, GROUP)
+    assert len(targets) == len(cli.role_assignments) == 4
+    expected = {}
+    for key, (scope, _) in targets.items():
+        assignment = next(row for row in cli.role_assignments if row["scope"] == scope)
+        assignment["name"] = str(uuid5(NAMESPACE_URL, f"manual-{key}"))
+        expected[key] = assignment["name"]
+    cli.deployments.clear()
+    kt.run(cli, values, "deploy", "complete")
+    assert cli.deployments[0]["existingControlPlaneRoleAssignmentNames"] == expected
+    assert len(cli.role_assignments) == 4
+
+
+@pytest.mark.parametrize("storage", ["1Gi", "2Gi", None])
+def test_provider_ephemeral_storage_default_is_not_app_customization(
+    values: dict, vnet: dict, storage: str | None
+):
+    values["enablePrivateAnonymousWebUi"] = True
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.application is not None
+    cli.application["template"]["containers"][0]["resources"]["ephemeralStorage"] = storage
+    cli.deployments.clear()
+    if storage == "1Gi":
+        kt.run(cli, values, "deploy", "complete")
+        assert len(cli.deployments) == 1
+    else:
+        with pytest.raises(ValueError, match="promoted or customized"):
+            kt.run(cli, values, "deploy", "complete")
+        assert not cli.deployments
+
+
+def test_provider_ephemeral_storage_default_is_not_scheduler_customization(
+    values: dict, vnet: dict
+):
+    values.update(deploySchedulerJob=True, enablePrivateAnonymousWebUi=True)
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.scheduler is not None
+    cli.scheduler["template"]["containers"][0]["resources"]["ephemeralStorage"] = "4Gi"
+    kt.run(cli, values, "deploy", "complete")
+
+
+@pytest.mark.parametrize("anonymous", [False, True])
+def test_existing_arm_bool_strings_do_not_block_safe_stage_two_reuse(
+    values: dict, vnet: dict, anonymous: bool
+):
+    values["enablePrivateAnonymousWebUi"] = anonymous
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.application is not None
+    for entry in cli.application["template"]["containers"][0]["env"]:
+        if entry["name"] in {
+            "ADMIN_UI_ENABLED",
+            "ADMIN_REQUIRE_AUTH",
+            "ARCHIVE_UI_ENABLED",
+            "ARCHIVE_REQUIRE_AUTH",
+            "OTEL_ENABLED",
+        }:
+            entry["value"] = entry["value"].capitalize()
+    cli.deployments.clear()
+    kt.run(cli, values, "deploy", "complete")
+    assert len(cli.deployments) == 1
+
+
+def test_inherited_reader_is_preserved_but_not_reused_as_an_rg_assignment(values: dict, vnet: dict):
+    cli = FakeAzure(values, vnet)
+    requested = {**values, "deployCapabilityHost": True}
+    cli.role_assignments = [
+        {
+            "scope": f"/subscriptions/{SUBSCRIPTION}",
+            "principalId": UAMI_PRINCIPAL,
+            "roleDefinitionId": "acdd72a7-3385-48ef-bd42-f606fba81ae7",
+            "name": str(uuid5(NAMESPACE_URL, "subscription-reader")),
+        }
+    ]
+    assert kt.existing_control_plane_roles(cli, requested, UAMI_PRINCIPAL) == {}
+    assert len(cli.role_assignments) == 1
+
+
+def test_conditional_uami_roles_block_replacement_before_any_write(values: dict, vnet: dict):
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    cli.role_assignments[0]["condition"] = "@Resource[type] StringEquals 'limited'"
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="ambiguous or conditional"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
+
+
+def test_role_assignment_inventory_failure_never_becomes_an_empty_create_plan(
+    monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict
+):
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    original = cli.json
+
+    def json_request(*args: str) -> Any:
+        if args[:3] == ("role", "assignment", "list"):
+            raise RuntimeError("role inventory denied")
+        return original(*args)
+
+    monkeypatch.setattr(cli, "json", json_request)
+    cli.deployments.clear()
+    with pytest.raises(RuntimeError, match="inventory denied"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "command",
+        "timeout",
+        "retries",
+        "parallelism",
+        "client",
+        "literal-key",
+        "resources",
+        "extra-env",
+    ],
+)
+def test_scheduler_customization_cannot_be_overwritten(values: dict, vnet: dict, change: str):
+    values.update(deploySchedulerJob=True, enablePrivateAnonymousWebUi=True)
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.scheduler is not None
+    container = cli.scheduler["template"]["containers"][0]
+    config = cli.scheduler["configuration"]
+    if change == "command":
+        container["command"] = ["python", "-m", "custom.scheduler"]
+    elif change == "timeout":
+        config["replicaTimeout"] = 86400
+    elif change == "retries":
+        config["replicaRetryLimit"] = 1
+    elif change == "parallelism":
+        config["manualTriggerConfig"]["parallelism"] = 2
+    elif change == "client":
+        next(e for e in container["env"] if e["name"] == "AZURE_CLIENT_ID")["value"] = "foreign"
+    elif change == "literal-key":
+        next(e for e in container["env"] if e["name"] == "API_KEY")["value"] = "private-test-key"
+    elif change == "resources":
+        container["resources"]["memory"] = "4Gi"
+    elif change == "extra-env":
+        container["env"].append({"name": "CUSTOM_SETTING", "value": "preserve"})
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="scheduler|Scheduler"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
+
+
+@pytest.mark.parametrize("change", ["wildcard", "deletion", "not-actions", "foreign-scope"])
+def test_email_sender_role_is_scoped_and_cannot_grant_owner_permissions(
+    monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict, change: str
+):
+    values.update(
+        communicationServicesName="approved-acs",
+        emailSenderRoleDefinitionId=EMAIL_ROLE,
+        communicationServicesEndpoint="https://approved.communication.azure.com",
+        emailSenderAddress="sender@example.com",
+        emailRecipientAddress="operator@example.com",
+    )
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    original = cli.get
+
+    def get(resource_id: str, api_version: str) -> dict:
+        result = original(resource_id, api_version)
+        if resource_id.endswith(f"/roleDefinitions/{EMAIL_ROLE}"):
+            props = result["properties"]
+            if change == "wildcard":
+                props["permissions"][0]["actions"].append("*")
+            elif change == "deletion":
+                props["permissions"][0]["actions"].append(
+                    "Microsoft.Communication/CommunicationServices/delete"
+                )
+            elif change == "not-actions":
+                props["permissions"][0]["notActions"] = [
+                    "Microsoft.Communication/CommunicationServices/write"
+                ]
+            else:
+                props["assignableScopes"] = ["/subscriptions/foreign"]
+        return result
+
+    monkeypatch.setattr(cli, "get", get)
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="minimal ACS custom role"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
+
+
+def test_runtime_telemetry_reuses_only_an_approved_entra_component(
+    monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict
+):
+    values.update(applicationInsightsName="ai-approved", enablePrivateAnonymousWebUi=True)
+    cli = FakeAzure(values, vnet)
+    original = cli.get
+    state = {"DisableLocalAuth": False, "ConnectionString": "InstrumentationKey=nonsecret-test"}
+
+    def get(resource_id: str, api_version: str) -> dict:
+        if "/Microsoft.Insights/components/" in resource_id:
+            return {"properties": state}
+        return original(resource_id, api_version)
+
+    monkeypatch.setattr(cli, "get", get)
+    with pytest.raises(ValueError, match="Entra-only"):
+        kt.prepare(cli, {**values, "deployCapabilityHost": True})
+    assert not cli.deployments
+    state["DisableLocalAuth"] = True
+    prepared = kt.prepare(cli, {**values, "deployCapabilityHost": False})
+    assert prepared["deployCapabilityHost"] is False
 
 
 @pytest.mark.parametrize(
@@ -2551,6 +3058,8 @@ class FakeAzure(kt.AzureCli):
         self.host_target_override = ""
         self.application: dict | None = None
         self.authentication: dict | None = None
+        self.scheduler: dict | None = None
+        self.role_assignments: list[dict] = []
 
     def json(self, *args: str) -> Any:
         self.calls.append(args)
@@ -2562,6 +3071,8 @@ class FakeAzure(kt.AzureCli):
             return {"id": GROUP}
         if args[:2] == ("resource", "list"):
             return list(copy.deepcopy(self.resources).values())
+        if args[:3] == ("role", "assignment", "list"):
+            return copy.deepcopy(self.role_assignments)
         if args[:3] == ("network", "vnet", "check-ip-address"):
             return {"available": self.free_ips}
         raise AssertionError(f"Unexpected CLI call: {args}")
@@ -2570,6 +3081,39 @@ class FakeAzure(kt.AzureCli):
         self.calls.append(("get", resource_id, api_version))
         if resource_id == VNET:
             return copy.deepcopy(self.vnet)
+        identity_id = (
+            f"{GROUP}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+            f"id-{self.values['containerAppName']}"
+        )
+        if resource_id == identity_id:
+            return {"properties": {"principalId": UAMI_PRINCIPAL, "clientId": "configured"}}
+        if (
+            resource_id
+            == f"{GROUP}/providers/Microsoft.Communication/communicationServices/approved-acs"
+        ):
+            return {
+                "properties": {
+                    "hostName": "approved.communication.azure.com",
+                    "provisioningState": "Succeeded",
+                }
+            }
+        if resource_id.endswith(f"/roleDefinitions/{EMAIL_ROLE}"):
+            return {
+                "properties": {
+                    "type": "CustomRole",
+                    "assignableScopes": [GROUP],
+                    "permissions": [{"actions": sorted(kt.EMAIL_SENDER_ACTIONS)}],
+                }
+            }
+        if (
+            resource_id
+            == (f"{GROUP}/providers/Microsoft.App/jobs/{self.values['schedulerJobName']}")
+            and self.scheduler is not None
+        ):
+            return {
+                "identity": {"type": "UserAssigned", "userAssignedIdentities": {identity_id: {}}},
+                "properties": copy.deepcopy(self.scheduler),
+            }
         if resource_id == (
             f"{GROUP}/providers/Microsoft.App/containerApps/"
             f"{self.values['containerAppName']}/authConfigs/current"
@@ -2696,6 +3240,82 @@ class FakeAzure(kt.AzureCli):
                 "tags": {"deploymentProfile": kt.PROFILE},
             }
             self.application = _foundation_app(values)
+            for key, (scope, role) in kt.control_plane_role_targets(values, GROUP).items():
+                if not any(
+                    row["scope"] == scope and row["roleDefinitionId"].endswith(role)
+                    for row in self.role_assignments
+                ):
+                    self.role_assignments.append(
+                        {
+                            "principalId": UAMI_PRINCIPAL,
+                            "scope": scope,
+                            "roleDefinitionId": f"/subscriptions/{SUBSCRIPTION}/providers/Microsoft.Authorization/roleDefinitions/{role}",
+                            "name": values["existingControlPlaneRoleAssignmentNames"].get(key)
+                            or str(uuid5(NAMESPACE_URL, f"{scope}/{role}/{UAMI_PRINCIPAL}")),
+                        }
+                    )
+            if values["deployCapabilityHost"] and values["deploySchedulerJob"]:
+                job_id = f"{GROUP}/providers/Microsoft.App/jobs/{values['schedulerJobName']}"
+                self.resources[job_id] = {
+                    "id": job_id,
+                    "tags": {"deploymentProfile": kt.PROFILE},
+                }
+                self.scheduler = {
+                    "provisioningState": "Succeeded",
+                    "environmentId": kt.endpoint_specs(values, GROUP)[4]["target"],
+                    "workloadProfileName": "Consumption",
+                    "configuration": {
+                        "triggerType": "Manual",
+                        "replicaTimeout": 43200,
+                        "replicaRetryLimit": 0,
+                        "manualTriggerConfig": {"parallelism": 1, "replicaCompletionCount": 1},
+                        "registries": copy.deepcopy(
+                            self.application["configuration"]["registries"]
+                        ),
+                        "secrets": [
+                            secret
+                            for secret in self.application["configuration"]["secrets"]
+                            if secret["name"] != "microsoft-provider-authentication-secret"
+                        ],
+                    },
+                    "template": {
+                        "containers": [
+                            {
+                                "name": "azbrief-scheduler",
+                                "image": values["bootstrapImage"],
+                                "command": ["python", "-m", "src.scheduler"],
+                                "resources": {"cpu": 1, "memory": "2Gi"},
+                                "env": [
+                                    {"name": name, "value": value}
+                                    for name, value in {
+                                        **kt.runtime_setup_env(values),
+                                        "APPLICATIONINSIGHTS_CONNECTION_STRING": "",
+                                        "AZURE_TENANT_ID": TENANT,
+                                        "AZURE_SUBSCRIPTION_ID": SUBSCRIPTION,
+                                        "AZURE_CLIENT_ID": "configured",
+                                        "FOUNDRY_PROJECT_ENDPOINT": f"https://{values['foundryAccountName']}.services.ai.azure.com/api/projects/{values['projectName']}",
+                                        "FOUNDRY_HOSTED_AGENT_NAME": values[
+                                            "foundryHostedAgentName"
+                                        ],
+                                        "ARCHIVE_BLOB_CONTAINER_URL": f"https://{values['storageAccountName']}.blob.core.windows.net/azbrief-archive",
+                                        "CHECKPOINT_BLOB_URL": f"https://{values['storageAccountName']}.blob.core.windows.net/azbrief-state/checkpoint.json",
+                                        "ADMIN_CONFIG_BLOB_URL": next(
+                                            e["value"]
+                                            for e in self.application["template"]["containers"][0][
+                                                "env"
+                                            ]
+                                            if e["name"] == "ADMIN_CONFIG_BLOB_URL"
+                                        ),
+                                        "MAX_CONCURRENT_ANALYSES": "1",
+                                        "SCHEDULE_DISPATCH_ENABLED": "true",
+                                        "RUN_TIME_BUDGET_S": "39600",
+                                    }.items()
+                                ]
+                                + [{"name": "API_KEY", "secretRef": "orchestrator-api-key"}],
+                            }
+                        ]
+                    },
+                }
             if (
                 values["deployCapabilityHost"]
                 and not values["enablePrivateAnonymousWebUi"]
@@ -3143,6 +3763,10 @@ def _foundation_app(values: dict) -> dict:
         and (admin or any(part.strip() for part in values["archiveAllowedPrincipals"].split(",")))
     )
     fqdn = f"{values['containerAppName']}.kt-test.eastus2.azurecontainerapps.io"
+    runtime_settings = {
+        **kt.runtime_setup_env(values),
+        "APPLICATIONINSIGHTS_CONNECTION_STRING": "",
+    }
     flags = {
         "ADMIN_UI_ENABLED": str(admin).lower(),
         "ADMIN_REQUIRE_AUTH": str(not anonymous).lower(),
@@ -3170,11 +3794,18 @@ def _foundation_app(values: dict) -> dict:
             name: base64.b64encode(json.dumps(rows).encode("utf-8")).decode("ascii")
             for name, rows in _readiness_metadata(values).items()
         },
+        **runtime_settings,
     }
     env = [
         {"name": name, "value": flags.get(name, "configured")}
         for name in sorted(
-            (kt.FOUNDATION_ENV_NAMES | kt.WEB_ENV_NAMES | kt.READINESS_ENV_NAMES) - {"API_KEY"}
+            (
+                kt.FOUNDATION_ENV_NAMES
+                | kt.WEB_ENV_NAMES
+                | kt.READINESS_ENV_NAMES
+                | kt.RUNTIME_SETUP_ENV_NAMES
+            )
+            - {"API_KEY"}
         )
     ] + [{"name": "API_KEY", "secretRef": "orchestrator-api-key"}]
     return {

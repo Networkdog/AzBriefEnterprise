@@ -57,7 +57,7 @@ host 복구를 대신하지 않습니다.
 이 모드는 사설 앱에 접속 가능한 모든 클라이언트의 관리 기능·Archive 데이터 접근을 허용합니다.
 조회 전용이나 운영용 사용자 인증이 아닙니다. 내부 Environment와 공용 접근 차단, Azure 서비스용
 Managed Identity와 API/MCP 키는 유지합니다. 관리자 설정 저장 경로와 최소 replica 1도
-설정합니다(유휴 비용 증가). Entra 앱·callback·운영 RBAC는 추후 운영자가 별도로 관리합니다.
+설정합니다(유휴 비용 증가). Entra 앱·callback·Hosted identity 권한은 추후 운영자가 관리합니다.
 [2단계 웹 인증 자동 구성](infra/kt/README.md#2단계-웹-인증-자동-구성)을 따르십시오.
 CLI의 `--stage complete`는 1단계를 반복하지 않고 2단계만 적용합니다. 이미지 게시만으로
 기존 앱이 업데이트되지는 않습니다.
@@ -71,13 +71,32 @@ CLI의 `--stage complete`는 1단계를 반복하지 않고 2단계만 적용합
 subdomain을 다시 제출하지 않습니다. 따라서 동일 이름의 2단계 배포에서
 `CustomDomainInUse`가 발생하면 살아 있는 1단계 계정을 삭제·purge하지 말고, 서로 다른
 revision의 ARM/UI 파일을 사용하고 있지 않은지 먼저 확인해야 합니다.
-KT 템플릿은 Container App과 Hosted Agent의 운영 역할을 부여하지 않습니다. 배포 후 운영자가
-각각의 ID에 필요한 역할·범위를 지정합니다. BYO 프로비저닝에 필요한 프로젝트 ID 권한만
-유지하며, Incremental 재배포로 기존 역할 할당을 삭제하지 않습니다.
+KT 2단계는 제어면 UAMI에 RG Reader, 프로젝트 범위 Foundry User와 두 애플리케이션 컨테이너의
+Blob Data Contributor를 자동 부여합니다. 승인된 기존 Insights·메일을 연결하면 해당
+컴포넌트/리소스의 발행 역할도 부여합니다. 배포자에게 `roleAssignments/write`가 필요합니다.
+Hosted 근거 권한, App의 계정 전체 Blob 권한, 역할 정의나 비밀은 자동 생성하지 않습니다.
+CLI 사전검사는 기존 principal/role/scope가 정확히 일치하는 할당 이름을 재사용하며 삭제하거나
+중복 생성하지 않습니다. Portal은 고정 GUID를 사용하므로 다른 이름의 과거 수동 할당은 CLI로
+검사하십시오. `assignControlPlaneRoles=false`는 고급 CLI의 수동 RBAC 예외이며 Portal 기본 동작이 아닙니다.
+사전검사는 Azure가 자동 반환하는 ephemeral storage 기본값(App 1 GiB, Manual Job 4 GiB)을
+사용자 지정으로 오인하지 않으며 CPU·메모리나 다른 구성 변경은 여전히 차단합니다.
+기존 ARM의 `True`/`False` 설정은 같은 의미로 비교하고 새 환경 값은 소문자로 기록합니다.
+이 호환 처리가 Entra 인증을 익명 접근으로 낮추는 것을 허용하지는 않습니다.
+프로젝트 ID의 BYO 권한은 별도이며 Incremental은 기존 권한을 삭제하지 않습니다.
 KT 템플릿은 실제 Environment·Container App·UAMI와 공유 Storage/Cosmos/Search를 Admin
-진단 대상으로 연결합니다. 비밀이 아닌 대상 정보만 설정하며 읽기 권한을 부여하지 않습니다.
-제어면 ID의 범위가 제한된 ARM Reader·프로젝트 Foundry User·컨테이너 Blob 권한은 별도입니다.
-모델·여섯 Prompt Agent·Hosted Agent 게시, 메일·스케줄 Job·선택적 계측은 배포 후 작업입니다.
+진단 대상으로 연결하고 제어면의 필수 범위별 권한은 2단계에서 부여합니다. 승인된 기존 모델
+배포 이름과 고유한 여섯 Prompt Agent 이름, 선택적 동일 이미지 **Manual** Job, 기존
+ACS/Entra-only Insights 설정도 같은 배포에 연결할 수 있습니다.
+기본 전문가 이름은 프로젝트 이름 앞 47자와 역할 접미사로 64자 이내를 유지하며 프로젝트
+리소스 이름 자체는 변경하지 않습니다.
+메일 자동 권한에는 기존 ACS 이름과 고객이 승인한 최소 발신 역할 GUID가 필요합니다. Insights는 프로젝트의 `AppInsights`
+연결도 구성하지만 프로젝트·Hosted의 계측 발행 권한은 별도 확인해야 합니다.
+ARM 설정은 모델이나 Prompt/Hosted Agent 버전을 생성하지 않습니다. 승인된 사설망 호스트의
+깨끗한 고객 clone에서 [setup_kt_agents.ps1](scripts/setup_kt_agents.ps1)의
+`Configure`·`Publish`·`Check`를 명시적인 azd 환경으로 실행하십시오.
+`ktFoundation.runtimeSetup`을 사용하며 개발 환경을 재사용하지 않습니다. Agent 게시, 메일
+도메인·발신/수신 검증, Hosted 권한과 스케줄 활성화는 여전히 필수 입력/인수 작업입니다.
+Manual Job이나 비활성 계측은 Attention이며 총 항목을 25/28로 고정하거나 강제 정상 처리하지 않습니다.
 endpoint나 Archive URL의 설정만으로 실제 호출 성공을 의미하지 않습니다.
 [Configuration status 진단](infra/kt/README.md#configuration-status-진단)을 참고하십시오.
 KT는 수동 진단을 위해 `deployContainerAppsPrivateEndpoint=false`를 임시 기본값으로 사용합니다.

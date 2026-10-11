@@ -70,6 +70,19 @@ gates. Never treat foundation success or a bootstrap image as a completed instal
 The real application and scheduler must share an immutable digest before scheduling is enabled.
 These are deployment procedures, not new Prompt Agent runtime instructions.
 
+KT uses `scripts/setup_kt_agents.ps1` with the separate successful `ktFoundation.runtimeSetup`
+contract; never coerce it into `customerSetup`. Stage two automatically grants only the control-plane
+UAMI's scoped RG/project/application-container roles and configured service publishers. Existing
+model aliases, six distinct target names, a Manual Job and optional existing email/Insights settings
+are not model or Agent versions. The KT handoff requires a clean customer clone, matching CLI login
+and an explicit named azd environment. Configure preserves the existing default; Publish keeps the
+full import/test/roster/guarded Hosted/smoke gates, and Check verifies the intended ACTIVE Hosted
+version without publishing. Process variables and local OTel test overrides are restored on failure
+and success. Hosted evidence/data/publisher roles and real private, email and schedule acceptance
+remain separate; a populated configuration or role assignment never proves an operational agent.
+Guarded first publication accepts only an explicit `not_deployed` state, not lookup failures.
+Existing and newly active Hosted names must match the configured target before accepting an update.
+
 Customer setup v3 also binds the shared Container Apps environment/profile and existing Application
 Insights; current outputs optionally add the `AzBriefFailures_CL` Direct DCR endpoint, immutable ID,
 resource ID and stream while older v3 outputs remain valid. The separate MCP app keeps its own
