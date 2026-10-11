@@ -76,20 +76,23 @@ private/VNet paths.
    requires an existing foundation, while a first installation may also use an Existing RG.
    Select an existing VNet filtered to the deployment subscription and region.
 2. Read the VNet through `Microsoft.Solutions.ArmApiControl`.
-3. Use static TextBoxes for the three role subnet names, with no dynamic dropdown initializer:
+3. Use simple independent dropdowns for the three role subnet selections in both stages:
+   - populate choices only from the selected VNet's subnet names using a short nullable-safe map;
+     retain a literal empty-choice default, never an automatic first subnet;
+   - keep resource names as TextBoxes; do not restore existing-resource selection or auto-defaults;
    - derive CIDR and delegation from ARM;
    - do not ask the operator to re-enter CIDR;
-   - validate typed names against the selected VNet and reject invalid sizes, non-RFC1918 ranges,
+   - validate selected names separately against the VNet and reject invalid sizes, non-RFC1918 ranges,
      multiple/conflicting prefixes, wrong delegations, and
      Container Apps reserved ranges.
-   - Use explicit typed names in both stages. Optional binding/keyword defaults and all subnet
-     dropdowns were removed after customer control-creation failures. Keep an empty literal
-     default, name validation and current VNet response identity; no fabricated
+   - Do not reintroduce complex prefix/delegation filtering or references to other subnet controls
+     in the list initializer after the earlier customer control-creation failures. Keep name-only
+     choices, separate validation and current VNet response identity; no fabricated
      first choice or skipped CIDR/delegation/reserved-range validation.
    - Nullable/empty prefix arrays and unrelated IPv6 rows must not break validation. Pad arrays
      before first(), avoid unsafe numeric casts, and test eager branch evaluation as well as
      the normal expression path. A reproduced local first(null) risk is not a captured Portal
-     exception or customer acceptance. Keep distinct roles and entered names unchanged.
+     exception or customer acceptance. Keep distinct roles and selected names unchanged.
 4. Output the selected subnet names. The Bicep template constructs the exact child resource IDs.
 5. Use Azure Resource Graph to find required Private DNS zones already linked to the VNet in the
    selected subscription.
@@ -230,7 +233,7 @@ Compare full ARM IDs.
 | `A virtual network cannot be linked to multiple zones with overlapping namespaces` | A different zone with the same namespace was already linked to the VNet. | Discover and reuse the linked zone ID; create only missing namespaces. |
 | Portal validation passed but deployment failed | CreateUiDefinition validates input shape, not every nested AVM discriminator, Policy rule, live link, quota, or permission. | Pair UI checks with compiled-template tests, CLI preflight, ARM validate/what-if, and live acceptance. |
 | Portal reported failure to create `existingContainerAppsEnvironment` and cascaded unrelated validation errors | The optional existing-resource control did not initialize, so its dependent discovery/default expressions had no usable outputs. The precise Portal evaluator exception was not available. | Remove the optional controls and automatic defaults; use direct names/manual subnets, preserving essential App/key and typed Environment checks. Do not claim customer acceptance from local expression tests. |
-| Portal still failed to create the `containerAppsSubnetName` DropDown | A complex dynamic subnet initializer remained; local eager-branch tests also reproduced first(null) on singular-prefix ARM fixtures. The exact Portal exception was not captured. | Use static subnet-name TextBoxes and separate safe ARM-based validation for all three roles. Retain scope, size, delegation, reserved ranges and output contracts; do not merely silence invalid network checks. |
+| Portal still failed to create the `containerAppsSubnetName` DropDown | A complex dynamic subnet initializer remained; local eager-branch tests also reproduced first(null) on singular-prefix ARM fixtures. The exact Portal exception was not captured. | Use only simple name-based subnet choices, with prefix/delegation checks separate from initialization. Test unloaded arrays, varied prefixes and VNet changes; retain scope, size, reserved ranges and outputs rather than silencing validation. |
 | Container Apps PE failed with generic `InternalServerError` | The error alone does not distinguish a transient provider failure from an unsupported or incomplete configuration. | Preserve exact customer operations, Correlation ID, Environment/PE states and `privateLinkResources`; do not weaken PNA/internal settings or delete the whole foundation as a first response. |
 | Bootstrap image reported invalid with `Get https://mcr.microsoft.com/v2/: EOF` | The registry connection ended before a usable response, not proof of an invalid image name or an inbound PE failure. | Check actual Environment DNS/egress/TLS and MCR data endpoints; preserve PNA/internal settings and verify a real image pull. |
 | GitHub source changed but deployed runtime did not | Git is source control, not a deployment trigger in the isolated environment. | Transfer reviewed immutable artifacts and deploy manually from an approved private-network host. |

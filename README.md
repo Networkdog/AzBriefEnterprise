@@ -43,8 +43,10 @@ pagination and ownership guards. Failures show only response state, error code a
 The KT **Resource names** tab uses direct name inputs for both New and Existing RGs. Optional
 existing-resource dropdowns and automatic subnet recommendations were removed after a customer
 Portal control-initialization failure. For stage two, enter the same resource names and manually
-enter the same approved subnet **names** as stage one. Subnet fields are now static TextBoxes,
-not dynamic dropdowns; ARM still supplies the CIDR/delegation data for separate validation.
+select the same approved subnets as stage one. Both stages list the selected VNet's subnet
+names in simple independent dropdowns; no subnet-name typing is needed. List construction uses
+only names, while ARM CIDR/delegation checks remain separate. Resource names stay TextBoxes;
+existing-resource discovery and automatic recommendations are not restored.
 Choose the deployment stage in **Basics** before entering the remaining settings. An Existing RG
 may still be a first installation; stage two requires an existing foundation and never silently
 changes the selected stage. Live VNet/CIDR/delegation filters, unique endpoint target names,

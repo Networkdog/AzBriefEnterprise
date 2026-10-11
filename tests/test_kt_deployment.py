@@ -34,6 +34,7 @@ SUBNET_NAMES = {
     "foundrySubnetName": "snet-foundry-agent",
     "containerAppsSubnetName": "snet-container-apps",
 }
+SUBNET_SELECTION_LABEL = "서브넷을 선택하십시오."
 WEB_INPUTS = {
     "adminEntraClientId": "33333333-3333-3333-3333-333333333333",
     "adminEntraClientSecret": "test-only-entra-client-secret",
@@ -555,13 +556,15 @@ def test_wizard_only_selects_existing_same_region_network_and_reads_subnets(wiza
         ("containerAppsSubnetName", "createContainerAppsSubnet", 27),
     ):
         subnet_selector = controls[name_control]
-        assert subnet_selector["type"] == "Microsoft.Common.TextBox"
+        assert subnet_selector["type"] == "Microsoft.Common.DropDown"
         assert subnet_selector["constraints"]["required"] is True
-        assert subnet_selector["defaultValue"] == ""
-        assert "allowedValues" not in subnet_selector["constraints"]
-        assert not {"multiLine", "filter", "defaultDescription"} & subnet_selector.keys()
-        assert re.fullmatch(_ui_regex(subnet_selector), SUBNET_NAMES[name_control])
-        assert "전체 ARM ID나 CIDR" in subnet_selector["toolTip"]
+        assert subnet_selector["defaultValue"] == SUBNET_SELECTION_LABEL
+        assert subnet_selector["filter"] is True
+        assert "regex" not in subnet_selector["constraints"]
+        choices = subnet_selector["constraints"]["allowedValues"]
+        assert "virtualNetworkApi.properties.subnets" in choices
+        assert len(choices) < 500
+        assert not re.search(r"first\(|last\(|split\(|int\(|addressPrefix|delegation", choices)
         role_label = subnet_selector["label"].removesuffix(" 이름")
         rule = next(
             rule
@@ -619,7 +622,87 @@ def test_subnet_input_initialization_does_not_require_a_plural_prefix_array(
         for value in initializer.values():
             if isinstance(value, str) and value.startswith("["):
                 _evaluate_ui_expression(value, {}, network=network, eager_conditionals=True)
-        assert control["type"] == "Microsoft.Common.TextBox"
+        assert control["type"] == "Microsoft.Common.DropDown"
+        assert _evaluate_ui_expression(
+            control["constraints"]["allowedValues"],
+            {},
+            network=network,
+            eager_conditionals=True,
+        ) == [
+            {"label": SUBNET_SELECTION_LABEL, "value": ""},
+            {"label": "snet-container-apps", "value": "snet-container-apps"},
+        ]
+
+
+@pytest.mark.parametrize("parameter", SUBNET_NAMES)
+@pytest.mark.parametrize("stage", ["foundation", "complete"])
+def test_vnet_subnet_choices_are_name_only_and_independent_of_role_inputs(
+    wizard: dict, parameter: str, stage: str
+):
+    network = _subnet_form(
+        [
+            _subnet("private-endpoints", "10.70.0.0/28"),
+            _subnet("foundry-prod", "10.70.0.32/27", True),
+            _subnet("containers-prod", "10.70.0.64/27", True),
+            _subnet("unrelated-v6", "fd00::/64", True),
+            {"name": "missing-prefix", "properties": {}},
+            {"properties": {}},
+        ]
+    )
+    for name in SUBNET_NAMES:
+        network.pop(name)
+    control = _ui_controls(wizard, "network")[parameter]
+    assert _resolve_selection(
+        control["constraints"]["allowedValues"],
+        {},
+        stage=stage,
+        network=network,
+        eager_conditionals=True,
+    ) == [
+        {"label": SUBNET_SELECTION_LABEL, "value": ""},
+        {"label": "private-endpoints", "value": "private-endpoints"},
+        {"label": "foundry-prod", "value": "foundry-prod"},
+        {"label": "containers-prod", "value": "containers-prod"},
+        {"label": "unrelated-v6", "value": "unrelated-v6"},
+        {"label": "missing-prefix", "value": "missing-prefix"},
+    ]
+    assert control["defaultValue"] == SUBNET_SELECTION_LABEL
+
+
+def test_subnet_choices_update_with_the_vnet_and_old_selection_is_invalid(wizard: dict):
+    parameter = "containerAppsSubnetName"
+    control = _ui_controls(wizard, "network")[parameter]
+    network = _subnet_form([_subnet("snet-old-container", "10.70.0.64/27", True)])
+    choices = _resolve_selection(control["constraints"]["allowedValues"], {}, network=network)
+    network[parameter] = choices[1]["value"]
+    assert network[parameter] == "snet-old-container"
+    assert (
+        _resolve_selection(_manual_subnet_validation(wizard, parameter), {}, network=network)
+        is True
+    )
+    network["virtualNetworkApi"]["properties"]["subnets"] = [
+        _subnet("snet-new-container", "10.80.0.64/27", True)
+    ]
+    new_vnet = VNET.replace("vnet-kt", "vnet-new")
+    network["virtualNetwork"]["id"] = new_vnet
+    network["virtualNetworkApi"]["id"] = new_vnet
+    choices = _resolve_selection(control["constraints"]["allowedValues"], {}, network=network)
+    assert choices == [
+        {"label": SUBNET_SELECTION_LABEL, "value": ""},
+        {"label": "snet-new-container", "value": "snet-new-container"},
+    ]
+    assert (
+        _resolve_selection(_manual_subnet_validation(wizard, parameter), {}, network=network)
+        is False
+    )
+    network[parameter] = choices[1]["value"]
+    assert (
+        _resolve_selection(_manual_subnet_validation(wizard, parameter), {}, network=network)
+        is True
+    )
+    assert _resolve_selection(wizard["outputs"][parameter], {}, network=network) == (
+        "snet-new-container"
+    )
 
 
 def _manual_subnet_validation(wizard: dict, parameter: str) -> str:
@@ -782,17 +865,35 @@ def test_manual_subnet_validation_requires_the_role_delegation(
 @pytest.mark.parametrize(
     "value", ["", "/subscriptions/tenant/subnets/name", "10.70.0.0/27", "bad name"]
 )
-def test_manual_subnet_inputs_reject_ids_cidrs_and_blank_names(
+def test_subnet_selections_reject_ids_cidrs_and_blank_values(
     wizard: dict, parameter: str, value: str
 ):
     control = _ui_controls(wizard, "network")[parameter]
-    assert re.fullmatch(_ui_regex(control), value) is None
+    network = _subnet_form(
+        [_subnet(SUBNET_NAMES[parameter], "10.70.0.0/27", parameter != "peSubnetName")]
+    )
+    options = _resolve_selection(control["constraints"]["allowedValues"], {}, network=network)
+    assert value == "" or not any(option["value"] == value for option in options)
+    network[parameter] = value
+    assert (
+        _resolve_selection(_manual_subnet_validation(wizard, parameter), {}, network=network)
+        is False
+    )
 
 
 @pytest.mark.parametrize("parameter", SUBNET_NAMES)
 @pytest.mark.parametrize("value", ["a", "a" * 80, "snet_Name.zone-01"])
-def test_manual_subnet_inputs_accept_supported_names(wizard: dict, parameter: str, value: str):
-    assert re.fullmatch(_ui_regex(_ui_controls(wizard, "network")[parameter]), value)
+def test_subnet_selections_preserve_supported_names(wizard: dict, parameter: str, value: str):
+    network = _subnet_form([_subnet(value, "10.70.0.0/27", parameter != "peSubnetName")])
+    control = _ui_controls(wizard, "network")[parameter]
+    options = _resolve_selection(control["constraints"]["allowedValues"], {}, network=network)
+    assert {"label": value, "value": value} in options
+    network[parameter] = value
+    assert (
+        _resolve_selection(_manual_subnet_validation(wizard, parameter), {}, network=network)
+        is True
+    )
+    assert _resolve_selection(wizard["outputs"][parameter], {}, network=network) == value
 
 
 def test_subnet_names_preserve_case_and_cannot_share_roles(wizard: dict):
@@ -823,15 +924,24 @@ def test_subnet_names_preserve_case_and_cannot_share_roles(wizard: dict):
     assert _resolve_selection(rule, {}, network=network) is False
 
 
-@pytest.mark.parametrize("response", [{}, {"properties": {}}, {"properties": {"subnets": []}}])
+@pytest.mark.parametrize(
+    "response",
+    [{}, {"properties": {}}, {"properties": {"subnets": None}}, {"properties": {"subnets": []}}],
+)
 def test_subnet_initialization_and_validation_handle_an_unloaded_vnet(wizard: dict, response: dict):
     network = {"virtualNetworkApi": response}
     for parameter in SUBNET_NAMES:
         control = _ui_controls(wizard, "network")[parameter]
-        assert control["type"] == "Microsoft.Common.TextBox"
+        assert control["type"] == "Microsoft.Common.DropDown"
         assert all(
             not (isinstance(value, str) and value.startswith("[")) for value in control.values()
         )
+        assert _resolve_selection(
+            control["constraints"]["allowedValues"],
+            {},
+            network=network,
+            eager_conditionals=True,
+        ) == [{"label": SUBNET_SELECTION_LABEL, "value": ""}]
         assert (
             _resolve_selection(
                 _manual_subnet_validation(wizard, parameter),
@@ -856,7 +966,7 @@ def test_vnet_read_identity_and_errors_block_stale_subnet_defaults(wizard: dict,
         form["virtualNetworkApi"]["error"] = {"code": "Forbidden"}
     else:
         form["virtualNetworkApi"]["properties"].pop("subnets")
-    assert _ui_controls(wizard, "network")["peSubnetName"]["defaultValue"] == ""
+    assert _ui_controls(wizard, "network")["peSubnetName"]["defaultValue"] == SUBNET_SELECTION_LABEL
     rule = next(
         rule["isValid"]
         for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
@@ -869,7 +979,7 @@ def test_subnet_manual_choice_is_preserved_in_outputs_and_revalidated(wizard: di
     manual = "snet-manual-choice"
     form = _subnet_form([_subnet(manual, "10.70.0.0/28")])
     form["peSubnetName"] = manual
-    assert _ui_controls(wizard, "network")["peSubnetName"]["defaultValue"] == ""
+    assert _ui_controls(wizard, "network")["peSubnetName"]["defaultValue"] == SUBNET_SELECTION_LABEL
     assert _resolve_selection(wizard["outputs"]["peSubnetName"], {}, network=form) == manual
     rule = next(
         rule["isValid"]

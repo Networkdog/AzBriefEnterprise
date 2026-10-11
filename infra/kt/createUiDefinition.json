@@ -60,7 +60,7 @@
             "type": "Microsoft.Common.InfoBox",
             "options": {
               "icon": "Warning",
-              "text": "새 VNet이나 서브넷은 만들지 않습니다. 기존 VNet을 선택한 뒤 PE·Foundry·Container Apps 서브넷 이름을 직접 입력하십시오. 2단계에서는 1단계와 같은 이름을 사용합니다. 주소·위임·예약 범위와 서로 다른 서브넷인지 ARM 조회로 검증하지만, IP 여유·점유자·DNS·NSG·UDR·권한 인수를 대신하지 않습니다."
+              "text": "새 VNet이나 서브넷은 만들지 않습니다. 기존 VNet을 선택한 뒤 PE·Foundry·Container Apps 서브넷을 목록에서 선택하십시오. 목록에는 선택한 VNet의 서브넷 이름을 표시하며 주소·위임·예약 범위와 역할 분리는 별도로 검증합니다. 2단계에서는 1단계와 같은 서브넷을 사용합니다. IP 여유·점유자·DNS·NSG·UDR·권한 인수는 별도입니다."
             }
           },
           {
@@ -102,41 +102,41 @@
           },
           {
             "name": "peSubnetName",
-            "type": "Microsoft.Common.TextBox",
+            "type": "Microsoft.Common.DropDown",
             "label": "Private Endpoint subnet 이름",
-            "defaultValue": "",
-            "placeholder": "기존 서브넷 이름만 직접 입력하십시오.",
-            "toolTip": "전체 ARM ID나 CIDR이 아니라 서브넷 이름입니다. 2단계는 1단계 출력의 해당 subnet ID 마지막 이름을 입력하십시오. 실제 주소·위임은 선택한 VNet의 ARM 응답으로 확인하며 서브넷을 새로 만들지 않습니다.",
+            "defaultValue": "서브넷을 선택하십시오.",
+            "placeholder": "선택한 VNet의 기존 서브넷을 선택하십시오.",
+            "filter": true,
+            "toolTip": "선택한 VNet의 서브넷 이름 목록입니다. Private Endpoint용은 RFC1918 IPv4 /28 이상이며 서비스 위임이 없어야 합니다. 2단계는 1단계와 같은 서브넷을 선택하십시오. CIDR·위임은 별도로 검증합니다.",
             "constraints": {
               "required": true,
-              "regex": "^[a-zA-Z0-9_](?:[a-zA-Z0-9_.-]{0,78}[a-zA-Z0-9_])?$",
-              "validationMessage": "1~80자의 기존 서브넷 이름만 입력하십시오. 영문·숫자·밑줄로 시작하고 끝나며, 중간에는 하이픈·마침표도 사용할 수 있습니다. ARM ID·CIDR·공백은 허용하지 않습니다."
+              "allowedValues": "[concat(parse('[{\"label\":\"서브넷을 선택하십시오.\",\"value\":\"\"}]'), map(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => not(empty(s.name))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"value\":\"', s.name, '\"}'))))]"
             }
           },
           {
             "name": "foundrySubnetName",
-            "type": "Microsoft.Common.TextBox",
+            "type": "Microsoft.Common.DropDown",
             "label": "Foundry 전용 subnet 이름",
-            "defaultValue": "",
-            "placeholder": "기존 서브넷 이름만 직접 입력하십시오.",
-            "toolTip": "전체 ARM ID나 CIDR이 아니라 서브넷 이름입니다. 2단계는 1단계 출력의 해당 subnet ID 마지막 이름을 입력하십시오. 실제 주소·위임은 선택한 VNet의 ARM 응답으로 확인하며 서브넷을 새로 만들지 않습니다.",
+            "defaultValue": "서브넷을 선택하십시오.",
+            "placeholder": "선택한 VNet의 기존 서브넷을 선택하십시오.",
+            "filter": true,
+            "toolTip": "선택한 VNet의 서브넷 이름 목록입니다. Foundry 전용은 RFC1918 IPv4 /27 이상이며 Microsoft.App/environments에 단독 위임되어야 합니다. 2단계는 1단계와 같은 서브넷을 선택하십시오. CIDR·위임은 별도로 검증합니다.",
             "constraints": {
               "required": true,
-              "regex": "^[a-zA-Z0-9_](?:[a-zA-Z0-9_.-]{0,78}[a-zA-Z0-9_])?$",
-              "validationMessage": "1~80자의 기존 서브넷 이름만 입력하십시오. 영문·숫자·밑줄로 시작하고 끝나며, 중간에는 하이픈·마침표도 사용할 수 있습니다. ARM ID·CIDR·공백은 허용하지 않습니다."
+              "allowedValues": "[concat(parse('[{\"label\":\"서브넷을 선택하십시오.\",\"value\":\"\"}]'), map(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => not(empty(s.name))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"value\":\"', s.name, '\"}'))))]"
             }
           },
           {
             "name": "containerAppsSubnetName",
-            "type": "Microsoft.Common.TextBox",
+            "type": "Microsoft.Common.DropDown",
             "label": "Container Apps 전용 subnet 이름",
-            "defaultValue": "",
-            "placeholder": "기존 서브넷 이름만 직접 입력하십시오.",
-            "toolTip": "전체 ARM ID나 CIDR이 아니라 서브넷 이름입니다. 2단계는 1단계 출력의 해당 subnet ID 마지막 이름을 입력하십시오. 실제 주소·위임은 선택한 VNet의 ARM 응답으로 확인하며 서브넷을 새로 만들지 않습니다.",
+            "defaultValue": "서브넷을 선택하십시오.",
+            "placeholder": "선택한 VNet의 기존 서브넷을 선택하십시오.",
+            "filter": true,
+            "toolTip": "선택한 VNet의 서브넷 이름 목록입니다. Container Apps 전용은 RFC1918 IPv4 /27 이상, Microsoft.App/environments 단독 위임, 예약 범위 제외 조건을 충족해야 합니다. Foundry와 다른 서브넷을 선택하십시오. 2단계는 1단계와 같은 서브넷을 사용합니다.",
             "constraints": {
               "required": true,
-              "regex": "^[a-zA-Z0-9_](?:[a-zA-Z0-9_.-]{0,78}[a-zA-Z0-9_])?$",
-              "validationMessage": "1~80자의 기존 서브넷 이름만 입력하십시오. 영문·숫자·밑줄로 시작하고 끝나며, 중간에는 하이픈·마침표도 사용할 수 있습니다. ARM ID·CIDR·공백은 허용하지 않습니다."
+              "allowedValues": "[concat(parse('[{\"label\":\"서브넷을 선택하십시오.\",\"value\":\"\"}]'), map(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => not(empty(s.name))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"value\":\"', s.name, '\"}'))))]"
             }
           }
         ]
