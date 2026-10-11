@@ -79,6 +79,7 @@ private/VNet paths.
 3. Use simple independent dropdowns for the three role subnet selections in both stages:
    - populate choices only from the selected VNet's subnet names using a short nullable-safe map;
      retain a literal empty-choice default, never an automatic first subnet;
+     compose the choice array through JSON strings rather than assuming ARM-style array concat;
    - keep resource names as TextBoxes; do not restore existing-resource selection or auto-defaults;
    - derive CIDR and delegation from ARM;
    - do not ask the operator to re-enter CIDR;
@@ -90,7 +91,7 @@ private/VNet paths.
      choices, separate validation and current VNet response identity; no fabricated
      first choice or skipped CIDR/delegation/reserved-range validation.
    - Nullable/empty prefix arrays and unrelated IPv6 rows must not break validation. Pad arrays
-     before first(), avoid unsafe numeric casts, and test eager branch evaluation as well as
+     or select a guaranteed non-empty fallback before first(), avoid unsafe numeric casts, and test eager branch evaluation as well as
      the normal expression path. A reproduced local first(null) risk is not a captured Portal
      exception or customer acceptance. Keep distinct roles and selected names unchanged.
 4. Output the selected subnet names. The Bicep template constructs the exact child resource IDs.

@@ -333,9 +333,12 @@ both stages, with a literal empty-choice default. Keep resource-name TextBoxes u
 Do not restore complex prefix/delegation calculation, other-role dependencies or auto-defaults
 inside dropdown initialization. Validate selected names separately with ARM CIDR/delegation;
 do not request CIDRs or allow free-text subnet names. Validation must evaluate safely
-without lazy-branch assumptions: pad nullable prefix arrays before first(), avoid numeric casts
+without lazy-branch assumptions: choose a non-empty fallback array before first(), avoid numeric casts
 on unknown/IPv6 data, and reject multiple or conflicting prefixes. Keep subnet size, RFC1918,
-reserved-range and distinct-role checks plus exact outputs. Keep essential owned App/key
+reserved-range and distinct-role checks plus exact outputs. CreateUiDefinition concat is documented
+for strings, not ARM-style array merging; build choice JSON with string functions and parse it,
+and test the Portal expression contract separately from compiled ARM expressions.
+Keep essential owned App/key
 inventory fail-closed, and read the exact typed Environment in stage two through the 2026-01-01
 ARM API. Verify internal=true, PNA Disabled, ownership and the selected infrastructure subnet.
 First-stage/New-RG paths must not GET an absent Environment. Other ownership/BYO investigation

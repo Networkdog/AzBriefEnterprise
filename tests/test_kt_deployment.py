@@ -327,6 +327,7 @@ def _evaluate_ui_expression(
         if function == "concat":
             if all(isinstance(value, str) for value in arguments):
                 return "".join(arguments)
+            assert parameters is not None, "CreateUiDefinition concat must use strings"
             assert all(isinstance(value, list) for value in arguments)
             return [item for value in arguments for item in value]
         if function == "steps":
@@ -632,6 +633,12 @@ def test_subnet_input_initialization_does_not_require_a_plural_prefix_array(
             {"label": SUBNET_SELECTION_LABEL, "value": ""},
             {"label": "snet-container-apps", "value": "snet-container-apps"},
         ]
+
+
+def test_portal_expression_contract_does_not_assume_arm_array_concat():
+    with pytest.raises(AssertionError, match="concat must use strings"):
+        _evaluate_ui_expression("[concat(parse('[]'), parse('[]'))]", {})
+    assert _evaluate_ui_expression("[concat('left', 'right')]", {}) == "leftright"
 
 
 @pytest.mark.parametrize("parameter", SUBNET_NAMES)
