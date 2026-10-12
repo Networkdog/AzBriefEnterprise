@@ -63,6 +63,9 @@ jobs:
       - name: Import check (must pass)
         run: python -c "import src"
 
+      - name: V2 Portal form normalization check
+        run: python -m scripts.build_v2_ui --check
+
       - name: Run tests with coverage
         env:
           AZURE_TENANT_ID: "00000000-0000-0000-0000-000000000000"

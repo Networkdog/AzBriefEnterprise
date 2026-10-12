@@ -17,6 +17,9 @@ param azureAdTenantId string
 @description('Microsoft Entra application client ID used for incoming authentication.')
 param azureAdClientId string
 
+@description('Optional pre-provisioned dedicated UAMI for infrastructure/application separation. Empty retains the existing system-assigned profile.')
+param userAssignedIdentityResourceId string = ''
+
 @description('Default subscription exposed to read-only Azure MCP tools.')
 param targetSubscriptionId string
 
@@ -57,7 +60,7 @@ var baseArgs = [
 ]
 var namespaceArgs = [for namespace in namespaces: ['--namespace', namespace]]
 var serverArgs = flatten(concat([baseArgs], namespaceArgs))
-var baseEnvironment = [
+var baseEnvironment = concat([
   {
     name: 'ASPNETCORE_ENVIRONMENT'
     value: 'Production'
@@ -114,17 +117,23 @@ var baseEnvironment = [
     name: 'AZURE_MCP_DANGEROUSLY_ENABLE_FORWARDED_HEADERS'
     value: 'true'
   }
-]
+], empty(userAssignedIdentityResourceId) ? [] : [
+  {
+    name: 'AZURE_CLIENT_ID'
+    value: reference(userAssignedIdentityResourceId, '2023-01-31').clientId
+  }
+])
 
-resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
   name: name
   location: location
   tags: union(tags, {
     product: 'azbrief'
     component: 'azure-mcp-server'
   })
-  identity: {
-    type: 'SystemAssigned'
+  identity: empty(userAssignedIdentityResourceId) ? { type: 'SystemAssigned' } : {
+    type: 'UserAssigned'
+    userAssignedIdentities: { '${userAssignedIdentityResourceId}': {} }
   }
   properties: {
     managedEnvironmentId: containerAppEnvironmentId
@@ -197,5 +206,5 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 output containerAppResourceId string = containerApp.id
 output containerAppUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
 output containerAppName string = containerApp.name
-output containerAppPrincipalId string = containerApp.identity.principalId
+output containerAppPrincipalId string = empty(userAssignedIdentityResourceId) ? containerApp.identity.principalId : reference(userAssignedIdentityResourceId, '2023-01-31').principalId
 output containerAppEnvironmentId string = containerAppEnvironmentId

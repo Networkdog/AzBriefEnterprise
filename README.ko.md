@@ -132,13 +132,15 @@ Private Endpoint가 실패하면 삭제 전에 배포 진단 정보를 보존하
 
 **인프라 배포**
 
-[![Deploy v2 infrastructure to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json)
+[![Deploy v2 infrastructure to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.createUiDefinition.json)
 
 **앱 최초 설치·업데이트**
 
-[![Deploy v2 application to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json)
+[![Deploy v2 application to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
 
-버튼은 GitHub `main`에 게시된 ARM 템플릿을 직접 엽니다. 인프라 내부 두 단계를 완료하고,
+버튼은 GitHub `main`에 게시된 각 ARM·UI Definition 쌍을 함께 엽니다.
+RG에 표시되는 고객 리소스 이름은 입력받고, 모델·용량·MCP 내부 설정은 자동으로 결정합니다.
+기반 단계 필수 옵션은 RG 태그로 저장해 후속 단계에서 재사용합니다. 인프라 내부 두 단계를 완료하고,
 앱 업데이트 전 기존 키·설정을 확인해야 합니다. 아래 가이드의 보호된 배포 절차를 따르십시오.
 
 [v2 배포 가이드](infra/v2/README.md): 기존 VNet 기반의 별도 프라이빗 프로필입니다.

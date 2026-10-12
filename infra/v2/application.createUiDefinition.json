@@ -1,0 +1,116 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
+  "handler": "Microsoft.Azure.CreateUIDef",
+  "version": "0.1.2-preview",
+  "parameters": {
+    "config": {
+      "basics": {
+        "description": "같은 기존 RG의 완료된 v2 인프라를 사용해 앱과 읽기 전용 MCP 서버를 설치하거나 이미지를 업데이트합니다. 리소스 이름·모델·MCP 주소는 저장된 태그로 참조합니다.",
+        "resourceGroup": {
+          "allowExisting": true
+        }
+      },
+      "isWizard": true
+    },
+    "basics": [],
+    "steps": [
+      {
+        "name": "application",
+        "label": "앱 배포",
+        "elements": [
+          {
+            "name": "resourceGroupApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(equals(resourceGroup().mode, 'Existing'), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '?api-version=2025-04-01'), concat('/subscriptions/', subscription().subscriptionId, '?api-version=2022-12-01'))]"
+            }
+          },
+          {
+            "name": "containerAppsApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(equals(resourceGroup().mode, 'Existing'), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.App/containerApps?api-version=2026-01-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27'))]"
+            }
+          },
+          {
+            "name": "jobsApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(equals(resourceGroup().mode, 'Existing'), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.App/jobs?api-version=2026-01-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27'))]"
+            }
+          },
+          {
+            "name": "containerImage",
+            "type": "Microsoft.Common.TextBox",
+            "label": "승인된 AzBrief 컨테이너 이미지 digest",
+            "defaultValue": "ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$",
+              "validationMessage": "고객이 승인한 registry/repository@sha256:64자리 digest를 입력하십시오."
+            },
+            "toolTip": "App와 Job에 같은 승인 이미지를 적용합니다. latest나 이동 가능한 tag는 사용하지 않습니다. MCP 이미지는 기존 고정 공식 버전을 자동 사용합니다."
+          },
+          {
+            "name": "deploymentAccepted",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "같은 RG의 완료한 인프라와 업데이트 사전검사를 확인했습니다.",
+            "defaultValue": false,
+            "constraints": {
+              "required": true,
+              "validationMessage": "배포 범위와 사전검사를 확인하십시오."
+            }
+          },
+          {
+            "name": "preservationNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Info",
+              "text": "기존 App·Job 비밀과 설정은 ARM 내부에서 읽어 보존합니다. 키를 이 폼이나 로그에 표시하지 않습니다. 인증 설정은 생략해 유지하고 승인된 Schedule/cron을 초기화하지 않습니다. 실제 Graph 권한·MCP 인증·로그·분석·메일 인수는 배포 성공과 별개입니다."
+            }
+          },
+          {
+            "name": "deploymentGuard",
+            "type": "Microsoft.Common.TextBox",
+            "label": "배포 검증 (값 변경 불필요)",
+            "defaultValue": "검사",
+            "constraints": {
+              "required": true,
+              "validations": [
+                {
+                  "isValid": "[equals(steps('application').deploymentAccepted, true)]",
+                  "message": "배포 범위·이미지·인증·권한과 실제 네트워크를 확인하십시오."
+                },
+                {
+                  "isValid": "[and(equals(resourceGroup().mode, 'Existing'), equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.schema'], ''), '2'), equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.profile'], ''), 'kt-private-v2'), equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.state'], ''), 'ready'), not(empty(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.options0'], ''))), empty(steps('application').resourceGroupApi.error))]",
+                  "message": "같은 기존 RG에서 인프라 완성 단계까지 성공해야 합니다. 기반 준비만 완료한 RG에는 앱을 설치하지 않습니다."
+                },
+                {
+                  "isValid": "[and(not(equals(coalesce(steps('application').containerAppsApi.value, false), false)), empty(steps('application').containerAppsApi.error), empty(steps('application').containerAppsApi.nextLink), not(equals(coalesce(steps('application').jobsApi.value, false), false)), empty(steps('application').jobsApi.error), empty(steps('application').jobsApi.nextLink))]",
+                  "message": "App·Job의 완전한 조회 결과가 필요합니다. 조회 실패·대기·추가 페이지를 신규 설치로 처리하지 않습니다."
+                },
+                {
+                  "isValid": "[and(empty(filter(coalesce(steps('application').containerAppsApi.value, parse('[]')), (app) => and(equals(toLower(app.name), toLower(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.app'], ''))), not(equals(app.tags.deploymentProfile, 'kt-private-v2'))))), empty(filter(coalesce(steps('application').jobsApi.value, parse('[]')), (job) => and(equals(toLower(job.name), toLower(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.job'], ''))), not(equals(job.tags.deploymentProfile, 'kt-private-v2'))))))]",
+                  "message": "다른 소유권의 App나 Job을 같은 이름으로 덮어쓰지 않습니다."
+                },
+                {
+                  "isValid": "[equals(empty(filter(coalesce(steps('application').containerAppsApi.value, parse('[]')), (app) => equals(toLower(app.name), toLower(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.app'], ''))))), empty(filter(coalesce(steps('application').jobsApi.value, parse('[]')), (job) => equals(toLower(job.name), toLower(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.job'], ''))))))]",
+                  "message": "App·Job 중 하나만 있는 부분 설치는 별도 복구가 필요합니다. API 키를 새로 만들지 않습니다."
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ],
+    "outputs": {
+      "infrastructureTags": "[steps('application').resourceGroupApi.tags]",
+      "containerImage": "[steps('application').containerImage]",
+      "reuseExistingApiKey": "[not(empty(filter(coalesce(steps('application').containerAppsApi.value, parse('[]')), (app) => equals(toLower(app.name), toLower(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.app'], ''))))))]",
+      "preserveExistingSettings": true
+    }
+  }
+}

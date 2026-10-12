@@ -33,17 +33,18 @@ Never hand-edit the compiled ARM JSON. Change Bicep, compile with the pinned com
 the ARM/UI pair from the same source revision.
 Keep the paired KT Deploy button in both top-level READMEs while this profile ships. The repository
 contract expects two standard Enterprise Portal links, one KT Portal link and separate v2
-infrastructure/application Deploy buttons in each README. v2 buttons use the compiled ARM
-on GitHub main after publication; they do not replace guarded live preflight or supply a
-CreateUiDefinition that does not exist.
+infrastructure/application Deploy buttons in each README. v2 buttons pair their compiled ARM
+with the corresponding real CreateUiDefinition on GitHub main after publication. Keep customer
+RG resource-name inputs, auto model/MCP internal settings, and guarded live preflight.
 
 ## Two-Stage Template v2
 
 The opt-in [`infra/v2`](../../../infra/v2/README.md) profile reuses this existing-VNet
 security/lifecycle knowledge but does not replace the KT Portal button or adopt old resources.
 Its one-time infrastructure command internally sequences foundation, account-host readiness
-and model/project/BYO/RBAC completion without an App image. Only then does it merge 29 bounded,
-non-secret `azbrief.v2.*` RG tags. The same-RG application template owns App/Job/auth only;
+and model/project/BYO/RBAC completion without an App image. Foundation saves 39 bounded,
+non-secret `azbrief.v2.*` RG tags including customer options; completion promotes them to ready.
+The same-RG application template owns App/Job/auth and the pinned read-only MCP container;
 [`scripts/deploy_v2.py`](../../../scripts/deploy_v2.py) preserves current keys, secrets,
 environments, registry/auth settings and accepted schedules on repeated updates. Missing,
 paged, denied, foreign or redirected reads remain blocking. Retain canonical linked DNS,
@@ -51,7 +52,9 @@ private ingress and existing subnet protections, tag limits and unrelated tags. 
 are not substitutes for live preflight. Initial Hosted identity permissions are late
 infrastructure completion after guarded Agent publication, never a broad role or infrastructure
 replay during App upgrades. v2 keeps Entra-only UI; it does not inherit KT's temporary anonymous
-exception. Keep Bicep/ARM sources in sync and distinguish offline tests from customer acceptance.
+exception. Normalize its real UI forms with scripts/build_v2_ui.py and retain all five existing
+KT subnet/VNet validators. Directory app/role permissions remain separate from ARM permissions.
+Keep Bicep/ARM sources in sync and distinguish offline tests from customer Portal acceptance.
 
 ## Non-Negotiable KT Contract
 

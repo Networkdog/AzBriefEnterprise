@@ -13,6 +13,7 @@ entry point입니다.
 | [setup_customer.ps1](setup_customer.ps1) | ARM 출력 기반 고객 환경 구성, MCP/Agent 게시, 초기 이미지 전환, 준비 검사·스케줄 활성화 | 단계별 로컬/원격 변경. 일반 `-WhatIf`도 ARM은 조회하며 완전 오프라인은 `-SetupFile ... -WhatIf`만 해당. `Verify`는 읽기 전용이며 모델·이메일 호출 없음 |
 | [deploy_kt.py](deploy_kt.py) | KT 기반/2단계 배포의 읽기 전용 사전검사, 기존 역할 이름 재사용 및 ARM 배포/검증 | deploy만 원격 변경. 2단계 모델/관리 도메인 Email 기본 생성과 UAMI 최소 역할, 기존 구성 보존, 선택적 Manual Job; 모델 quota 회수·기존 버전/용량 변경·키 조회/메일 발송 없음 |
 | [deploy_v2.py](deploy_v2.py) | [v2](../infra/v2/README.md) 인프라 1회와 같은 RG 태그 기반 App/Job 반복 설치·업데이트 | 기본 preflight는 읽기 전용, deploy는 Incremental validate/what-if/create. 기존 키·비밀·인증·환경·스케줄을 보존하며 Hosted 역할 완성만 별도 인프라 소유 작업 |
+| [build_v2_ui.py](build_v2_ui.py) | v2 Portal UI 정규화·KT 네트워크 검증식 재사용 | 기본은 두 로컬 JSON 갱신, --check는 읽기 전용. Azure 호출 없음 |
 | [setup_kt_agents.ps1](setup_kt_agents.ps1) | 성공한 KT `runtimeSetup` 출력으로 Configure/Publish/Check | Configure는 지정한 로컬 azd binding 변경, Publish는 여섯 Prompt/Hosted 게시·smoke, Check는 원격 읽기만 수행. WhatIf는 출력 조회만, 모델·MCP·메일·스케줄 생성 없음 |
 | [deploy_dev.ps1](deploy_dev.ps1) | 이미 기동한 App/Job의 동일 digest 업그레이드와 실패 시 되돌림 | 기본 ACR 빌드 또는 `-PrebuiltImage`의 승인된 digest로 두 이미지 갱신. 새 설치의 포트 전환에는 사용하지 않음 |
 | [deploy_hosted_agent.ps1](deploy_hosted_agent.ps1) | 검토된 Hosted 패키지의 검사·게시·smoke | Foundry 버전 생성 및 명시적 모델 smoke 호출 |

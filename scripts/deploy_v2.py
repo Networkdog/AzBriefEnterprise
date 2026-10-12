@@ -59,6 +59,20 @@ TAG_FIELDS = {
     "containerAppsSubnetName": "appSubnet",
     "azureMcpServerUrl": "mcpUrl",
     "azureMcpProjectConnectionName": "mcpConnection",
+    "azureMcpContainerAppName": "mcpApp",
+    "azureMcpIdentityName": "mcpIdentity",
+}
+OPTION_TAG_KEYS = tuple(PREFIX + f"options{index}" for index in range(8))
+OPTION_FIELDS = {
+    "emailDataLocation": str,
+    "searchSku": str,
+    "coreModelName": str,
+    "simpleModelName": str,
+    "modelVersion": str,
+    "modelCapacity": int,
+    "simpleModelCapacity": int,
+    "existingPrivateDnsZoneIds": dict,
+    "tags": dict,
 }
 TAG_KEYS = frozenset(PREFIX + suffix for suffix in TAG_FIELDS.values()) | {
     PREFIX + "schema",
@@ -108,21 +122,25 @@ def validate_tag_budget(tags: dict[str, Any]) -> None:
             raise ValueError("Tags require valid names and string values of at most 256 characters")
 
 
-def parse_tag_contract(tags: dict[str, Any]) -> dict[str, str]:
+def parse_tag_contract(tags: dict[str, Any], require_ready: bool = True) -> dict[str, str]:
     """Read the bounded, non-secret infrastructure contract, never an arbitrary ARM ID."""
     validate_tag_budget(tags)
     contract = {key: value for key, value in tags.items() if key.casefold().startswith(PREFIX)}
-    if set(contract) != TAG_KEYS:
+    required = TAG_KEYS - {PREFIX + "mcpApp", PREFIX + "mcpIdentity"}
+    if not required <= set(contract) or set(contract) - (TAG_KEYS | set(OPTION_TAG_KEYS)):
         raise ValueError("Missing, unknown or non-canonical AzBrief v2 resource-group tag keys")
     if (
         contract[PREFIX + "schema"] != "2"
         or contract[PREFIX + "profile"] != PROFILE
-        or contract[PREFIX + "state"] != "ready"
+        or contract[PREFIX + "state"]
+        not in ({"ready"} if require_ready else {"foundation", "ready"})
         or contract[PREFIX + "acaPeEnabled"] not in {"true", "false"}
     ):
         raise ValueError("Use the completed AzBrief v2 infrastructure contract")
     for suffix in TAG_FIELDS.values():
-        value = contract[PREFIX + suffix]
+        value = contract.get(PREFIX + suffix, "")
+        if suffix in {"mcpApp", "mcpIdentity"} and not value:
+            continue
         if suffix in {"mcpUrl", "mcpConnection"} and not value:
             continue
         if suffix == "mcpUrl":
@@ -145,9 +163,37 @@ def parse_tag_contract(tags: dict[str, Any]) -> dict[str, str]:
     return contract
 
 
+def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
+    present = set(OPTION_TAG_KEYS).intersection(tags)
+    if not present:
+        return {}
+    if present != set(OPTION_TAG_KEYS):
+        raise ValueError("Incomplete infrastructure option tags")
+    options = json.loads("".join(tags[key] for key in OPTION_TAG_KEYS))
+    optional = {
+        "manageAzureMcp",
+        "azureMcpClientId",
+        "azureMcpServicePrincipalId",
+        "azureMcpAppRoleId",
+    }
+    if not isinstance(options, dict) or set(options) - (set(OPTION_FIELDS) | optional):
+        raise ValueError("Unknown or secret-valued infrastructure options")
+    if set(OPTION_FIELDS) - set(options):
+        raise ValueError("Missing saved infrastructure options")
+    if any(type(options[field]) is not kind for field, kind in OPTION_FIELDS.items()):
+        raise ValueError("Invalid saved infrastructure option type")
+    if "manageAzureMcp" in options and type(options["manageAzureMcp"]) is not bool:
+        raise ValueError("Invalid managed MCP setting")
+    for field in optional - {"manageAzureMcp"}:
+        if options.get(field):
+            UUID(options[field])
+    return options
+
+
 def infrastructure_values(cli: AzureCli, tags: dict[str, str]) -> dict[str, Any]:
     """Resolve leaf names within the explicit CLI scope, not a scope supplied in tags."""
-    values = {field: tags[PREFIX + suffix] for field, suffix in TAG_FIELDS.items()}
+    values = {field: tags.get(PREFIX + suffix, "") for field, suffix in TAG_FIELDS.items()}
+    values.update(decode_tag_options(tags))
     values.update(
         tenantId=cli.tenant,
         subscriptionId=cli.subscription,
@@ -633,18 +679,35 @@ def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
     return values
 
 
-def make_tag_contract(values: dict[str, Any], deployment_name: str) -> dict[str, str]:
+def make_tag_contract(
+    values: dict[str, Any], deployment_name: str, state: str = "ready"
+) -> dict[str, str]:
     contract = {PREFIX + suffix: values.get(field, "") for field, suffix in TAG_FIELDS.items()}
     contract.update(
         {
             PREFIX + "deployment": deployment_name,
             PREFIX + "schema": "2",
             PREFIX + "profile": PROFILE,
-            PREFIX + "state": "ready",
+            PREFIX + "state": state,
             PREFIX + "acaPeEnabled": str(values["deployContainerAppsPrivateEndpoint"]).lower(),
         }
     )
-    return parse_tag_contract(contract)
+    options = {field: values[field] for field in OPTION_FIELDS}
+    options.update(
+        {
+            "manageAzureMcp": not bool(values.get("azureMcpServerUrl")),
+            "azureMcpClientId": values.get("azureMcpClientId", ""),
+            "azureMcpServicePrincipalId": values.get("azureMcpServicePrincipalId", ""),
+            "azureMcpAppRoleId": values.get("azureMcpAppRoleId", ""),
+        }
+    )
+    encoded = json.dumps(options, ensure_ascii=False, separators=(",", ":"))
+    if len(encoded) > 8 * 256:
+        raise ValueError("Saved infrastructure options exceed the 2048-character tag budget")
+    contract.update(
+        {key: encoded[index * 256 : (index + 1) * 256] for index, key in enumerate(OPTION_TAG_KEYS)}
+    )
+    return parse_tag_contract(contract, require_ready=state == "ready")
 
 
 def _private_dns_bindings(cli: AzureCli, values: dict[str, Any], vnet_id: str) -> dict[str, str]:
@@ -744,10 +807,30 @@ def prepare_infrastructure(
     cli.assert_context()
     group = cli.json("group", "show", "--name", cli.group, "--subscription", cli.subscription)
     group_tags = group.get("tags") or {}
+    if (
+        values["containerAppName"].casefold() == values["azureMcpContainerAppName"].casefold()
+        or values["controlPlaneIdentityName"].casefold()
+        == values["azureMcpIdentityName"].casefold()
+    ):
+        raise ValueError("Core/MCP Apps and identities must have distinct customer resource names")
+    saved_options: dict[str, Any] = {}
     if any(key.casefold().startswith(PREFIX) for key in group_tags):
-        raise ValueError(
-            "v2 infrastructure already has a handoff; use application deployment, not an infrastructure rerun"
-        )
+        saved = parse_tag_contract(group_tags, require_ready=False)
+        if stage != "complete" or saved[PREFIX + "state"] != "foundation":
+            raise ValueError(
+                "v2 infrastructure already has a handoff; use application deployment, not an infrastructure rerun"
+            )
+        saved_options = decode_tag_options(saved)
+        if not saved_options:
+            raise ValueError("Completion requires saved foundation options")
+        for field, suffix in TAG_FIELDS.items():
+            if field in {"deploymentName", "azureMcpServerUrl"}:
+                continue
+            if str(values.get(field, "")).casefold() != saved.get(PREFIX + suffix, "").casefold():
+                raise ValueError(f"Refusing to change saved foundation option: {field}")
+        for field in OPTION_FIELDS:
+            if field != "existingPrivateDnsZoneIds" and values[field] != saved_options[field]:
+                raise ValueError(f"Refusing to change saved foundation option: {field}")
     contract = make_tag_contract(values, name + "-complete")
     validate_tag_budget({**group_tags, **contract})
     vnet_id = f"/subscriptions/{cli.subscription}/resourceGroups/{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
@@ -829,6 +912,11 @@ def prepare_infrastructure(
         "infrastructureStage": stage,
         "existingPrivateDnsZoneIds": _private_dns_bindings(cli, values, vnet_id),
     }
+    if (
+        saved_options
+        and prepared["existingPrivateDnsZoneIds"] != saved_options["existingPrivateDnsZoneIds"]
+    ):
+        raise ValueError("Refusing to redirect saved private DNS bindings")
     if stage == "complete":
         account_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}"
         reused, telemetry = validate_existing_host(cli, account_id, values)

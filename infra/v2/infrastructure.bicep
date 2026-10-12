@@ -49,7 +49,9 @@ param reuseExistingFoundrySetup bool = false
 param reuseExistingTelemetryConnection bool = false
 param foundryHostedAgentName string = 'azbrief-analysis-hosted'
 param azureMcpServerUrl string = ''
-param azureMcpProjectConnectionName string = ''
+param azureMcpProjectConnectionName string = 'azure-mcp-read-only'
+param azureMcpContainerAppName string = 'ca-azbrief-mcp-v2'
+param azureMcpIdentityName string = 'id-azbrief-mcp-v2'
 param tags object = {
   application: 'AzBrief'
   customer: 'KT'
@@ -62,6 +64,35 @@ var projectId = resourceId('Microsoft.CognitiveServices/accounts/projects', foun
 var projectEndpoint = 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${projectName}'
 var vnetId = resourceId(virtualNetworkResourceGroupName, 'Microsoft.Network/virtualNetworks', virtualNetworkName)
 var reuseFoundry = complete && reuseExistingFoundrySetup
+var manageAzureMcp = empty(azureMcpServerUrl)
+var savedOptions = complete ? json(concat(
+  resourceGroup().tags[?'azbrief.v2.options0'] ?? '{}',
+  resourceGroup().tags[?'azbrief.v2.options1'] ?? '',
+  resourceGroup().tags[?'azbrief.v2.options2'] ?? '',
+  resourceGroup().tags[?'azbrief.v2.options3'] ?? '',
+  resourceGroup().tags[?'azbrief.v2.options4'] ?? '',
+  resourceGroup().tags[?'azbrief.v2.options5'] ?? '',
+  resourceGroup().tags[?'azbrief.v2.options6'] ?? '',
+  resourceGroup().tags[?'azbrief.v2.options7'] ?? ''
+)) : {}
+var mcpClientId = manageAzureMcp ? (complete ? savedOptions.azureMcpClientId : mcpAuthentication!.outputs.entraAppClientId) : ''
+var mcpServicePrincipalId = manageAzureMcp ? (complete ? savedOptions.azureMcpServicePrincipalId : mcpAuthentication!.outputs.entraAppServicePrincipalObjectId) : ''
+var mcpAppRoleId = manageAzureMcp ? (complete ? savedOptions.azureMcpAppRoleId : mcpAuthentication!.outputs.entraAppRoleId) : ''
+var deploymentOptions = {
+  emailDataLocation: emailDataLocation
+  searchSku: searchSku
+  coreModelName: coreModelName
+  simpleModelName: simpleModelName
+  modelVersion: modelVersion
+  modelCapacity: modelCapacity
+  simpleModelCapacity: simpleModelCapacity
+  existingPrivateDnsZoneIds: existingPrivateDnsZoneIds
+  tags: resourceTags
+  manageAzureMcp: manageAzureMcp
+  azureMcpClientId: mcpClientId
+  azureMcpServicePrincipalId: mcpServicePrincipalId
+  azureMcpAppRoleId: mcpAppRoleId
+}
 var promptAgentNames = {
   coordinator: '${take(projectName, 47)}-coordinator'
   resource_graph: '${take(projectName, 47)}-resource-graph'
@@ -95,6 +126,23 @@ module foundation 'foundation.bicep' = if (!complete) {
     existingPrivateDnsZoneIds: existingPrivateDnsZoneIds
     deployContainerAppsPrivateEndpoint: deployContainerAppsPrivateEndpoint
     tags: resourceTags
+  }
+}
+
+module mcpIdentity 'mcp-identity.bicep' = if (!complete && manageAzureMcp) {
+  name: 'v2-mcp-identity'
+  params: {
+    name: azureMcpIdentityName
+    location: location
+    tags: resourceTags
+  }
+}
+
+module mcpAuthentication '../azure-mcp-server/infra/modules/entra-app.bicep' = if (!complete && manageAzureMcp) {
+  name: 'v2-mcp-authentication'
+  params: {
+    entraAppDisplayName: 'AzBrief v2 Azure MCP API'
+    entraAppUniqueName: 'azbrief-v2-mcp-${uniqueString(resourceGroup().id)}'
   }
 }
 
@@ -219,6 +267,31 @@ module controlPlaneRoles '../kt/control-plane-roles.bicep' = if (complete) {
   dependsOn: [capabilityHost]
 }
 
+module mcpProjectPermission '../azure-mcp-server/infra/modules/foundry-role-assignment-entraapp.bicep' = if (complete && manageAzureMcp) {
+  name: 'v2-mcp-project-permission'
+  params: {
+    foundryProjectResourceId: projectId
+    entraAppServicePrincipalObjectId: mcpServicePrincipalId
+    entraAppRoleId: mcpAppRoleId
+  }
+  dependsOn: [capabilityHost]
+}
+
+resource mcpConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = if (complete && manageAzureMcp) {
+  #disable-next-line use-parent-property
+  name: '${foundryAccountName}/${projectName}/${azureMcpProjectConnectionName}'
+  properties: {
+    category: 'RemoteToolServer'
+    #disable-next-line BCP036
+    authType: 'ProjectManagedIdentity'
+    target: 'https://${azureMcpContainerAppName}.${containerEnvironment.properties.defaultDomain}'
+    #disable-next-line BCP037
+    audience: 'api://${mcpClientId}'
+    isSharedToAll: true
+  }
+  dependsOn: [mcpProjectPermission]
+}
+
 var infrastructureContract = {
   schemaVersion: 2
   profile: 'kt-private-v2'
@@ -264,14 +337,30 @@ var infrastructureContract = {
   modelDeploymentName: modelDeploymentName
   simpleModelDeploymentName: simpleModelDeploymentName
   promptAgentNames: promptAgentNames
-  azureMcpServerUrl: azureMcpServerUrl
+  azureMcpServerUrl: manageAzureMcp ? 'https://${azureMcpContainerAppName}.${complete ? containerEnvironment.properties.defaultDomain : foundation!.outputs.environmentDefaultDomain}' : azureMcpServerUrl
   azureMcpProjectConnectionName: azureMcpProjectConnectionName
+  azureMcpContainerAppName: azureMcpContainerAppName
+  azureMcpIdentityName: azureMcpIdentityName
+}
+
+module foundationHandoff 'resource-group-tags.bicep' = if (!complete) {
+  name: 'v2-foundation-tags'
+  params: {
+    infrastructure: infrastructureContract
+    infrastructureState: 'foundation'
+    infrastructureOptions: deploymentOptions
+  }
+  dependsOn: [mcpIdentity]
 }
 
 module handoff 'resource-group-tags.bicep' = if (complete) {
   name: 'v2-infrastructure-tags'
-  params: { infrastructure: infrastructureContract }
-  dependsOn: [controlPlaneRoles, projectTelemetryRole, telemetryConnection]
+  params: {
+    infrastructure: infrastructureContract
+    infrastructureState: 'ready'
+    infrastructureOptions: deploymentOptions
+  }
+  dependsOn: [controlPlaneRoles, projectTelemetryRole, telemetryConnection, mcpConnection]
 }
 
 output infrastructure object = infrastructureContract
@@ -294,7 +383,7 @@ output ktFoundation object = {
     modelDeploymentName: modelDeploymentName
     simpleModelDeploymentName: simpleModelDeploymentName
     promptAgentNames: promptAgentNames
-    azureMcpServerUrl: azureMcpServerUrl
+    azureMcpServerUrl: infrastructureContract.azureMcpServerUrl
     azureMcpProjectConnectionName: azureMcpProjectConnectionName
     schedulerJobName: schedulerJobName
     applicationInsightsName: applicationInsightsName

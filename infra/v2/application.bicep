@@ -34,12 +34,36 @@ param jobTemplate object = {}
 param appEnvironment array = []
 param jobEnvironment array = []
 param webAuthConfiguration object = {}
+@description('Portal updates read current App/Job settings and secrets inside ARM; never expose them in UI controls.')
+param preserveExistingSettings bool = false
 param tags object = {
   application: 'AzBrief'
   customer: 'KT'
   deploymentProfile: 'kt-private-v2'
 }
 param jobTags object = tags
+
+resource existingApp 'Microsoft.App/containerApps@2026-01-01' existing = {
+  name: infrastructureTags['azbrief.v2.app']
+}
+resource existingJob 'Microsoft.App/jobs@2026-01-01' existing = {
+  name: infrastructureTags['azbrief.v2.job']
+}
+var liveUpdate = preserveExistingSettings && reuseExistingApiKey
+var previousAppSecrets = liveUpdate ? existingApp.listSecrets().value : []
+var previousJobSecrets = liveUpdate ? existingJob.listSecrets().value : []
+var suppliedAppSecretNames = map(existingSecrets.?app ?? [], secret => secret.name)
+var suppliedJobSecretNames = map(existingSecrets.?job ?? [], secret => secret.name)
+var resolvedAppSecrets = concat(filter(previousAppSecrets, secret => !contains(suppliedAppSecretNames, secret.name)), existingSecrets.?app ?? [])
+var resolvedJobSecrets = concat(filter(previousJobSecrets, secret => !contains(suppliedJobSecretNames, secret.name)), existingSecrets.?job ?? [])
+var resolvedAppConfiguration = union(liveUpdate ? existingApp.properties.configuration : {}, appConfiguration)
+var resolvedJobConfiguration = union(liveUpdate ? existingJob.properties.configuration : {}, jobConfiguration)
+var resolvedAppTemplate = union(liveUpdate ? existingApp.properties.template : {}, appTemplate)
+var resolvedJobTemplate = union(liveUpdate ? existingJob.properties.template : {}, jobTemplate)
+var suppliedAppEnvironmentNames = map(appEnvironment, item => item.name)
+var suppliedJobEnvironmentNames = map(jobEnvironment, item => item.name)
+var resolvedAppEnvironment = concat(filter(liveUpdate ? (existingApp.properties.template.containers[0].?env ?? []) : [], item => !contains(suppliedAppEnvironmentNames, item.name)), appEnvironment)
+var resolvedJobEnvironment = concat(filter(liveUpdate ? (existingJob.properties.template.containers[0].?env ?? []) : [], item => !contains(suppliedJobEnvironmentNames, item.name)), jobEnvironment)
 
 resource containerEnvironment 'Microsoft.App/managedEnvironments@2026-01-01' existing = {
   name: infrastructureTags['azbrief.v2.environment']
@@ -68,14 +92,14 @@ var promptAgentNames = {
   quality_reviewer: '${take(infrastructureTags['azbrief.v2.project'], 47)}-quality-reviewer'
 }
 var apiSecret = reuseExistingApiKey
-  ? filter(existingSecrets.?app ?? [], secret => secret.name == 'orchestrator-api-key')[0]
+  ? filter(resolvedAppSecrets, secret => secret.name == 'orchestrator-api-key')[0]
   : { name: 'orchestrator-api-key', value: apiKey }
 var appSecrets = concat(
-  filter(existingSecrets.?app ?? [], secret => secret.name != 'orchestrator-api-key'),
+  filter(resolvedAppSecrets, secret => secret.name != 'orchestrator-api-key'),
   [apiSecret]
 )
 var jobSecrets = concat(
-  filter(existingSecrets.?job ?? [], secret => secret.name != 'orchestrator-api-key'),
+  filter(resolvedJobSecrets, secret => secret.name != 'orchestrator-api-key'),
   [apiSecret]
 )
 var runtimeEnvironment = [
@@ -123,15 +147,15 @@ var jobDefaults = concat(runtimeEnvironment, [
   { name: 'SCHEDULE_DISPATCH_ENABLED', value: 'true' }
   { name: 'RUN_TIME_BUDGET_S', value: '39600' }
 ])
-var appEnvironmentNames = map(appEnvironment, item => item.name)
-var jobEnvironmentNames = map(jobEnvironment, item => item.name)
+var appEnvironmentNames = map(resolvedAppEnvironment, item => item.name)
+var jobEnvironmentNames = map(resolvedJobEnvironment, item => item.name)
 var mergedAppEnvironment = concat(
   filter(appDefaults, item => !contains(appEnvironmentNames, item.name)),
-  appEnvironment
+  resolvedAppEnvironment
 )
 var mergedJobEnvironment = concat(
   filter(jobDefaults, item => !contains(jobEnvironmentNames, item.name)),
-  jobEnvironment
+  resolvedJobEnvironment
 )
 var appContainer = union({
   name: 'azbrief'
@@ -144,23 +168,23 @@ var appContainer = union({
       periodSeconds: 10
     }
   ]
-}, appTemplate.?containers[?0] ?? {}, {
+}, resolvedAppTemplate.?containers[?0] ?? {}, {
   image: containerImage
   env: mergedAppEnvironment
 })
 var jobContainer = union({
   name: 'azbrief-scheduler'
   resources: { cpu: json('1.0'), memory: '2Gi' }
-}, jobTemplate.?containers[?0] ?? {}, {
+}, resolvedJobTemplate.?containers[?0] ?? {}, {
   image: containerImage
   command: ['python', '-m', 'src.scheduler']
   env: mergedJobEnvironment
 })
 var jobConfigurationDefaults = union({
-  triggerType: jobConfiguration.?triggerType ?? 'Manual'
+  triggerType: resolvedJobConfiguration.?triggerType ?? 'Manual'
   replicaTimeout: 43200
   replicaRetryLimit: 0
-}, (jobConfiguration.?triggerType ?? 'Manual') == 'Manual' ? {
+}, (resolvedJobConfiguration.?triggerType ?? 'Manual') == 'Manual' ? {
   manualTriggerConfig: { parallelism: 1, replicaCompletionCount: 1 }
 } : {})
 
@@ -178,8 +202,8 @@ resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
     configuration: union({
       activeRevisionsMode: 'Single'
       ingress: { external: true, allowInsecure: false, targetPort: 8000, transport: 'auto' }
-    }, appConfiguration, { secrets: appSecrets })
-    template: union({ scale: { minReplicas: 0, maxReplicas: 1 } }, appTemplate, {
+    }, resolvedAppConfiguration, { secrets: appSecrets })
+    template: union({ scale: { minReplicas: 0, maxReplicas: 1 } }, resolvedAppTemplate, {
       containers: [appContainer]
     })
   }
@@ -202,8 +226,16 @@ resource schedulerJob 'Microsoft.App/jobs@2026-01-01' = {
   properties: {
     environmentId: containerEnvironment.id
     workloadProfileName: 'Consumption'
-    configuration: union(jobConfigurationDefaults, jobConfiguration, { secrets: jobSecrets })
-    template: union(jobTemplate, { containers: [jobContainer] })
+    configuration: union(jobConfigurationDefaults, resolvedJobConfiguration, { secrets: jobSecrets })
+    template: union(resolvedJobTemplate, { containers: [jobContainer] })
+  }
+}
+
+module mcp 'mcp-application.bicep' = if (contains(infrastructureTags, 'azbrief.v2.options0')) {
+  name: 'v2-managed-mcp-application'
+  params: {
+    infrastructureTags: infrastructureTags
+    installManagedMcp: !reuseExistingApiKey
   }
 }
 

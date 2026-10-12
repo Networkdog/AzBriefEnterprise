@@ -15,7 +15,13 @@
     "projectName": { "value": "<new-foundry-project>" },
     "containerAppsEnvironmentName": { "value": "<new-private-environment>" },
     "containerAppName": { "value": "<new-container-app>" },
-    "azureMcpServerUrl": { "value": "<approved-existing-https-mcp-url>" },
-    "azureMcpProjectConnectionName": { "value": "<approved-project-mcp-connection-name>" }
+    "schedulerJobName": { "value": "<customer-scheduler-job>" },
+    "controlPlaneIdentityName": { "value": "<customer-control-plane-identity>" },
+    "logAnalyticsWorkspaceName": { "value": "<customer-log-workspace>" },
+    "applicationInsightsName": { "value": "<customer-insights>" },
+    "communicationServicesName": { "value": "<customer-communication-service>" },
+    "emailServiceName": { "value": "<customer-email-service>" },
+    "azureMcpContainerAppName": { "value": "<customer-mcp-app>" },
+    "azureMcpIdentityName": { "value": "<customer-mcp-identity>" }
   }
 }

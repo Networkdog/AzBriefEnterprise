@@ -10,6 +10,7 @@ import pytest
 
 from scripts import deploy_v2
 from scripts.deploy_kt import AzureCli
+from tests.test_kt_deployment import _evaluate_ui_expression
 
 ROOT = Path(__file__).resolve().parents[1]
 V2 = ROOT / "infra" / "v2"
@@ -67,6 +68,7 @@ def test_application_reads_rg_tags_and_only_writes_application_surfaces() -> Non
         "Microsoft.App/containerApps",
         "Microsoft.App/containerApps/authConfigs",
         "Microsoft.App/jobs",
+        "Microsoft.Resources/deployments",
     }
 
 
@@ -78,12 +80,15 @@ def test_handoff_is_completed_after_control_plane_rbac() -> None:
     assert any("v2-project-telemetry-role" in dependency for dependency in handoff["dependsOn"])
     tags_document = handoff["properties"]["template"]
     tags = tags_document["variables"]["contractTags"]
-    assert len(tags) == 29
-    assert tags["azbrief.v2.schema"] == "2"
-    assert tags["azbrief.v2.state"] == "ready"
-    assert "azbrief.v2.foundrySubnet" in tags
-    assert all(key.startswith("azbrief.v2.") for key in tags)
-    assert not any("secret" in key.lower() or "password" in key.lower() for key in tags)
+    assert len(deploy_v2.TAG_KEYS) == 31
+    assert all(f"'{key}'" in tags for key in deploy_v2.TAG_KEYS)
+    assert handoff["properties"]["parameters"]["infrastructureState"]["value"] == "ready"
+    assert tags_document["parameters"]["infrastructureState"]["allowedValues"] == [
+        "foundation",
+        "ready",
+    ]
+    assert "range(0, 8)" in tags_document["variables"]["optionsTags"]
+    assert "256" in tags_document["variables"]["optionsTags"]
     assert tags_document["resources"][0]["properties"]["tags"].startswith(
         "[union(coalesce(resourceGroup().tags,"
     )
@@ -158,10 +163,48 @@ def test_app_and_job_share_image_and_secret_but_keep_distinct_commands() -> None
     assert "src.scheduler" not in app
     assert document["parameters"]["apiKey"]["type"] == "securestring"
     assert document["parameters"]["existingSecrets"]["type"] == "secureObject"
-    assert "parameters('apiKey')" in document["variables"]["apiSecret"]
-    assert "reuseExistingApiKey" in document["variables"]["apiSecret"]
-    assert "manualTriggerConfig" in document["variables"]["jobConfigurationDefaults"]
-    assert "if(" in document["variables"]["jobConfigurationDefaults"]
+    assert "parameters('apiKey')" in json.dumps(document["resources"])
+    assert "reuseExistingApiKey" in json.dumps(document["resources"])
+    job_configuration = next(
+        resource["properties"]["configuration"]
+        for resource in document["resources"]
+        if resource["type"] == "Microsoft.App/jobs"
+    )
+    assert "manualTriggerConfig" in job_configuration
+    assert "if(" in job_configuration
+
+
+def test_foundation_saves_options_before_completion_and_app_stays_ready_only() -> None:
+    document = template("infrastructure")
+    foundation = module(document, "v2-foundation-tags")
+    assert foundation["condition"] == "[not(variables('complete'))]"
+    assert foundation["properties"]["parameters"]["infrastructureState"]["value"] == "foundation"
+    assert "infrastructureOptions" in foundation["properties"]["parameters"]
+    assert template("application")["parameters"]["infrastructureState"]["allowedValues"] == [
+        "ready"
+    ]
+
+
+def test_managed_mcp_is_split_between_identity_and_application_without_auth_bypass() -> None:
+    infrastructure = template("infrastructure")
+    assert module(infrastructure, "v2-mcp-identity")
+    assert module(infrastructure, "v2-mcp-authentication")
+    assert module(infrastructure, "v2-mcp-project-permission")
+    app = module(template("application"), "v2-managed-mcp-application")
+    assert (
+        app["properties"]["parameters"]["installManagedMcp"]["value"]
+        == "[not(parameters('reuseExistingApiKey'))]"
+    )
+    server = module(app["properties"]["template"], "v2-mcp-server-application")
+    assert (
+        server["properties"]["parameters"]["azureMcpImage"]["value"]
+        == "mcr.microsoft.com/azure-sdk/azure-mcp:3.0.0-beta.38"
+    )
+    body = json.dumps(server["properties"]["template"])
+    assert "--read-only" in body
+    assert "AzureAd__ClientId" in body
+    assert "DANGEROUSLY_DISABLE_AUTH" not in body
+    assert "Microsoft.Authorization/roleAssignments" not in body
 
 
 def test_hosted_roles_only_complete_post_publication_permissions() -> None:
@@ -448,6 +491,190 @@ def test_initial_application_uses_generated_key_and_tag_names() -> None:
     assert "apiKey" not in parameters
     assert parameters["infrastructureTags"] == cli.tags
     assert parameters["existingSecrets"] == {"app": [], "job": []}
+    assert not cli.operations
+
+
+def ui_definition(name: str) -> dict[str, Any]:
+    return json.loads((V2 / f"{name}.createUiDefinition.json").read_text(encoding="utf-8"))[
+        "parameters"
+    ]
+
+
+def ui_controls(name: str) -> dict[str, dict[str, Any]]:
+    return {
+        element["name"]: element
+        for step in ui_definition(name)["steps"]
+        for element in step["elements"]
+    }
+
+
+def test_infrastructure_ui_keeps_customer_names_but_not_internal_settings() -> None:
+    controls = ui_controls("infrastructure")
+    for field in (
+        "foundryAccountName",
+        "storageAccountName",
+        "cosmosAccountName",
+        "searchServiceName",
+        "projectName",
+        "containerAppName",
+        "containerAppsEnvironmentName",
+        "schedulerJobName",
+        "controlPlaneIdentityName",
+        "applicationInsightsName",
+        "communicationServicesName",
+        "emailServiceName",
+        "azureMcpContainerAppName",
+        "azureMcpIdentityName",
+    ):
+        assert controls[field]["type"] == "Microsoft.Common.TextBox"
+        assert controls[field]["constraints"]["required"] is True
+    for field in (
+        "modelDeploymentName",
+        "simpleModelDeploymentName",
+        "coreModelName",
+        "simpleModelName",
+        "modelVersion",
+        "modelCapacity",
+        "simpleModelCapacity",
+        "foundryHostedAgentName",
+        "azureMcpServerUrl",
+        "azureMcpProjectConnectionName",
+    ):
+        assert field not in controls
+    for name in ("infrastructure", "application"):
+        assert set(ui_definition(name)["outputs"]) <= set(template(name)["parameters"])
+
+
+def test_saved_customer_options_round_trip_and_application_rejects_foundation(
+    tmp_path: Path,
+) -> None:
+    values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    values.update(
+        searchSku="standard", emailDataLocation="Korea", modelCapacity=450, simpleModelCapacity=300
+    )
+    saved = deploy_v2.make_tag_contract(values, "customer-foundation", state="foundation")
+    assert len(saved) == 39
+    assert all(len(value) <= 256 for value in saved.values())
+    options = deploy_v2.decode_tag_options(saved)
+    assert options["searchSku"] == "standard"
+    assert options["emailDataLocation"] == "Korea"
+    assert options["modelCapacity"] == 450
+    with pytest.raises(ValueError, match="completed"):
+        deploy_v2.parse_tag_contract(saved)
+    outputs = ui_definition("infrastructure")["outputs"]
+    data = {"contract": {"resourceGroupApi": {"tags": saved}}}
+    for field in (
+        "searchSku",
+        "emailDataLocation",
+        "modelCapacity",
+        "simpleModelCapacity",
+        "modelVersion",
+        "containerAppName",
+        "foundryAccountName",
+        "azureMcpIdentityName",
+    ):
+        actual = _evaluate_ui_expression(
+            outputs[field], data, basics={"infrastructureStage": "complete"}
+        )
+        assert actual == values[field]
+
+
+@pytest.mark.parametrize("state", ["foundation", "ready", "invalid"])
+def test_application_ui_requires_ready_same_group_contract(state: str) -> None:
+    controls = ui_controls("application")
+    expression = controls["deploymentGuard"]["constraints"]["validations"][1]["isValid"]
+    tags = tag_contract()
+    tags.update({"azbrief.v2.state": state, "azbrief.v2.options0": "{}"})
+    assert _evaluate_ui_expression(
+        expression,
+        {"application": {"resourceGroupApi": {"tags": tags}}},
+        resource_group={"mode": "Existing"},
+    ) is (state == "ready")
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {},
+        {"value": None},
+        {"value": [], "error": {"code": "Denied"}},
+        {"value": [], "nextLink": "https://management.azure.com/next"},
+    ],
+)
+def test_application_ui_never_treats_failed_inventory_as_install(response: dict[str, Any]) -> None:
+    expression = ui_controls("application")["deploymentGuard"]["constraints"]["validations"][2][
+        "isValid"
+    ]
+    result = _evaluate_ui_expression(
+        expression, {"application": {"containerAppsApi": response, "jobsApi": {"value": []}}}
+    )
+    assert result is False
+
+
+def test_option_tags_reject_partial_unknown_and_oversized_saved_inputs(tmp_path: Path) -> None:
+    values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    saved = deploy_v2.make_tag_contract(values, "customer-foundation")
+    saved.pop("azbrief.v2.options7")
+    with pytest.raises(ValueError, match="Incomplete"):
+        deploy_v2.decode_tag_options(saved)
+    values["existingPrivateDnsZoneIds"] = {"unexpected": "a" * 2100}
+    with pytest.raises(ValueError, match="2048"):
+        deploy_v2.make_tag_contract(values, "customer-foundation")
+
+
+def test_ui_uses_supported_control_schema_and_legacy_network_guards(tmp_path: Path) -> None:
+    for name in ("infrastructure", "application"):
+        definition = ui_definition(name)
+        assert definition["config"]["isWizard"] is True
+        assert definition["config"]["basics"]["resourceGroup"]["allowExisting"] is True
+        assert all("visible" not in step for step in definition["steps"])
+        for control in ui_controls(name).values():
+            if control["type"] == "Microsoft.Common.CheckBox":
+                assert "validations" not in control.get("constraints", {})
+        assert "isValidJson(" not in json.dumps(definition)
+        assert "listSecrets" not in json.dumps(definition)
+    cli, values = infrastructure_cli(tmp_path)
+    vnet_id = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
+    network = {
+        "virtualNetwork": {"id": vnet_id},
+        "virtualNetworkApi": cli.documents[vnet_id],
+        **values,
+    }
+    validations = ui_controls("infrastructure")["networkGuard"]["constraints"]["validations"]
+    assert len(validations) == 5
+    for validation in validations:
+        assert (
+            _evaluate_ui_expression(
+                validation["isValid"], {}, network=network, eager_conditionals=True
+            )
+            is True
+        )
+    network["containerAppsSubnetName"] = network["foundrySubnetName"]
+    assert _evaluate_ui_expression(validations[-1]["isValid"], {}, network=network) is False
+
+
+def test_saved_foundation_names_and_choices_cannot_be_changed(tmp_path: Path) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    cli.tags = deploy_v2.make_tag_contract(values, "foundation", state="foundation")
+    altered = {**values, "searchSku": "standard"}
+    with pytest.raises(ValueError, match="saved foundation option"):
+        deploy_v2.prepare_infrastructure(cli, altered, "complete", "v2")
+    altered = {**values, "containerAppName": "another-customer-app"}
+    with pytest.raises(ValueError, match="saved foundation option"):
+        deploy_v2.prepare_infrastructure(cli, altered, "complete", "v2")
+    assert not cli.operations
+
+
+def test_core_and_mcp_customer_names_never_merge_identities(tmp_path: Path) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    expression = ui_controls("infrastructure")["namesGuard"]["constraints"]["validations"][0][
+        "isValid"
+    ]
+    assert _evaluate_ui_expression(expression, values) is True
+    values["azureMcpIdentityName"] = values["controlPlaneIdentityName"]
+    assert _evaluate_ui_expression(expression, values) is False
+    with pytest.raises(ValueError, match="distinct"):
+        deploy_v2.prepare_infrastructure(cli, values, "foundation", "v2")
     assert not cli.operations
 
 

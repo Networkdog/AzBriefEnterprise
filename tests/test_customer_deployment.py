@@ -449,15 +449,14 @@ def test_readme_buttons_publish_the_same_arm_and_ui_pair() -> None:
             assert (
                 decoded_links.count(
                     f"https://portal.azure.com/#create/Microsoft.Template/uri/"
-                    f"{expected_root}v2/{template}.json"
+                    f"{expected_root}v2/{template}.json/createUIDefinitionUri/"
+                    f"{expected_root}v2/{template}.createUiDefinition.json"
                 )
                 == 1
             )
-            assert (
-                f"[![Deploy v2 {template} to Azure](https://aka.ms/deploytoazurebutton)]"
-                in text
-            )
+            assert f"[![Deploy v2 {template} to Azure](https://aka.ms/deploytoazurebutton)]" in text
             assert (ROOT / "infra" / "v2" / f"{template}.json").is_file()
+            assert (ROOT / "infra" / "v2" / f"{template}.createUiDefinition.json").is_file()
         assert "infra/CUSTOMER_DEPLOYMENT.md" in text
         assert ".github/skills/kt-private-deployment/SKILL.md" in text
     assert (ROOT / "infra" / "CUSTOMER_DEPLOYMENT.md").is_file()

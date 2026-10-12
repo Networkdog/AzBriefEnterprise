@@ -2,13 +2,22 @@ targetScope = 'resourceGroup'
 
 metadata description = 'Non-secret AzBrief v2 infrastructure handoff. Preserve unrelated resource-group tags.'
 
-@description('Completed, same-resource-group infrastructure contract. Never include application secrets.')
+@description('Same-resource-group infrastructure contract. Never include application secrets.')
 param infrastructure object
 
-var contractTags = {
+@allowed(['foundation', 'ready'])
+param infrastructureState string = 'ready'
+
+@description('Explicit allow-listed non-secret deployment options, serialized in bounded tag values.')
+param infrastructureOptions object = {}
+
+@maxLength(2048)
+param optionsJson string = string(infrastructureOptions)
+var optionsTags = toObject(range(0, 8), index => 'azbrief.v2.options${index}', index => take(skip(optionsJson, index * 256), 256))
+var contractTags = union({
   'azbrief.v2.schema': '2'
   'azbrief.v2.profile': 'kt-private-v2'
-  'azbrief.v2.state': 'ready'
+  'azbrief.v2.state': infrastructureState
   'azbrief.v2.deployment': infrastructure.deploymentName
   'azbrief.v2.location': infrastructure.location
   'azbrief.v2.environment': infrastructure.containerAppsEnvironmentName
@@ -35,7 +44,9 @@ var contractTags = {
   'azbrief.v2.acaPeEnabled': toLower(string(infrastructure.deployContainerAppsPrivateEndpoint))
   'azbrief.v2.mcpUrl': infrastructure.azureMcpServerUrl
   'azbrief.v2.mcpConnection': infrastructure.azureMcpProjectConnectionName
-}
+  'azbrief.v2.mcpApp': infrastructure.azureMcpContainerAppName
+  'azbrief.v2.mcpIdentity': infrastructure.azureMcpIdentityName
+}, optionsTags)
 
 resource handoff 'Microsoft.Resources/tags@2025-04-01' = {
   name: 'default'

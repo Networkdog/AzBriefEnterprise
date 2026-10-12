@@ -9,7 +9,7 @@ Use a new set of resource names in one explicitly selected resource group.
 
 | User stage | Owns | Does not do |
 | --- | --- | --- |
-| Infrastructure, once | Foundry account, model deployments, project, BYO connections/host, Storage, Cosmos DB, Search, control-plane UAMI, internal Container Apps Environment, private DNS/PEs, Log Analytics, Entra-only Insights, resource diagnostics, ACS/email/domain, scoped roles, RG tag handoff | No App/Job container, placeholder image, environment variables or Prompt/Hosted Agent versions |
+| Infrastructure, once | Foundry account, models, project/BYO, Storage/Cosmos/Search, control-plane and MCP UAMIs, internal Environment, DNS/PEs, logs/Insights, email, scoped roles, MCP Entra application/project connection, staged RG tag handoff | No App/Job/MCP container image or Prompt/Hosted Agent versions |
 | Application, initially and repeatedly | Agent code/policies through the existing guarded publication workflow; real App/Job image, environment, secrets, registry configuration and Entra web settings | No infrastructure, model, BYO, diagnostic or RBAC replay during image/configuration updates |
 
 The infrastructure command internally creates the foundation, waits for the account
@@ -31,12 +31,15 @@ and separately approved evidence scopes remain operator-managed.
 | --- | --- |
 | [infrastructure.bicep](infrastructure.bicep) | [infrastructure.json](infrastructure.json), one-time infrastructure |
 | [foundation.bicep](foundation.bicep) | Internal foundation; reuses the pinned KT AVM modules and email module |
-| [resource-group-tags.bicep](resource-group-tags.bicep) | Completion-only, non-secret RG handoff |
+| [resource-group-tags.bicep](resource-group-tags.bicep) | Foundation and ready handoff, including bounded saved options |
 | [application.bicep](application.bicep) | [application.json](application.json), repeatable App/Job installation and updates |
 | [runtime-roles.bicep](runtime-roles.bicep) | [runtime-roles.json](runtime-roles.json), late Hosted permissions |
 | [monitoring-role.bicep](monitoring-role.bicep), [subscription-reader.bicep](subscription-reader.bicep) | Scoped role modules, never application resources |
 | [deploy_v2.py](../../scripts/deploy_v2.py) | Explicit-target preflight and Incremental deployment CLI |
 | [test_deployment_v2.py](../../tests/test_deployment_v2.py) | Offline ARM and install/update contract tests |
+| [infrastructure.createUiDefinition.json](infrastructure.createUiDefinition.json), [application.createUiDefinition.json](application.createUiDefinition.json) | Paired Portal forms attached by each README Deploy button |
+| [build_v2_ui.py](../../scripts/build_v2_ui.py) | Normalize supported form guards and reuse the tested KT network validation contract |
+| [mcp-identity.bicep](mcp-identity.bicep), [mcp-application.bicep](mcp-application.bicep) | Dedicated infrastructure-owned Reader UAMI and application-owned read-only MCP container |
 
 Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all three artifacts.
 
@@ -49,10 +52,11 @@ Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all three art
   The tool does not PUT the VNet or create/change subnets.
 - Deployment and role-definition/assignment permissions, plus private DNS reads and
   any explicit canonical central-DNS IDs. Failed or incomplete reads block writes.
-- An approved read-only Azure MCP server and project connection for Agent publication.
-  v2 records their names/URL, not their credentials or an Entra permission bypass.
-  The separate [MCP deployment unit](../azure-mcp-server/README.md) and its Entra
-  permissions remain explicit setup work; do not create a second Environment/workspace.
+- Permission to create the MCP Entra application/service principal and assign its app role
+  through the existing Microsoft Graph Bicep modules. This is separate from ARM Contributor;
+  verify directory approval before deployment. No authentication bypass or secret is created.
+  MCP uses the same Environment/workspace and a dedicated Reader-only UAMI. Its URL comes
+  from the actual Environment domain and customer-named MCP App, not a fabricated address.
 - Actual model catalog, Responses/Agents capabilities and quota. The completion
   preflight reuses the KT checks; aliases alone are not availability proof.
 - An approved immutable control-plane image digest and registry reachability.
@@ -68,10 +72,13 @@ before opting into `--mode deploy`.
 
 ## Resource Group Handoff
 
-The completed infrastructure merges **29** `azbrief.v2.*` tags into the existing RG
-tags. It never removes unrelated tags. `schema=2`, `profile=kt-private-v2` and
-`state=ready` are written only after infrastructure, BYO, roles and telemetry bindings
-finish. Foundation alone does not produce a ready contract.
+Infrastructure merges **39** `azbrief.v2.*` tags without removing unrelated RG tags.
+Foundation success writes `schema=2`, `profile=kt-private-v2`, `state=foundation`, customer
+names and required options. Completion reuses them and changes the state to `ready` only
+after BYO, roles and connections succeed. Application still accepts only `ready`.
+The eight `options0` through `options7` values each hold at most 256 characters of one
+allow-listed JSON object (2048 characters total). It preserves model IDs/version/capacity,
+Search SKU, email location, canonical DNS IDs, resource tags and non-secret MCP identifiers.
 
 Names include `environment`, `app`, `job`, `identity`, `storage`, `cosmos`, `search`,
 `workspace`, `insights`, `acs`, `email`, `foundry`, `project`, `hosted`, `coreModel`,
@@ -86,7 +93,7 @@ Tags are editable, plaintext routing metadata, not identity, permission or crypt
 proof. The CLI also checks explicit context, ownership, typed internal/PNA/subnet state
 and exact BYO bindings. Unknown/corrupt/missing contracts block writes.
 
-Azure permits 50 tags per RG and 256 characters per value. v2 reserves 29 slots;
+Azure permits 50 tags per RG and 256 characters per value. v2 reserves 39 slots;
 the CLI checks the merged budget before provisioning. Resource tags have a separate
 15-tag limit because the same input also reaches Private DNS. Use canonical tag-key
 casing. Never store API keys, registry tokens, client secrets or subscriber data here.
@@ -94,6 +101,18 @@ See [Azure tag limits](https://learn.microsoft.com/azure/azure-resource-manager/
 and [Bicep tag application](https://learn.microsoft.com/azure/azure-resource-manager/management/tag-resources-bicep).
 
 ## Infrastructure Once
+
+Both README buttons attach their own `createUIDefinitionUri`, following the existing
+Enterprise/KT ARM/UI pairing. Publish each pair to GitHub main together; a local link
+change does not update the remote Portal form. Normalize forms with
+`python -m scripts.build_v2_ui` and check drift with `--check`.
+
+Portal customers enter RG-visible resource names, including the core/MCP Apps, UAMIs,
+Environment, Job, storage, logs, email and project. Internal model aliases, model IDs,
+version, 200-unit capacities, Hosted name and MCP connection name are automatically set.
+No model/MCP URL/connection field is presented. Completion reads names/options from the
+same RG rather than asking again. Model quota/catalog and Graph permissions are still
+real preflight gates, not implied by automatic values.
 
 Prepare a protected parameter file based on
 [infrastructure.parameters.example.json](infrastructure.parameters.example.json).
@@ -129,7 +148,8 @@ Agent publication is part of the application stage, not ARM infrastructure:
 use [setup_kt_agents.ps1](../../scripts/setup_kt_agents.ps1) with the completed
 deployment name from `azbrief.v2.deployment`, the exact target and an isolated named
 azd environment. Its compatible `ktFoundation.runtimeSetup` output is retained.
-Complete Configure/Publish/Check using the existing private-network guide. These
+Install the application/MCP containers before the guarded Agent publication smoke, then
+complete Configure/Publish/Check using the existing private-network guide. These
 steps publish the six distinct Prompt Agents and the Hosted code, not merely names.
 Do not overwrite the developer `.env` or skip a failed publication/smoke gate.
 
@@ -175,6 +195,14 @@ Manual or activate a new schedule. A partial App/Job install requires explicit r
 Infrastructure-bound identity/endpoint/storage routes cannot be redirected in a patch.
 Temporary parameter files are removed and their values are never logged.
 
+The Portal application form reads the same RG contract and complete App/Job inventory.
+It derives initial install versus key reuse; failed, pending, paged, foreign or partial
+inventory blocks. On updates, ARM reads existing secrets/settings internally, retains
+auth by omission and keeps the accepted trigger/cron. Secrets never enter UI controls.
+The MCP container uses the pinned official image, incoming Entra authentication and only
+the group/resourcehealth/advisor namespaces with `--read-only`. Initial Admin/Archive
+remain disabled until the separate approved Entra web configuration is supplied.
+
 Serialize deployments to one RG/App. This tool has no distributed deployment lock,
 image provenance/vulnerability certification, automatic live rollback or smoke acceptance.
 Review/approve artifacts and what-if first. Updated Agent code/policies need their own
@@ -200,3 +228,6 @@ temporary-file cleanup. They do not perform Azure provisioning or prove registry
 DNS routing, login/denial, PE Succeeded/Approved, actual log ingestion, Agent inference,
 Archive access, email delivery or schedule readiness. Outputs deliberately keep
 `applicationReady=false`; accept those customer paths before enabling automatic runs.
+
+Offline expression tests and JSON checks are not a real Portal Sandbox acceptance. Verify
+the published ARM/UI pair in the authenticated customer Portal before production rollout.

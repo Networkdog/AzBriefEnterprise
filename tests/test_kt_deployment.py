@@ -352,6 +352,10 @@ def _evaluate_ui_expression(
         if isinstance(node, ast.Subscript):
             value = evaluate(node.value, bindings)
             index = evaluate(node.slice, bindings)
+            if value is None:
+                return None
+            if isinstance(value, dict) and isinstance(index, str):
+                return value.get(index)
             assert isinstance(value, list) and isinstance(index, int)
             return value[index]
         assert isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
@@ -400,7 +404,10 @@ def _evaluate_ui_expression(
             if arguments == ["network"]:
                 assert network is not None
                 return network
-            assert arguments == ["names"]
+            if arguments != ["names"] and len(arguments) == 1:
+                value = names.get(arguments[0])
+                assert isinstance(value, dict)
+                return value
             return names
         if function == "basics":
             assert len(arguments) == 1 and isinstance(arguments[0], str)

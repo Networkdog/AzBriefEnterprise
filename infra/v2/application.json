@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "18199484948787860835"
+      "templateHash": "13941114662785825262"
     },
     "description": "Repeatable AzBrief v2 application installation/update using the current resource-group tag contract. No infrastructure, model, BYO, RBAC or diagnostics writes."
   },
@@ -91,6 +91,13 @@
       "type": "object",
       "defaultValue": {}
     },
+    "preserveExistingSettings": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Portal updates read current App/Job settings and secrets inside ARM; never expose them in UI controls."
+      }
+    },
     "tags": {
       "type": "object",
       "defaultValue": {
@@ -105,6 +112,11 @@
     }
   },
   "variables": {
+    "liveUpdate": "[and(parameters('preserveExistingSettings'), parameters('reuseExistingApiKey'))]",
+    "suppliedAppSecretNames": "[map(coalesce(tryGet(parameters('existingSecrets'), 'app'), createArray()), lambda('secret', lambdaVariables('secret').name))]",
+    "suppliedJobSecretNames": "[map(coalesce(tryGet(parameters('existingSecrets'), 'job'), createArray()), lambda('secret', lambdaVariables('secret').name))]",
+    "suppliedAppEnvironmentNames": "[map(parameters('appEnvironment'), lambda('item', lambdaVariables('item').name))]",
+    "suppliedJobEnvironmentNames": "[map(parameters('jobEnvironment'), lambda('item', lambdaVariables('item').name))]",
     "stateContainerUrl": "[format('https://{0}.blob.{1}/azbrief-state', parameters('infrastructureTags')['azbrief.v2.storage'], environment().suffixes.storage)]",
     "promptAgentNames": {
       "coordinator": "[format('{0}-coordinator', take(parameters('infrastructureTags')['azbrief.v2.project'], 47))]",
@@ -114,9 +126,6 @@
       "report_writer": "[format('{0}-report-writer', take(parameters('infrastructureTags')['azbrief.v2.project'], 47))]",
       "quality_reviewer": "[format('{0}-quality-reviewer', take(parameters('infrastructureTags')['azbrief.v2.project'], 47))]"
     },
-    "apiSecret": "[if(parameters('reuseExistingApiKey'), filter(coalesce(tryGet(parameters('existingSecrets'), 'app'), createArray()), lambda('secret', equals(lambdaVariables('secret').name, 'orchestrator-api-key')))[0], createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey')))]",
-    "appSecrets": "[concat(filter(coalesce(tryGet(parameters('existingSecrets'), 'app'), createArray()), lambda('secret', not(equals(lambdaVariables('secret').name, 'orchestrator-api-key')))), createArray(variables('apiSecret')))]",
-    "jobSecrets": "[concat(filter(coalesce(tryGet(parameters('existingSecrets'), 'job'), createArray()), lambda('secret', not(equals(lambdaVariables('secret').name, 'orchestrator-api-key')))), createArray(variables('apiSecret')))]",
     "supportResources": [
       {
         "id": "managed_identity",
@@ -146,10 +155,7 @@
         "resource_type": "Microsoft.Search/searchServices",
         "api_version": "2023-11-01"
       }
-    ],
-    "appEnvironmentNames": "[map(parameters('appEnvironment'), lambda('item', lambdaVariables('item').name))]",
-    "jobEnvironmentNames": "[map(parameters('jobEnvironment'), lambda('item', lambdaVariables('item').name))]",
-    "jobConfigurationDefaults": "[union(createObject('triggerType', coalesce(tryGet(parameters('jobConfiguration'), 'triggerType'), 'Manual'), 'replicaTimeout', 43200, 'replicaRetryLimit', 0), if(equals(coalesce(tryGet(parameters('jobConfiguration'), 'triggerType'), 'Manual'), 'Manual'), createObject('manualTriggerConfig', createObject('parallelism', 1, 'replicaCompletionCount', 1)), createObject()))]"
+    ]
   },
   "resources": [
     {
@@ -167,8 +173,8 @@
       "properties": {
         "environmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('infrastructureTags')['azbrief.v2.environment'])]",
         "workloadProfileName": "Consumption",
-        "configuration": "[union(createObject('activeRevisionsMode', 'Single', 'ingress', createObject('external', true(), 'allowInsecure', false(), 'targetPort', 8000, 'transport', 'auto')), parameters('appConfiguration'), createObject('secrets', variables('appSecrets')))]",
-        "template": "[union(createObject('scale', createObject('minReplicas', 0, 'maxReplicas', 1)), parameters('appTemplate'), createObject('containers', createArray(union(createObject('name', 'azbrief', 'resources', createObject('cpu', json('0.25'), 'memory', '0.5Gi'), 'probes', createArray(createObject('type', 'Readiness', 'httpGet', createObject('path', '/health', 'port', 8000), 'initialDelaySeconds', 5, 'periodSeconds', 10))), coalesce(tryGet(tryGet(parameters('appTemplate'), 'containers'), 0), createObject()), createObject('image', parameters('containerImage'), 'env', concat(filter(concat(createArray(createObject('name', 'AZURE_TENANT_ID', 'value', tenant().tenantId), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_CLIENT_ID', 'value', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('infrastructureTags')['azbrief.v2.identity']), '2023-01-31').clientId), createObject('name', 'FOUNDRY_PROJECT_ENDPOINT', 'value', format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project'])), createObject('name', 'FOUNDRY_HOSTED_AGENT_NAME', 'value', parameters('infrastructureTags')['azbrief.v2.hosted']), createObject('name', 'API_KEY', 'secretRef', 'orchestrator-api-key'), createObject('name', 'CHECKPOINT_BLOB_URL', 'value', format('{0}/checkpoint.json', variables('stateContainerUrl'))), createObject('name', 'ARCHIVE_BLOB_CONTAINER_URL', 'value', format('https://{0}.blob.{1}/azbrief-archive', parameters('infrastructureTags')['azbrief.v2.storage'], environment().suffixes.storage)), createObject('name', 'ADMIN_CONFIG_BLOB_URL', 'value', format('{0}/admin-config.json', variables('stateContainerUrl'))), createObject('name', 'COMMUNICATION_SERVICES_ENDPOINT', 'value', format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('infrastructureTags')['azbrief.v2.acs']), '2023-04-01').hostName)), createObject('name', 'EMAIL_SENDER_ADDRESS', 'value', format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('infrastructureTags')['azbrief.v2.email']), '/')[0], split(format('{0}/AzureManagedDomain', parameters('infrastructureTags')['azbrief.v2.email']), '/')[1]), '2023-04-01').fromSenderDomain)), createObject('name', 'OTEL_ENABLED', 'value', 'true'), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', parameters('infrastructureTags')['azbrief.v2.insights']), '2020-02-02').ConnectionString)), createArray(createObject('name', 'MAX_CONCURRENT_ANALYSES', 'value', '1'), createObject('name', 'ADMIN_UI_ENABLED', 'value', 'false'), createObject('name', 'ADMIN_REQUIRE_AUTH', 'value', 'true'), createObject('name', 'ARCHIVE_UI_ENABLED', 'value', 'false'), createObject('name', 'ARCHIVE_REQUIRE_AUTH', 'value', 'true'), createObject('name', 'FEEDBACK_UI_ENABLED', 'value', 'false'), createObject('name', 'ARCHIVE_BASE_URL', 'value', format('https://{0}.{1}', parameters('infrastructureTags')['azbrief.v2.app'], reference(resourceId('Microsoft.App/managedEnvironments', parameters('infrastructureTags')['azbrief.v2.environment']), '2026-01-01').defaultDomain)), createObject('name', 'ADMIN_READINESS_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'ADMIN_READINESS_FOUNDRY_ACCOUNT', 'value', parameters('infrastructureTags')['azbrief.v2.foundry']), createObject('name', 'ADMIN_READINESS_FOUNDRY_PROJECT', 'value', parameters('infrastructureTags')['azbrief.v2.project']), createObject('name', 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', 'value', parameters('infrastructureTags')['azbrief.v2.coreModel']), createObject('name', 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', 'value', parameters('infrastructureTags')['azbrief.v2.simpleModel']), createObject('name', 'ADMIN_READINESS_PROMPT_AGENTS', 'value', base64(string(variables('promptAgentNames')))), createObject('name', 'ADMIN_READINESS_CONTAINER_ENVIRONMENTS', 'value', base64(string(createArray(parameters('infrastructureTags')['azbrief.v2.environment'])))), createObject('name', 'ADMIN_READINESS_CONTAINER_APPS', 'value', base64(string(createArray(parameters('infrastructureTags')['azbrief.v2.app'])))), createObject('name', 'ADMIN_READINESS_CONTAINER_JOBS', 'value', base64(string(createArray(parameters('infrastructureTags')['azbrief.v2.job'])))), createObject('name', 'ADMIN_READINESS_SUPPORT_RESOURCES', 'value', base64(string(variables('supportResources')))))), lambda('item', not(contains(variables('appEnvironmentNames'), lambdaVariables('item').name)))), parameters('appEnvironment')))))))]"
+        "configuration": "[union(createObject('activeRevisionsMode', 'Single', 'ingress', createObject('external', true(), 'allowInsecure', false(), 'targetPort', 8000, 'transport', 'auto')), union(if(variables('liveUpdate'), reference(resourceId('Microsoft.App/containerApps', parameters('infrastructureTags')['azbrief.v2.app']), '2026-01-01').configuration, createObject()), parameters('appConfiguration')), createObject('secrets', concat(filter(concat(filter(if(variables('liveUpdate'), listSecrets(resourceId('Microsoft.App/containerApps', parameters('infrastructureTags')['azbrief.v2.app']), '2026-01-01').value, createArray()), lambda('secret', not(contains(variables('suppliedAppSecretNames'), lambdaVariables('secret').name)))), coalesce(tryGet(parameters('existingSecrets'), 'app'), createArray())), lambda('secret', not(equals(lambdaVariables('secret').name, 'orchestrator-api-key')))), createArray(if(parameters('reuseExistingApiKey'), filter(concat(filter(if(variables('liveUpdate'), listSecrets(resourceId('Microsoft.App/containerApps', parameters('infrastructureTags')['azbrief.v2.app']), '2026-01-01').value, createArray()), lambda('secret', not(contains(variables('suppliedAppSecretNames'), lambdaVariables('secret').name)))), coalesce(tryGet(parameters('existingSecrets'), 'app'), createArray())), lambda('secret', equals(lambdaVariables('secret').name, 'orchestrator-api-key')))[0], createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey')))))))]",
+        "template": "[union(createObject('scale', createObject('minReplicas', 0, 'maxReplicas', 1)), union(if(variables('liveUpdate'), reference(resourceId('Microsoft.App/containerApps', parameters('infrastructureTags')['azbrief.v2.app']), '2026-01-01').template, createObject()), parameters('appTemplate')), createObject('containers', createArray(union(createObject('name', 'azbrief', 'resources', createObject('cpu', json('0.25'), 'memory', '0.5Gi'), 'probes', createArray(createObject('type', 'Readiness', 'httpGet', createObject('path', '/health', 'port', 8000), 'initialDelaySeconds', 5, 'periodSeconds', 10))), coalesce(tryGet(tryGet(union(if(variables('liveUpdate'), reference(resourceId('Microsoft.App/containerApps', parameters('infrastructureTags')['azbrief.v2.app']), '2026-01-01').template, createObject()), parameters('appTemplate')), 'containers'), 0), createObject()), createObject('image', parameters('containerImage'), 'env', concat(filter(concat(createArray(createObject('name', 'AZURE_TENANT_ID', 'value', tenant().tenantId), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_CLIENT_ID', 'value', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('infrastructureTags')['azbrief.v2.identity']), '2023-01-31').clientId), createObject('name', 'FOUNDRY_PROJECT_ENDPOINT', 'value', format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project'])), createObject('name', 'FOUNDRY_HOSTED_AGENT_NAME', 'value', parameters('infrastructureTags')['azbrief.v2.hosted']), createObject('name', 'API_KEY', 'secretRef', 'orchestrator-api-key'), createObject('name', 'CHECKPOINT_BLOB_URL', 'value', format('{0}/checkpoint.json', variables('stateContainerUrl'))), createObject('name', 'ARCHIVE_BLOB_CONTAINER_URL', 'value', format('https://{0}.blob.{1}/azbrief-archive', parameters('infrastructureTags')['azbrief.v2.storage'], environment().suffixes.storage)), createObject('name', 'ADMIN_CONFIG_BLOB_URL', 'value', format('{0}/admin-config.json', variables('stateContainerUrl'))), createObject('name', 'COMMUNICATION_SERVICES_ENDPOINT', 'value', format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('infrastructureTags')['azbrief.v2.acs']), '2023-04-01').hostName)), createObject('name', 'EMAIL_SENDER_ADDRESS', 'value', format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('infrastructureTags')['azbrief.v2.email']), '/')[0], split(format('{0}/AzureManagedDomain', parameters('infrastructureTags')['azbrief.v2.email']), '/')[1]), '2023-04-01').fromSenderDomain)), createObject('name', 'OTEL_ENABLED', 'value', 'true'), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', parameters('infrastructureTags')['azbrief.v2.insights']), '2020-02-02').ConnectionString)), createArray(createObject('name', 'MAX_CONCURRENT_ANALYSES', 'value', '1'), createObject('name', 'ADMIN_UI_ENABLED', 'value', 'false'), createObject('name', 'ADMIN_REQUIRE_AUTH', 'value', 'true'), createObject('name', 'ARCHIVE_UI_ENABLED', 'value', 'false'), createObject('name', 'ARCHIVE_REQUIRE_AUTH', 'value', 'true'), createObject('name', 'FEEDBACK_UI_ENABLED', 'value', 'false'), createObject('name', 'ARCHIVE_BASE_URL', 'value', format('https://{0}.{1}', parameters('infrastructureTags')['azbrief.v2.app'], reference(resourceId('Microsoft.App/managedEnvironments', parameters('infrastructureTags')['azbrief.v2.environment']), '2026-01-01').defaultDomain)), createObject('name', 'ADMIN_READINESS_RESOURCE_GROUP', 'value', resourceGroup().name), createObject('name', 'ADMIN_READINESS_FOUNDRY_ACCOUNT', 'value', parameters('infrastructureTags')['azbrief.v2.foundry']), createObject('name', 'ADMIN_READINESS_FOUNDRY_PROJECT', 'value', parameters('infrastructureTags')['azbrief.v2.project']), createObject('name', 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', 'value', parameters('infrastructureTags')['azbrief.v2.coreModel']), createObject('name', 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', 'value', parameters('infrastructureTags')['azbrief.v2.simpleModel']), createObject('name', 'ADMIN_READINESS_PROMPT_AGENTS', 'value', base64(string(variables('promptAgentNames')))), createObject('name', 'ADMIN_READINESS_CONTAINER_ENVIRONMENTS', 'value', base64(string(createArray(parameters('infrastructureTags')['azbrief.v2.environment'])))), createObject('name', 'ADMIN_READINESS_CONTAINER_APPS', 'value', base64(string(createArray(parameters('infrastructureTags')['azbrief.v2.app'])))), createObject('name', 'ADMIN_READINESS_CONTAINER_JOBS', 'value', base64(string(createArray(parameters('infrastructureTags')['azbrief.v2.job'])))), createObject('name', 'ADMIN_READINESS_SUPPORT_RESOURCES', 'value', base64(string(variables('supportResources')))))), lambda('item', not(contains(map(concat(filter(if(variables('liveUpdate'), coalesce(tryGet(reference(resourceId('Microsoft.App/containerApps', parameters('infrastructureTags')['azbrief.v2.app']), '2026-01-01').template.containers[0], 'env'), createArray()), createArray()), lambda('item', not(contains(variables('suppliedAppEnvironmentNames'), lambdaVariables('item').name)))), parameters('appEnvironment')), lambda('item', lambdaVariables('item').name)), lambdaVariables('item').name)))), concat(filter(if(variables('liveUpdate'), coalesce(tryGet(reference(resourceId('Microsoft.App/containerApps', parameters('infrastructureTags')['azbrief.v2.app']), '2026-01-01').template.containers[0], 'env'), createArray()), createArray()), lambda('item', not(contains(variables('suppliedAppEnvironmentNames'), lambdaVariables('item').name)))), parameters('appEnvironment'))))))))]"
       }
     },
     {
@@ -196,8 +202,329 @@
       "properties": {
         "environmentId": "[resourceId('Microsoft.App/managedEnvironments', parameters('infrastructureTags')['azbrief.v2.environment'])]",
         "workloadProfileName": "Consumption",
-        "configuration": "[union(variables('jobConfigurationDefaults'), parameters('jobConfiguration'), createObject('secrets', variables('jobSecrets')))]",
-        "template": "[union(parameters('jobTemplate'), createObject('containers', createArray(union(createObject('name', 'azbrief-scheduler', 'resources', createObject('cpu', json('1.0'), 'memory', '2Gi')), coalesce(tryGet(tryGet(parameters('jobTemplate'), 'containers'), 0), createObject()), createObject('image', parameters('containerImage'), 'command', createArray('python', '-m', 'src.scheduler'), 'env', concat(filter(concat(createArray(createObject('name', 'AZURE_TENANT_ID', 'value', tenant().tenantId), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_CLIENT_ID', 'value', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('infrastructureTags')['azbrief.v2.identity']), '2023-01-31').clientId), createObject('name', 'FOUNDRY_PROJECT_ENDPOINT', 'value', format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project'])), createObject('name', 'FOUNDRY_HOSTED_AGENT_NAME', 'value', parameters('infrastructureTags')['azbrief.v2.hosted']), createObject('name', 'API_KEY', 'secretRef', 'orchestrator-api-key'), createObject('name', 'CHECKPOINT_BLOB_URL', 'value', format('{0}/checkpoint.json', variables('stateContainerUrl'))), createObject('name', 'ARCHIVE_BLOB_CONTAINER_URL', 'value', format('https://{0}.blob.{1}/azbrief-archive', parameters('infrastructureTags')['azbrief.v2.storage'], environment().suffixes.storage)), createObject('name', 'ADMIN_CONFIG_BLOB_URL', 'value', format('{0}/admin-config.json', variables('stateContainerUrl'))), createObject('name', 'COMMUNICATION_SERVICES_ENDPOINT', 'value', format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('infrastructureTags')['azbrief.v2.acs']), '2023-04-01').hostName)), createObject('name', 'EMAIL_SENDER_ADDRESS', 'value', format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('infrastructureTags')['azbrief.v2.email']), '/')[0], split(format('{0}/AzureManagedDomain', parameters('infrastructureTags')['azbrief.v2.email']), '/')[1]), '2023-04-01').fromSenderDomain)), createObject('name', 'OTEL_ENABLED', 'value', 'true'), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', parameters('infrastructureTags')['azbrief.v2.insights']), '2020-02-02').ConnectionString)), createArray(createObject('name', 'MAX_CONCURRENT_ANALYSES', 'value', '1'), createObject('name', 'SCHEDULE_DISPATCH_ENABLED', 'value', 'true'), createObject('name', 'RUN_TIME_BUDGET_S', 'value', '39600'))), lambda('item', not(contains(variables('jobEnvironmentNames'), lambdaVariables('item').name)))), parameters('jobEnvironment')))))))]"
+        "configuration": "[union(union(createObject('triggerType', coalesce(tryGet(union(if(variables('liveUpdate'), reference(resourceId('Microsoft.App/jobs', parameters('infrastructureTags')['azbrief.v2.job']), '2026-01-01').configuration, createObject()), parameters('jobConfiguration')), 'triggerType'), 'Manual'), 'replicaTimeout', 43200, 'replicaRetryLimit', 0), if(equals(coalesce(tryGet(union(if(variables('liveUpdate'), reference(resourceId('Microsoft.App/jobs', parameters('infrastructureTags')['azbrief.v2.job']), '2026-01-01').configuration, createObject()), parameters('jobConfiguration')), 'triggerType'), 'Manual'), 'Manual'), createObject('manualTriggerConfig', createObject('parallelism', 1, 'replicaCompletionCount', 1)), createObject())), union(if(variables('liveUpdate'), reference(resourceId('Microsoft.App/jobs', parameters('infrastructureTags')['azbrief.v2.job']), '2026-01-01').configuration, createObject()), parameters('jobConfiguration')), createObject('secrets', concat(filter(concat(filter(if(variables('liveUpdate'), listSecrets(resourceId('Microsoft.App/jobs', parameters('infrastructureTags')['azbrief.v2.job']), '2026-01-01').value, createArray()), lambda('secret', not(contains(variables('suppliedJobSecretNames'), lambdaVariables('secret').name)))), coalesce(tryGet(parameters('existingSecrets'), 'job'), createArray())), lambda('secret', not(equals(lambdaVariables('secret').name, 'orchestrator-api-key')))), createArray(if(parameters('reuseExistingApiKey'), filter(concat(filter(if(variables('liveUpdate'), listSecrets(resourceId('Microsoft.App/containerApps', parameters('infrastructureTags')['azbrief.v2.app']), '2026-01-01').value, createArray()), lambda('secret', not(contains(variables('suppliedAppSecretNames'), lambdaVariables('secret').name)))), coalesce(tryGet(parameters('existingSecrets'), 'app'), createArray())), lambda('secret', equals(lambdaVariables('secret').name, 'orchestrator-api-key')))[0], createObject('name', 'orchestrator-api-key', 'value', parameters('apiKey')))))))]",
+        "template": "[union(union(if(variables('liveUpdate'), reference(resourceId('Microsoft.App/jobs', parameters('infrastructureTags')['azbrief.v2.job']), '2026-01-01').template, createObject()), parameters('jobTemplate')), createObject('containers', createArray(union(createObject('name', 'azbrief-scheduler', 'resources', createObject('cpu', json('1.0'), 'memory', '2Gi')), coalesce(tryGet(tryGet(union(if(variables('liveUpdate'), reference(resourceId('Microsoft.App/jobs', parameters('infrastructureTags')['azbrief.v2.job']), '2026-01-01').template, createObject()), parameters('jobTemplate')), 'containers'), 0), createObject()), createObject('image', parameters('containerImage'), 'command', createArray('python', '-m', 'src.scheduler'), 'env', concat(filter(concat(createArray(createObject('name', 'AZURE_TENANT_ID', 'value', tenant().tenantId), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_CLIENT_ID', 'value', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('infrastructureTags')['azbrief.v2.identity']), '2023-01-31').clientId), createObject('name', 'FOUNDRY_PROJECT_ENDPOINT', 'value', format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project'])), createObject('name', 'FOUNDRY_HOSTED_AGENT_NAME', 'value', parameters('infrastructureTags')['azbrief.v2.hosted']), createObject('name', 'API_KEY', 'secretRef', 'orchestrator-api-key'), createObject('name', 'CHECKPOINT_BLOB_URL', 'value', format('{0}/checkpoint.json', variables('stateContainerUrl'))), createObject('name', 'ARCHIVE_BLOB_CONTAINER_URL', 'value', format('https://{0}.blob.{1}/azbrief-archive', parameters('infrastructureTags')['azbrief.v2.storage'], environment().suffixes.storage)), createObject('name', 'ADMIN_CONFIG_BLOB_URL', 'value', format('{0}/admin-config.json', variables('stateContainerUrl'))), createObject('name', 'COMMUNICATION_SERVICES_ENDPOINT', 'value', format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('infrastructureTags')['azbrief.v2.acs']), '2023-04-01').hostName)), createObject('name', 'EMAIL_SENDER_ADDRESS', 'value', format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('infrastructureTags')['azbrief.v2.email']), '/')[0], split(format('{0}/AzureManagedDomain', parameters('infrastructureTags')['azbrief.v2.email']), '/')[1]), '2023-04-01').fromSenderDomain)), createObject('name', 'OTEL_ENABLED', 'value', 'true'), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', reference(resourceId('Microsoft.Insights/components', parameters('infrastructureTags')['azbrief.v2.insights']), '2020-02-02').ConnectionString)), createArray(createObject('name', 'MAX_CONCURRENT_ANALYSES', 'value', '1'), createObject('name', 'SCHEDULE_DISPATCH_ENABLED', 'value', 'true'), createObject('name', 'RUN_TIME_BUDGET_S', 'value', '39600'))), lambda('item', not(contains(map(concat(filter(if(variables('liveUpdate'), coalesce(tryGet(reference(resourceId('Microsoft.App/jobs', parameters('infrastructureTags')['azbrief.v2.job']), '2026-01-01').template.containers[0], 'env'), createArray()), createArray()), lambda('item', not(contains(variables('suppliedJobEnvironmentNames'), lambdaVariables('item').name)))), parameters('jobEnvironment')), lambda('item', lambdaVariables('item').name)), lambdaVariables('item').name)))), concat(filter(if(variables('liveUpdate'), coalesce(tryGet(reference(resourceId('Microsoft.App/jobs', parameters('infrastructureTags')['azbrief.v2.job']), '2026-01-01').template.containers[0], 'env'), createArray()), createArray()), lambda('item', not(contains(variables('suppliedJobEnvironmentNames'), lambdaVariables('item').name)))), parameters('jobEnvironment'))))))))]"
+      }
+    },
+    {
+      "condition": "[contains(parameters('infrastructureTags'), 'azbrief.v2.options0')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "v2-managed-mcp-application",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "infrastructureTags": {
+            "value": "[parameters('infrastructureTags')]"
+          },
+          "installManagedMcp": {
+            "value": "[not(parameters('reuseExistingApiKey'))]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "534701092691372967"
+            }
+          },
+          "parameters": {
+            "infrastructureTags": {
+              "type": "object"
+            },
+            "installManagedMcp": {
+              "type": "bool"
+            }
+          },
+          "variables": {
+            "options": "[json(concat(parameters('infrastructureTags')['azbrief.v2.options0'], parameters('infrastructureTags')['azbrief.v2.options1'], parameters('infrastructureTags')['azbrief.v2.options2'], parameters('infrastructureTags')['azbrief.v2.options3'], parameters('infrastructureTags')['azbrief.v2.options4'], parameters('infrastructureTags')['azbrief.v2.options5'], parameters('infrastructureTags')['azbrief.v2.options6'], parameters('infrastructureTags')['azbrief.v2.options7']))]"
+          },
+          "resources": [
+            {
+              "condition": "[and(variables('options').manageAzureMcp, parameters('installManagedMcp'))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "v2-mcp-server-application",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "name": {
+                    "value": "[parameters('infrastructureTags')['azbrief.v2.mcpApp']]"
+                  },
+                  "location": {
+                    "value": "[parameters('infrastructureTags')['azbrief.v2.location']]"
+                  },
+                  "containerAppEnvironmentId": {
+                    "value": "[resourceId('Microsoft.App/managedEnvironments', parameters('infrastructureTags')['azbrief.v2.environment'])]"
+                  },
+                  "workloadProfileName": {
+                    "value": "Consumption"
+                  },
+                  "azureAdTenantId": {
+                    "value": "[tenant().tenantId]"
+                  },
+                  "azureAdClientId": {
+                    "value": "[variables('options').azureMcpClientId]"
+                  },
+                  "userAssignedIdentityResourceId": {
+                    "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('infrastructureTags')['azbrief.v2.mcpIdentity'])]"
+                  },
+                  "targetSubscriptionId": {
+                    "value": "[subscription().subscriptionId]"
+                  },
+                  "azureMcpImage": {
+                    "value": "mcr.microsoft.com/azure-sdk/azure-mcp:3.0.0-beta.38"
+                  },
+                  "tags": {
+                    "value": "[variables('options').tags]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.46.1.21595",
+                      "templateHash": "11405705341763862812"
+                    }
+                  },
+                  "parameters": {
+                    "location": {
+                      "type": "string",
+                      "defaultValue": "[resourceGroup().location]",
+                      "metadata": {
+                        "description": "Location for all resources."
+                      }
+                    },
+                    "name": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Azure Container App name and resource prefix."
+                      }
+                    },
+                    "containerAppEnvironmentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "metadata": {
+                        "description": "Existing AzBrief Container Apps environment resource ID."
+                      }
+                    },
+                    "workloadProfileName": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Existing environment workload profile. Empty for consumption-only environments."
+                      }
+                    },
+                    "azureAdTenantId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Microsoft Entra tenant ID."
+                      }
+                    },
+                    "azureAdClientId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Microsoft Entra application client ID used for incoming authentication."
+                      }
+                    },
+                    "userAssignedIdentityResourceId": {
+                      "type": "string",
+                      "defaultValue": "",
+                      "metadata": {
+                        "description": "Optional pre-provisioned dedicated UAMI for infrastructure/application separation. Empty retains the existing system-assigned profile."
+                      }
+                    },
+                    "targetSubscriptionId": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Default subscription exposed to read-only Azure MCP tools."
+                      }
+                    },
+                    "azureMcpImage": {
+                      "type": "string",
+                      "metadata": {
+                        "description": "Pinned official Azure MCP Server image."
+                      }
+                    },
+                    "namespaces": {
+                      "type": "array",
+                      "defaultValue": [
+                        "group",
+                        "resourcehealth",
+                        "advisor"
+                      ],
+                      "minLength": 1,
+                      "maxLength": 3,
+                      "metadata": {
+                        "description": "Azure MCP namespaces exposed to the impact Agent. Keep this list narrow and read-only."
+                      }
+                    },
+                    "cpuCores": {
+                      "type": "string",
+                      "defaultValue": "0.5",
+                      "metadata": {
+                        "description": "Number of CPU cores allocated to the server."
+                      }
+                    },
+                    "memorySize": {
+                      "type": "string",
+                      "defaultValue": "1Gi",
+                      "metadata": {
+                        "description": "Memory allocated to the server."
+                      }
+                    },
+                    "minReplicas": {
+                      "type": "int",
+                      "defaultValue": 1,
+                      "metadata": {
+                        "description": "Minimum number of replicas."
+                      }
+                    },
+                    "maxReplicas": {
+                      "type": "int",
+                      "defaultValue": 3,
+                      "metadata": {
+                        "description": "Maximum number of replicas."
+                      }
+                    },
+                    "tags": {
+                      "type": "object",
+                      "defaultValue": {}
+                    }
+                  },
+                  "variables": {
+                    "copy": [
+                      {
+                        "name": "namespaceArgs",
+                        "count": "[length(parameters('namespaces'))]",
+                        "input": "[createArray('--namespace', parameters('namespaces')[copyIndex('namespaceArgs')])]"
+                      }
+                    ],
+                    "baseArgs": [
+                      "--transport",
+                      "http",
+                      "--outgoing-auth-strategy",
+                      "UseHostingEnvironmentIdentity",
+                      "--mode",
+                      "all",
+                      "--read-only"
+                    ],
+                    "serverArgs": "[flatten(concat(createArray(variables('baseArgs')), variables('namespaceArgs')))]"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.App/containerApps",
+                      "apiVersion": "2026-01-01",
+                      "name": "[parameters('name')]",
+                      "location": "[parameters('location')]",
+                      "tags": "[union(parameters('tags'), createObject('product', 'azbrief', 'component', 'azure-mcp-server'))]",
+                      "identity": "[if(empty(parameters('userAssignedIdentityResourceId')), createObject('type', 'SystemAssigned'), createObject('type', 'UserAssigned', 'userAssignedIdentities', createObject(format('{0}', parameters('userAssignedIdentityResourceId')), createObject())))]",
+                      "properties": {
+                        "managedEnvironmentId": "[parameters('containerAppEnvironmentId')]",
+                        "workloadProfileName": "[if(empty(parameters('workloadProfileName')), null(), parameters('workloadProfileName'))]",
+                        "configuration": {
+                          "activeRevisionsMode": "Single",
+                          "ingress": {
+                            "external": true,
+                            "targetPort": 8080,
+                            "allowInsecure": false,
+                            "transport": "http",
+                            "traffic": [
+                              {
+                                "weight": 100,
+                                "latestRevision": true
+                              }
+                            ]
+                          }
+                        },
+                        "template": {
+                          "containers": [
+                            {
+                              "name": "[parameters('name')]",
+                              "image": "[parameters('azureMcpImage')]",
+                              "command": [],
+                              "args": "[variables('serverArgs')]",
+                              "resources": {
+                                "cpu": "[json(parameters('cpuCores'))]",
+                                "memory": "[parameters('memorySize')]"
+                              },
+                              "env": "[concat(createArray(createObject('name', 'ASPNETCORE_ENVIRONMENT', 'value', 'Production'), createObject('name', 'ASPNETCORE_URLS', 'value', 'http://+:8080'), createObject('name', 'AZURE_TOKEN_CREDENTIALS', 'value', 'managedidentitycredential'), createObject('name', 'AZURE_MCP_INCLUDE_PRODUCTION_CREDENTIALS', 'value', 'true'), createObject('name', 'AZURE_MCP_COLLECT_TELEMETRY', 'value', 'false'), createObject('name', 'AZURE_MCP_COLLECT_TELEMETRY_MICROSOFT', 'value', 'false'), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', parameters('targetSubscriptionId')), createObject('name', 'AZURE_TENANT_ID', 'value', parameters('azureAdTenantId')), createObject('name', 'AzureAd__Instance', 'value', environment().authentication.loginEndpoint), createObject('name', 'AzureAd__TenantId', 'value', parameters('azureAdTenantId')), createObject('name', 'AzureAd__ClientId', 'value', parameters('azureAdClientId')), createObject('name', 'AZURE_LOG_LEVEL', 'value', 'Information'), createObject('name', 'AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION', 'value', 'true'), createObject('name', 'AZURE_MCP_DANGEROUSLY_ENABLE_FORWARDED_HEADERS', 'value', 'true')), if(empty(parameters('userAssignedIdentityResourceId')), createArray(), createArray(createObject('name', 'AZURE_CLIENT_ID', 'value', reference(parameters('userAssignedIdentityResourceId'), '2023-01-31').clientId))))]",
+                              "probes": [
+                                {
+                                  "type": "Startup",
+                                  "tcpSocket": {
+                                    "port": 8080
+                                  },
+                                  "initialDelaySeconds": 5,
+                                  "periodSeconds": 5,
+                                  "failureThreshold": 30
+                                },
+                                {
+                                  "type": "Liveness",
+                                  "tcpSocket": {
+                                    "port": 8080
+                                  },
+                                  "periodSeconds": 30
+                                }
+                              ]
+                            }
+                          ],
+                          "scale": {
+                            "minReplicas": "[parameters('minReplicas')]",
+                            "maxReplicas": "[parameters('maxReplicas')]",
+                            "rules": [
+                              {
+                                "name": "http-scaler",
+                                "http": {
+                                  "metadata": {
+                                    "concurrentRequests": "20"
+                                  }
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "outputs": {
+                    "containerAppResourceId": {
+                      "type": "string",
+                      "value": "[resourceId('Microsoft.App/containerApps', parameters('name'))]"
+                    },
+                    "containerAppUrl": {
+                      "type": "string",
+                      "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', parameters('name')), '2026-01-01').configuration.ingress.fqdn)]"
+                    },
+                    "containerAppName": {
+                      "type": "string",
+                      "value": "[parameters('name')]"
+                    },
+                    "containerAppPrincipalId": {
+                      "type": "string",
+                      "value": "[if(empty(parameters('userAssignedIdentityResourceId')), reference(resourceId('Microsoft.App/containerApps', parameters('name')), '2026-01-01', 'full').identity.principalId, reference(parameters('userAssignedIdentityResourceId'), '2023-01-31').principalId)]"
+                    },
+                    "containerAppEnvironmentId": {
+                      "type": "string",
+                      "value": "[parameters('containerAppEnvironmentId')]"
+                    }
+                  }
+                }
+              }
+            }
+          ]
+        }
       }
     }
   ],

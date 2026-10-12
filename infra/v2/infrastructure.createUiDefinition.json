@@ -1,0 +1,527 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
+  "handler": "Microsoft.Azure.CreateUIDef",
+  "version": "0.1.2-preview",
+  "parameters": {
+    "config": {
+      "basics": {
+        "description": "AzBrief v2 인프라 배포입니다. 기반 준비 후 같은 RG에서 프로젝트·BYO·권한을 완성합니다. 앱 이미지는 별도 앱 배포 버튼으로 설치합니다.",
+        "location": {
+          "label": "기존 VNet과 같은 지역",
+          "resourceTypes": [
+            "Microsoft.CognitiveServices/accounts",
+            "Microsoft.App/managedEnvironments",
+            "Microsoft.DocumentDB/databaseAccounts",
+            "Microsoft.Search/searchServices"
+          ]
+        },
+        "resourceGroup": {
+          "allowExisting": true
+        }
+      },
+      "isWizard": true
+    },
+    "basics": [
+      {
+        "name": "infrastructureStage",
+        "type": "Microsoft.Common.DropDown",
+        "label": "인프라 내부 단계",
+        "defaultValue": "기반 준비",
+        "constraints": {
+          "required": true,
+          "allowedValues": [
+            {
+              "label": "기반 준비",
+              "value": "foundation"
+            },
+            {
+              "label": "기존 기반 완성",
+              "value": "complete"
+            }
+          ]
+        },
+        "toolTip": "기반 준비는 계정·네트워크·저장소·로그를 생성하고 선택값을 RG 태그에 저장합니다. 계정 host 준비 확인 후 기존 기반 완성을 같은 RG에서 실행하십시오. 완성 단계는 저장된 값만 사용합니다."
+      }
+    ],
+    "steps": [
+      {
+        "name": "contract",
+        "label": "배포 범위",
+        "elements": [
+          {
+            "name": "resourceGroupApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(equals(resourceGroup().mode, 'Existing'), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '?api-version=2025-04-01'), concat('/subscriptions/', subscription().subscriptionId, '?api-version=2022-12-01'))]"
+            }
+          },
+          {
+            "name": "contractAccepted",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "정확한 RG와 승인된 사전검사를 확인했습니다.",
+            "defaultValue": false,
+            "constraints": {
+              "required": true,
+              "validationMessage": "배포 범위와 사전검사를 확인하십시오."
+            }
+          },
+          {
+            "name": "stageNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Warning",
+              "text": "인프라 내부 단계는 기반 준비 → 계정 Capability Host 준비 확인 → 기존 기반 완성 순서입니다. 앱·Prompt/Hosted Agent 버전은 생성하지 않습니다. 기존 KT 설치의 인수·이전·host 초기화를 수행하지 않으며, 실제 배포 전 보호된 CLI 사전검사를 수행하십시오."
+            }
+          },
+          {
+            "name": "contractGuard",
+            "type": "Microsoft.Common.TextBox",
+            "label": "배포 검증 (값 변경 불필요)",
+            "defaultValue": "검사",
+            "constraints": {
+              "required": true,
+              "validations": [
+                {
+                  "isValid": "[equals(steps('contract').contractAccepted, true)]",
+                  "message": "네트워크·DNS·quota·권한을 확인하십시오. 이 폼은 실제 사전검사나 연결 인수를 대신하지 않습니다."
+                },
+                {
+                  "isValid": "[or(equals(basics('infrastructureStage'), 'foundation'), and(equals(resourceGroup().mode, 'Existing'), equals(coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.schema'], ''), '2'), equals(coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.profile'], ''), 'kt-private-v2'), equals(coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.state'], ''), 'foundation'), not(empty(coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.options0'], ''))), empty(steps('contract').resourceGroupApi.error)))]",
+                  "message": "기존 기반 완성에는 같은 기존 RG의 정상 foundation 태그와 저장된 옵션이 필요합니다. 실패한 조회나 완료된 인프라를 재설치로 처리하지 않습니다."
+                },
+                {
+                  "isValid": "[or(equals(basics('infrastructureStage'), 'complete'), empty(coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.schema'], '')))]",
+                  "message": "이미 v2 태그가 있는 RG에 기반을 다시 배포하지 마십시오. 기반 완성 또는 앱 배포를 선택하십시오."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "network",
+        "label": "기존 네트워크",
+        "elements": [
+          {
+            "name": "virtualNetwork",
+            "type": "Microsoft.Solutions.ResourceSelector",
+            "label": "승인된 기존 VNet",
+            "resourceType": "Microsoft.Network/virtualNetworks",
+            "options": {
+              "filter": {
+                "subscription": "onBasics",
+                "location": "onBasics"
+              }
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "virtualNetworkApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]"
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "peSubnetName",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Private Endpoint 서브넷",
+            "defaultValue": "서브넷을 선택하십시오.",
+            "filter": true,
+            "toolTip": "위임 없는 RFC1918 IPv4 /28 이상과 승인된 IP 여유가 필요합니다.",
+            "constraints": {
+              "required": true,
+              "allowedValues": "[parse(concat('[{\"label\":\"서브넷을 선택하십시오.\",\"value\":\"\"}', replace(replace(replace(string(map(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => not(empty(s.name))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"value\":\"', s.name, '\"}')))), '[]', ''), '[', ','), ']', ''), ']'))]"
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "foundrySubnetName",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Foundry 전용 서브넷",
+            "defaultValue": "서브넷을 선택하십시오.",
+            "filter": true,
+            "toolTip": "Microsoft.App/environments 단독 위임, RFC1918 IPv4 /27 이상과 전용 점유가 필요합니다.",
+            "constraints": {
+              "required": true,
+              "allowedValues": "[parse(concat('[{\"label\":\"서브넷을 선택하십시오.\",\"value\":\"\"}', replace(replace(replace(string(map(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => not(empty(s.name))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"value\":\"', s.name, '\"}')))), '[]', ''), '[', ','), ']', ''), ']'))]"
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "containerAppsSubnetName",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Container Apps 전용 서브넷",
+            "defaultValue": "서브넷을 선택하십시오.",
+            "filter": true,
+            "toolTip": "Foundry와 다른 Microsoft.App/environments 전용 서브넷, RFC1918 IPv4 /27 이상이며 ACA 예약 범위를 피해야 합니다.",
+            "constraints": {
+              "required": true,
+              "allowedValues": "[parse(concat('[{\"label\":\"서브넷을 선택하십시오.\",\"value\":\"\"}', replace(replace(replace(string(map(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => not(empty(s.name))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"value\":\"', s.name, '\"}')))), '[]', ''), '[', ','), ']', ''), ']'))]"
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "existingPrivateDnsZoneIds",
+            "type": "Microsoft.Common.TextBox",
+            "label": "검증한 기존 Private DNS zone ID 맵(JSON)",
+            "defaultValue": "{}",
+            "multiLine": true,
+            "toolTip": "기존 KT CLI의 연결 조사로 확인한 canonical zone-name → ARM ID 객체를 사용합니다. 실제 연결을 조사하지 않은 {}는 기존 DNS를 만들거나 덮어쓰는 승인이 아닙니다.",
+            "constraints": {
+              "required": true,
+              "regex": "^\\s*\\{[\\s\\S]*\\}\\s*$",
+              "validationMessage": "검증한 zone-name → ARM ID JSON 객체를 입력하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "deployContainerAppsPrivateEndpoint",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "Container Apps Environment Private Endpoint 자동 생성",
+            "defaultValue": false,
+            "toolTip": "기본은 수동입니다. 내부 환경/PNA Disabled와 다른 네 PE는 유지합니다. 자동 생성은 승인된 추가 IP 여유와 정책 확인 후 선택하십시오.",
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "networkGuard",
+            "type": "Microsoft.Common.TextBox",
+            "label": "서브넷 검증 (값 변경 불필요)",
+            "defaultValue": "검사",
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]",
+            "constraints": {
+              "required": true,
+              "validations": [
+                {
+                  "isValid": "[not(empty(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => and(equals(toLower(coalesce(s.name, '')), toLower(coalesce(steps('network').peSubnetName, ''))), lessOrEquals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), or(empty(s.properties.addressPrefix), empty(coalesce(s.properties.addressPrefixes, parse('[]'))), equals(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))))), or(and(startsWith(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '10.'), contains(parse('[\"8\",\"9\",\"10\",\"11\",\"12\",\"13\",\"14\",\"15\",\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\",\"28\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')))), and(startsWith(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '192.168.'), contains(parse('[\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\",\"28\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')))), and(startsWith(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '172.'), contains(parse('[\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\",\"28\",\"29\",\"30\",\"31\"]'), last(take(split(first(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')), '.'), 2))), contains(parse('[\"12\",\"13\",\"14\",\"15\",\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\",\"28\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/'))))), equals(length(coalesce(s.properties.delegations, parse('[]'))), 0)))))]",
+                  "message": "Private Endpoint subnet 이름이 현재 VNet의 유효한 서브넷과 일치하지 않습니다. RFC1918 단일 IPv4 /28 이상과 위임을 확인하십시오."
+                },
+                {
+                  "isValid": "[not(empty(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => and(equals(toLower(coalesce(s.name, '')), toLower(coalesce(steps('network').foundrySubnetName, ''))), lessOrEquals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), or(empty(s.properties.addressPrefix), empty(coalesce(s.properties.addressPrefixes, parse('[]'))), equals(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))))), or(and(startsWith(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '10.'), contains(parse('[\"8\",\"9\",\"10\",\"11\",\"12\",\"13\",\"14\",\"15\",\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')))), and(startsWith(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '192.168.'), contains(parse('[\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')))), and(startsWith(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '172.'), contains(parse('[\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\",\"28\",\"29\",\"30\",\"31\"]'), last(take(split(first(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')), '.'), 2))), contains(parse('[\"12\",\"13\",\"14\",\"15\",\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/'))))), equals(length(coalesce(s.properties.delegations, parse('[]'))), 1), equals(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments'))), 1)))))]",
+                  "message": "Foundry 전용 subnet 이름이 현재 VNet의 유효한 서브넷과 일치하지 않습니다. RFC1918 단일 IPv4 /27 이상과 위임을 확인하십시오."
+                },
+                {
+                  "isValid": "[not(empty(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), (s) => and(equals(toLower(coalesce(s.name, '')), toLower(coalesce(steps('network').containerAppsSubnetName, ''))), lessOrEquals(length(coalesce(s.properties.addressPrefixes, parse('[]'))), 1), or(empty(s.properties.addressPrefix), empty(coalesce(s.properties.addressPrefixes, parse('[]'))), equals(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))))), or(and(startsWith(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '10.'), contains(parse('[\"8\",\"9\",\"10\",\"11\",\"12\",\"13\",\"14\",\"15\",\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')))), and(startsWith(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '192.168.'), contains(parse('[\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')))), and(startsWith(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '172.'), or(and(contains(parse('[\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\"]'), last(take(split(first(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')), '.'), 2))), contains(parse('[\"13\",\"14\",\"15\",\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')))), and(contains(parse('[\"24\",\"25\",\"26\",\"27\"]'), last(take(split(first(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')), '.'), 2))), contains(parse('[\"14\",\"15\",\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')))), and(contains(parse('[\"28\",\"29\"]'), last(take(split(first(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/')), '.'), 2))), contains(parse('[\"15\",\"16\",\"17\",\"18\",\"19\",\"20\",\"21\",\"22\",\"23\",\"24\",\"25\",\"26\",\"27\"]'), last(split(coalesce(s.properties.addressPrefix, first(if(empty(coalesce(s.properties.addressPrefixes, parse('[]'))), parse('[\"\"]'), coalesce(s.properties.addressPrefixes, parse('[]')))), ''), '/'))))))), equals(length(coalesce(s.properties.delegations, parse('[]'))), 1), equals(length(filter(coalesce(s.properties.delegations, parse('[]')), (d) => equals(d.properties.serviceName, 'Microsoft.App/environments'))), 1)))))]",
+                  "message": "Container Apps 전용 subnet 이름이 현재 VNet의 유효한 서브넷과 일치하지 않습니다. RFC1918 단일 IPv4 /27 이상과 위임을 확인하십시오. Container Apps 예약 범위는 사용할 수 없습니다."
+                },
+                {
+                  "isValid": "[and(not(equals(coalesce(steps('network').virtualNetworkApi.properties.subnets, false), false)), empty(steps('network').virtualNetworkApi.error), equals(toLower(coalesce(steps('network').virtualNetworkApi.id, '')), toLower(coalesce(steps('network').virtualNetwork.id, ''))))]",
+                  "message": "현재 선택한 VNet의 서브넷 조회가 완료되지 않았거나 오류·이전 응답이 남아 있습니다. 현재 VNet의 읽기 결과를 확인하십시오."
+                },
+                {
+                  "isValid": "[not(or(equals(toLower(coalesce(steps('network').peSubnetName, '')), toLower(coalesce(steps('network').foundrySubnetName, ''))), equals(toLower(coalesce(steps('network').peSubnetName, '')), toLower(coalesce(steps('network').containerAppsSubnetName, ''))), equals(toLower(coalesce(steps('network').foundrySubnetName, '')), toLower(coalesce(steps('network').containerAppsSubnetName, '')))))]",
+                  "message": "Private Endpoint·Foundry·Container Apps의 서브넷 이름은 서로 달라야 합니다. Foundry와 Container Apps는 같은 서브넷을 공유할 수 없습니다."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "names",
+        "label": "리소스 이름",
+        "elements": [
+          {
+            "name": "foundryAccountName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Foundry 계정",
+            "defaultValue": "ai-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9][a-z0-9-]{0,62}[a-z0-9]$",
+              "validationMessage": "2~64자의 소문자·숫자·하이픈을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "storageAccountName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "공유 Storage Account",
+            "defaultValue": "stazbriefv2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9]{3,24}$",
+              "validationMessage": "3~24자의 소문자·숫자를 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "cosmosAccountName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Cosmos DB 계정",
+            "defaultValue": "cosmos-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9][a-z0-9-]{1,42}[a-z0-9]$",
+              "validationMessage": "3~44자의 소문자·숫자·하이픈을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "searchServiceName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Azure AI Search",
+            "defaultValue": "srch-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^(?!.*--)[a-z0-9][a-z0-9-]{0,58}[a-z0-9]$",
+              "validationMessage": "2~60자의 소문자·숫자·단일 하이픈을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "projectName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Foundry 프로젝트",
+            "defaultValue": "azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]$",
+              "validationMessage": "2~63자의 소문자·숫자·하이픈을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "containerAppsEnvironmentName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Container Apps Environment",
+            "defaultValue": "cae-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z][a-z0-9-]{0,58}[a-z0-9]$",
+              "validationMessage": "2~60자의 소문자·숫자·하이픈을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "containerAppName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Container App",
+            "defaultValue": "ca-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z][a-z0-9-]{0,30}[a-z0-9]$",
+              "validationMessage": "2~32자의 소문자·숫자·하이픈을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "schedulerJobName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Scheduler Job",
+            "defaultValue": "job-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z][a-z0-9-]{0,30}[a-z0-9]$",
+              "validationMessage": "2~32자의 소문자·숫자·하이픈을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "controlPlaneIdentityName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "제어면 UAMI",
+            "defaultValue": "id-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9_-]{2,127}$",
+              "validationMessage": "3~128자의 문자·숫자·하이픈·밑줄을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "logAnalyticsWorkspaceName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Log Analytics",
+            "defaultValue": "log-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9-]{2,61}[a-zA-Z0-9]$",
+              "validationMessage": "4~63자의 문자·숫자·하이픈을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "applicationInsightsName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Application Insights",
+            "defaultValue": "appi-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,254}$",
+              "validationMessage": "255자 이내 이름을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "communicationServicesName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Communication Services",
+            "defaultValue": "acs-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$",
+              "validationMessage": "2~63자의 문자·숫자·하이픈을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "emailServiceName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Email Communication Services",
+            "defaultValue": "email-azbrief-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9-]{0,61}[a-zA-Z0-9]$",
+              "validationMessage": "2~63자의 문자·숫자·하이픈을 사용하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "azureMcpContainerAppName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Azure MCP Container App",
+            "defaultValue": "ca-azbrief-mcp-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-z][a-z0-9-]{0,30}[a-z0-9]$",
+              "validationMessage": "고객 명명 규칙에 맞는 2~32자 이름을 입력하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "azureMcpIdentityName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Azure MCP 전용 UAMI",
+            "defaultValue": "id-azbrief-mcp-v2",
+            "constraints": {
+              "required": true,
+              "regex": "^[a-zA-Z0-9][a-zA-Z0-9_-]{2,127}$",
+              "validationMessage": "고객 명명 규칙에 맞는 3~128자 이름을 입력하십시오."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "namesGuard",
+            "type": "Microsoft.Common.TextBox",
+            "label": "이름 분리 검증 (값 변경 불필요)",
+            "defaultValue": "검사",
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]",
+            "constraints": {
+              "required": true,
+              "validations": [
+                {
+                  "isValid": "[and(not(equals(toLower(coalesce(steps('names').containerAppName, '')), toLower(coalesce(steps('names').azureMcpContainerAppName, '')))), not(equals(toLower(coalesce(steps('names').controlPlaneIdentityName, '')), toLower(coalesce(steps('names').azureMcpIdentityName, '')))))]",
+                  "message": "Core App/MCP App 이름과 두 UAMI 이름은 각각 달라야 합니다. identity 권한을 합치지 않습니다."
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "name": "options",
+        "label": "모델·서비스 옵션",
+        "elements": [
+          {
+            "name": "automaticSettings",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Info",
+              "text": "모델 배포 별칭·승인 모델 ID/버전·용량, Hosted 이름과 MCP 연결 이름은 자동 설정합니다. MCP URL은 실제 내부 Environment 도메인과 고객 지정 MCP App 이름으로 구성합니다. Graph 앱/역할 권한, 모델 quota와 실제 서버 연결은 별도 사전검사·인수가 필요합니다."
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "searchSku",
+            "type": "Microsoft.Common.DropDown",
+            "label": "Search SKU",
+            "defaultValue": "Basic",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                {
+                  "label": "Basic",
+                  "value": "basic"
+                },
+                {
+                  "label": "Standard",
+                  "value": "standard"
+                }
+              ]
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          },
+          {
+            "name": "emailDataLocation",
+            "type": "Microsoft.Common.DropDown",
+            "label": "이메일 데이터 저장 지역",
+            "defaultValue": "Asia Pacific",
+            "constraints": {
+              "required": true,
+              "allowedValues": [
+                {
+                  "label": "Asia Pacific",
+                  "value": "Asia Pacific"
+                },
+                {
+                  "label": "Korea",
+                  "value": "Korea"
+                },
+                {
+                  "label": "Europe",
+                  "value": "Europe"
+                },
+                {
+                  "label": "United States",
+                  "value": "United States"
+                }
+              ]
+            },
+            "visible": "[equals(basics('infrastructureStage'), 'foundation')]"
+          }
+        ]
+      }
+    ],
+    "outputs": {
+      "infrastructureStage": "[basics('infrastructureStage')]",
+      "location": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.location'], steps('network').virtualNetwork.location)]",
+      "virtualNetworkResourceGroupName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.vnetRg'], steps('network').virtualNetwork.resourceGroup)]",
+      "virtualNetworkName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.vnet'], steps('network').virtualNetwork.name)]",
+      "peSubnetName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.peSubnet'], steps('network').peSubnetName)]",
+      "foundrySubnetName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.foundrySubnet'], steps('network').foundrySubnetName)]",
+      "containerAppsSubnetName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.appSubnet'], steps('network').containerAppsSubnetName)]",
+      "foundryAccountName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.foundry'], steps('names').foundryAccountName)]",
+      "storageAccountName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.storage'], steps('names').storageAccountName)]",
+      "cosmosAccountName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.cosmos'], steps('names').cosmosAccountName)]",
+      "searchServiceName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.search'], steps('names').searchServiceName)]",
+      "projectName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.project'], steps('names').projectName)]",
+      "containerAppsEnvironmentName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.environment'], steps('names').containerAppsEnvironmentName)]",
+      "containerAppName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.app'], steps('names').containerAppName)]",
+      "schedulerJobName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.job'], steps('names').schedulerJobName)]",
+      "controlPlaneIdentityName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.identity'], steps('names').controlPlaneIdentityName)]",
+      "logAnalyticsWorkspaceName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.workspace'], steps('names').logAnalyticsWorkspaceName)]",
+      "applicationInsightsName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.insights'], steps('names').applicationInsightsName)]",
+      "communicationServicesName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.acs'], steps('names').communicationServicesName)]",
+      "emailServiceName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.email'], steps('names').emailServiceName)]",
+      "modelDeploymentName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.coreModel'], 'gpt-5-terra')]",
+      "simpleModelDeploymentName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.simpleModel'], 'gpt-5-luna')]",
+      "foundryHostedAgentName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.hosted'], 'azbrief-analysis-hosted')]",
+      "azureMcpContainerAppName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.mcpApp'], steps('names').azureMcpContainerAppName)]",
+      "azureMcpIdentityName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.mcpIdentity'], steps('names').azureMcpIdentityName)]",
+      "azureMcpProjectConnectionName": "[if(equals(basics('infrastructureStage'), 'complete'), steps('contract').resourceGroupApi.tags['azbrief.v2.mcpConnection'], 'azure-mcp-read-only')]",
+      "deployContainerAppsPrivateEndpoint": "[if(equals(basics('infrastructureStage'), 'complete'), equals(steps('contract').resourceGroupApi.tags['azbrief.v2.acaPeEnabled'], 'true'), steps('network').deployContainerAppsPrivateEndpoint)]",
+      "existingPrivateDnsZoneIds": "[if(equals(basics('infrastructureStage'), 'complete'), parse(concat(steps('contract').resourceGroupApi.tags['azbrief.v2.options0'], steps('contract').resourceGroupApi.tags['azbrief.v2.options1'], steps('contract').resourceGroupApi.tags['azbrief.v2.options2'], steps('contract').resourceGroupApi.tags['azbrief.v2.options3'], steps('contract').resourceGroupApi.tags['azbrief.v2.options4'], steps('contract').resourceGroupApi.tags['azbrief.v2.options5'], steps('contract').resourceGroupApi.tags['azbrief.v2.options6'], steps('contract').resourceGroupApi.tags['azbrief.v2.options7'])).existingPrivateDnsZoneIds, parse(steps('network').existingPrivateDnsZoneIds))]",
+      "emailDataLocation": "[if(equals(basics('infrastructureStage'), 'complete'), parse(concat(steps('contract').resourceGroupApi.tags['azbrief.v2.options0'], steps('contract').resourceGroupApi.tags['azbrief.v2.options1'], steps('contract').resourceGroupApi.tags['azbrief.v2.options2'], steps('contract').resourceGroupApi.tags['azbrief.v2.options3'], steps('contract').resourceGroupApi.tags['azbrief.v2.options4'], steps('contract').resourceGroupApi.tags['azbrief.v2.options5'], steps('contract').resourceGroupApi.tags['azbrief.v2.options6'], steps('contract').resourceGroupApi.tags['azbrief.v2.options7'])).emailDataLocation, steps('options').emailDataLocation)]",
+      "searchSku": "[if(equals(basics('infrastructureStage'), 'complete'), parse(concat(steps('contract').resourceGroupApi.tags['azbrief.v2.options0'], steps('contract').resourceGroupApi.tags['azbrief.v2.options1'], steps('contract').resourceGroupApi.tags['azbrief.v2.options2'], steps('contract').resourceGroupApi.tags['azbrief.v2.options3'], steps('contract').resourceGroupApi.tags['azbrief.v2.options4'], steps('contract').resourceGroupApi.tags['azbrief.v2.options5'], steps('contract').resourceGroupApi.tags['azbrief.v2.options6'], steps('contract').resourceGroupApi.tags['azbrief.v2.options7'])).searchSku, steps('options').searchSku)]",
+      "coreModelName": "[if(equals(basics('infrastructureStage'), 'complete'), parse(concat(steps('contract').resourceGroupApi.tags['azbrief.v2.options0'], steps('contract').resourceGroupApi.tags['azbrief.v2.options1'], steps('contract').resourceGroupApi.tags['azbrief.v2.options2'], steps('contract').resourceGroupApi.tags['azbrief.v2.options3'], steps('contract').resourceGroupApi.tags['azbrief.v2.options4'], steps('contract').resourceGroupApi.tags['azbrief.v2.options5'], steps('contract').resourceGroupApi.tags['azbrief.v2.options6'], steps('contract').resourceGroupApi.tags['azbrief.v2.options7'])).coreModelName, 'gpt-5.6-terra')]",
+      "simpleModelName": "[if(equals(basics('infrastructureStage'), 'complete'), parse(concat(steps('contract').resourceGroupApi.tags['azbrief.v2.options0'], steps('contract').resourceGroupApi.tags['azbrief.v2.options1'], steps('contract').resourceGroupApi.tags['azbrief.v2.options2'], steps('contract').resourceGroupApi.tags['azbrief.v2.options3'], steps('contract').resourceGroupApi.tags['azbrief.v2.options4'], steps('contract').resourceGroupApi.tags['azbrief.v2.options5'], steps('contract').resourceGroupApi.tags['azbrief.v2.options6'], steps('contract').resourceGroupApi.tags['azbrief.v2.options7'])).simpleModelName, 'gpt-5.6-luna')]",
+      "modelVersion": "[if(equals(basics('infrastructureStage'), 'complete'), parse(concat(steps('contract').resourceGroupApi.tags['azbrief.v2.options0'], steps('contract').resourceGroupApi.tags['azbrief.v2.options1'], steps('contract').resourceGroupApi.tags['azbrief.v2.options2'], steps('contract').resourceGroupApi.tags['azbrief.v2.options3'], steps('contract').resourceGroupApi.tags['azbrief.v2.options4'], steps('contract').resourceGroupApi.tags['azbrief.v2.options5'], steps('contract').resourceGroupApi.tags['azbrief.v2.options6'], steps('contract').resourceGroupApi.tags['azbrief.v2.options7'])).modelVersion, '2026-07-09')]",
+      "modelCapacity": "[if(equals(basics('infrastructureStage'), 'complete'), parse(concat(steps('contract').resourceGroupApi.tags['azbrief.v2.options0'], steps('contract').resourceGroupApi.tags['azbrief.v2.options1'], steps('contract').resourceGroupApi.tags['azbrief.v2.options2'], steps('contract').resourceGroupApi.tags['azbrief.v2.options3'], steps('contract').resourceGroupApi.tags['azbrief.v2.options4'], steps('contract').resourceGroupApi.tags['azbrief.v2.options5'], steps('contract').resourceGroupApi.tags['azbrief.v2.options6'], steps('contract').resourceGroupApi.tags['azbrief.v2.options7'])).modelCapacity, 200)]",
+      "simpleModelCapacity": "[if(equals(basics('infrastructureStage'), 'complete'), parse(concat(steps('contract').resourceGroupApi.tags['azbrief.v2.options0'], steps('contract').resourceGroupApi.tags['azbrief.v2.options1'], steps('contract').resourceGroupApi.tags['azbrief.v2.options2'], steps('contract').resourceGroupApi.tags['azbrief.v2.options3'], steps('contract').resourceGroupApi.tags['azbrief.v2.options4'], steps('contract').resourceGroupApi.tags['azbrief.v2.options5'], steps('contract').resourceGroupApi.tags['azbrief.v2.options6'], steps('contract').resourceGroupApi.tags['azbrief.v2.options7'])).simpleModelCapacity, 200)]"
+    }
+  }
+}
