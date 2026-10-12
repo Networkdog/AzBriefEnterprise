@@ -73,8 +73,13 @@ Both root READMEs expose separate v2 infrastructure/application Deploy to Azure 
 in addition to the two standard Enterprise links and one KT link. Pair them with the actual
 infrastructure/application CreateUI definitions. RG-visible names remain customer inputs;
 model aliases/IDs/capacity, Hosted and MCP connection settings are automatic. Use the tested
-KT network guards through scripts/build_v2_ui.py. MCP authentication/Reader UAMI/connection
-belong to infrastructure; its read-only pinned container belongs to application. Preserve
+KT network guards through scripts/build_v2_ui.py.
+Keep UI output JSON assembly safe with unloaded RG/VNet/tag state even under eager branch
+evaluation. Empty initialization fallbacks never authorize completion; retain required tags
+and test loaded/unloaded states. A CreateUIDef CustomDeploymentBlade error is not ARM/Graph
+provisioning evidence. Local tests are not actual authenticated Portal acceptance.
+MCP authentication/Reader UAMI/connection belong to infrastructure; its read-only pinned
+container belongs to application. Preserve
 Graph permission gates, incoming Entra and source scope. Keep all eight bounded option tags
 and reject changed saved choices. Publication, actual Portal acceptance and equivalent live
 preflight/key/settings preservation remain required, never inferred from offline JSON tests.

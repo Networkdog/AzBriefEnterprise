@@ -114,6 +114,13 @@ No model/MCP URL/connection field is presented. Completion reads names/options f
 same RG rather than asking again. Model quota/catalog and Graph permissions are still
 real preflight gates, not implied by automatic values.
 
+Portal `Microsoft_Azure_CreateUIDef / CustomDeploymentBlade` errors before the form opens
+are UI initialization failures, not proof of ARM/Graph provisioning failure. The normalizer
+guards initial output JSON assembly before RG tags or VNet inputs exist; no reliance on
+lazy branch evaluation is needed for those outputs. An initialization fallback never satisfies
+the completion guard. Test the unloaded state as well as a populated saved contract, and
+do not claim a generic Portal error is resolved from local expression tests alone.
+
 Prepare a protected parameter file based on
 [infrastructure.parameters.example.json](infrastructure.parameters.example.json).
 Replace every placeholder. Internal stage/reuse flags are derived by the CLI and

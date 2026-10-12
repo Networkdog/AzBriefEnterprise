@@ -11,6 +11,22 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def _safe_initial_outputs(parameters: dict[str, Any]) -> None:
+    tag_prefix = "steps('contract').resourceGroupApi.tags"
+    chunks = [f"{tag_prefix}['azbrief.v2.options{index}']" for index in range(8)]
+    original = "parse(concat(" + ", ".join(chunks) + "))"
+    combined = "concat(" + ", ".join(f"coalesce({chunk}, '')" for chunk in chunks) + ")"
+    guarded = f"parse(if(empty({combined}), '{{}}', {combined}))"
+    for name, expression in parameters["outputs"].items():
+        if isinstance(expression, str):
+            expression = expression.replace(original, guarded)
+            expression = expression.replace(
+                "parse(steps('network').existingPrivateDnsZoneIds)",
+                "parse(if(empty(coalesce(steps('network').existingPrivateDnsZoneIds, '')), '{}', coalesce(steps('network').existingPrivateDnsZoneIds, '{}')))",
+            )
+            parameters["outputs"][name] = expression
+
+
 def normalize_ui(
     document: dict[str, Any], network_validations: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -19,6 +35,7 @@ def normalize_ui(
     config = parameters.setdefault("config", {})
     config["isWizard"] = True
     config.setdefault("basics", {}).setdefault("resourceGroup", {})["allowExisting"] = True
+    _safe_initial_outputs(parameters)
     for step in parameters["steps"]:
         visibility = step.pop("visible", None)
         elements = step["elements"]

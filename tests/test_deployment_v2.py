@@ -678,6 +678,52 @@ def test_core_and_mcp_customer_names_never_merge_identities(tmp_path: Path) -> N
     assert not cli.operations
 
 
+def test_infrastructure_outputs_are_safe_before_rg_and_vnet_load() -> None:
+    definition = ui_definition("infrastructure")
+    controls = ui_controls("infrastructure")
+    data = {"contract": {"resourceGroupApi": None}, "names": {}, "options": {}}
+    for step in definition["steps"]:
+        values = data.setdefault(step["name"], {})
+        for control in step["elements"]:
+            if "defaultValue" in control:
+                values[control["name"]] = control["defaultValue"]
+    for expression in definition["outputs"].values():
+        _evaluate_ui_expression(
+            expression,
+            data,
+            network={},
+            basics={"infrastructureStage": "foundation"},
+            eager_conditionals=True,
+        )
+    assert controls["contractGuard"]["constraints"]["required"] is True
+
+
+def test_infrastructure_initialization_fallback_never_authorizes_completion() -> None:
+    expression = ui_controls("infrastructure")["contractGuard"]["constraints"]["validations"][1][
+        "isValid"
+    ]
+    result = _evaluate_ui_expression(
+        expression,
+        {"contract": {"resourceGroupApi": None}},
+        resource_group={"mode": "Existing"},
+        basics={"infrastructureStage": "complete"},
+        eager_conditionals=True,
+    )
+    assert result is False
+
+
+def test_infrastructure_initial_output_normalization_is_idempotent() -> None:
+    from scripts.build_v2_ui import normalize_ui
+
+    document = json.loads(
+        (V2 / "infrastructure.createUiDefinition.json").read_text(encoding="utf-8")
+    )
+    validations = ui_controls("infrastructure")["networkGuard"]["constraints"]["validations"]
+    assert normalize_ui(normalize_ui(document, validations), validations) == normalize_ui(
+        document, validations
+    )
+
+
 def test_application_update_retains_keys_auth_environment_and_schedule() -> None:
     cli = FakeV2Azure(installed=True)
     parameters = deploy_v2.prepare_application(cli, IMAGE.replace("a" * 64, "b" * 64))

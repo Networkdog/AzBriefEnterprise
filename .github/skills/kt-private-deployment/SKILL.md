@@ -54,6 +54,9 @@ infrastructure completion after guarded Agent publication, never a broad role or
 replay during App upgrades. v2 keeps Entra-only UI; it does not inherit KT's temporary anonymous
 exception. Normalize its real UI forms with scripts/build_v2_ui.py and retain all five existing
 KT subnet/VNet validators. Directory app/role permissions remain separate from ARM permissions.
+Guard initial UI output parsing with empty RG/tag/VNet state; test both conditional branches,
+not only completed selections. Preserve completion/ownership guards. A CreateUIDef
+CustomDeploymentBlade error is a Portal UI symptom, not an Azure Graph deployment verdict.
 Keep Bicep/ARM sources in sync and distinguish offline tests from customer Portal acceptance.
 
 ## Non-Negotiable KT Contract

@@ -149,6 +149,8 @@ approval from provisioning success. CLI readback requires each endpoint to be `S
 These buttons load each ARM/UI Definition pair from GitHub `main` after publication.
 Customer resource names remain editable. Internal model aliases/IDs/capacity and MCP
 connection settings are automatic; foundation options are persisted in RG tags and reused.
+The form keeps initial output evaluation safe before RG/VNet responses arrive; missing
+foundation tags still block completion. Publish ARM/UI pairs together and verify the Portal.
 Complete both internal infrastructure stages and verify existing keys/settings before
 application updates; follow the guarded deployment workflow below.
 
