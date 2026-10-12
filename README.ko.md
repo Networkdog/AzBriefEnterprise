@@ -94,14 +94,26 @@ CLI 사전검사는 기존 principal/role/scope가 정확히 일치하는 할당
 이 호환 처리가 Entra 인증을 익명 접근으로 낮추는 것을 허용하지는 않습니다.
 프로젝트 ID의 BYO 권한은 별도이며 Incremental은 기존 권한을 삭제하지 않습니다.
 KT 템플릿은 실제 Environment·Container App·UAMI와 공유 Storage/Cosmos/Search를 Admin
-진단 대상으로 연결하고 제어면의 필수 범위별 권한은 2단계에서 부여합니다. 승인된 기존 모델
-배포 이름과 고유한 여섯 Prompt Agent 이름, 선택적 동일 이미지 **Manual** Job, 기존
-ACS/Entra-only Insights 설정도 같은 배포에 연결할 수 있습니다.
+진단 대상으로 연결하고 제어면의 필수 범위별 권한은 2단계에서 부여합니다. 2단계는 기본으로
+필수 모델 배포와 이메일 서비스를 생성하고 여섯 Prompt Agent 이름을 매핑합니다.
+선택적 동일 이미지 **Manual** Job과 기존 Entra-only Insights도 연결할 수 있습니다.
 기본 전문가 이름은 프로젝트 이름 앞 47자와 역할 접미사로 64자 이내를 유지하며 프로젝트
 리소스 이름 자체는 변경하지 않습니다.
-메일 자동 권한에는 기존 ACS 이름과 고객이 승인한 최소 발신 역할 GUID가 필요합니다. Insights는 프로젝트의 `AppInsights`
+배포 별칭은 `gpt-5-terra` / `gpt-5-luna`, 실제 모델은 `gpt-5.6-terra` /
+`gpt-5.6-luna`, 고정 버전은 `2026-07-09`이며 GlobalStandard와 각 200 capacity units를
+사용합니다. Korea Central 밖에서 처리될 수 있습니다. 신규 simple 배포의 Luna quota가
+소진됐고 합산 Terra quota가 충분하면 Terra 사용을 명시적으로 기록합니다. 다른 배포의
+할당을 회수하지 않으며 준비된 기존 모델의 PUT·버전·SKU·용량 변경도 생략합니다.
+출력은 실제 모델과 신규 배포의 quota 대안을 표시합니다.
+이메일은 ACS·Email Communication Services·Azure 관리 도메인과 키/삭제 없는 최소 custom
+발신 역할을 생성합니다. 기본 저장 지역은 Asia Pacific입니다. 외부 DNS 설정 없이 Azure의
+실제 HTTPS endpoint와 `DoNotReply` 주소를 연결하지만 수신자를 만들거나 메일을 보내지 않습니다.
+기존 서비스·도메인·역할을 보존하고 누락 링크 추가 시에도 기존 도메인 링크·태그·identity를
+유지합니다. Portal/CLI는 최신 조회로 생성/재사용 flag를 결정하며 직접 ARM 호출도 같은
+결정을 명시해야 합니다. `provisionModels=false` / `provisionEmail=false`는 고급 수동 연결입니다.
+Insights는 프로젝트의 `AppInsights`
 연결도 구성하지만 프로젝트·Hosted의 계측 발행 권한은 별도 확인해야 합니다.
-ARM 설정은 모델이나 Prompt/Hosted Agent 버전을 생성하지 않습니다. 승인된 사설망 호스트의
+ARM 설정은 Prompt/Hosted Agent 버전을 생성하지 않습니다. 승인된 사설망 호스트의
 깨끗한 고객 clone에서 [setup_kt_agents.ps1](scripts/setup_kt_agents.ps1)의
 `Configure`·`Publish`·`Check`를 명시적인 azd 환경으로 실행하십시오.
 `ktFoundation.runtimeSetup`을 사용하며 개발 환경을 재사용하지 않습니다. Agent 게시, 메일

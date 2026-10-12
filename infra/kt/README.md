@@ -738,24 +738,36 @@ Environment가 정상이고 PE만 실패했다면 전체 RG, Foundry/Capability 
 2단계는 제어면 UAMI의 필수 역할을 **기본 자동 구성**합니다. Portal의 확인란은
 권한·scope 확인용이며 역할 부여를 선택적으로 켜는 스위치가 아닙니다. 배포자에게 각 대상의
 `Microsoft.Authorization/roleAssignments/write`가 필요합니다. Contributor만으로는 부족합니다.
-승인된 기존 모델과 서비스가 준비되어 있으면 아래 설정도 같은 배포에서 연결합니다.
+필수 모델과 이메일 서비스는 2단계 기본 자동 배포에 포함됩니다. 기존 리소스는 최신 조회로
+준비·범위·호환성을 확인한 뒤 보존하며 사용자에게 추가 확인 대화상자를 요구하지 않습니다.
+자동 발신 역할 생성에는 `roleDefinitions/write`도 필요합니다.
 
 | 입력 | 2단계 동작 | 자동 처리하지 않는 부분 |
 |---|---|---|
-| `modelDeploymentName`, 선택적 `simpleModelDeploymentName` | 실제 모델 **배포 이름**을 진단 대상으로 설정 | 모델 ID/버전/SKU 선택, 모델 생성, quota·기능 검증 |
+| `provisionModels=true` | 별칭 `gpt-5-terra` / `gpt-5-luna`에 실제 `gpt-5.6-terra` / `gpt-5.6-luna`, 버전 `2026-07-09`, GlobalStandard, 각 200 units를 직렬 생성. 기존 모델 PUT/버전/SKU/용량 변경 생략 | quota 증가, 다른 배포의 용량 회수, 실제 Agent 기능/품질 인수 |
 | `promptAgentNames` | 프로젝트 이름 앞 47자와 역할 접미사로 64자 이내의 여섯 고유 이름을 매핑. 프로젝트 이름 자체는 변경하지 않음. 기존 이름이 다르면 보호된 CLI parameter 파일로 지정 | Prompt/Hosted 데이터-plane 버전 게시 |
 | `azureMcpServerUrl`, `azureMcpProjectConnectionName` | 기존 Entra 인증 read-only MCP의 게시용 handoff | MCP App·identity·디렉터리 권한·프로젝트 연결 생성과 사설 경로 인수 |
 | `deploySchedulerJob=true` | 동일 digest·UAMI·Environment의 Manual Job 준비. 12h timeout, retry 0, 동시성 1 | 자동 스케줄 활성화, 메일 발송, 미완료 실행 재개 |
-| ACS endpoint·발신/수신 주소, `communicationServicesName`, `emailSenderRoleDefinitionId` | 같은 RG의 기존 ACS 설정과 승인된 최소 발신 역할을 연결 | ACS/도메인/역할 정의 생성, DNS 검증, 승인된 수신자 결정, 실제 발송 |
+| `provisionEmail=true` | `acs-App이름` / `email-App이름`의 ACS·Email Services·AzureManagedDomain을 생성/재사용하고 endpoint/DoNotReply 주소·최소 역할을 연결. 기본 저장 지역 Asia Pacific | 고객 브랜드 도메인/DNS, 수신자 결정, 실제 발송 |
 | `applicationInsightsName` | 기존 Entra-only 컴포넌트를 App/Job과 프로젝트 `AppInsights`에 연결 | 컴포넌트/workspace 생성, 프로젝트·Hosted publisher 부여, 네트워크·실제 로그 인수 |
 
-메일 역할은 고객 권한 관리자가 준비한 기존 custom role의 GUID를 사용합니다. CLI는
+모델은 Korea Central 밖에서 처리될 수 있습니다. Luna quota가 소진된 신규 simple 배포만
+합산 Terra quota가 충분할 때 Terra를 사용하며 명시적 로그/출력으로 알립니다. 기존 모델은
+바꾸지 않습니다. quota가 읽히지 않거나 두 대안 모두 부족하면 실제 오류를 보존하고 중단합니다.
+자동 이메일은 안정적인 최소 custom role을 생성하거나 같은 권한의 기존 역할을 재사용합니다.
+고급 `provisionEmail=false` 경로는 승인된 기존 role GUID와 endpoint/발신 설정을 받습니다. CLI는
 `Microsoft.Communication/CommunicationServices/read`, `.../write`,
 `Microsoft.Communication/EmailServices/write`를 확인하고 wildcard·삭제·키 관리 권한을
 거부합니다. [공식 최소 권한 구성 예시](https://learn.microsoft.com/azure/communication-services/quickstarts/email/send-email-smtp/smtp-authentication#assign-a-role-to-the-microsoft-entra-application)를
 참고하되, 이 정의 검사만으로 실제 SDK 발송 성공을 주장하지 마십시오.
 기존 ACS의 host와 endpoint도 일치해야 합니다. 광범위한
 Communication and Email Service Owner를 대신 부여하거나 액세스 키를 읽지 않습니다.
+기존 서비스가 완성되어 있으면 서비스·관리 도메인·역할 정의 PUT을 생략합니다. 누락된 연결만
+완성할 때도 기존 도메인 링크·태그·managed identity와 데이터 저장 지역을 유지합니다.
+서로 다른 저장 지역, 미완료 상태, 잘못된 권한이나 읽기 실패를 신규 설치로 위장하지 않습니다.
+Portal/CLI는 생성/재사용 flag를 자동 결정하며 직접 ARM 호출도 최신 조회로 결정해야 합니다.
+수신 주소의 기본값은 비어 있습니다. 서비스가 준비되어도 승인된 수신자가 없으면 메일
+readiness는 Attention을 유지하며 발송하거나 임의 구독자를 등록하지 않습니다.
 
 1단계에서는 역할 모듈·운영 Job·메일/계측 활성화를 실행하지 않습니다. 모델·역할 이름은
 예정 대상일 뿐 Agent가 생성됐다는 뜻이 아닙니다. 이미 사용 중인 설정, Job의 identity/명령/

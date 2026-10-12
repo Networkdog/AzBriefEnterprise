@@ -148,7 +148,7 @@ param communicationServicesEndpoint string = ''
 @description('Existing ACS resource name in this deployment RG. Required for automatic email role assignment; its host must match communicationServicesEndpoint.')
 param communicationServicesName string = 'acs-${containerAppName}'
 param emailServiceName string = 'email-${containerAppName}'
-@allowed(['Africa', 'Asia Pacific', 'Europe', 'United States', 'Australia', 'Brazil', 'Canada', 'United Kingdom', 'India'])
+@allowed(['Africa', 'Asia Pacific', 'Australia', 'Brazil', 'Canada', 'Europe', 'France', 'Germany', 'India', 'Japan', 'Korea', 'Norway', 'Switzerland', 'UAE', 'UK', 'United States'])
 param emailDataLocation string = 'Asia Pacific'
 param reuseCommunicationService bool = false
 param reuseEmailService bool = false

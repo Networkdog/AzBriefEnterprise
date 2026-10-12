@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "11169560968486208309"
+      "templateHash": "7516416395432827211"
     }
   },
   "parameters": {
@@ -354,13 +354,20 @@
       "allowedValues": [
         "Africa",
         "Asia Pacific",
-        "Europe",
-        "United States",
         "Australia",
         "Brazil",
         "Canada",
-        "United Kingdom",
-        "India"
+        "Europe",
+        "France",
+        "Germany",
+        "India",
+        "Japan",
+        "Korea",
+        "Norway",
+        "Switzerland",
+        "UAE",
+        "UK",
+        "United States"
       ]
     },
     "reuseCommunicationService": {

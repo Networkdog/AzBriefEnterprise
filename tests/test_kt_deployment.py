@@ -337,6 +337,10 @@ def _evaluate_ui_expression(
     def evaluate(node: ast.expr, bindings: dict[str, object]) -> object:
         if isinstance(node, ast.Constant):
             return node.value
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+            value = evaluate(node.operand, bindings)
+            assert type(value) is int
+            return -value
         if isinstance(node, ast.Name):
             return {"true": True, "false": False, "null": None, **bindings}[node.id]
         if isinstance(node, ast.Attribute):
@@ -4834,6 +4838,33 @@ def test_portal_automatic_services_block_unknown_or_incompatible_evidence(
         review["modelDeploymentName"] = ""
     rules = _ui_controls(wizard, "review")["automaticServicesGuard"]["constraints"]["validations"]
     assert not all(_evaluate_ui_expression(rule["isValid"], **arguments) for rule in rules)
+
+
+def test_automatic_role_inventory_cannot_silently_treat_an_object_as_absence(
+    monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict
+):
+    values = _automatic_services(values)
+    cli = OperationalAzure(values, vnet)
+    kt.run(cli, values, "deploy", "foundation")
+    original = cli.json
+
+    def json_request(*args: str) -> Any:
+        return {} if args[:3] == ("role", "definition", "list") else original(*args)
+
+    monkeypatch.setattr(cli, "json", json_request)
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="complete array"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
+
+
+def test_arm_inventory_array_shape_is_required_before_creation(monkeypatch: pytest.MonkeyPatch):
+    cli = kt.AzureCli(SUBSCRIPTION, TENANT, "rg-kt-test")
+    monkeypatch.setattr(cli, "get", lambda *_args: {"value": {}})
+    with pytest.raises(ValueError, match="must be an array"):
+        cli.collection(
+            f"{GROUP}/providers/Microsoft.Communication/emailServices", kt.COMMUNICATION_API
+        )
 
 
 @pytest.mark.parametrize("error", [ValueError("invalid inventory"), RuntimeError("Forbidden")])

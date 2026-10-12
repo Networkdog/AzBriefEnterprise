@@ -563,6 +563,8 @@ class AzureCli:
 
     def collection(self, resource_id: str, api_version: str) -> list[dict[str, Any]]:
         page = self.get(resource_id, api_version)
+        if not isinstance(page["value"], list):
+            raise ValueError("ARM inventory value must be an array")
         rows = list(page["value"])
         for _ in range(20):
             next_link = page.get("nextLink")
@@ -571,6 +573,8 @@ class AzureCli:
             if not next_link.startswith(f"{MANAGEMENT}/subscriptions/"):
                 raise ValueError("Unexpected ARM continuation URL")
             page = self.json("rest", "--method", "get", "--url", next_link)
+            if not isinstance(page, dict) or not isinstance(page["value"], list):
+                raise ValueError("ARM inventory continuation value must be an array")
             rows.extend(page["value"])
         raise RuntimeError("ARM inventory exceeded its page limit; no deployment was attempted")
 
@@ -861,6 +865,10 @@ def automatic_service_plan(
             "--subscription",
             cli.subscription,
         )
+        if not isinstance(definitions, list) or any(
+            not isinstance(row, dict) for row in definitions
+        ):
+            raise ValueError("Custom sender-role inventory must be a complete array")
         role_name = f"AzBrief Email Sender {cli.group_id.casefold()}/{values['communicationServicesName'].casefold()}"
         matching_roles = [
             row
@@ -1194,6 +1202,8 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
     resources = cli.json(
         "resource", "list", "--resource-group", cli.group, "--subscription", cli.subscription
     )
+    if not isinstance(resources, list) or any(not isinstance(row, dict) for row in resources):
+        raise ValueError("Resource inventory must be a complete array before deployment")
     by_id = {resource["id"].casefold(): resource for resource in resources}
     values = {**values, **automatic_service_plan(cli, values, by_id)}
     specs = endpoint_specs(values, cli.group_id)

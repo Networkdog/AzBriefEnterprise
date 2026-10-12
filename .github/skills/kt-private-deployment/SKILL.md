@@ -58,7 +58,7 @@ contract expects two standard Enterprise Portal links and one KT Portal link in 
 | GHCR credentials | Default Anonymous after verifying Public visibility and anonymous layer downloads. Explicit Credentials accepts only a read-only PAT via App secret. Never grant GHCR an Azure identity role or deploy the publisher token. |
 | API key lifecycle | No Portal key input. ARM generates the initial secure random key; complete Portal/CLI ARM inventory selects existing-secret reuse. Read failures or missing keys never trigger rotation. Keep API authentication. |
 | Identities | Keep Container Apps control-plane, Foundry project, Hosted Agent, and Azure MCP identities distinct. |
-| Runtime roles | Stage two automatically assigns UAMI RG Reader, project Foundry User and state/archive container Blob Contributor, plus configured resource-scoped email/Insights publishers. Require roleAssignments/write; never grant Hosted evidence roles, create a broad role definition or delete old assignments. CLI-only false is a manual exception. |
+| Runtime roles | Stage two automatically assigns UAMI RG Reader, project Foundry User and state/archive container Blob Contributor, plus configured resource-scoped email/Insights publishers. Automatic email creates only its three-action custom sender role. Require roleDefinitions/write and roleAssignments/write; never grant Hosted evidence roles, broad/key/delete rights or remove old assignments. CLI-only false is a manual exception. |
 | Storage | One `storageAccountName` and one Blob PE. Keep app state/archive separate and App/Job grants container-scoped. Retain project-ID BYO provisioning/data roles; these share the trust boundary, not hard account isolation. |
 
 Built-in policy `d074ddf8-01a5-4b5e-a2b8-964aed452c0a` is named “Container Apps environment should
@@ -240,11 +240,22 @@ The preflight must remain read-only and rerun immediately before validate, what-
     flags and retain the Entra-to-anonymous downgrade guard.
     Deterministic Portal names cannot
     adopt other legacy names; use the CLI for those instead of deleting old grants. Optional ACS
-    assignment needs the ready same-RG service, matching HTTPS endpoint and an approved existing
-    minimal custom role; reject wildcard, delete/key permissions and foreign assignable scopes.
+    legacy assignment needs the ready same-RG service, matching HTTPS endpoint and an approved
+    minimal custom role; automatic email creates only that minimal role. Reject wildcard,
+    delete/key permissions and foreign or ambiguous evidence.
     Insights must be existing and Entra-only. Its project AppInsights connection must not redirect
     a different destination; project/Hosted publisher permissions and actual ingestion remain separate.
-15. Models/Agent versions are not ARM metadata. Bind the existing model aliases and six distinct
+15. Model aliases alone are not deployments. Stage two defaults to actual serialized model
+    creation: gpt-5.6-terra/luna 2026-07-09, GlobalStandard, 200 units each. Verify catalog and
+    quota; a missing simple model alone may explicitly fall back to Terra when combined quota fits.
+    Existing ready GPT-5 deployment versions/SKUs/capacities are never changed. No quota is reclaimed
+    from other accounts. Global processing can leave Korea Central; disclose the resolved policy.
+    Default email creates ACS/Email Services/AzureManagedDomain in Asia Pacific, resolves actual
+    sender/endpoint and creates the three-action resource-scoped sender role without keys.
+    Reuse matching ready services/domains/roles, preserving links/tags/identity when adding missing
+    links. No fake read absence, arbitrary sender/recipient or automatic send. UI/CLI derive reuse
+    from complete scoped inventory; raw ARM callers must provide those decisions.
+16. Prompt/Hosted Agent versions are not ARM metadata. Bind six distinct
     names (project prefix capped at 47 characters, Agent names at 64), then use setup_kt_agents.ps1
     only with a successful exact-scope runtimeSetup output,
     matching CLI login and isolated named azd environment from a clean customer clone. WhatIf only
@@ -253,7 +264,7 @@ The preflight must remain read-only and rerun immediately before validate, what-
     environment/default state. Disable OTel export only during local pytest and restore it even on
     failure. Never bypass a failing publication gate. The optional scheduler stays Manual with the
     same image, UAMI, credentials, bounded limits and runtime bindings; reject customization or a
-    Schedule reset. Existing email/telemetry inputs, Host identity grants, mail/domain/recipient,
+    Schedule reset. Recipient/telemetry inputs, Host identity grants, actual mail delivery,
     network and scheduling acceptance are not invented to make 25/28 checks pass.
 
 Never infer that a same-name zone in the deployment resource group is the linked canonical zone.

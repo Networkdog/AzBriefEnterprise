@@ -184,7 +184,7 @@ Service Tag 방식의 대안은 아래와 같다. FQDN 규칙과 태그 규칙�
 | N13 | B | `techcommunity.microsoft.com`, `devblogs.microsoft.com`, `github.com` | TCP 443 | 실제 필요한 추가 기술 문서·샘플 호스트만 선택. 커뮤니티 본문 보강을 유지하면 Tech Community도 필요 | [C02], [C03] |
 | N14 | B | `aka.ms`, `go.microsoft.com` | TCP 443 | 단축 링크가 실제 필요할 때만. 검증된 최종 허용 URL을 직접 사용하면 제외 가능 | [C02] |
 | N15 | B | `azureweekly.info` | TCP 443 | 커뮤니티 보강을 유지할 때. **기본 활성**이므로 제외 시 Hosted의 비활성 설정 확인 필수 | [C03], [V02] |
-| N16 | A의 App/Job | `<ACS리소스명>.communication.azure.com` | TCP 443 | **메일 전송을 사용하면 필수**, 미구성/미사용이면 제외. wildcard 대신 실제 리소스 endpoint 하나 | [C06], [S15] |
+| N16 | A의 App/Job | `<실제 ACS hostName>.communication.azure.com` | TCP 443 | **메일 전송을 사용하면 필수**, 미구성/미사용이면 제외. 2단계 출력의 실제 endpoint 하나를 승인하며 리소스 이름으로 hostname을 추측하지 않음 | [C06], [S15] |
 
 N12–N15를 차단해도 프로세스가 기동될 수 있지만, **근거 수집 범위 축소와 정상 운영은
 동일하지 않다.** 문서 조사를 지원하려면 코드의 허용 호스트와 방화벽 정책을 함께 맞춘다.
@@ -197,6 +197,12 @@ Learn MCP는 Foundry 관리형 도구/data proxy 경로이며, 로컬 문서 fet
 현재 메일 전송은 ACS HTTPS API다. **SMTP 25/465/587 개방은 이 구현의 요구사항이 아니다.**
 메일 본문·수신자 정보는 ACS로, 테넌트 근거는 설정된 Foundry 경로로 전송되므로
 네트워크 허용과 별도로 고객의 데이터 처리·지역 정책도 승인해야 한다.
+KT 2단계는 이제 모델 배포와 ACS/Email Services/AzureManagedDomain을 기본 생성합니다.
+생성만으로 N16이 열리거나 메일이 전송되지는 않습니다. 자동 발신 도메인은 Azure가 관리하므로
+고객 DNS TXT 입력을 요구하지 않지만, 실제 endpoint의 HTTPS 경로·MI 권한·승인된 수신자는
+별도로 필요합니다. 기본 이메일 저장 지역은 Asia Pacific이며 GlobalStandard 모델 처리는
+Korea Central 밖에서 이뤄질 수 있습니다. 새 기능의 생성이 기존 방화벽/데이터 정책을
+우회하거나 이전 연결 인수 결과를 증명하지 않습니다.
 
 ### 3.3 로그·관측 — 사용 기능만 추가
 

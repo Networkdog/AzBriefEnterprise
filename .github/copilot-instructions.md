@@ -420,7 +420,9 @@ Require deployment roleAssignments/write; Portal confirms this and always enable
 grants. `assignControlPlaneRoles=false` remains an advanced CLI-only manual exception. Preserve
 principal outputs, `applicationReady=false`, distinct project BYO permissions and operator-managed
 Hosted evidence/data roles. Never give the control plane tenant evidence scope, account-wide Blob
-access, ACS deletion/key-management rights or an automatic custom role definition. CLI derives
+access or ACS deletion/key-management rights. The explicitly requested automatic email profile
+creates only the three-action minimal sender custom role and resource-scoped UAMI assignment;
+legacy manual email retains approved existing roles. CLI derives
 existing assignment names from fresh exact principal/role/scope inventory; failures and conditional
 assignments block, never become an empty create plan. Portal deterministic names do not adopt
 different legacy manual names; use CLI for those. Never delete or expand old grants implicitly.
@@ -431,11 +433,24 @@ These descriptors themselves are non-secret lookup targets, not new resources or
 project ARM 403s concern the control-plane UAMI's scoped reads, while Agent listing requires project
 data permissions and private reachability. A failed Agent listing cannot prove an absent Hosted
 version; 0/6 mappings and unset model names are not inventory results. Stage two wires approved
-existing model aliases and six distinct names (47-character project prefix plus role suffix, maximum
-64 characters without changing the project name), an opt-in same-image Manual Job, existing ACS email,
+actual model deployments and six distinct names (47-character project prefix plus role suffix, maximum
+64 characters without changing the project name), an opt-in same-image Manual Job, automatic ACS email,
 and existing Entra-only Insights with its project AppInsights connection. Guard existing runtime
 bindings, Job identity/command/limits/secret refs and telemetry destination; do not reset a Schedule
-Job to Manual or drop customized settings. Models and Prompt/Hosted versions are not created by ARM.
+Job to Manual or drop customized settings. Prompt/Hosted versions are not created by ARM.
+KT models/email are stage-two defaults with provisionModels/provisionEmail true. Pin physical
+gpt-5.6-terra/luna at 2026-07-09, GlobalStandard and 200 units each, using the existing deployment
+aliases. Verify live catalog/Responses/Agents and quota for new models. Only a missing simple
+deployment may use the explicit, logged core-model fallback after combined quota validation.
+Never reclaim another allocation or change a ready existing deployment's model/version/SKU/capacity.
+Core/simple creation is serialized before initial project creation; reuse emits no model PUTs.
+Email creates ACS, Email Communication Services, AzureManagedDomain and the minimal sender role.
+Resolve real endpoint/fromSenderDomain, retain existing domains/links/tags/identity and roles, and
+never read/regenerate ACS keys or invent recipients. Default storage geography is Asia Pacific;
+GlobalStandard inference can leave Korea Central. No automatic send, schedule or all-ready claim.
+Portal and CLI require complete scoped inventory and derive flags before writes; raw ARM callers
+must choose reuse explicitly. Role definition/assignment write permissions and HTTPS egress remain
+real requirements, not reasons for broader roles, auth or network bypasses.
 Normalize only the documented ARM-injected ephemeralStorage default (App 1Gi, Job 4Gi), never
 ignore other resource drift. The live Job API also returns an empty string for automatic storage;
 accept that representation for Job only, without treating it as a measured capacity or allowing

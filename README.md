@@ -102,13 +102,26 @@ default. Project-identity BYO permissions remain separate; Incremental replay ne
 The KT template binds Admin readiness to its actual Environment, Container App, UAMI and shared
 Storage/Cosmos/Search resources. These non-secret descriptors do not grant read access. The
 control-plane identity receives its required scoped permissions in stage two. The same deployment
-can bind approved existing model aliases and six distinct Prompt Agent names, prepare an opt-in
-same-image **Manual** Job, and connect existing ACS/Entra-only Insights configuration.
+creates the required model deployments and email services by default in stage two, maps six
+distinct Prompt Agent names, prepares an opt-in same-image **Manual** Job, and can connect
+existing Entra-only Insights.
 Default specialist names use at most 47 project-name characters plus the role suffix, never
 renaming the project or exceeding the 64-character Agent-name limit.
-Email automation requires the existing ACS name and a customer-approved minimum sender role GUID.
+Models use aliases `gpt-5-terra` / `gpt-5-luna`, physical models `gpt-5.6-terra` /
+`gpt-5.6-luna`, pinned version `2026-07-09`, GlobalStandard and 200 capacity units each.
+GlobalStandard can process outside Korea Central. Fresh quota checks may explicitly use Terra
+for a missing simple deployment when Luna quota is exhausted and the combined Terra quota fits;
+no existing allocation is reclaimed. Compatible ready existing deployments are not PUT, resized
+or upgraded. Outputs disclose actual model identities and new-deployment fallback.
+Email provisioning creates ACS, Email Communication Services, an Azure-managed domain and a
+minimum custom sender role without keys/delete rights. Default data storage location is Asia
+Pacific. It resolves the real HTTPS endpoint and `DoNotReply` address from Azure, without customer
+DNS configuration, inventing a recipient or sending mail. Existing services/domains/roles are
+preserved; missing links retain previous domain links, tags and managed identities.
+Portal/CLI derive creation/reuse flags from complete fresh inventory; direct ARM callers must do
+the same. `provisionModels=false` / `provisionEmail=false` retain advanced manual bindings.
 Insights also creates the project `AppInsights` connection; project and Hosted telemetry
-publisher permissions still need separate acceptance. No model or Prompt/Hosted Agent version is
+publisher permissions still need separate acceptance. Prompt/Hosted Agent versions are not
 created by these ARM settings. Use [setup_kt_agents.ps1](scripts/setup_kt_agents.ps1) on an approved
 private-network host for the guarded `Configure`, `Publish`, and `Check` handoff from
 `ktFoundation.runtimeSetup`, with a clean customer clone and explicit named azd environment.
