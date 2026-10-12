@@ -184,7 +184,7 @@ Service Tag 방식의 대안은 아래와 같다. FQDN 규칙과 태그 규칙�
 | N13 | B | `techcommunity.microsoft.com`, `devblogs.microsoft.com`, `github.com` | TCP 443 | 실제 필요한 추가 기술 문서·샘플 호스트만 선택. 커뮤니티 본문 보강을 유지하면 Tech Community도 필요 | [C02], [C03] |
 | N14 | B | `aka.ms`, `go.microsoft.com` | TCP 443 | 단축 링크가 실제 필요할 때만. 검증된 최종 허용 URL을 직접 사용하면 제외 가능 | [C02] |
 | N15 | B | `azureweekly.info` | TCP 443 | 커뮤니티 보강을 유지할 때. **기본 활성**이므로 제외 시 Hosted의 비활성 설정 확인 필수 | [C03], [V02] |
-| N16 | A의 App/Job | `<실제 ACS hostName>.communication.azure.com` | TCP 443 | **메일 전송을 사용하면 필수**, 미구성/미사용이면 제외. 2단계 출력의 실제 endpoint 하나를 승인하며 리소스 이름으로 hostname을 추측하지 않음 | [C06], [S15] |
+| N16 | A의 App/Job | ARM 출력의 실제 ACS `hostName` (예: `acs-name.asiapacific.communication.azure.com`) | TCP 443 | **메일 전송을 사용하면 필수**, 미구성/미사용이면 제외. 2단계 출력의 실제 endpoint 하나를 승인하며 리소스 이름으로 hostname을 추측하지 않음 | [C06], [S15] |
 
 N12–N15를 차단해도 프로세스가 기동될 수 있지만, **근거 수집 범위 축소와 정상 운영은
 동일하지 않다.** 문서 조사를 지원하려면 코드의 허용 호스트와 방화벽 정책을 함께 맞춘다.

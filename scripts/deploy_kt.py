@@ -815,7 +815,7 @@ def automatic_service_plan(
             communication = cli.get(acs_id, COMMUNICATION_API)
             props = communication["properties"]
             if props.get("provisioningState") != "Succeeded" or not re.fullmatch(
-                r"[A-Za-z0-9-]+\.communication\.azure\.com", props.get("hostName", "")
+                r"(?:[A-Za-z0-9-]+\.)+communication\.azure\.com", props.get("hostName", "")
             ):
                 raise ValueError("Existing Communication Services is not ready")
             if props["dataLocation"] != plan.get("emailDataLocation", values["emailDataLocation"]):

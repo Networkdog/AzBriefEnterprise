@@ -1,0 +1,8 @@
+{
+  "appEnvironment": [
+    { "name": "COMMUNITY_INSIGHTS_ENABLED", "value": "false" }
+  ],
+  "jobEnvironment": [
+    { "name": "COMMUNITY_INSIGHTS_ENABLED", "value": "false" }
+  ]
+}

@@ -26,6 +26,7 @@ pytest로 검증합니다. 대부분 외부 Azure/Foundry 호출을 mock해 빠�
 | Admin 오류 이력 | [test_admin_errors.py](test_admin_errors.py), [browser/admin_errors.cjs](browser/admin_errors.cjs): 실제 SDK 열 형식, 시간·마스킹·인가·조회 제한, 메모리와 독립적인 로그 조회, Local/UTC, run drilldown, 요청 경합과 모바일 긴 오류 표시 |
 | 고객 배포 | [test_customer_deployment.py](test_customer_deployment.py): 독립 폴더·가짜 CLI 기반 대상 격리, MCP 리전/인증, Agent 게시 gate, 이미지/포트 전환·되돌림, 스케줄 설정 보존, 버튼·폼 계약 |
 | KT 인프라 | [test_kt_deployment.py](test_kt_deployment.py): compiled ARM의 private/minimum/Capability Host/no-Insights 계약, CIDR·위임·주소 충돌, 기존 subnet·DNS 보존, 대상 격리, 단계별 재조회·실패 차단. Azure 호출 없는 mock 검증 |
+| 배포 v2 | [test_deployment_v2.py](test_deployment_v2.py): 인프라/App 쓰기 경계, 컴파일된 RBAC scope, RG 태그·한도·완료 순서, 기존 네트워크·DNS 보존, 최초 앱 설치와 두 업데이트, 키·인증·스케줄 보호와 임시 파일 정리. Azure 호출 없는 검증 |
 | 공개 저장소 위생 | [`test_repository_hygiene.py`](test_repository_hygiene.py) |
 | 웹 사용자 흐름 | [browser/control_surfaces.cjs](browser/control_surfaces.cjs): 탐색·필터 URL·요청 경합·반응형 검사. Feedback 절은 이전 컨트롤을 전제로 하므로 현행 폼에 맞춘 수정 필요 |
 

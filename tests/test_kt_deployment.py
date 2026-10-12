@@ -1906,6 +1906,14 @@ def test_control_plane_role_grants_default_on_and_remain_stage_two_only(
     assert all("/blobServices/containers" in r["scope"] for r in blob)
     project = next(r for r in assignments if "53ca6127" in r["properties"]["roleDefinitionId"])
     assert "/projects" in project["scope"]
+    sender = next(
+        r
+        for r in assignments
+        if "emailSenderRoleDefinitionId" in r["properties"]["roleDefinitionId"]
+    )
+    assert "Microsoft.Communication/communicationServices" in sender["scope"]
+    telemetry = next(r for r in assignments if "3913510d" in r["properties"]["roleDefinitionId"])
+    assert "Microsoft.Insights/components" in telemetry["scope"]
     assert "Hosted" not in json.dumps(_params(template, "controlPlaneRoles"))
     assert not {"Owner", "Contributor", "Delete"} & roles
 
@@ -4517,12 +4525,17 @@ class OperationalAzure(FakeAzure):
                     }
                 if not values["reuseCommunicationService"]:
                     self.email_writes += 1
+                    host_name = (
+                        self.communication["properties"]["hostName"]
+                        if self.communication
+                        else "test-only.asiapacific.communication.azure.com"
+                    )
                     self.communication = {
                         "id": acs_id,
                         "properties": {
                             "provisioningState": "Succeeded",
                             "dataLocation": values["emailDataLocation"],
-                            "hostName": "test-only.communication.azure.com",
+                            "hostName": host_name,
                             "linkedDomains": [
                                 f"{email_id}/domains/AzureManagedDomain",
                                 *values["existingLinkedEmailDomains"],

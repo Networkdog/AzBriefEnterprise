@@ -19,6 +19,7 @@
 | [CUSTOMER_DEPLOYMENT.md](CUSTOMER_DEPLOYMENT.md) | 고객 사전 조건, 단계별 설정, 인수·정기 실행·복구 절차 |
 | [NETWORK_REQUIREMENTS.md](NETWORK_REQUIREMENTS.md) | KT 기준 고객 방화벽·DNS 요청 목록. 출발지·기능별 인터넷/사설 통신, 포트, 출처와 인수 체크리스트 |
 | [kt/](kt/README.md) | KT 전용 기존-VNet 프라이빗 인프라 bootstrap. Capability Host, 최소 subnet/Consumption, Application Insights 제외. 일반 고객 설정과 별도 |
+| [v2/](v2/README.md) | 별도 기존-VNet 프로필. 인프라·RBAC·로그 1회, RG 태그 전달, App/Job·인증·환경의 반복 설치/업데이트 |
 | [`azbrief-enterprise.parameters.example.json`](azbrief-enterprise.parameters.example.json) | 비밀값 없는 deployment parameter 예시 |
 | [`azure-mcp-server/`](azure-mcp-server/README.md) | Azure MCP specialist가 호출하는 별도 Entra 인증 read-only Container App |
 
@@ -53,6 +54,10 @@ Azure MCP template은 별도로 정적 compile할 수 있습니다.
 - `enterprise/main.bicep`이 제품 topology의 원본입니다. checkpoint와 immutable analysis archive
   container도 여기서 함께 정의하며 compiled JSON을 손으로 수정하지 않습니다.
 - Azure MCP는 `azure-mcp-server/infra/main.bicep`과 그 module이 원본입니다.
+- v2는 [infrastructure.bicep](v2/infrastructure.bicep), [application.bicep](v2/application.bicep),
+  [runtime-roles.bicep](v2/runtime-roles.bicep)이 원본이며 세 JSON을 함께 compile합니다.
+  기존 Portal 버튼이나 기존 고객 리소스를 변경하는 경로가 아닙니다. Hosted 주체 권한의 늦은
+  완성과 실제 네트워크·로그·분석·메일 인수는 [v2 가이드](v2/README.md)를 따릅니다.
 - `enterprise/main.json`은 현재 CI나 Deploy 버튼이 참조하지 않는 별도 snapshot입니다. 배포
   산출물로 사용하지 말고, 필요성이 확인될 때 원본/생성 경로를 정리해야 합니다.
 - parameter example에는 실제 client secret, API key, 구독자 개인정보를 넣지 않습니다.

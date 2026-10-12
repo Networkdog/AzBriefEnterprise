@@ -762,6 +762,8 @@ Environment가 정상이고 PE만 실패했다면 전체 RG, Foundry/Capability 
 참고하되, 이 정의 검사만으로 실제 SDK 발송 성공을 주장하지 마십시오.
 기존 ACS의 host와 endpoint도 일치해야 합니다. 광범위한
 Communication and Email Service Owner를 대신 부여하거나 액세스 키를 읽지 않습니다.
+실제 ACS는 `서비스명.asiapacific.communication.azure.com`처럼 지역 label을 포함할 수
+있습니다. 허용된 Microsoft suffix 아래의 실제 `hostName`을 사용하며 이름만으로 추측하지 않습니다.
 기존 서비스가 완성되어 있으면 서비스·관리 도메인·역할 정의 PUT을 생략합니다. 누락된 연결만
 완성할 때도 기존 도메인 링크·태그·managed identity와 데이터 저장 지역을 유지합니다.
 서로 다른 저장 지역, 미완료 상태, 잘못된 권한이나 읽기 실패를 신규 설치로 위장하지 않습니다.

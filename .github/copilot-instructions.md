@@ -51,6 +51,24 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 > Do not add other top-level localized README variants unless explicitly requested.
 > Code changes that affect the documentation must update both top-level README files.
 
+### Deployment Template v2
+
+`infra/v2` is an opt-in existing-VNet private profile, not a replacement for the existing
+Enterprise/KT Portal buttons or a legacy migration. `infrastructure.bicep` owns one-time
+foundation/completion, model/project/BYO provisioning, scoped roles, logs and the completion-only
+RG handoff. `application.bicep` reads the same group's 29 non-secret `azbrief.v2.*` tags and
+writes only App/Job/auth settings. Use `scripts/deploy_v2.py` for fresh fail-closed context,
+network/DNS/ownership/BYO checks, Incremental validate/what-if/create and current key/config
+preservation. Never rotate on denied/missing secret reads, downgrade Entra auth or reset a
+Schedule Job. Keep unknown or corrupted tag contracts blocking and preserve unrelated tags;
+enforce the 50-tag/256-character budget before provisioning. Raw ARM callers must perform
+equivalent checks and supply verified reuse/settings; templates alone are not adoption approval.
+Agent versions still require the guarded publication workflow. Only the Hosted principal's
+post-publication roles use `runtime-roles.bicep` as late infrastructure completion, not normal
+App updates. Never claim application readiness from metadata. Compile all three artifacts
+with pinned Bicep 0.46.1, retain CI drift checks and offline install/two-update coverage in
+`tests/test_deployment_v2.py`. Keep `infra/v2/README.md` and both root READMEs synchronized.
+
 ---
 
 ## Agentic AI Design Principles
@@ -447,10 +465,16 @@ Core/simple creation is serialized before initial project creation; reuse emits 
 Email creates ACS, Email Communication Services, AzureManagedDomain and the minimal sender role.
 Resolve real endpoint/fromSenderDomain, retain existing domains/links/tags/identity and roles, and
 never read/regenerate ACS keys or invent recipients. Default storage geography is Asia Pacific;
+ACS can return a regional host such as name.asiapacific.communication.azure.com; allow valid
+labels under communication.azure.com and never derive the host from the resource name.
 GlobalStandard inference can leave Korea Central. No automatic send, schedule or all-ready claim.
 Portal and CLI require complete scoped inventory and derive flags before writes; raw ARM callers
 must choose reuse explicitly. Role definition/assignment write permissions and HTTPS egress remain
 real requirements, not reasons for broader roles, auth or network bypasses.
+Keep conditional resource symbols bare in role-assignment scope (communication/insights), not
+null-forgiving scope expressions. The pinned compiler dropped the latter's ARM scope; lock the
+compiled resource scope in tests and verify actual readback. Never leave a task-created broader
+grant in place or remove unrelated customer assignments.
 Normalize only the documented ARM-injected ephemeralStorage default (App 1Gi, Job 4Gi), never
 ignore other resource drift. The live Job API also returns an empty string for automatic storage;
 accept that representation for Job only, without treating it as a measured capacity or allowing

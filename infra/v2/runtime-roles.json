@@ -1,0 +1,158 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.46.1.21595",
+      "templateHash": "17587743030457024232"
+    },
+    "description": "Infrastructure-owned, post-publication Hosted identity RBAC. Agent identity exists only after first publication; no App or infrastructure resource is recreated."
+  },
+  "parameters": {
+    "infrastructureTags": {
+      "type": "object",
+      "defaultValue": "[resourceGroup().tags]"
+    },
+    "infrastructureSchema": {
+      "type": "string",
+      "defaultValue": "[parameters('infrastructureTags')['azbrief.v2.schema']]",
+      "allowedValues": [
+        "2"
+      ]
+    },
+    "infrastructureState": {
+      "type": "string",
+      "defaultValue": "[parameters('infrastructureTags')['azbrief.v2.state']]",
+      "allowedValues": [
+        "ready"
+      ]
+    },
+    "hostedPrincipalId": {
+      "type": "string",
+      "minLength": 36,
+      "maxLength": 36
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', split(format('{0}/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project']), '/')[0], split(format('{0}/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project']), '/')[1])]",
+      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', split(format('{0}/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project']), '/')[0], split(format('{0}/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project']), '/')[1]), parameters('hostedPrincipalId'), '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
+      "properties": {
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
+        "principalId": "[parameters('hostedPrincipalId')]",
+        "principalType": "ServicePrincipal"
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "v2-hosted-telemetry-role",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "applicationInsightsName": {
+            "value": "[parameters('infrastructureTags')['azbrief.v2.insights']]"
+          },
+          "principalId": {
+            "value": "[parameters('hostedPrincipalId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "14250839677659291319"
+            }
+          },
+          "parameters": {
+            "applicationInsightsName": {
+              "type": "string"
+            },
+            "principalId": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
+              "name": "[guid(resourceId('Microsoft.Insights/components', parameters('applicationInsightsName')), parameters('principalId'), '3913510d-42f4-4e42-8a64-420c390055eb')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "v2-hosted-evidence-reader",
+      "subscriptionId": "[subscription().subscriptionId]",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "principalId": {
+            "value": "[parameters('hostedPrincipalId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2018-05-01/subscriptionDeploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "2692520348870983889"
+            }
+          },
+          "parameters": {
+            "principalId": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(subscription().id, parameters('principalId'), 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "outputs": {
+    "runtimeRoles": {
+      "type": "object",
+      "value": {
+        "schemaVersion": "[int(parameters('infrastructureSchema'))]",
+        "infrastructureState": "[parameters('infrastructureState')]",
+        "hostedPrincipalId": "[parameters('hostedPrincipalId')]",
+        "applicationReady": false
+      }
+    }
+  }
+}

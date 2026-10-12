@@ -34,6 +34,22 @@ the ARM/UI pair from the same source revision.
 Keep the paired KT Deploy button in both top-level READMEs while this profile ships. The repository
 contract expects two standard Enterprise Portal links and one KT Portal link in each README.
 
+## Two-Stage Template v2
+
+The opt-in [`infra/v2`](../../../infra/v2/README.md) profile reuses this existing-VNet
+security/lifecycle knowledge but does not replace the KT Portal button or adopt old resources.
+Its one-time infrastructure command internally sequences foundation, account-host readiness
+and model/project/BYO/RBAC completion without an App image. Only then does it merge 29 bounded,
+non-secret `azbrief.v2.*` RG tags. The same-RG application template owns App/Job/auth only;
+[`scripts/deploy_v2.py`](../../../scripts/deploy_v2.py) preserves current keys, secrets,
+environments, registry/auth settings and accepted schedules on repeated updates. Missing,
+paged, denied, foreign or redirected reads remain blocking. Retain canonical linked DNS,
+private ingress and existing subnet protections, tag limits and unrelated tags. Raw templates
+are not substitutes for live preflight. Initial Hosted identity permissions are late
+infrastructure completion after guarded Agent publication, never a broad role or infrastructure
+replay during App upgrades. v2 keeps Entra-only UI; it does not inherit KT's temporary anonymous
+exception. Keep Bicep/ARM sources in sync and distinguish offline tests from customer acceptance.
+
 ## Non-Negotiable KT Contract
 
 | Area | Required behavior |
@@ -243,6 +259,9 @@ The preflight must remain read-only and rerun immediately before validate, what-
     legacy assignment needs the ready same-RG service, matching HTTPS endpoint and an approved
     minimal custom role; automatic email creates only that minimal role. Reject wildcard,
     delete/key permissions and foreign or ambiguous evidence.
+    Use the resource symbol directly for conditional communication/insights assignment scope;
+    the pinned compiler omitted null-forgiving scope expressions. Assert compiled scope and
+    actual resource-level grants, not only Bicep text.
     Insights must be existing and Entra-only. Its project AppInsights connection must not redirect
     a different destination; project/Hosted publisher permissions and actual ingestion remain separate.
 15. Model aliases alone are not deployments. Stage two defaults to actual serialized model
@@ -252,6 +271,8 @@ The preflight must remain read-only and rerun immediately before validate, what-
     from other accounts. Global processing can leave Korea Central; disclose the resolved policy.
     Default email creates ACS/Email Services/AzureManagedDomain in Asia Pacific, resolves actual
     sender/endpoint and creates the three-action resource-scoped sender role without keys.
+    Regional ACS hostnames include a geography label; validate the allow-listed suffix, not
+    one-label assumptions, and use the provider's real hostName.
     Reuse matching ready services/domains/roles, preserving links/tags/identity when adding missing
     links. No fake read absence, arbitrary sender/recipient or automatic send. UI/CLI derive reuse
     from complete scoped inventory; raw ARM callers must provide those decisions.

@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "7516416395432827211"
+      "templateHash": "18444309036716091312"
     }
   },
   "parameters": {
@@ -29453,7 +29453,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "6664501714431692752"
+              "templateHash": "538679055625139116"
             }
           },
           "parameters": {
@@ -29534,6 +29534,7 @@
               "condition": "[not(empty(parameters('applicationInsightsName')))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
               "name": "[coalesce(tryGet(parameters('existingAssignmentNames'), 'telemetryPublisher'), guid(resourceId('Microsoft.Insights/components', parameters('applicationInsightsName')), parameters('controlPlanePrincipalId'), '3913510d-42f4-4e42-8a64-420c390055eb'))]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')]",
@@ -29545,6 +29546,7 @@
               "condition": "[and(not(empty(parameters('communicationServicesName'))), not(empty(parameters('emailSenderRoleDefinitionId'))))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName'))]",
               "name": "[coalesce(tryGet(parameters('existingAssignmentNames'), 'emailSender'), guid(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), parameters('controlPlanePrincipalId'), parameters('emailSenderRoleDefinitionId')))]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('emailSenderRoleDefinitionId'))]",

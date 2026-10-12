@@ -136,6 +136,17 @@ For a failed Private Endpoint, preserve the deployment diagnostics before deleti
 [KT failure triage](infra/kt/README.md#private-endpoint-생성-실패-진단) distinguishes connection
 approval from provisioning success. CLI readback requires each endpoint to be `Succeeded`.
 
+**Two-stage deployment template v2**
+
+[v2 deployment guide](infra/v2/README.md): an opt-in existing-VNet private profile that
+deploys infrastructure, scoped roles and diagnostics once, then installs or updates App/Job
+images, environment, secrets and web authentication independently. Completed infrastructure
+names are stored in non-secret `azbrief.v2.*` resource-group tags; the application reads the
+same RG instead of replaying infrastructure. The guarded CLI preserves existing API keys,
+auth, settings and accepted schedules. Hosted identity permissions are a narrow late
+infrastructure completion after first code publication. Existing Portal templates remain
+available; local/offline checks are not a customer Azure deployment or acceptance result.
+
 </div>
 
 ---

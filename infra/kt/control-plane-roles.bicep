@@ -74,7 +74,7 @@ resource archiveContributor 'Microsoft.Authorization/roleAssignments@2022-04-01'
   }
 }
 resource telemetryPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(applicationInsightsName)) {
-  scope: insights!
+  scope: insights
   name: existingAssignmentNames.?telemetryPublisher ?? guid(insights!.id, controlPlanePrincipalId, '3913510d-42f4-4e42-8a64-420c390055eb')
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '3913510d-42f4-4e42-8a64-420c390055eb')
@@ -85,7 +85,7 @@ resource telemetryPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01'
 }
 
 resource emailSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(communicationServicesName) && !empty(emailSenderRoleDefinitionId)) {
-  scope: communication!
+  scope: communication
   name: existingAssignmentNames.?emailSender ?? guid(communication!.id, controlPlanePrincipalId, emailSenderRoleDefinitionId)
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', emailSenderRoleDefinitionId)

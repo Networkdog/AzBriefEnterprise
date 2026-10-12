@@ -835,7 +835,7 @@
             "label": "기존 Azure Communication Services HTTPS endpoint",
             "constraints": {
               "required": true,
-              "regex": "^https://[a-zA-Z0-9-]+\\.communication\\.azure\\.com/?$",
+              "regex": "^https://(?:[a-zA-Z0-9-]+\\.)+communication\\.azure\\.com/?$",
               "validationMessage": "기존 ACS HTTPS origin을 입력하십시오."
             },
             "visible": "[and(equals(basics('deploymentStage'), 'complete'), not(steps('review').provisionEmail), steps('review').configureEmail)]"
