@@ -147,8 +147,9 @@ approval from provisioning success. CLI readback requires each endpoint to be `S
 [![Deploy v2 application to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
 
 These buttons load each ARM/UI Definition pair from GitHub `main` after publication.
-Customer resource names come from one common prefix/suffix pair with a read-only preview.
-Editable validation rows are removed; read-only Review results still block invalid input.
+Customer resource names are derived from the editable common `namingPrefix`/`namingSuffix`
+pair and saved for completion. Validation rows are hidden, but the internal
+`portalValidationPassed` output remains constrained to `true` in both ARM templates.
 Internal model aliases/IDs/capacity and MCP
 connection settings are automatic; foundation options are persisted in RG tags and reused.
 The form keeps initial output evaluation safe before RG/VNet responses arrive; missing

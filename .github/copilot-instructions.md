@@ -71,12 +71,8 @@ with pinned Bicep 0.46.1, retain CI drift checks and offline install/two-update 
 `tests/test_deployment_v2.py`. Keep `infra/v2/README.md` and both root READMEs synchronized.
 Both root READMEs expose separate v2 infrastructure/application Deploy to Azure buttons,
 in addition to the two standard Enterprise links and one KT link. Pair them with the actual
-infrastructure/application CreateUI definitions. RG-visible names derive from one customer
-prefix/suffix pair with a read-only preview. Do not restore repetitive name TextBoxes or
-editable validation rows. Keep all rules in a read-only portalValidationPassed Review output
-and ARM allowedValues true, plus native input validation and fresh CLI preflight. Save the
-naming pair and actual names in existing RG tag contracts; preserve explicit-name CLI files.
-Model aliases/IDs/capacity, Hosted and MCP connection settings are automatic. Use the tested
+infrastructure/application CreateUI definitions. RG-visible names remain customer inputs;
+model aliases/IDs/capacity, Hosted and MCP connection settings are automatic. Use the tested
 KT network guards through scripts/build_v2_ui.py.
 Keep UI output JSON assembly safe with unloaded RG/VNet/tag state even under eager branch
 evaluation. Empty initialization fallbacks never authorize completion; retain required tags
@@ -95,6 +91,9 @@ container belongs to application. Preserve
 Graph permission gates, incoming Entra and source scope. Keep all eight bounded option tags
 and reject changed saved choices. Publication, actual Portal acceptance and equivalent live
 preflight/key/settings preservation remain required, never inferred from offline JSON tests.
+Preserve common namingPrefix/namingSuffix parameters and saved options. Removing visible
+validation rows must not remove portalValidationPassed: both ARM templates allow only true.
+Recompile and verify UI-output/ARM-parameter parity before live deployment.
 
 ---
 

@@ -585,7 +585,6 @@ def test_saved_customer_options_round_trip_and_application_rejects_foundation(
 
 @pytest.mark.parametrize("state", ["foundation", "ready", "invalid"])
 def test_application_ui_requires_ready_same_group_contract(state: str) -> None:
-    controls = ui_controls("application")
     expression = ui_definition("application")["outputs"]["portalValidationPassed"]
     tags = tag_contract()
     tags.update({"azbrief.v2.state": state, "azbrief.v2.options0": "{}"})

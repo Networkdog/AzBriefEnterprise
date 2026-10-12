@@ -139,8 +139,8 @@ Private Endpoint가 실패하면 삭제 전에 배포 진단 정보를 보존하
 [![Deploy v2 application to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
 
 버튼은 GitHub `main`에 게시된 각 ARM·UI Definition 쌍을 함께 엽니다.
-고객 리소스 이름은 공통 접두사·접미사를 한 번 입력해 생성하며 읽기 전용 요약으로 확인합니다.
-탭 하단의 편집형 검증 칸은 없애고 실패 조건은 읽기 전용 Review 결과로 계속 차단합니다.
+고객 리소스 이름은 공통 `namingPrefix`/`namingSuffix` 입력으로 생성하고 완성 단계에도 보존합니다.
+화면의 검증 행은 숨기지만 내부 `portalValidationPassed` 출력과 두 ARM 템플릿의 `true` 제약은 유지합니다.
 모델·용량·MCP 내부 설정은 자동으로 결정합니다.
 기반 단계 필수 옵션은 RG 태그로 저장해 후속 단계에서 재사용합니다. 인프라 내부 두 단계를 완료하고,
 RG/VNet 응답이 아직 없는 초기 출력 평가도 보호하며, 필수 기반 태그가 없으면 완성 배포는 차단합니다.

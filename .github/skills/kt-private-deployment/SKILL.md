@@ -35,10 +35,7 @@ Keep the paired KT Deploy button in both top-level READMEs while this profile sh
 contract expects two standard Enterprise Portal links, one KT Portal link and separate v2
 infrastructure/application Deploy buttons in each README. v2 buttons pair their compiled ARM
 with the corresponding real CreateUiDefinition on GitHub main after publication. Keep customer
-RG naming through one prefix/suffix pair and a read-only generated-name preview, auto
-model/MCP internal settings, and guarded live preflight. Only v2 uses the common pair;
-the existing KT form is unchanged. Remove editable bottom validation rows, not the rules:
-retain read-only portalValidationPassed Review/ARM acceptance and fresh CLI guards.
+RG resource-name inputs, auto model/MCP internal settings, and guarded live preflight.
 
 ## Two-Stage Template v2
 
@@ -69,6 +66,9 @@ VNet RG outputs must come from the selected ARM ID, not the picker's optional re
 field. Test id/name/location-only picker fixtures, cross-RG networks, customer casing and
 saved-tag completion without a live picker. Never invent the application RG as a fallback.
 Keep Bicep/ARM sources in sync and distinguish offline tests from customer Portal acceptance.
+Common namingPrefix/namingSuffix inputs stay in the ARM contract and saved options.
+Hide validation rows without dropping the internal portalValidationPassed=true constraint;
+compile the current sources and verify every UI output matches an ARM parameter.
 
 ## Non-Negotiable KT Contract
 

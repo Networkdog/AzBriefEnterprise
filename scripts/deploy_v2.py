@@ -852,10 +852,11 @@ def prepare_infrastructure(
         for field in OPTION_FIELDS:
             if field != "existingPrivateDnsZoneIds" and values[field] != saved_options[field]:
                 raise ValueError(f"Refusing to change saved foundation option: {field}")
+    contract = make_tag_contract(values, name + "-complete")
+    if saved_options:
         for field in ("namingPrefix", "namingSuffix"):
             if values.get(field, "") != saved_options.get(field, ""):
                 raise ValueError(f"Refusing to change saved foundation option: {field}")
-    contract = make_tag_contract(values, name + "-complete")
     validate_tag_budget({**group_tags, **contract})
     vnet_id = f"/subscriptions/{cli.subscription}/resourceGroups/{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
     vnet = cli.get(vnet_id, NETWORK_API)
