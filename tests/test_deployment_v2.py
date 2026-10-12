@@ -2,6 +2,7 @@
 
 import copy
 import json
+import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -510,6 +511,9 @@ def ui_controls(name: str) -> dict[str, dict[str, Any]]:
 
 def test_infrastructure_ui_keeps_customer_names_but_not_internal_settings() -> None:
     controls = ui_controls("infrastructure")
+    for field in ("namingPrefix", "namingSuffix"):
+        assert controls[field]["type"] == "Microsoft.Common.TextBox"
+        assert controls[field]["constraints"]["required"] is True
     for field in (
         "foundryAccountName",
         "storageAccountName",
@@ -526,8 +530,8 @@ def test_infrastructure_ui_keeps_customer_names_but_not_internal_settings() -> N
         "azureMcpContainerAppName",
         "azureMcpIdentityName",
     ):
-        assert controls[field]["type"] == "Microsoft.Common.TextBox"
-        assert controls[field]["constraints"]["required"] is True
+        assert field not in controls
+        assert field in ui_definition("infrastructure")["outputs"]
     for field in (
         "modelDeploymentName",
         "simpleModelDeploymentName",
@@ -582,12 +586,19 @@ def test_saved_customer_options_round_trip_and_application_rejects_foundation(
 @pytest.mark.parametrize("state", ["foundation", "ready", "invalid"])
 def test_application_ui_requires_ready_same_group_contract(state: str) -> None:
     controls = ui_controls("application")
-    expression = controls["deploymentGuard"]["constraints"]["validations"][1]["isValid"]
+    expression = ui_definition("application")["outputs"]["portalValidationPassed"]
     tags = tag_contract()
     tags.update({"azbrief.v2.state": state, "azbrief.v2.options0": "{}"})
     assert _evaluate_ui_expression(
         expression,
-        {"application": {"resourceGroupApi": {"tags": tags}}},
+        {
+            "application": {
+                "resourceGroupApi": {"tags": tags},
+                "deploymentAccepted": True,
+                "containerAppsApi": {"value": []},
+                "jobsApi": {"value": []},
+            }
+        },
         resource_group={"mode": "Existing"},
     ) is (state == "ready")
 
@@ -602,11 +613,19 @@ def test_application_ui_requires_ready_same_group_contract(state: str) -> None:
     ],
 )
 def test_application_ui_never_treats_failed_inventory_as_install(response: dict[str, Any]) -> None:
-    expression = ui_controls("application")["deploymentGuard"]["constraints"]["validations"][2][
-        "isValid"
-    ]
+    expression = ui_definition("application")["outputs"]["portalValidationPassed"]
+    tags = {**tag_contract(), "azbrief.v2.options0": "{}"}
     result = _evaluate_ui_expression(
-        expression, {"application": {"containerAppsApi": response, "jobsApi": {"value": []}}}
+        expression,
+        {
+            "application": {
+                "resourceGroupApi": {"tags": tags},
+                "deploymentAccepted": True,
+                "containerAppsApi": response,
+                "jobsApi": {"value": []},
+            }
+        },
+        resource_group={"mode": "Existing"},
     )
     assert result is False
 
@@ -640,17 +659,33 @@ def test_ui_uses_supported_control_schema_and_legacy_network_guards(tmp_path: Pa
         "virtualNetworkApi": cli.documents[vnet_id],
         **values,
     }
-    validations = ui_controls("infrastructure")["networkGuard"]["constraints"]["validations"]
-    assert len(validations) == 5
-    for validation in validations:
-        assert (
-            _evaluate_ui_expression(
-                validation["isValid"], {}, network=network, eager_conditionals=True
-            )
-            is True
+    expression = ui_definition("infrastructure")["outputs"]["portalValidationPassed"]
+    data = {
+        "contract": {"contractAccepted": True, "resourceGroupApi": None},
+        "names": {"namingPrefix": "kt", "namingSuffix": "dev"},
+    }
+    assert (
+        _evaluate_ui_expression(
+            expression,
+            data,
+            network=network,
+            resource_group={"mode": "New"},
+            basics={"infrastructureStage": "foundation"},
+            eager_conditionals=True,
         )
+        is True
+    )
     network["containerAppsSubnetName"] = network["foundrySubnetName"]
-    assert _evaluate_ui_expression(validations[-1]["isValid"], {}, network=network) is False
+    assert (
+        _evaluate_ui_expression(
+            expression,
+            data,
+            network=network,
+            resource_group={"mode": "New"},
+            basics={"infrastructureStage": "foundation"},
+        )
+        is False
+    )
 
 
 def test_saved_foundation_names_and_choices_cannot_be_changed(tmp_path: Path) -> None:
@@ -667,12 +702,7 @@ def test_saved_foundation_names_and_choices_cannot_be_changed(tmp_path: Path) ->
 
 def test_core_and_mcp_customer_names_never_merge_identities(tmp_path: Path) -> None:
     cli, values = infrastructure_cli(tmp_path)
-    expression = ui_controls("infrastructure")["namesGuard"]["constraints"]["validations"][0][
-        "isValid"
-    ]
-    assert _evaluate_ui_expression(expression, values) is True
     values["azureMcpIdentityName"] = values["controlPlaneIdentityName"]
-    assert _evaluate_ui_expression(expression, values) is False
     with pytest.raises(ValueError, match="distinct"):
         deploy_v2.prepare_infrastructure(cli, values, "foundation", "v2")
     assert not cli.operations
@@ -692,19 +722,22 @@ def test_infrastructure_outputs_are_safe_before_rg_and_vnet_load() -> None:
             expression,
             data,
             network={},
+            resource_group={"mode": "New"},
             basics={"infrastructureStage": "foundation"},
             eager_conditionals=True,
         )
-    assert controls["contractGuard"]["constraints"]["required"] is True
+    assert not any(name.endswith("Guard") for name in controls)
+    assert template("infrastructure")["parameters"]["portalValidationPassed"]["allowedValues"] == [
+        True
+    ]
 
 
 def test_infrastructure_initialization_fallback_never_authorizes_completion() -> None:
-    expression = ui_controls("infrastructure")["contractGuard"]["constraints"]["validations"][1][
-        "isValid"
-    ]
+    expression = ui_definition("infrastructure")["outputs"]["portalValidationPassed"]
     result = _evaluate_ui_expression(
         expression,
-        {"contract": {"resourceGroupApi": None}},
+        {"contract": {"resourceGroupApi": None}, "names": {}},
+        network={},
         resource_group={"mode": "Existing"},
         basics={"infrastructureStage": "complete"},
         eager_conditionals=True,
@@ -718,7 +751,20 @@ def test_infrastructure_initial_output_normalization_is_idempotent() -> None:
     document = json.loads(
         (V2 / "infrastructure.createUiDefinition.json").read_text(encoding="utf-8")
     )
-    validations = ui_controls("infrastructure")["networkGuard"]["constraints"]["validations"]
+    legacy = json.loads((ROOT / "infra/kt/createUiDefinition.json").read_text(encoding="utf-8"))
+    validations = [
+        validation
+        for step in legacy["parameters"]["steps"]
+        for control in step["elements"]
+        for validation in control.get("constraints", {}).get("validations", [])
+        if validation.get("isValid", "").startswith(
+            (
+                "[not(empty(filter(coalesce(steps('network')",
+                "[and(not(equals(coalesce(steps('network')",
+                "[not(or(equals(toLower(coalesce(steps('network')",
+            )
+        )
+    ]
     assert normalize_ui(normalize_ui(document, validations), validations) == normalize_ui(
         document, validations
     )
@@ -746,14 +792,15 @@ def test_generated_v2_forms_do_not_use_string_key_tag_indexes() -> None:
     for name in ("infrastructure", "application"):
         text = (V2 / f"{name}.createUiDefinition.json").read_text(encoding="utf-8")
         assert "tags['azbrief.v2." not in text
-    expression = ui_controls("application")["deploymentGuard"]["constraints"]["validations"][1][
-        "isValid"
-    ]
+    expression = ui_definition("application")["outputs"]["portalValidationPassed"]
     assert (
         _evaluate_ui_expression(
             expression,
             {
                 "application": {
+                    "deploymentAccepted": True,
+                    "containerAppsApi": {"value": []},
+                    "jobsApi": {"value": []},
                     "resourceGroupApi": {
                         "tags": {
                             "azbrief.v2.schema": "2",
@@ -761,7 +808,7 @@ def test_generated_v2_forms_do_not_use_string_key_tag_indexes() -> None:
                             "azbrief.v2.state": "ready",
                             "azbrief.v2.options0": "{}",
                         }
-                    }
+                    },
                 }
             },
             resource_group={"mode": "Existing"},
@@ -793,6 +840,99 @@ def test_v2_matches_working_kt_navigation_and_subnet_choice_contract() -> None:
         ui_controls("infrastructure")["virtualNetwork"]["options"]
         == legacy_controls["virtualNetwork"]["options"]
     )
+
+
+@pytest.mark.parametrize("network_group", ["rg-customer-network", "RG-Customer-Network"])
+def test_infrastructure_exports_vnet_rg_from_selected_arm_id(network_group: str) -> None:
+    selected = {
+        "id": f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{network_group}/providers/Microsoft.Network/virtualNetworks/vnet-customer",
+        "name": "vnet-customer",
+        "location": "koreacentral",
+    }
+    expression = ui_definition("infrastructure")["outputs"]["virtualNetworkResourceGroupName"]
+    actual = _evaluate_ui_expression(
+        expression,
+        {"contract": {"resourceGroupApi": None}},
+        network={"virtualNetwork": selected},
+        basics={"infrastructureStage": "foundation"},
+    )
+    assert actual == network_group
+
+
+def test_completion_reuses_saved_vnet_rg_without_a_picker_value() -> None:
+    expression = ui_definition("infrastructure")["outputs"]["virtualNetworkResourceGroupName"]
+    actual = _evaluate_ui_expression(
+        expression,
+        {"contract": {"resourceGroupApi": {"tags": {"azbrief.v2.vnetRg": "rg-approved-network"}}}},
+        network={},
+        basics={"infrastructureStage": "complete"},
+        eager_conditionals=True,
+    )
+    assert actual == "rg-approved-network"
+
+
+def test_generated_forms_remove_editable_validation_rows_but_require_review_success() -> None:
+    for name in ("infrastructure", "application"):
+        controls = ui_controls(name)
+        assert not any(control_name.endswith("Guard") for control_name in controls)
+        assert not any(control.get("defaultValue") == "검사" for control in controls.values())
+        assert "portalValidationPassed" in ui_definition(name)["outputs"]
+        assert template(name)["parameters"]["portalValidationPassed"]["allowedValues"] == [True]
+
+
+@pytest.mark.parametrize(("prefix", "suffix"), [("kt", "prd"), ("abcdefghij", "0123456789")])
+def test_common_name_inputs_generate_unique_rule_compliant_resource_names(
+    prefix: str, suffix: str
+) -> None:
+    from scripts.build_v2_ui import RESOURCE_NAME_PARTS
+
+    outputs = ui_definition("infrastructure")["outputs"]
+    data = {"contract": {"resourceGroupApi": None}, "namingPrefix": prefix, "namingSuffix": suffix}
+    names = {
+        name: _evaluate_ui_expression(
+            outputs[name], data, network={}, basics={"infrastructureStage": "foundation"}
+        )
+        for name in RESOURCE_NAME_PARTS
+    }
+    assert names["containerAppName"] == f"ca-{prefix}-{suffix}"
+    assert names["storageAccountName"] == f"st{prefix}{suffix}"
+    assert len(set(names.values())) == len(names)
+    assert re.fullmatch(r"[a-z0-9]{3,24}", names["storageAccountName"])
+    for name in ("containerAppName", "schedulerJobName", "azureMcpContainerAppName"):
+        assert len(names[name]) <= 32
+        assert re.fullmatch(r"[a-z][a-z0-9-]+[a-z0-9]", names[name])
+
+
+def test_common_name_inputs_are_saved_and_reused_on_completion(tmp_path: Path) -> None:
+    values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    values.update(namingPrefix="kt", namingSuffix="prd")
+    saved = deploy_v2.make_tag_contract(values, "foundation", state="foundation")
+    assert deploy_v2.decode_tag_options(saved)["namingPrefix"] == "kt"
+    assert deploy_v2.decode_tag_options(saved)["namingSuffix"] == "prd"
+    data = {"contract": {"resourceGroupApi": {"tags": saved}}, "names": {}}
+    for name in ("namingPrefix", "namingSuffix"):
+        actual = _evaluate_ui_expression(
+            ui_definition("infrastructure")["outputs"][name],
+            data,
+            basics={"infrastructureStage": "complete"},
+            eager_conditionals=True,
+        )
+        assert actual == values[name]
+
+
+def test_cli_can_resolve_all_customer_resource_names_from_one_pair(tmp_path: Path) -> None:
+    from scripts.build_v2_ui import RESOURCE_NAME_PARTS
+
+    path = infrastructure_parameter_file(tmp_path)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    for name in RESOURCE_NAME_PARTS:
+        document["parameters"].pop(name, None)
+    document["parameters"].update(namingPrefix={"value": "kt"}, namingSuffix={"value": "prd"})
+    path.write_text(json.dumps(document), encoding="utf-8")
+    values = deploy_v2.load_infrastructure_parameters(path)
+    assert values["foundryAccountName"] == "ai-kt-prd"
+    assert values["storageAccountName"] == "stktprd"
+    assert values["azureMcpContainerAppName"] == "ca-kt-mcp-prd"
 
 
 def test_application_update_retains_keys_auth_environment_and_schedule() -> None:

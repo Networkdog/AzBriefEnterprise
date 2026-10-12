@@ -4,6 +4,13 @@ metadata description = 'One-time AzBrief v2 infrastructure. Foundation and compl
 
 @allowed(['foundation', 'complete'])
 param infrastructureStage string = 'foundation'
+@allowed([true])
+@description('Read-only Portal validation result. The guarded CLI validates before submitting; false always blocks deployment.')
+param portalValidationPassed bool = true
+@maxLength(10)
+param namingPrefix string = ''
+@maxLength(10)
+param namingSuffix string = ''
 param location string
 param virtualNetworkResourceGroupName string
 param virtualNetworkName string
@@ -88,6 +95,8 @@ var deploymentOptions = {
   simpleModelCapacity: simpleModelCapacity
   existingPrivateDnsZoneIds: existingPrivateDnsZoneIds
   tags: resourceTags
+  namingPrefix: namingPrefix
+  namingSuffix: namingSuffix
   manageAzureMcp: manageAzureMcp
   azureMcpClientId: mcpClientId
   azureMcpServicePrincipalId: mcpServicePrincipalId
@@ -296,6 +305,7 @@ var infrastructureContract = {
   schemaVersion: 2
   profile: 'kt-private-v2'
   infrastructureComplete: complete
+  portalValidationPassed: portalValidationPassed
   applicationReady: false
   hostedRuntimeRolesPending: true
   deploymentName: deployment().name

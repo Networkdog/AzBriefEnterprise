@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "13941114662785825262"
+      "templateHash": "17880581219102612639"
     },
     "description": "Repeatable AzBrief v2 application installation/update using the current resource-group tag contract. No infrastructure, model, BYO, RBAC or diagnostics writes."
   },
@@ -15,6 +15,16 @@
       "defaultValue": "[resourceGroup().tags]",
       "metadata": {
         "description": "Read from this resource group by default. The guarded CLI verifies version, ownership, names and live infrastructure before deployment."
+      }
+    },
+    "portalValidationPassed": {
+      "type": "bool",
+      "defaultValue": true,
+      "allowedValues": [
+        true
+      ],
+      "metadata": {
+        "description": "Read-only Portal contract/inventory validation result. False blocks deployment."
       }
     },
     "infrastructureSchema": {
@@ -535,6 +545,7 @@
         "schemaVersion": "[int(parameters('infrastructureSchema'))]",
         "profile": "[parameters('infrastructureProfile')]",
         "infrastructureState": "[parameters('infrastructureState')]",
+        "portalValidationPassed": "[parameters('portalValidationPassed')]",
         "infrastructureDeploymentName": "[parameters('infrastructureTags')['azbrief.v2.deployment']]",
         "applicationReady": false,
         "containerAppResourceId": "[resourceId('Microsoft.App/containerApps', parameters('infrastructureTags')['azbrief.v2.app'])]",

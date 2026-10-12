@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "148702174042415051"
+      "templateHash": "16868531613986694449"
     },
     "description": "One-time AzBrief v2 infrastructure. Foundation and completion are internal orchestration stages; application containers and Agent versions are excluded."
   },
@@ -17,6 +17,26 @@
         "foundation",
         "complete"
       ]
+    },
+    "portalValidationPassed": {
+      "type": "bool",
+      "defaultValue": true,
+      "allowedValues": [
+        true
+      ],
+      "metadata": {
+        "description": "Read-only Portal validation result. The guarded CLI validates before submitting; false always blocks deployment."
+      }
+    },
+    "namingPrefix": {
+      "type": "string",
+      "defaultValue": "",
+      "maxLength": 10
+    },
+    "namingSuffix": {
+      "type": "string",
+      "defaultValue": "",
+      "maxLength": 10
     },
     "location": {
       "type": "string"
@@ -28592,6 +28612,7 @@
               "schemaVersion": 2,
               "profile": "kt-private-v2",
               "infrastructureComplete": "[variables('complete')]",
+              "portalValidationPassed": "[parameters('portalValidationPassed')]",
               "applicationReady": false,
               "hostedRuntimeRolesPending": true,
               "deploymentName": "[deployment().name]",
@@ -28653,6 +28674,8 @@
               "simpleModelCapacity": "[parameters('simpleModelCapacity')]",
               "existingPrivateDnsZoneIds": "[parameters('existingPrivateDnsZoneIds')]",
               "tags": "[variables('resourceTags')]",
+              "namingPrefix": "[parameters('namingPrefix')]",
+              "namingSuffix": "[parameters('namingSuffix')]",
               "manageAzureMcp": "[variables('manageAzureMcp')]",
               "azureMcpClientId": "[if(variables('manageAzureMcp'), if(variables('complete'), variables('savedOptions').azureMcpClientId, reference(resourceId('Microsoft.Resources/deployments', 'v2-mcp-authentication'), '2025-04-01').outputs.entraAppClientId.value), '')]",
               "azureMcpServicePrincipalId": "[if(variables('manageAzureMcp'), if(variables('complete'), variables('savedOptions').azureMcpServicePrincipalId, reference(resourceId('Microsoft.Resources/deployments', 'v2-mcp-authentication'), '2025-04-01').outputs.entraAppServicePrincipalObjectId.value), '')]",
@@ -28744,6 +28767,7 @@
               "schemaVersion": 2,
               "profile": "kt-private-v2",
               "infrastructureComplete": "[variables('complete')]",
+              "portalValidationPassed": "[parameters('portalValidationPassed')]",
               "applicationReady": false,
               "hostedRuntimeRolesPending": true,
               "deploymentName": "[deployment().name]",
@@ -28805,6 +28829,8 @@
               "simpleModelCapacity": "[parameters('simpleModelCapacity')]",
               "existingPrivateDnsZoneIds": "[parameters('existingPrivateDnsZoneIds')]",
               "tags": "[variables('resourceTags')]",
+              "namingPrefix": "[parameters('namingPrefix')]",
+              "namingSuffix": "[parameters('namingSuffix')]",
               "manageAzureMcp": "[variables('manageAzureMcp')]",
               "azureMcpClientId": "[if(variables('manageAzureMcp'), if(variables('complete'), variables('savedOptions').azureMcpClientId, reference(resourceId('Microsoft.Resources/deployments', 'v2-mcp-authentication'), '2025-04-01').outputs.entraAppClientId.value), '')]",
               "azureMcpServicePrincipalId": "[if(variables('manageAzureMcp'), if(variables('complete'), variables('savedOptions').azureMcpServicePrincipalId, reference(resourceId('Microsoft.Resources/deployments', 'v2-mcp-authentication'), '2025-04-01').outputs.entraAppServicePrincipalObjectId.value), '')]",
@@ -28891,6 +28917,7 @@
         "schemaVersion": 2,
         "profile": "kt-private-v2",
         "infrastructureComplete": "[variables('complete')]",
+        "portalValidationPassed": "[parameters('portalValidationPassed')]",
         "applicationReady": false,
         "hostedRuntimeRolesPending": true,
         "deploymentName": "[deployment().name]",
@@ -28959,7 +28986,7 @@
           "modelDeploymentName": "[parameters('modelDeploymentName')]",
           "simpleModelDeploymentName": "[parameters('simpleModelDeploymentName')]",
           "promptAgentNames": "[variables('promptAgentNames')]",
-          "azureMcpServerUrl": "[createObject('schemaVersion', 2, 'profile', 'kt-private-v2', 'infrastructureComplete', variables('complete'), 'applicationReady', false(), 'hostedRuntimeRolesPending', true(), 'deploymentName', deployment().name, 'tenantId', tenant().tenantId, 'subscriptionId', subscription().subscriptionId, 'resourceGroup', resourceGroup().name, 'location', parameters('location'), 'tags', variables('resourceTags'), 'virtualNetworkResourceId', variables('vnetId'), 'foundrySubnetResourceId', format('{0}/subnets/{1}', variables('vnetId'), parameters('foundrySubnetName')), 'infrastructureSubnetId', format('{0}/subnets/{1}', variables('vnetId'), parameters('containerAppsSubnetName')), 'privateEndpointSubnetId', format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName')), 'deployContainerAppsPrivateEndpoint', parameters('deployContainerAppsPrivateEndpoint'), 'containerAppsEnvironmentName', parameters('containerAppsEnvironmentName'), 'containerAppsEnvironmentResourceId', resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), 'environmentDefaultDomain', if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value), 'containerAppName', parameters('containerAppName'), 'schedulerJobName', parameters('schedulerJobName'), 'controlPlaneIdentityResourceId', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), 'controlPlanePrincipalId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityPrincipalId.value), 'controlPlaneClientId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').clientId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityClientId.value), 'storageAccountName', parameters('storageAccountName'), 'cosmosAccountName', parameters('cosmosAccountName'), 'searchServiceName', parameters('searchServiceName'), 'logAnalyticsWorkspaceName', parameters('logAnalyticsWorkspaceName'), 'applicationInsightsName', parameters('applicationInsightsName'), 'communicationServicesName', parameters('communicationServicesName'), 'emailServiceName', parameters('emailServiceName'), 'communicationServicesEndpoint', if(variables('complete'), format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value), 'emailSenderAddress', if(variables('complete'), format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[0], split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value), 'stateContainerUrl', format('https://{0}.blob.{1}/azbrief-state', parameters('storageAccountName'), environment().suffixes.storage), 'archiveContainerUrl', format('https://{0}.blob.{1}/azbrief-archive', parameters('storageAccountName'), environment().suffixes.storage), 'foundryAccountName', parameters('foundryAccountName'), 'projectName', parameters('projectName'), 'foundryProjectResourceId', variables('projectId'), 'foundryProjectEndpoint', variables('projectEndpoint'), 'foundryProjectPrincipalId', if(variables('complete'), if(variables('reuseFoundry'), reference(variables('projectId'), '2025-06-01', 'full').identity.principalId, reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId), ''), 'foundryHostedAgentName', parameters('foundryHostedAgentName'), 'modelDeploymentName', parameters('modelDeploymentName'), 'simpleModelDeploymentName', parameters('simpleModelDeploymentName'), 'promptAgentNames', variables('promptAgentNames'), 'azureMcpServerUrl', if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl')), 'azureMcpProjectConnectionName', parameters('azureMcpProjectConnectionName'), 'azureMcpContainerAppName', parameters('azureMcpContainerAppName'), 'azureMcpIdentityName', parameters('azureMcpIdentityName')).azureMcpServerUrl]",
+          "azureMcpServerUrl": "[createObject('schemaVersion', 2, 'profile', 'kt-private-v2', 'infrastructureComplete', variables('complete'), 'portalValidationPassed', parameters('portalValidationPassed'), 'applicationReady', false(), 'hostedRuntimeRolesPending', true(), 'deploymentName', deployment().name, 'tenantId', tenant().tenantId, 'subscriptionId', subscription().subscriptionId, 'resourceGroup', resourceGroup().name, 'location', parameters('location'), 'tags', variables('resourceTags'), 'virtualNetworkResourceId', variables('vnetId'), 'foundrySubnetResourceId', format('{0}/subnets/{1}', variables('vnetId'), parameters('foundrySubnetName')), 'infrastructureSubnetId', format('{0}/subnets/{1}', variables('vnetId'), parameters('containerAppsSubnetName')), 'privateEndpointSubnetId', format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName')), 'deployContainerAppsPrivateEndpoint', parameters('deployContainerAppsPrivateEndpoint'), 'containerAppsEnvironmentName', parameters('containerAppsEnvironmentName'), 'containerAppsEnvironmentResourceId', resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), 'environmentDefaultDomain', if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value), 'containerAppName', parameters('containerAppName'), 'schedulerJobName', parameters('schedulerJobName'), 'controlPlaneIdentityResourceId', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), 'controlPlanePrincipalId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityPrincipalId.value), 'controlPlaneClientId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').clientId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityClientId.value), 'storageAccountName', parameters('storageAccountName'), 'cosmosAccountName', parameters('cosmosAccountName'), 'searchServiceName', parameters('searchServiceName'), 'logAnalyticsWorkspaceName', parameters('logAnalyticsWorkspaceName'), 'applicationInsightsName', parameters('applicationInsightsName'), 'communicationServicesName', parameters('communicationServicesName'), 'emailServiceName', parameters('emailServiceName'), 'communicationServicesEndpoint', if(variables('complete'), format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value), 'emailSenderAddress', if(variables('complete'), format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[0], split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value), 'stateContainerUrl', format('https://{0}.blob.{1}/azbrief-state', parameters('storageAccountName'), environment().suffixes.storage), 'archiveContainerUrl', format('https://{0}.blob.{1}/azbrief-archive', parameters('storageAccountName'), environment().suffixes.storage), 'foundryAccountName', parameters('foundryAccountName'), 'projectName', parameters('projectName'), 'foundryProjectResourceId', variables('projectId'), 'foundryProjectEndpoint', variables('projectEndpoint'), 'foundryProjectPrincipalId', if(variables('complete'), if(variables('reuseFoundry'), reference(variables('projectId'), '2025-06-01', 'full').identity.principalId, reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId), ''), 'foundryHostedAgentName', parameters('foundryHostedAgentName'), 'modelDeploymentName', parameters('modelDeploymentName'), 'simpleModelDeploymentName', parameters('simpleModelDeploymentName'), 'promptAgentNames', variables('promptAgentNames'), 'azureMcpServerUrl', if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl')), 'azureMcpProjectConnectionName', parameters('azureMcpProjectConnectionName'), 'azureMcpContainerAppName', parameters('azureMcpContainerAppName'), 'azureMcpIdentityName', parameters('azureMcpIdentityName')).azureMcpServerUrl]",
           "azureMcpProjectConnectionName": "[parameters('azureMcpProjectConnectionName')]",
           "schedulerJobName": "[parameters('schedulerJobName')]",
           "applicationInsightsName": "[parameters('applicationInsightsName')]",

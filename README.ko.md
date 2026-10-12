@@ -139,11 +139,14 @@ Private Endpoint가 실패하면 삭제 전에 배포 진단 정보를 보존하
 [![Deploy v2 application to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
 
 버튼은 GitHub `main`에 게시된 각 ARM·UI Definition 쌍을 함께 엽니다.
-RG에 표시되는 고객 리소스 이름은 입력받고, 모델·용량·MCP 내부 설정은 자동으로 결정합니다.
+고객 리소스 이름은 공통 접두사·접미사를 한 번 입력해 생성하며 읽기 전용 요약으로 확인합니다.
+탭 하단의 편집형 검증 칸은 없애고 실패 조건은 읽기 전용 Review 결과로 계속 차단합니다.
+모델·용량·MCP 내부 설정은 자동으로 결정합니다.
 기반 단계 필수 옵션은 RG 태그로 저장해 후속 단계에서 재사용합니다. 인프라 내부 두 단계를 완료하고,
 RG/VNet 응답이 아직 없는 초기 출력 평가도 보호하며, 필수 기반 태그가 없으면 완성 배포는 차단합니다.
 UI의 태그 읽기는 점 표기법을 사용하며 저장된 태그 이름·값은 변경하지 않습니다.
 화면 탐색과 서브넷 목록 초기화는 기존 KT 폼의 기본 모드를 따릅니다.
+선택한 VNet의 RG 이름은 선택기의 선택적 속성이 아니라 ARM ID에서 추출합니다.
 ARM·UI 파일을 함께 게시한 뒤 실제 Portal 동작을 확인하십시오.
 앱 업데이트 전 기존 키·설정을 확인해야 합니다. 아래 가이드의 보호된 배포 절차를 따르십시오.
 

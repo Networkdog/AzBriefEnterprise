@@ -35,7 +35,10 @@ Keep the paired KT Deploy button in both top-level READMEs while this profile sh
 contract expects two standard Enterprise Portal links, one KT Portal link and separate v2
 infrastructure/application Deploy buttons in each README. v2 buttons pair their compiled ARM
 with the corresponding real CreateUiDefinition on GitHub main after publication. Keep customer
-RG resource-name inputs, auto model/MCP internal settings, and guarded live preflight.
+RG naming through one prefix/suffix pair and a read-only generated-name preview, auto
+model/MCP internal settings, and guarded live preflight. Only v2 uses the common pair;
+the existing KT form is unchanged. Remove editable bottom validation rows, not the rules:
+retain read-only portalValidationPassed Review/ARM acceptance and fresh CLI guards.
 
 ## Two-Stage Template v2
 
@@ -62,6 +65,9 @@ option JSON values. Do not equate the Python test evaluator with the actual Port
 repeat symptoms need authenticated CreateUIDef diagnostics, not another success claim.
 Use the working KT default non-wizard navigation and exact selector/subnet choice contract.
 Compare schema-required differences before editing optional titles or shared properties.
+VNet RG outputs must come from the selected ARM ID, not the picker's optional resourceGroup
+field. Test id/name/location-only picker fixtures, cross-RG networks, customer casing and
+saved-tag completion without a live picker. Never invent the application RG as a fallback.
 Keep Bicep/ARM sources in sync and distinguish offline tests from customer Portal acceptance.
 
 ## Non-Negotiable KT Contract

@@ -4,6 +4,9 @@ metadata description = 'Repeatable AzBrief v2 application installation/update us
 
 @description('Read from this resource group by default. The guarded CLI verifies version, ownership, names and live infrastructure before deployment.')
 param infrastructureTags object = resourceGroup().tags
+@allowed([true])
+@description('Read-only Portal contract/inventory validation result. False blocks deployment.')
+param portalValidationPassed bool = true
 
 @allowed(['2'])
 param infrastructureSchema string = infrastructureTags['azbrief.v2.schema']
@@ -243,6 +246,7 @@ output application object = {
   schemaVersion: int(infrastructureSchema)
   profile: infrastructureProfile
   infrastructureState: infrastructureState
+  portalValidationPassed: portalValidationPassed
   infrastructureDeploymentName: infrastructureTags['azbrief.v2.deployment']
   applicationReady: false
   containerAppResourceId: containerApp.id

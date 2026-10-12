@@ -70,37 +70,6 @@
               "icon": "Info",
               "text": "기존 App·Job 비밀과 설정은 ARM 내부에서 읽어 보존합니다. 키를 이 폼이나 로그에 표시하지 않습니다. 인증 설정은 생략해 유지하고 승인된 Schedule/cron을 초기화하지 않습니다. 실제 Graph 권한·MCP 인증·로그·분석·메일 인수는 배포 성공과 별개입니다."
             }
-          },
-          {
-            "name": "deploymentGuard",
-            "type": "Microsoft.Common.TextBox",
-            "label": "배포 검증 (값 변경 불필요)",
-            "defaultValue": "검사",
-            "constraints": {
-              "required": true,
-              "validations": [
-                {
-                  "isValid": "[equals(steps('application').deploymentAccepted, true)]",
-                  "message": "배포 범위·이미지·인증·권한과 실제 네트워크를 확인하십시오."
-                },
-                {
-                  "isValid": "[and(equals(resourceGroup().mode, 'Existing'), equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.schema\":', '\"azbrief_v2_schema\":')).azbrief_v2_schema, ''), '2'), equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.profile\":', '\"azbrief_v2_profile\":')).azbrief_v2_profile, ''), 'kt-private-v2'), equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.state\":', '\"azbrief_v2_state\":')).azbrief_v2_state, ''), 'ready'), not(empty(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.options0\":', '\"azbrief_v2_options0\":')).azbrief_v2_options0, ''))), empty(steps('application').resourceGroupApi.error))]",
-                  "message": "같은 기존 RG에서 인프라 완성 단계까지 성공해야 합니다. 기반 준비만 완료한 RG에는 앱을 설치하지 않습니다."
-                },
-                {
-                  "isValid": "[and(not(equals(coalesce(steps('application').containerAppsApi.value, false), false)), empty(steps('application').containerAppsApi.error), empty(steps('application').containerAppsApi.nextLink), not(equals(coalesce(steps('application').jobsApi.value, false), false)), empty(steps('application').jobsApi.error), empty(steps('application').jobsApi.nextLink))]",
-                  "message": "App·Job의 완전한 조회 결과가 필요합니다. 조회 실패·대기·추가 페이지를 신규 설치로 처리하지 않습니다."
-                },
-                {
-                  "isValid": "[and(empty(filter(coalesce(steps('application').containerAppsApi.value, parse('[]')), (app) => and(equals(toLower(app.name), toLower(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.app\":', '\"azbrief_v2_app\":')).azbrief_v2_app, ''))), not(equals(app.tags.deploymentProfile, 'kt-private-v2'))))), empty(filter(coalesce(steps('application').jobsApi.value, parse('[]')), (job) => and(equals(toLower(job.name), toLower(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.job\":', '\"azbrief_v2_job\":')).azbrief_v2_job, ''))), not(equals(job.tags.deploymentProfile, 'kt-private-v2'))))))]",
-                  "message": "다른 소유권의 App나 Job을 같은 이름으로 덮어쓰지 않습니다."
-                },
-                {
-                  "isValid": "[equals(empty(filter(coalesce(steps('application').containerAppsApi.value, parse('[]')), (app) => equals(toLower(app.name), toLower(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.app\":', '\"azbrief_v2_app\":')).azbrief_v2_app, ''))))), empty(filter(coalesce(steps('application').jobsApi.value, parse('[]')), (job) => equals(toLower(job.name), toLower(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.job\":', '\"azbrief_v2_job\":')).azbrief_v2_job, ''))))))]",
-                  "message": "App·Job 중 하나만 있는 부분 설치는 별도 복구가 필요합니다. API 키를 새로 만들지 않습니다."
-                }
-              ]
-            }
           }
         ]
       }
@@ -109,7 +78,8 @@
       "infrastructureTags": "[steps('application').resourceGroupApi.tags]",
       "containerImage": "[steps('application').containerImage]",
       "reuseExistingApiKey": "[not(empty(filter(coalesce(steps('application').containerAppsApi.value, parse('[]')), (app) => equals(toLower(app.name), toLower(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.app\":', '\"azbrief_v2_app\":')).azbrief_v2_app, ''))))))]",
-      "preserveExistingSettings": true
+      "preserveExistingSettings": true,
+      "portalValidationPassed": "[and(equals(steps('application').deploymentAccepted, true), and(equals(resourceGroup().mode, 'Existing'), equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.schema\":', '\"azbrief_v2_schema\":')).azbrief_v2_schema, ''), '2'), equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.profile\":', '\"azbrief_v2_profile\":')).azbrief_v2_profile, ''), 'kt-private-v2'), equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.state\":', '\"azbrief_v2_state\":')).azbrief_v2_state, ''), 'ready'), not(empty(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.options0\":', '\"azbrief_v2_options0\":')).azbrief_v2_options0, ''))), empty(steps('application').resourceGroupApi.error)), and(not(equals(coalesce(steps('application').containerAppsApi.value, false), false)), empty(steps('application').containerAppsApi.error), empty(steps('application').containerAppsApi.nextLink), not(equals(coalesce(steps('application').jobsApi.value, false), false)), empty(steps('application').jobsApi.error), empty(steps('application').jobsApi.nextLink)), and(empty(filter(coalesce(steps('application').containerAppsApi.value, parse('[]')), (app) => and(equals(toLower(app.name), toLower(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.app\":', '\"azbrief_v2_app\":')).azbrief_v2_app, ''))), not(equals(app.tags.deploymentProfile, 'kt-private-v2'))))), empty(filter(coalesce(steps('application').jobsApi.value, parse('[]')), (job) => and(equals(toLower(job.name), toLower(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.job\":', '\"azbrief_v2_job\":')).azbrief_v2_job, ''))), not(equals(job.tags.deploymentProfile, 'kt-private-v2')))))), equals(empty(filter(coalesce(steps('application').containerAppsApi.value, parse('[]')), (app) => equals(toLower(app.name), toLower(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.app\":', '\"azbrief_v2_app\":')).azbrief_v2_app, ''))))), empty(filter(coalesce(steps('application').jobsApi.value, parse('[]')), (job) => equals(toLower(job.name), toLower(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.job\":', '\"azbrief_v2_job\":')).azbrief_v2_job, '')))))))]"
     }
   }
 }

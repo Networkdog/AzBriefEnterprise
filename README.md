@@ -147,12 +147,15 @@ approval from provisioning success. CLI readback requires each endpoint to be `S
 [![Deploy v2 application to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
 
 These buttons load each ARM/UI Definition pair from GitHub `main` after publication.
-Customer resource names remain editable. Internal model aliases/IDs/capacity and MCP
+Customer resource names come from one common prefix/suffix pair with a read-only preview.
+Editable validation rows are removed; read-only Review results still block invalid input.
+Internal model aliases/IDs/capacity and MCP
 connection settings are automatic; foundation options are persisted in RG tags and reused.
 The form keeps initial output evaluation safe before RG/VNet responses arrive; missing
 foundation tags still block completion. Publish ARM/UI pairs together and verify the Portal.
 UI tag reads use projected dot-access properties while stored tag names/values stay unchanged.
 Navigation and subnet choice initialization follow the existing KT form's default mode.
+The selected VNet resource group is derived from its ARM ID, not an optional picker property.
 Complete both internal infrastructure stages and verify existing keys/settings before
 application updates; follow the guarded deployment workflow below.
 

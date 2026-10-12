@@ -71,8 +71,12 @@ with pinned Bicep 0.46.1, retain CI drift checks and offline install/two-update 
 `tests/test_deployment_v2.py`. Keep `infra/v2/README.md` and both root READMEs synchronized.
 Both root READMEs expose separate v2 infrastructure/application Deploy to Azure buttons,
 in addition to the two standard Enterprise links and one KT link. Pair them with the actual
-infrastructure/application CreateUI definitions. RG-visible names remain customer inputs;
-model aliases/IDs/capacity, Hosted and MCP connection settings are automatic. Use the tested
+infrastructure/application CreateUI definitions. RG-visible names derive from one customer
+prefix/suffix pair with a read-only preview. Do not restore repetitive name TextBoxes or
+editable validation rows. Keep all rules in a read-only portalValidationPassed Review output
+and ARM allowedValues true, plus native input validation and fresh CLI preflight. Save the
+naming pair and actual names in existing RG tag contracts; preserve explicit-name CLI files.
+Model aliases/IDs/capacity, Hosted and MCP connection settings are automatic. Use the tested
 KT network guards through scripts/build_v2_ui.py.
 Keep UI output JSON assembly safe with unloaded RG/VNet/tag state even under eager branch
 evaluation. Empty initialization fallbacks never authorize completion; retain required tags
@@ -83,6 +87,9 @@ AST string-key support is not proof of CreateUI grammar support; require real Po
 diagnostics for a repeated CustomDeploymentBlade symptom before declaring it resolved.
 Retain the working KT default non-wizard mode, VNet selector and subnet choice contract.
 Optional bladeTitle or properties used by both profiles are not verified failure causes.
+Derive virtualNetworkResourceGroupName from the selected VNet ARM ID, as the KT UI does;
+never assume ResourceSelector exposes resourceGroup or substitute the application RG.
+Keep unloaded-output safety and completion's saved-tag value, including customer casing.
 MCP authentication/Reader UAMI/connection belong to infrastructure; its read-only pinned
 container belongs to application. Preserve
 Graph permission gates, incoming Entra and source scope. Keep all eight bounded option tags

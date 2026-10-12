@@ -78,7 +78,8 @@ names and required options. Completion reuses them and changes the state to `rea
 after BYO, roles and connections succeed. Application still accepts only `ready`.
 The eight `options0` through `options7` values each hold at most 256 characters of one
 allow-listed JSON object (2048 characters total). It preserves model IDs/version/capacity,
-Search SKU, email location, canonical DNS IDs, resource tags and non-secret MCP identifiers.
+Search SKU, email location, canonical DNS IDs, resource tags, common namingPrefix/namingSuffix
+and non-secret MCP identifiers. Actual generated names remain in their existing routing tags.
 
 Names include `environment`, `app`, `job`, `identity`, `storage`, `cosmos`, `search`,
 `workspace`, `insights`, `acs`, `email`, `foundry`, `project`, `hosted`, `coreModel`,
@@ -107,12 +108,24 @@ Enterprise/KT ARM/UI pairing. Publish each pair to GitHub main together; a local
 change does not update the remote Portal form. Normalize forms with
 `python -m scripts.build_v2_ui` and check drift with `--check`.
 
-Portal customers enter RG-visible resource names, including the core/MCP Apps, UAMIs,
-Environment, Job, storage, logs, email and project. Internal model aliases, model IDs,
+Portal customers enter a common prefix and suffix once. The service-specific prefixes generate
+the core/MCP Apps, UAMIs, Environment, Job, storage, logs, email and project, shown in a read-only
+name preview. Prefix uses a lowercase letter followed by lowercase letters/digits, 1-10 characters;
+suffix uses lowercase letters/digits, 1-10 characters. These bounds keep generated names within
+the strict Storage/App limits without silent truncation. For kt/prd, names include ai-kt-prd,
+stktprd, ca-kt-prd and ca-kt-mcp-prd. Choose a pair whose global names are available.
+Internal model aliases, model IDs,
 version, 200-unit capacities, Hosted name and MCP connection name are automatically set.
 No model/MCP URL/connection field is presented. Completion reads names/options from the
 same RG rather than asking again. Model quota/catalog and Graph permissions are still
 real preflight gates, not implied by automatic values.
+
+The editable validation TextBoxes at the bottom of tabs are removed. The same contract,
+ownership, inventory, subnet and identity-separation rules become a read-only
+`portalValidationPassed` output. Both ARM templates accept only true, so a failed result
+blocks Review/deployment. This is not removal of security checks. Native prefix/suffix
+validation and the guarded CLI's fresh preflight remain; changing names cannot redirect
+an installed environment. Completion reads stored actual names and the saved naming pair.
 
 Portal `Microsoft_Azure_CreateUIDef / CustomDeploymentBlade` errors before the form opens
 are UI initialization failures, not proof of ARM/Graph provisioning failure. The normalizer
@@ -131,11 +144,18 @@ rules. `bladeTitle` is optional in the official schema and also absent from some
 do not label its absence a proven cause. The v2-only initial tag-contract step remains a
 separate difference. Structural parity reduces candidates but does not establish a fix
 without a real Portal reload/diagnostic comparison.
+For Review-stage `InvalidTemplate` errors naming `virtualNetworkResourceGroupName`, the
+foundation output derives the VNet RG from the selected resource ID, matching KT. It does
+not assume the ResourceSelector returns a `resourceGroup` property or use the application
+RG as a fallback. Empty initial selections remain guarded; completion retains the saved
+`azbrief.v2.vnetRg` value even with no VNet picker value.
 
 Prepare a protected parameter file based on
 [infrastructure.parameters.example.json](infrastructure.parameters.example.json).
 Replace every placeholder. Internal stage/reuse flags are derived by the CLI and
 must not be supplied. Keep custom parameter/configuration files out of Git and logs.
+The CLI resolves the same name table from namingPrefix/namingSuffix. Existing explicit-name
+parameter files remain an advanced compatible path; Portal presents only the common pair.
 
 ```powershell
 & .\.venv\Scripts\Activate.ps1

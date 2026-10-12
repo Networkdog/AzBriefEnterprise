@@ -15,6 +15,7 @@ from uuid import UUID
 
 import structlog
 
+from scripts.build_v2_ui import derive_resource_names
 from scripts.deploy_kt import (
     CONTAINER_ENV_API,
     FOUNDRY_API,
@@ -175,6 +176,8 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
         "azureMcpClientId",
         "azureMcpServicePrincipalId",
         "azureMcpAppRoleId",
+        "namingPrefix",
+        "namingSuffix",
     }
     if not isinstance(options, dict) or set(options) - (set(OPTION_FIELDS) | optional):
         raise ValueError("Unknown or secret-valued infrastructure options")
@@ -184,9 +187,17 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
         raise ValueError("Invalid saved infrastructure option type")
     if "manageAzureMcp" in options and type(options["manageAzureMcp"]) is not bool:
         raise ValueError("Invalid managed MCP setting")
-    for field in optional - {"manageAzureMcp"}:
+    for field in optional - {"manageAzureMcp", "namingPrefix", "namingSuffix"}:
         if options.get(field):
             UUID(options[field])
+    for field in ("namingPrefix", "namingSuffix"):
+        value = options.get(field, "")
+        if (
+            not isinstance(value, str)
+            or len(value) > 10
+            or (value and not re.fullmatch(r"[a-z0-9]+", value))
+        ):
+            raise ValueError("Invalid saved common resource-name input")
     return options
 
 
@@ -620,6 +631,14 @@ def run_application(
 def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
     """Resolve literal parameters and safe name defaults without reading developer .env files."""
     supplied = json.loads(path.read_text(encoding="utf-8-sig"))["parameters"]
+    if "namingPrefix" in supplied or "namingSuffix" in supplied:
+        if "namingPrefix" not in supplied or "namingSuffix" not in supplied:
+            raise ValueError("Supply both namingPrefix and namingSuffix")
+        names = derive_resource_names(
+            supplied["namingPrefix"]["value"], supplied["namingSuffix"]["value"]
+        )
+        for field, value in names.items():
+            supplied.setdefault(field, {"value": value})
     schema = json.loads((V2 / "infrastructure.json").read_text(encoding="utf-8"))["parameters"]
     if set(supplied) - set(schema) or set(supplied) & INTERNAL_PARAMETERS:
         raise ValueError("Unknown or internally derived infrastructure parameters")
@@ -699,6 +718,8 @@ def make_tag_contract(
             "azureMcpClientId": values.get("azureMcpClientId", ""),
             "azureMcpServicePrincipalId": values.get("azureMcpServicePrincipalId", ""),
             "azureMcpAppRoleId": values.get("azureMcpAppRoleId", ""),
+            "namingPrefix": values.get("namingPrefix", ""),
+            "namingSuffix": values.get("namingSuffix", ""),
         }
     )
     encoded = json.dumps(options, ensure_ascii=False, separators=(",", ":"))
@@ -830,6 +851,9 @@ def prepare_infrastructure(
                 raise ValueError(f"Refusing to change saved foundation option: {field}")
         for field in OPTION_FIELDS:
             if field != "existingPrivateDnsZoneIds" and values[field] != saved_options[field]:
+                raise ValueError(f"Refusing to change saved foundation option: {field}")
+        for field in ("namingPrefix", "namingSuffix"):
+            if values.get(field, "") != saved_options.get(field, ""):
                 raise ValueError(f"Refusing to change saved foundation option: {field}")
     contract = make_tag_contract(values, name + "-complete")
     validate_tag_budget({**group_tags, **contract})
