@@ -6,6 +6,7 @@ param projectPrincipalId string
 param projectInternalId string
 param agentStorageAccountName string
 param cosmosAccountName string
+param createHost bool = true
 
 resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
   name: foundryAccountName
@@ -16,7 +17,7 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' exis
 }
 
 // agent VNet injection이 만드는 account host를 중복 생성하면 409가 발생한다.
-resource host 'Microsoft.CognitiveServices/accounts/projects/capabilityHosts@2025-04-01-preview' = {
+resource host 'Microsoft.CognitiveServices/accounts/projects/capabilityHosts@2025-04-01-preview' = if (createHost) {
   parent: project
   name: 'agents'
   properties: {

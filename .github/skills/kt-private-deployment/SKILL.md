@@ -190,6 +190,17 @@ The preflight must remain read-only and rerun immediately before validate, what-
    and resource IDs. Missing, automatic, unready or redirected hosts stop preflight before writes.
    Never delete/reset a project host automatically. Recovery requires separate data-retention
    approval and exact project-host identity; do not replace the account or backing stores.
+    Preserve the exact project name, including hyphens. Another name means another internal AML
+    workspace even when the backing account is the same. Portal/CLI require complete project/host/
+    connection inventory and validate category, AAD, ResourceId and endpoint before setting
+    reuseExistingFoundrySetup. Replays skip the project, three BYO connection and host PUTs;
+    project roles remain, and matching AppInsights connections skip their PUT as well. Do not
+    declare a second existing-project alias: ARM checks an unconditional alias during stage one
+    and rejects complementary conditional declarations of the same ID. Read reused metadata by
+    full ARM ID only inside the verified branch; new telemetry depends on the new project. Do not
+    retry workspace-ownership UserError, delete connections or route writes through an internal
+    workspace to evade ownership. Direct ARM callers must choose reuse explicitly. The Portal
+    safety reads do not restore resource-name dropdowns and block failed/paged/stale responses.
 11. Optional Entra inputs must be complete: GUID client ID, non-whitespace secret and a non-empty
     administrator or reader list. Secrets must differ from the API key and registry token and
     remain secure parameters/App secrets, never environment values or outputs. Stage one must
@@ -222,6 +233,8 @@ The preflight must remain read-only and rerun immediately before validate, what-
     exact principal/role/scope assignments and preserves existing names; failures, invalid names,
     duplicate or conditional assignments block before writes.
     Accept only the documented service-injected ephemeralStorage default (App 1Gi/Job 4Gi);
+    the live Job API's empty-string automatic-storage value is also accepted only for Job.
+    It is a serialization representation, not a measured capacity.
     CPU/memory, unknown storage sizes and other execution/configuration drift remain blocking.
     Accept legacy ARM True/False casing without changing boolean meaning; emit lowercase env
     flags and retain the Entra-to-anonymous downgrade guard.
@@ -256,6 +269,7 @@ Compare full ARM IDs.
 | Older API readback showed PNA as `null` while `2026-01-01` showed `Disabled` | The older response projection omits the newer property; `null` was not proof that Azure enabled it. | Verify with the deployment API contract and inspect the actual Policy aliases before changing the template. |
 | Stage two rejected a compliant stage-one CAE | ARM returned `internal: true`, but the same Portal ARG query returned numeric `internal: 1`; type-strict `equals(1, true)` failed. | Normalize the ARG projection to a string and compare with `'true'`; preserve PNA/ownership guards and reuse the same Environment. |
 | Stage two failed with `CustomDomainInUse` for the live stage-one Foundry account | The account AVM module replayed `customSubDomainName` during the project/BYO deployment, causing the service to run the global-name reservation path again. | Run the account module only when `deployCapabilityHost=false`; stage two uses an `existing` account and deploys only project-scoped resources. Treat a recurrence as a stale ARM/UI pair, not a purge instruction. |
+| `Connection agent-storage already exist ... only ... workspace that created it` | A differently spelled project targeted another internal AML workspace; replaying workspace-owned connection PUTs is also unsafe. | Verify exact original project/ready BYO bindings, then skip project/connection/host PUTs on reuse. Never delete the connection or grant broader RBAC as a workaround. |
 | Existing-Environment warning remained after entering a new name | Validation used `or(empty(matches), first(matches)...)`; `first()` on the empty result still invalidated the control. | Avoid relying on logical short-circuiting. Filter only same-name noncompliant rows and assert that result is empty. |
 | `A virtual network cannot be linked to multiple zones with overlapping namespaces` | A different zone with the same namespace was already linked to the VNet. | Discover and reuse the linked zone ID; create only missing namespaces. |
 | Portal validation passed but deployment failed | CreateUiDefinition validates input shape, not every nested AVM discriminator, Policy rule, live link, quota, or permission. | Pair UI checks with compiled-template tests, CLI preflight, ARM validate/what-if, and live acceptance. |

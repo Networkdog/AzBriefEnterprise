@@ -71,6 +71,15 @@ CLI의 `--stage complete`는 1단계를 반복하지 않고 2단계만 적용합
 subdomain을 다시 제출하지 않습니다. 따라서 동일 이름의 2단계 배포에서
 `CustomDomainInUse`가 발생하면 살아 있는 1단계 계정을 삭제·purge하지 말고, 서로 다른
 revision의 ARM/UI 파일을 사용하고 있지 않은지 먼저 확인해야 합니다.
+프로젝트 이름도 하이픈까지 정확히 유지해야 합니다. 비슷한 이름의 프로젝트는 다른 workspace이며
+원래 workspace 소유의 연결을 수정할 수 없습니다. Portal/CLI는 정확한 프로젝트, 준비된 BYO host와
+세 연결의 category·AAD·리소스 ID·endpoint를 확인한 뒤 재사용합니다. 완전한 구성에서는
+`reuseExistingFoundrySetup=true`로 프로젝트·BYO 연결·host PUT을 생략하고 범위별 역할은 유지합니다.
+같은 기존 AppInsights 연결도 수정하지 않습니다. 직접 ARM 호출은 최신 검증된 inventory에서
+재사용 flag를 결정해야 합니다. 조회 실패·누락·페이지·불일치를 신규 생성이나 재사용으로 처리하지
+않습니다. 리소스 이름은 TextBox를 유지하며 선택 드롭다운이 아닌 안전 검사용 조회만 추가합니다.
+재사용 메타데이터는 별도 기존 resource 선언 없이 검증된 분기에서만 전체 ARM ID로 조회하므로
+1단계에서 아직 없는 프로젝트를 조회하지 않습니다.
 KT 2단계는 제어면 UAMI에 RG Reader, 프로젝트 범위 Foundry User와 두 애플리케이션 컨테이너의
 Blob Data Contributor를 자동 부여합니다. 승인된 기존 Insights·메일을 연결하면 해당
 컴포넌트/리소스의 발행 역할도 부여합니다. 배포자에게 `roleAssignments/write`가 필요합니다.
@@ -79,7 +88,8 @@ CLI 사전검사는 기존 principal/role/scope가 정확히 일치하는 할당
 중복 생성하지 않습니다. Portal은 고정 GUID를 사용하므로 다른 이름의 과거 수동 할당은 CLI로
 검사하십시오. `assignControlPlaneRoles=false`는 고급 CLI의 수동 RBAC 예외이며 Portal 기본 동작이 아닙니다.
 사전검사는 Azure가 자동 반환하는 ephemeral storage 기본값(App 1 GiB, Manual Job 4 GiB)을
-사용자 지정으로 오인하지 않으며 CPU·메모리나 다른 구성 변경은 여전히 차단합니다.
+사용자 지정으로 오인하지 않습니다. Job API가 자동 storage를 빈 문자열로 반환하는 실제
+표현도 수용하며 CPU·메모리나 다른 구성 변경은 여전히 차단합니다.
 기존 ARM의 `True`/`False` 설정은 같은 의미로 비교하고 새 환경 값은 소문자로 기록합니다.
 이 호환 처리가 Entra 인증을 익명 접근으로 낮추는 것을 허용하지는 않습니다.
 프로젝트 ID의 BYO 권한은 별도이며 Incremental은 기존 권한을 삭제하지 않습니다.

@@ -6,6 +6,7 @@ param projectPrincipalId string
 param agentStorageAccountName string
 param cosmosAccountName string
 param searchServiceName string
+param createConnections bool = true
 
 resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
   name: foundryAccountName
@@ -68,7 +69,7 @@ resource searchRoles 'Microsoft.Authorization/roleAssignments@2022-04-01' = [
   }
 ]
 
-resource storageConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = {
+resource storageConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = if (createConnections) {
   parent: project
   name: 'agent-storage'
   properties: {
@@ -86,7 +87,7 @@ resource storageConnection 'Microsoft.CognitiveServices/accounts/projects/connec
   ]
 }
 
-resource cosmosConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = {
+resource cosmosConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = if (createConnections) {
   parent: project
   name: 'agent-cosmos'
   properties: {
@@ -102,7 +103,7 @@ resource cosmosConnection 'Microsoft.CognitiveServices/accounts/projects/connect
   ]
 }
 
-resource searchConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = {
+resource searchConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = if (createConnections) {
   parent: project
   name: 'agent-search'
   properties: {

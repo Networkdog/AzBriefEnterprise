@@ -45,6 +45,12 @@ Windows의 PowerShell 오류 표시에서 ANSI와 자동 줄바꿈만 정규화�
 검사합니다. 비정상 종료·비밀 미노출·원격 변경 없음의 회귀 검사는 그대로 유지하며 게시 시
 실패 테스트를 제외하지 않습니다.
 
+KT 2단계의 Foundry 재사용은 정확한 기존 프로젝트 이름과 준비된 BYO host/연결을 검사한 뒤
+프로젝트·세 연결·host PUT을 생략합니다. 비슷한 프로젝트 이름은 다른 내부 AML workspace이므로
+소유권 오류를 재시도하거나 연결 삭제로 우회하지 않습니다. 직접 ARM에서는
+`reuseExistingFoundrySetup`과 선택적 `reuseExistingTelemetryConnection`을 최신 검증 결과로
+지정합니다. CLI parameter 파일에서는 예약된 flag를 직접 설정하지 않습니다.
+
 외부 테넌트의 ACR은 기반 배포의 `containerRegistryAuthMode=Credentials`와 고객별 pull-only
 토큰으로 연결합니다. 비밀번호는 고객사 Key Vault에만 저장하며 설치 스크립트는 값을 읽지
 않고 App/Job의 인증 방식·연결 ID·비밀 참조를 검증합니다. 기존 출력에서 인증 모드가 없으면

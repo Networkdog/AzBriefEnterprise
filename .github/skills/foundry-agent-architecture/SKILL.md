@@ -82,6 +82,10 @@ and success. Hosted evidence/data/publisher roles and real private, email and sc
 remain separate; a populated configuration or role assignment never proves an operational agent.
 Guarded first publication accepts only an explicit `not_deployed` state, not lookup failures.
 Existing and newly active Hosted names must match the configured target before accepting an update.
+KT infrastructure replay preserves the exact project and workspace-owned BYO connections. Verified
+reuse skips project/connection/host PUTs and retains existing project data roles, without changing
+Prompt/Hosted versions. Another project spelling is not the same workspace; never delete inherited
+connections or use the internal AML workspace as an update bypass.
 
 Customer setup v3 also binds the shared Container Apps environment/profile and existing Application
 Insights; current outputs optionally add the `AzBriefFailures_CL` Direct DCR endpoint, immutable ID,

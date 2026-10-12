@@ -212,6 +212,30 @@
             }
           },
           {
+            "name": "foundryProjectInventoryApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing')), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects?api-version=2025-06-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.CognitiveServices/accounts/projects%27'))]"
+            }
+          },
+          {
+            "name": "foundryHostInventoryApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(filter(coalesce(steps('names').foundryProjectInventoryApi.value, parse('[]')), (project) => equals(toLower(coalesce(project.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects/', steps('names').projectName))))))), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects/', steps('names').projectName, '/capabilityHosts?api-version=2025-04-01-preview'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.CognitiveServices/accounts/projects/capabilityHosts%27'))]"
+            }
+          },
+          {
+            "name": "foundryConnectionInventoryApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(and(equals(basics('deploymentStage'), 'complete'), equals(resourceGroup().mode, 'Existing'), not(empty(filter(coalesce(steps('names').foundryProjectInventoryApi.value, parse('[]')), (project) => equals(toLower(coalesce(project.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects/', steps('names').projectName))))))), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects/', steps('names').projectName, '/connections?api-version=2025-06-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.CognitiveServices/accounts/projects/connections%27'))]"
+            }
+          },
+          {
             "name": "containerAppsEnvironmentName",
             "type": "Microsoft.Common.TextBox",
             "label": "Container Apps Environment 이름",
@@ -274,6 +298,34 @@
                 {
                   "isValid": "[not(or(equals(toLower(steps('names').foundryAccountName), toLower(steps('names').storageAccountName)), equals(toLower(steps('names').foundryAccountName), toLower(steps('names').cosmosAccountName)), equals(toLower(steps('names').foundryAccountName), toLower(steps('names').searchServiceName)), equals(toLower(steps('names').foundryAccountName), toLower(steps('names').containerAppsEnvironmentName)), equals(toLower(steps('names').storageAccountName), toLower(steps('names').cosmosAccountName)), equals(toLower(steps('names').storageAccountName), toLower(steps('names').searchServiceName)), equals(toLower(steps('names').storageAccountName), toLower(steps('names').containerAppsEnvironmentName)), equals(toLower(steps('names').cosmosAccountName), toLower(steps('names').searchServiceName)), equals(toLower(steps('names').cosmosAccountName), toLower(steps('names').containerAppsEnvironmentName)), equals(toLower(steps('names').searchServiceName), toLower(steps('names').containerAppsEnvironmentName))))]",
                   "message": "Private Endpoint 이름(pe-대상명)이 겹치지 않도록 Foundry·Storage·Cosmos·Search·Environment 이름을 모두 다르게 입력하십시오."
+                },
+                {
+                  "isValid": "[if(equals(basics('deploymentStage'), 'complete'), and(not(equals(coalesce(steps('names').foundryProjectInventoryApi.value, false), false)), empty(steps('names').foundryProjectInventoryApi.error), empty(steps('names').foundryProjectInventoryApi.nextLink), not(equals(coalesce(steps('names').foundryHostInventoryApi.value, false), false)), empty(steps('names').foundryHostInventoryApi.error), empty(steps('names').foundryHostInventoryApi.nextLink), not(equals(coalesce(steps('names').foundryConnectionInventoryApi.value, false), false)), empty(steps('names').foundryConnectionInventoryApi.error), empty(steps('names').foundryConnectionInventoryApi.nextLink)), true)]",
+                  "message": "Foundry 프로젝트·host·연결 조회를 완료하지 못했습니다. 읽기 권한·응답·페이지 상태를 확인하십시오. 조회 실패를 신규 프로젝트로 처리하지 않습니다."
+                },
+                {
+                  "isValid": "[if(equals(basics('deploymentStage'), 'complete'), or(empty(coalesce(steps('names').foundryProjectInventoryApi.value, parse('[]'))), equals(length(filter(coalesce(steps('names').foundryProjectInventoryApi.value, parse('[]')), (project) => equals(toLower(coalesce(project.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects/', steps('names').projectName))))), 1)), true)]",
+                  "message": "계정에 다른 이름의 프로젝트가 이미 있습니다. 1단계/기존 배포의 정확한 프로젝트 이름을 입력하십시오. 하이픈을 생략하거나 새 프로젝트로 기존 연결을 덮어쓰지 마십시오."
+                },
+                {
+                  "isValid": "[if(and(equals(basics('deploymentStage'), 'complete'), empty(coalesce(steps('names').foundryProjectInventoryApi.value, parse('[]')))), equals(length(filter(coalesce(steps('names').containerAppsApi.value, parse('[]')), (app) => and(equals(toLower(app.name), toLower(steps('names').containerAppName)), equals(length(filter(coalesce(app.properties.template.containers, parse('[]')), (container) => equals(length(filter(coalesce(container.env, parse('[]')), (setting) => and(equals(setting.name, 'FOUNDRY_PROJECT_ENDPOINT'), equals(toLower(coalesce(setting.value, '')), toLower(concat('https://', steps('names').foundryAccountName, '.services.ai.azure.com/api/projects/', steps('names').projectName)))))), 1))), 1)))), 1), true)]",
+                  "message": "최초 2단계는 1단계 App에 설정된 정확한 프로젝트 이름을 사용해야 합니다. 새 이름으로 기존 연결을 가져오지 마십시오."
+                },
+                {
+                  "isValid": "[if(and(equals(basics('deploymentStage'), 'complete'), not(empty(coalesce(steps('names').foundryProjectInventoryApi.value, parse('[]'))))), and(equals(length(coalesce(steps('names').foundryHostInventoryApi.value, parse('[]'))), 1), equals(length(filter(coalesce(steps('names').foundryHostInventoryApi.value, parse('[]')), (host) => and(equals(toLower(coalesce(host.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects/', steps('names').projectName, '/capabilityHosts/agents'))), equals(host.properties.provisioningState, 'Succeeded'), equals(host.properties.storageConnections, parse('[\"agent-storage\"]')), equals(host.properties.threadStorageConnections, parse('[\"agent-cosmos\"]')), equals(host.properties.vectorStoreConnections, parse('[\"agent-search\"]'))))), 1)), true)]",
+                  "message": "기존 프로젝트의 Succeeded BYO host와 세 연결 이름이 일치해야 재사용할 수 있습니다. 자동 host·불완전 초기화·다른 연결은 별도 복구가 필요하며 삭제하지 않습니다."
+                },
+                {
+                  "isValid": "[if(and(equals(basics('deploymentStage'), 'complete'), not(empty(coalesce(steps('names').foundryProjectInventoryApi.value, parse('[]'))))), equals(length(filter(coalesce(steps('names').foundryConnectionInventoryApi.value, parse('[]')), (connection) => and(equals(toLower(coalesce(connection.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects/', steps('names').projectName, '/connections/agent-storage'))), equals(connection.properties.category, 'AzureStorageAccount'), equals(connection.properties.authType, 'AAD'), equals(toLower(coalesce(connection.properties.metadata.ResourceId, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Storage/storageAccounts/', steps('names').storageAccountName))), or(equals(toLower(coalesce(connection.properties.target, '')), concat('https://', steps('names').storageAccountName, '.blob.core.windows.net')), equals(toLower(coalesce(connection.properties.target, '')), concat('https://', steps('names').storageAccountName, '.blob.core.windows.net/')))))), 1), true)]",
+                  "message": "기존 agent-storage의 프로젝트·AAD·Storage 계정·endpoint가 입력값과 다릅니다. 연결을 변경하거나 다른 workspace의 연결을 가져올 수 없습니다."
+                },
+                {
+                  "isValid": "[if(and(equals(basics('deploymentStage'), 'complete'), not(empty(coalesce(steps('names').foundryProjectInventoryApi.value, parse('[]'))))), equals(length(filter(coalesce(steps('names').foundryConnectionInventoryApi.value, parse('[]')), (connection) => and(equals(toLower(coalesce(connection.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects/', steps('names').projectName, '/connections/agent-cosmos'))), equals(connection.properties.category, 'CosmosDb'), equals(connection.properties.authType, 'AAD'), equals(toLower(coalesce(connection.properties.metadata.ResourceId, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.DocumentDB/databaseAccounts/', steps('names').cosmosAccountName))), or(equals(toLower(coalesce(connection.properties.target, '')), concat('https://', steps('names').cosmosAccountName, '.documents.azure.com')), equals(toLower(coalesce(connection.properties.target, '')), concat('https://', steps('names').cosmosAccountName, '.documents.azure.com/')), equals(toLower(coalesce(connection.properties.target, '')), concat('https://', steps('names').cosmosAccountName, '.documents.azure.com:443')), equals(toLower(coalesce(connection.properties.target, '')), concat('https://', steps('names').cosmosAccountName, '.documents.azure.com:443/')))))), 1), true)]",
+                  "message": "기존 agent-cosmos의 프로젝트·AAD·Cosmos 계정·endpoint가 입력값과 다릅니다. 연결 대상 변경은 별도 승인된 이전이 필요합니다."
+                },
+                {
+                  "isValid": "[if(and(equals(basics('deploymentStage'), 'complete'), not(empty(coalesce(steps('names').foundryProjectInventoryApi.value, parse('[]'))))), equals(length(filter(coalesce(steps('names').foundryConnectionInventoryApi.value, parse('[]')), (connection) => and(equals(toLower(coalesce(connection.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects/', steps('names').projectName, '/connections/agent-search'))), equals(connection.properties.category, 'CognitiveSearch'), equals(connection.properties.authType, 'AAD'), equals(toLower(coalesce(connection.properties.metadata.ResourceId, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Search/searchServices/', steps('names').searchServiceName))), or(equals(toLower(coalesce(connection.properties.target, '')), concat('https://', steps('names').searchServiceName, '.search.windows.net')), equals(toLower(coalesce(connection.properties.target, '')), concat('https://', steps('names').searchServiceName, '.search.windows.net/')))))), 1), true)]",
+                  "message": "기존 agent-search의 프로젝트·AAD·Search 서비스·endpoint가 입력값과 다릅니다. 연결을 삭제하거나 덮어쓰지 마십시오."
                 },
                 {
                   "isValid": "[if(equals(basics('deploymentStage'), 'complete'), and(empty(steps('names').containerAppsEnvironmentApi.error), equals(toLower(coalesce(steps('names').containerAppsEnvironmentApi.id, '')), toLower(concat(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name), '/providers/Microsoft.App/managedEnvironments/', steps('names').containerAppsEnvironmentName))), equals(steps('names').containerAppsEnvironmentApi.properties.vnetConfiguration.internal, true), equals(steps('names').containerAppsEnvironmentApi.properties.publicNetworkAccess, 'Disabled'), equals(steps('names').containerAppsEnvironmentApi.tags.deploymentProfile, 'kt-private-foundation'), equals(toLower(coalesce(steps('names').containerAppsEnvironmentApi.properties.vnetConfiguration.infrastructureSubnetId, '')), toLower(concat(steps('network').virtualNetwork.id, '/subnets/', steps('network').containerAppsSubnetName)))), true)]",
@@ -671,8 +723,16 @@
             "label": "이 RG의 기존 Application Insights 컴포넌트 이름",
             "constraints": {
               "required": true,
-              "regex": "^[a-zA-Z0-9][a-zA-Z0-9_.()-]{0,254}$",
-              "validationMessage": "승인된 기존 Application Insights 이름을 입력하십시오."
+              "validations": [
+                {
+                  "regex": "^[a-zA-Z0-9][a-zA-Z0-9_.()-]{0,254}$",
+                  "message": "승인된 기존 Application Insights 이름을 입력하십시오."
+                },
+                {
+                  "isValid": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureTelemetry), empty(filter(coalesce(steps('names').foundryConnectionInventoryApi.value, parse('[]')), (connection) => and(equals(connection.name, 'azbrief-app-insights'), not(and(equals(connection.properties.authType, 'ProjectManagedIdentity'), equals(connection.properties.category, 'AppInsights'), equals(toLower(coalesce(connection.properties.target, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Insights/components/', steps('review').applicationInsightsName))), equals(toLower(coalesce(connection.properties.metadata.ResourceId, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Insights/components/', steps('review').applicationInsightsName)))))))), true)]",
+                  "message": "기존 AppInsights 연결은 같은 컴포넌트·인증 방식일 때만 재사용하며 다른 계측 대상으로 변경하지 않습니다."
+                }
+              ]
             },
             "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureTelemetry)]"
           },
@@ -847,6 +907,8 @@
       "linkedPrivateDnsZones": "[if(equals(steps('options').dnsMode, 'auto'), coalesce(steps('network').linkedPrivateDnsZonesApi.data, parse('[]')), parse('[]'))]",
       "searchSku": "[steps('options').searchSku]",
       "deployCapabilityHost": "[equals(basics('deploymentStage'), 'complete')]",
+      "reuseExistingFoundrySetup": "[and(equals(basics('deploymentStage'), 'complete'), not(empty(filter(coalesce(steps('names').foundryProjectInventoryApi.value, parse('[]')), (project) => equals(toLower(coalesce(project.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/projects/', steps('names').projectName)))))))]",
+      "reuseExistingTelemetryConnection": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureTelemetry, not(empty(filter(coalesce(steps('names').foundryConnectionInventoryApi.value, parse('[]')), (connection) => and(equals(connection.name, 'azbrief-app-insights'), equals(connection.properties.authType, 'ProjectManagedIdentity'), equals(connection.properties.category, 'AppInsights'), equals(toLower(coalesce(connection.properties.target, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Insights/components/', steps('review').applicationInsightsName))), equals(toLower(coalesce(connection.properties.metadata.ResourceId, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Insights/components/', steps('review').applicationInsightsName))))))))]",
       "assignControlPlaneRoles": "[equals(basics('deploymentStage'), 'complete')]",
       "modelDeploymentName": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').modelDeploymentName, '')]",
       "simpleModelDeploymentName": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').simpleModelDeploymentName, '')]",

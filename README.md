@@ -74,6 +74,16 @@ Stage two references the stage-one Foundry account as an existing resource and d
 account module or resubmit its globally unique custom subdomain. A same-name stage-two
 `CustomDomainInUse` therefore indicates a stale ARM/UI pair, not a reason to delete or purge the
 live stage-one account.
+The project name must also remain exact, including hyphens. A near-name project is another
+workspace and cannot update connections owned by the original workspace. Portal/CLI inspect the
+exact project, ready BYO host and all three connection categories, AAD bindings, resource IDs and
+endpoints before reuse. A complete setup sets `reuseExistingFoundrySetup=true`, omitting project,
+BYO connection and host PUTs while retaining scoped role reconciliation. Matching existing
+AppInsights connections are also preserved. Direct ARM callers must derive the reuse flags from
+fresh verified inventory; failed, missing, paged or mismatched reads never authorize reuse or
+creation. Resource names remain TextBoxes; this adds safety reads, not resource-selection dropdowns.
+Reused metadata is read by full ARM ID only in the verified branch, without a second existing
+resource alias, so stage one never looks up a not-yet-created project.
 KT stage two automatically grants the control-plane UAMI RG Reader, project-scoped Foundry User
 and Blob Data Contributor on each application container. Existing approved Insights and email
 bindings add only their component/resource-scoped publishing roles. The deployer needs
@@ -82,7 +92,8 @@ role definition or secret is created. CLI preflight reuses existing exact princi
 assignment names rather than deleting them or duplicating manually assigned roles. Portal uses
 stable assignment names; use CLI preflight for legacy assignments with different names.
 Preflight accepts Azure's documented injected ephemeral-storage sizes (App 1 GiB, Manual Job
-4 GiB) without treating those read-only defaults as customization; CPU/memory and other drift
+4 GiB) and the live Job API's empty-string automatic-storage representation without treating
+those read-only defaults as customization; CPU/memory and other drift
 remain blocking.
 Legacy ARM `True`/`False` web flags are compared semantically, while new writes use lowercase
 boolean strings; this never authorizes an Entra-to-anonymous downgrade.

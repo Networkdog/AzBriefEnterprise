@@ -128,6 +128,8 @@ INTERNAL_PARAMETERS = {row[3] for row in SUBNETS} | {
     "linkedPrivateDnsZones",
     "reuseExistingApiKey",
     "existingControlPlaneRoleAssignmentNames",
+    "reuseExistingFoundrySetup",
+    "reuseExistingTelemetryConnection",
 }
 
 
@@ -664,15 +666,23 @@ def existing_control_plane_roles(
 
 
 def _matches_container_resources(
-    resources: object, cpu: float, memory: str, ephemeral_storage: str
+    resources: object,
+    cpu: float,
+    memory: str,
+    ephemeral_storage: str,
+    *,
+    allow_empty_ephemeral: bool = False,
 ) -> bool:
-    """Accept the documented ARM-injected storage size, not arbitrary resource drift."""
+    """Accept only known service representations of automatic ephemeral storage."""
     return (
         isinstance(resources, dict)
         and set(resources) <= {"cpu", "memory", "ephemeralStorage"}
         and resources.get("cpu") == cpu
         and resources.get("memory") == memory
-        and resources.get("ephemeralStorage", ephemeral_storage) == ephemeral_storage
+        and (
+            resources.get("ephemeralStorage", ephemeral_storage) == ephemeral_storage
+            or (allow_empty_ephemeral and resources.get("ephemeralStorage") == "")
+        )
     )
 
 
@@ -718,7 +728,9 @@ def validate_scheduler_projection(
         or container.get("command") != ["python", "-m", "src.scheduler"]
         or container.get("args")
         or container.get("volumeMounts")
-        or not _matches_container_resources(container.get("resources"), 1, "2Gi", "4Gi")
+        or not _matches_container_resources(
+            container.get("resources"), 1, "2Gi", "4Gi", allow_empty_ephemeral=True
+        )
     ):
         raise ValueError("Refusing to overwrite customized scheduler execution settings")
     admin_ui, _ = _web_ui_flags(values)
@@ -803,14 +815,21 @@ def endpoint_specs(values: dict[str, Any], group_id: str) -> list[dict[str, Any]
     ]
 
 
-def validate_existing_host(cli: AzureCli, account_id: str, values: dict[str, Any]) -> None:
+def validate_existing_host(
+    cli: AzureCli, account_id: str, values: dict[str, Any]
+) -> tuple[bool, bool]:
     """Reject changes to immutable host bindings instead of implicitly replacing customer data."""
     projects = cli.collection(f"{account_id}/projects", FOUNDRY_API)
     if not any(
         project["name"].split("/")[-1].casefold() == values["projectName"].casefold()
         for project in projects
     ):
-        return
+        if projects:
+            raise ValueError(
+                "Another Foundry project already exists in this account. Use the exact "
+                "original project name; never create a near-name project to reuse its connections."
+            )
+        return False, False
     project_id = f"{account_id}/projects/{values['projectName']}"
     hosts = cli.collection(f"{project_id}/capabilityHosts", HOST_API)
     if not hosts:
@@ -838,19 +857,41 @@ def validate_existing_host(cli: AzureCli, account_id: str, values: dict[str, Any
         raise ValueError(
             "Capability Host bindings are immutable; a migration needs separate approval"
         )
-    connections = {
-        item["name"].split("/")[-1]: item["properties"]
-        for item in cli.collection(f"{project_id}/connections", FOUNDRY_API)
-    }
+    connection_rows = cli.collection(f"{project_id}/connections", FOUNDRY_API)
+    connections = {item["name"].split("/")[-1]: item["properties"] for item in connection_rows}
+    if len(connections) != len(connection_rows):
+        raise ValueError("Foundry connection inventory contains duplicate names")
     targets = endpoint_specs(values, cli.group_id)
-    for name, target in (
-        ("agent-storage", targets[1]["target"]),
-        ("agent-cosmos", targets[2]["target"]),
-        ("agent-search", targets[3]["target"]),
+    for name, target, category, endpoints in (
+        (
+            "agent-storage",
+            targets[1]["target"],
+            "AzureStorageAccount",
+            {f"https://{values['storageAccountName']}.blob.core.windows.net"},
+        ),
+        (
+            "agent-cosmos",
+            targets[2]["target"],
+            "CosmosDb",
+            {
+                f"https://{values['cosmosAccountName']}.documents.azure.com",
+                f"https://{values['cosmosAccountName']}.documents.azure.com:443",
+            },
+        ),
+        (
+            "agent-search",
+            targets[3]["target"],
+            "CognitiveSearch",
+            {f"https://{values['searchServiceName']}.search.windows.net"},
+        ),
     ):
         connection = connections.get(name, {})
-        if connection.get("authType") != "AAD" or not _same_id(
-            connection.get("metadata", {}).get("ResourceId", ""), target
+        if (
+            connection.get("authType") != "AAD"
+            or connection.get("category") != category
+            or connection.get("target", "").rstrip("/").casefold()
+            not in {endpoint.casefold() for endpoint in endpoints}
+            or not _same_id(connection.get("metadata", {}).get("ResourceId", ""), target)
         ):
             raise ValueError(f"Refusing to redirect an existing Capability Host connection: {name}")
     if values["applicationInsightsName"] and "azbrief-app-insights" in connections:
@@ -866,6 +907,7 @@ def validate_existing_host(cli: AzureCli, account_id: str, values: dict[str, Any
             or not _same_id(connection.get("metadata", {}).get("ResourceId", ""), target)
         ):
             raise ValueError("Refusing to redirect an existing Foundry telemetry connection")
+    return True, bool(values["applicationInsightsName"] and "azbrief-app-insights" in connections)
 
 
 def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
@@ -989,8 +1031,10 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
                     "Email sender role must be an approved minimal ACS custom role; "
                     "wildcards, deletion and key management are not granted automatically"
                 )
+    reuse_foundry = False
+    reuse_telemetry = False
     if specs[0]["target"].casefold() in by_id:
-        validate_existing_host(cli, specs[0]["target"], values)
+        reuse_foundry, reuse_telemetry = validate_existing_host(cli, specs[0]["target"], values)
     app_id = planned_ids[-2]
     reuse_existing_api_key = False
     if app_id.casefold() in by_id:
@@ -1018,6 +1062,18 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
         else:
             entries = container.get("env", [])
             env = {entry["name"]: entry for entry in entries}
+            if (
+                values["deployCapabilityHost"]
+                and not reuse_foundry
+                and not _same_id(
+                    env.get("FOUNDRY_PROJECT_ENDPOINT", {}).get("value", ""),
+                    f"https://{values['foundryAccountName']}.services.ai.azure.com/"
+                    f"api/projects/{values['projectName']}",
+                )
+            ):
+                raise ValueError(
+                    "Initial stage two must use the exact project name bound by stage one"
+                )
             admin_ui, archive_ui = _web_ui_flags(values)
             matches_web_request = (admin_ui or archive_ui) and all(
                 _matches_bool_setting(env.get(name, {}).get("value"), enabled)
@@ -1442,6 +1498,8 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
         existingPrivateDnsZoneIds=reuse,
         reuseExistingApiKey=reuse_existing_api_key,
         existingControlPlaneRoleAssignmentNames=role_names,
+        reuseExistingFoundrySetup=values["deployCapabilityHost"] and reuse_foundry,
+        reuseExistingTelemetryConnection=values["deployCapabilityHost"] and reuse_telemetry,
     )
     for plan in plans:
         prepared[plan.create_parameter] = plan.create

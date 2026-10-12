@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "14546231140512536152"
+      "templateHash": "7597179491432766929"
     }
   },
   "parameters": {
@@ -167,6 +167,20 @@
       "defaultValue": false,
       "metadata": {
         "description": "False creates only the foundation, not a project. True creates the project, its role/connection bindings and BYO Capability Host together after the account host is ready. Never use stage one to precreate the project."
+      }
+    },
+    "reuseExistingFoundrySetup": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Derived from fresh Portal/CLI inventory after validating the exact existing project, ready BYO host and three connection bindings. Reuse never PUTs the project, BYO connections or host. Direct ARM callers must set this explicitly for a replay."
+      }
+    },
+    "reuseExistingTelemetryConnection": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Derived from a matching existing project AppInsights connection. Preserve it without another PUT; never use this to redirect telemetry."
       }
     },
     "enablePrivateAnonymousWebUi": {
@@ -483,7 +497,8 @@
           "[variables('dnsZoneNames')[6]]"
         ]
       }
-    ]
+    ],
+    "reuseFoundrySetup": "[and(parameters('deployCapabilityHost'), parameters('reuseExistingFoundrySetup'))]"
   },
   "resources": {
     "account": {
@@ -493,7 +508,7 @@
       "name": "[parameters('foundryAccountName')]"
     },
     "project": {
-      "condition": "[parameters('deployCapabilityHost')]",
+      "condition": "[and(parameters('deployCapabilityHost'), not(variables('reuseFoundrySetup')))]",
       "type": "Microsoft.CognitiveServices/accounts/projects",
       "apiVersion": "2025-06-01",
       "name": "[format('{0}/{1}', parameters('foundryAccountName'), parameters('projectName'))]",
@@ -523,10 +538,10 @@
       "name": "[parameters('applicationInsightsName')]"
     },
     "foundryMonitoringConnection": {
-      "condition": "[variables('telemetryConfigured')]",
+      "condition": "[and(variables('telemetryConfigured'), not(parameters('reuseExistingTelemetryConnection')))]",
       "type": "Microsoft.CognitiveServices/accounts/projects/connections",
       "apiVersion": "2025-06-01",
-      "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'azbrief-app-insights')]",
+      "name": "[format('{0}/{1}/azbrief-app-insights', parameters('foundryAccountName'), parameters('projectName'))]",
       "properties": {
         "category": "AppInsights",
         "authType": "ProjectManagedIdentity",
@@ -537,7 +552,10 @@
           "ResourceId": "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
           "ApplicationInsightsConnectionString": "[reference('existingInsights').ConnectionString]",
           "location": "[reference('existingInsights', '2020-02-02', 'full').location]"
-        }
+        },
+        "dependsOn": [
+          "[reference('project', '2025-06-01', 'full')]"
+        ]
       },
       "dependsOn": [
         "existingInsights",
@@ -28664,9 +28682,7 @@
           "projectName": {
             "value": "[parameters('projectName')]"
           },
-          "projectPrincipalId": {
-            "value": "[reference('project', '2025-06-01', 'full').identity.principalId]"
-          },
+          "projectPrincipalId": "[if(parameters('deployCapabilityHost'), if(variables('reuseFoundrySetup'), createObject('value', reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId), createObject('value', reference('project', '2025-06-01', 'full').identity.principalId)), createObject('value', ''))]",
           "agentStorageAccountName": {
             "value": "[parameters('storageAccountName')]"
           },
@@ -28675,6 +28691,9 @@
           },
           "searchServiceName": {
             "value": "[parameters('searchServiceName')]"
+          },
+          "createConnections": {
+            "value": "[not(variables('reuseFoundrySetup'))]"
           }
         },
         "template": {
@@ -28684,7 +28703,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "2324377297029713997"
+              "templateHash": "2523672730469761133"
             }
           },
           "parameters": {
@@ -28705,6 +28724,10 @@
             },
             "searchServiceName": {
               "type": "string"
+            },
+            "createConnections": {
+              "type": "bool",
+              "defaultValue": true
             }
           },
           "resources": [
@@ -28750,6 +28773,7 @@
               }
             },
             {
+              "condition": "[parameters('createConnections')]",
               "type": "Microsoft.CognitiveServices/accounts/projects/connections",
               "apiVersion": "2025-06-01",
               "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agent-storage')]",
@@ -28768,6 +28792,7 @@
               ]
             },
             {
+              "condition": "[parameters('createConnections')]",
               "type": "Microsoft.CognitiveServices/accounts/projects/connections",
               "apiVersion": "2025-06-01",
               "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agent-cosmos')]",
@@ -28784,6 +28809,7 @@
               ]
             },
             {
+              "condition": "[parameters('createConnections')]",
               "type": "Microsoft.CognitiveServices/accounts/projects/connections",
               "apiVersion": "2025-06-01",
               "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agent-search')]",
@@ -28823,17 +28849,16 @@
           "projectName": {
             "value": "[parameters('projectName')]"
           },
-          "projectPrincipalId": {
-            "value": "[reference('project', '2025-06-01', 'full').identity.principalId]"
-          },
-          "projectInternalId": {
-            "value": "[reference('project').internalId]"
-          },
+          "projectPrincipalId": "[if(parameters('deployCapabilityHost'), if(variables('reuseFoundrySetup'), createObject('value', reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId), createObject('value', reference('project', '2025-06-01', 'full').identity.principalId)), createObject('value', ''))]",
+          "projectInternalId": "[if(parameters('deployCapabilityHost'), if(variables('reuseFoundrySetup'), createObject('value', reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').properties.internalId), createObject('value', reference('project').internalId)), createObject('value', ''))]",
           "agentStorageAccountName": {
             "value": "[parameters('storageAccountName')]"
           },
           "cosmosAccountName": {
             "value": "[parameters('cosmosAccountName')]"
+          },
+          "createHost": {
+            "value": "[not(variables('reuseFoundrySetup'))]"
           }
         },
         "template": {
@@ -28843,7 +28868,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "16310446098306758535"
+              "templateHash": "16774964363877140772"
             }
           },
           "parameters": {
@@ -28864,6 +28889,10 @@
             },
             "cosmosAccountName": {
               "type": "string"
+            },
+            "createHost": {
+              "type": "bool",
+              "defaultValue": true
             }
           },
           "variables": {
@@ -28872,6 +28901,7 @@
           },
           "resources": [
             {
+              "condition": "[parameters('createHost')]",
               "type": "Microsoft.CognitiveServices/accounts/projects/capabilityHosts",
               "apiVersion": "2025-04-01-preview",
               "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agents')]",
@@ -30873,6 +30903,7 @@
         "profile": "kt-private-foundation",
         "applicationReady": false,
         "capabilityHostRequested": "[parameters('deployCapabilityHost')]",
+        "foundrySetupReused": "[variables('reuseFoundrySetup')]",
         "containerAppsPrivateEndpointRequested": "[parameters('deployContainerAppsPrivateEndpoint')]",
         "tenantId": "[tenant().tenantId]",
         "subscriptionId": "[subscription().subscriptionId]",
@@ -30886,7 +30917,7 @@
         "foundryProjectResourceId": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
         "foundryProjectEndpoint": "[variables('foundryProjectEndpoint')]",
         "foundryHostedAgentName": "[parameters('foundryHostedAgentName')]",
-        "foundryProjectPrincipalId": "[if(parameters('deployCapabilityHost'), reference('project', '2025-06-01', 'full').identity.principalId, '')]",
+        "foundryProjectPrincipalId": "[if(parameters('deployCapabilityHost'), if(variables('reuseFoundrySetup'), reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId, reference('project', '2025-06-01', 'full').identity.principalId), '')]",
         "storageAccountResourceId": "[variables('storageId')]",
         "agentStorageAccountResourceId": "[variables('storageId')]",
         "stateStorageAccountResourceId": "[variables('storageId')]",

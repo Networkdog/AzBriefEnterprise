@@ -398,6 +398,19 @@ Keep `deployCapabilityHost=false` as the direct-ARM default and require stage tw
 explicitly. Never delete or purge the live stage-one account to recover from a stale ARM/UI pair.
 Keep Incremental replay and matching BYO connections. CLI rejects pre-existing projects with missing, automatic,
 unready or mismatched hosts before touching connections; never delete/reset them automatically.
+Stage-two replay also requires the exact original project name, including hyphens. A near-name
+project is a different internal AML workspace and must not overwrite inherited workspace-owned
+connections. Portal/CLI derive reuseExistingFoundrySetup only after complete exact-project,
+ready-host and three connection category/AAD/ResourceId/endpoint checks. A successful match skips
+project, BYO connection and host PUTs while retaining existing project roles; matching AppInsights
+connections skip their PUT too. Keep first-stage and initial stage-two creation unchanged.
+Read reused project metadata by its fully qualified ARM ID only inside the verified reuse branch.
+Do not declare a second existing-project alias: ARM eagerly checks an unconditional alias and
+rejects complementary same-ID conditional declarations even when stage one needs neither.
+Stage one returns empty project metadata without a lookup; new telemetry depends on the new project.
+Missing, paged, denied or mismatched evidence blocks; never infer create/reuse from a read error.
+Direct ARM callers must explicitly choose reuse from verified fresh inventory. Keep name TextBoxes
+and simple subnet dropdowns; the new internal safety reads are not optional discovery controls.
 Old installations need separately approved, data-loss-aware recovery. Do not move Korea Central
 to capabilitySettings preview based on documentation for other regions, or invent a BYO grace period.
 KT stage two automatically assigns the control-plane UAMI RG Reader, project Foundry User and
@@ -424,7 +437,9 @@ and existing Entra-only Insights with its project AppInsights connection. Guard 
 bindings, Job identity/command/limits/secret refs and telemetry destination; do not reset a Schedule
 Job to Manual or drop customized settings. Models and Prompt/Hosted versions are not created by ARM.
 Normalize only the documented ARM-injected ephemeralStorage default (App 1Gi, Job 4Gi), never
-ignore other resource drift. Runtime inventory keeps a typed lazy TokenCredential and safe status
+ignore other resource drift. The live Job API also returns an empty string for automatic storage;
+accept that representation for Job only, without treating it as a measured capacity or allowing
+unknown/non-default sizes. Runtime inventory keeps a typed lazy TokenCredential and safe status
 diagnostics; denied reads remain errors.
 Accept existing ARM True/False casing semantically and emit lowercase boolean env values.
 This normalization must not permit auth-mode downgrades or bypass other projection checks.

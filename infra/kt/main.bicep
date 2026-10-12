@@ -71,6 +71,12 @@ param searchSku string = 'basic'
 @description('False creates only the foundation, not a project. True creates the project, its role/connection bindings and BYO Capability Host together after the account host is ready. Never use stage one to precreate the project.')
 param deployCapabilityHost bool = false
 
+@description('Derived from fresh Portal/CLI inventory after validating the exact existing project, ready BYO host and three connection bindings. Reuse never PUTs the project, BYO connections or host. Direct ARM callers must set this explicitly for a replay.')
+param reuseExistingFoundrySetup bool = false
+
+@description('Derived from a matching existing project AppInsights connection. Preserve it without another PUT; never use this to redirect telemetry.')
+param reuseExistingTelemetryConnection bool = false
+
 @description('Explicit temporary stage-two anonymous Admin/Archive access inside the isolated KT network. Every reachable client can administer the app and read reports. Never use for public or production access; API/MCP keys and Azure Managed Identity remain required.')
 param enablePrivateAnonymousWebUi bool = false
 
@@ -606,7 +612,9 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
   name: foundryAccountName
 }
 
-resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = if (deployCapabilityHost) {
+var reuseFoundrySetup = deployCapabilityHost && reuseExistingFoundrySetup
+
+resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = if (deployCapabilityHost && !reuseFoundrySetup) {
   parent: account
   name: projectName
   location: location
@@ -622,15 +630,22 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = if
   ]
 }
 
+// 재사용 분기에서만 ID로 조회한다. 같은 ID의 조건부 resource 선언은 ARM 검증과 충돌한다.
+#disable-next-line use-resource-symbol-reference
+var projectPrincipalId = deployCapabilityHost ? (reuseFoundrySetup ? reference(resourceId('Microsoft.CognitiveServices/accounts/projects', foundryAccountName, projectName), '2025-06-01', 'full').identity.principalId : project!.identity.principalId) : ''
+#disable-next-line BCP053 use-resource-symbol-reference
+var projectInternalId = deployCapabilityHost ? (reuseFoundrySetup ? reference(resourceId('Microsoft.CognitiveServices/accounts/projects', foundryAccountName, projectName), '2025-06-01', 'full').properties.internalId : project!.properties.internalId) : ''
+
 module agentBindings 'agent-bindings.bicep' = if (deployCapabilityHost) {
   name: 'kt-agent-bindings'
   params: {
     foundryAccountName: foundryAccountName
     projectName: projectName
-    projectPrincipalId: project!.identity.principalId
+    projectPrincipalId: projectPrincipalId
     agentStorageAccountName: storageAccountName
     cosmosAccountName: cosmosAccountName
     searchServiceName: searchServiceName
+    createConnections: !reuseFoundrySetup
   }
 }
 
@@ -639,12 +654,11 @@ module capabilityHost 'capability-host.bicep' = if (deployCapabilityHost) {
   params: {
     foundryAccountName: foundryAccountName
     projectName: projectName
-    projectPrincipalId: project!.identity.principalId
-    // 공식 Standard Setup 샘플이 사용하는 내부 ID이며 생성된 Bicep 형식에는 빠져 있다.
-    #disable-next-line BCP053
-    projectInternalId: project!.properties.internalId
+    projectPrincipalId: projectPrincipalId
+    projectInternalId: projectInternalId
     agentStorageAccountName: storageAccountName
     cosmosAccountName: cosmosAccountName
+    createHost: !reuseFoundrySetup
   }
   dependsOn: [
     agentBindings
@@ -658,9 +672,8 @@ resource existingInsights 'Microsoft.Insights/components@2020-02-02' existing = 
   name: applicationInsightsName
 }
 
-resource foundryMonitoringConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = if (telemetryConfigured) {
-  parent: project
-  name: 'azbrief-app-insights'
+resource foundryMonitoringConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = if (telemetryConfigured && !reuseExistingTelemetryConnection) {
+  name: '${foundryAccountName}/${projectName}/azbrief-app-insights'
   properties: {
     category: 'AppInsights'
     // 표준 Enterprise 프로필에서 검증한 인증 방식이다.
@@ -674,6 +687,9 @@ resource foundryMonitoringConnection 'Microsoft.CognitiveServices/accounts/proje
       ApplicationInsightsConnectionString: existingInsights!.properties.ConnectionString
       location: existingInsights!.location
     }
+    dependsOn: [
+      project
+    ]
   }
 }
 
@@ -871,6 +887,7 @@ output ktFoundation object = {
   profile: 'kt-private-foundation'
   applicationReady: false
   capabilityHostRequested: deployCapabilityHost
+  foundrySetupReused: reuseFoundrySetup
   containerAppsPrivateEndpointRequested: deployContainerAppsPrivateEndpoint
   tenantId: tenant().tenantId
   subscriptionId: subscription().subscriptionId
@@ -884,7 +901,7 @@ output ktFoundation object = {
   foundryProjectResourceId: resourceId('Microsoft.CognitiveServices/accounts/projects', foundryAccountName, projectName)
   foundryProjectEndpoint: foundryProjectEndpoint
   foundryHostedAgentName: foundryHostedAgentName
-  foundryProjectPrincipalId: deployCapabilityHost ? project!.identity.principalId : ''
+  foundryProjectPrincipalId: projectPrincipalId
   storageAccountResourceId: storageId
   agentStorageAccountResourceId: storageId
   stateStorageAccountResourceId: storageId

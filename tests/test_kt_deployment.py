@@ -1112,9 +1112,26 @@ def selection_names() -> dict:
                 "type": "Microsoft.App/containerApps",
                 "name": names["containerAppName"],
                 "tags": {"deploymentProfile": kt.PROFILE},
+                "properties": {
+                    "template": {
+                        "containers": [
+                            {
+                                "env": [
+                                    {
+                                        "name": "FOUNDRY_PROJECT_ENDPOINT",
+                                        "value": f"https://{names['foundryAccountName']}.services.ai.azure.com/api/projects/{names['projectName']}",
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                },
             }
         ]
     }
+    names["foundryProjectInventoryApi"] = {"value": []}
+    names["foundryHostInventoryApi"] = {"value": []}
+    names["foundryConnectionInventoryApi"] = {"value": []}
     return names
 
 
@@ -1500,8 +1517,11 @@ def test_minimum_subnets_are_conditional_child_modules(template: dict):
 
 def test_foundation_defers_project_and_all_byo_dependencies(template: dict):
     condition = "[parameters('deployCapabilityHost')]"
-    for name in ("project", "agentBindings", "capabilityHost"):
+    for name in ("agentBindings", "capabilityHost"):
         assert template["resources"][name]["condition"] == condition
+    assert template["resources"]["project"]["condition"] == (
+        "[and(parameters('deployCapabilityHost'), not(variables('reuseFoundrySetup')))]"
+    )
     assert template["parameters"]["deployCapabilityHost"]["defaultValue"] is False
     assert template["resources"]["foundry"]["condition"] == (
         "[not(parameters('deployCapabilityHost'))]"
@@ -1516,6 +1536,10 @@ def test_foundation_defers_project_and_all_byo_dependencies(template: dict):
     output = template["outputs"]["ktFoundation"]["value"]
     assert output["foundryProjectPrincipalId"].startswith("[if(parameters('deployCapabilityHost'),")
     assert output["foundryProjectPrincipalId"].endswith(", '')]")
+    assert "reference(resourceId(" in output["foundryProjectPrincipalId"]
+    assert "reference('project'" in output["foundryProjectPrincipalId"]
+    assert template["parameters"]["reuseExistingFoundrySetup"]["defaultValue"] is False
+    assert "existingProject" not in template["resources"]
     assert output["foundryProjectResourceId"] == (
         "[resourceId('Microsoft.CognitiveServices/accounts/projects', "
         "parameters('foundryAccountName'), parameters('projectName'))]"
@@ -1546,6 +1570,7 @@ def test_foundry_standard_setup_and_connection_roles(template: dict):
         props = resource["properties"]
         assert props["authType"] == "AAD"
         assert "ResourceId" in props["metadata"]
+        assert resource["condition"] == "[parameters('createConnections')]"
     host_template = template["resources"]["capabilityHost"]["properties"]["template"]
     host, blob_role, cosmos_role = host_template["resources"]
     assert host["properties"] == {
@@ -1555,6 +1580,7 @@ def test_foundry_standard_setup_and_connection_roles(template: dict):
         "vectorStoreConnections": ["agent-search"],
     }
     assert "agentBindings" in template["resources"]["capabilityHost"]["dependsOn"]
+    assert host["condition"] == "[parameters('createHost')]"
     for role in (blob_role, cosmos_role):
         assert any("/capabilityHosts" in dependency for dependency in role["dependsOn"])
     assert "enterprise_memory" in cosmos_role["properties"]["scope"]
@@ -2094,14 +2120,15 @@ def test_provider_ephemeral_storage_default_is_not_app_customization(
         assert not cli.deployments
 
 
+@pytest.mark.parametrize("ephemeral", ["4Gi", ""])
 def test_provider_ephemeral_storage_default_is_not_scheduler_customization(
-    values: dict, vnet: dict
+    values: dict, vnet: dict, ephemeral: str
 ):
     values.update(deploySchedulerJob=True, enablePrivateAnonymousWebUi=True)
     cli = FakeAzure(values, vnet)
     kt.run(cli, values, "deploy")
     assert cli.scheduler is not None
-    cli.scheduler["template"]["containers"][0]["resources"]["ephemeralStorage"] = "4Gi"
+    cli.scheduler["template"]["containers"][0]["resources"]["ephemeralStorage"] = ephemeral
     kt.run(cli, values, "deploy", "complete")
 
 
@@ -3060,6 +3087,7 @@ class FakeAzure(kt.AzureCli):
         self.authentication: dict | None = None
         self.scheduler: dict | None = None
         self.role_assignments: list[dict] = []
+        self.connection_puts = 0
 
     def json(self, *args: str) -> Any:
         self.calls.append(args)
@@ -3211,6 +3239,14 @@ class FakeAzure(kt.AzureCli):
                     "name": name,
                     "properties": {
                         "authType": "AAD",
+                        "category": ("AzureStorageAccount", "CosmosDb", "CognitiveSearch")[
+                            index - 1
+                        ],
+                        "target": (
+                            f"https://{self.values['storageAccountName']}.blob.core.windows.net/",
+                            f"https://{self.values['cosmosAccountName']}.documents.azure.com:443/",
+                            f"https://{self.values['searchServiceName']}.search.windows.net",
+                        )[index - 1],
                         "metadata": {
                             "ResourceId": self.host_target_override or specs[index]["target"]
                         },
@@ -3226,6 +3262,13 @@ class FakeAzure(kt.AzureCli):
         if mode == "create":
             self.stage += 1
             if values["deployCapabilityHost"]:
+                if not values["reuseExistingFoundrySetup"]:
+                    if self.project_host_exists:
+                        raise RuntimeError(
+                            "Connection agent-storage already exists and can only be "
+                            "updated by its creator workspace"
+                        )
+                    self.connection_puts += 3
                 self.project_exists = True
                 self.project_host_exists = True
                 self.project_host_name = "agents"
@@ -3768,6 +3811,10 @@ def _foundation_app(values: dict) -> dict:
         "APPLICATIONINSIGHTS_CONNECTION_STRING": "",
     }
     flags = {
+        "FOUNDRY_PROJECT_ENDPOINT": (
+            f"https://{values['foundryAccountName']}.services.ai.azure.com/"
+            f"api/projects/{values['projectName']}"
+        ),
         "ADMIN_UI_ENABLED": str(admin).lower(),
         "ADMIN_REQUIRE_AUTH": str(not anonymous).lower(),
         "ARCHIVE_UI_ENABLED": str(archive).lower(),
@@ -4069,6 +4116,311 @@ def test_existing_completed_byo_setup_can_be_redeployed(values: dict, vnet: dict
     assert len(cli.deployments) == 4
     assert all(stage["reuseExistingApiKey"] for stage in cli.deployments[1:])
     assert cli.project_exists and cli.project_host_exists
+    assert cli.connection_puts == 3
+    assert cli.deployments[1]["reuseExistingFoundrySetup"] is False
+    assert cli.deployments[3]["reuseExistingFoundrySetup"] is True
+
+
+def _existing_foundry_inventories(names: dict) -> None:
+    project_id = (
+        f"{GROUP}/providers/Microsoft.CognitiveServices/accounts/"
+        f"{names['foundryAccountName']}/projects/{names['projectName']}"
+    )
+    names["foundryProjectInventoryApi"] = {
+        "value": [
+            {
+                "id": project_id,
+                "name": f"{names['foundryAccountName']}/{names['projectName']}",
+            }
+        ]
+    }
+    names["foundryHostInventoryApi"] = {
+        "value": [
+            {
+                "id": f"{project_id}/capabilityHosts/agents",
+                "properties": {
+                    "provisioningState": "Succeeded",
+                    "storageConnections": ["agent-storage"],
+                    "threadStorageConnections": ["agent-cosmos"],
+                    "vectorStoreConnections": ["agent-search"],
+                },
+            }
+        ]
+    }
+    names["foundryConnectionInventoryApi"] = {
+        "value": [
+            {
+                "id": f"{project_id}/connections/{name}",
+                "name": name,
+                "properties": {
+                    "category": category,
+                    "authType": "AAD",
+                    "target": endpoint,
+                    "metadata": {"ResourceId": f"{GROUP}/providers/{resource_type}/{names[key]}"},
+                },
+            }
+            for name, category, resource_type, key, endpoint in (
+                (
+                    "agent-storage",
+                    "AzureStorageAccount",
+                    "Microsoft.Storage/storageAccounts",
+                    "storageAccountName",
+                    f"https://{names['storageAccountName']}.blob.core.windows.net/",
+                ),
+                (
+                    "agent-cosmos",
+                    "CosmosDb",
+                    "Microsoft.DocumentDB/databaseAccounts",
+                    "cosmosAccountName",
+                    f"https://{names['cosmosAccountName']}.documents.azure.com:443/",
+                ),
+                (
+                    "agent-search",
+                    "CognitiveSearch",
+                    "Microsoft.Search/searchServices",
+                    "searchServiceName",
+                    f"https://{names['searchServiceName']}.search.windows.net",
+                ),
+            )
+        ]
+    }
+
+
+def _foundry_reuse_rules(wizard: dict) -> list[str]:
+    return [
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "names")["containerAppName"]["constraints"]["validations"]
+        if rule["message"].startswith(
+            ("Foundry 프로젝트", "계정에 다른", "최초 2단계", "기존 프로젝트", "기존 agent-")
+        )
+    ]
+
+
+@pytest.mark.parametrize("existing", [False, True])
+@pytest.mark.parametrize("eager", [False, True])
+def test_portal_creates_initial_setup_and_reuses_only_matching_completed_setup(
+    wizard: dict, selection_names: dict, existing: bool, eager: bool
+):
+    if existing:
+        _existing_foundry_inventories(selection_names)
+    assert all(
+        _resolve_selection(rule, selection_names, eager_conditionals=eager)
+        for rule in _foundry_reuse_rules(wizard)
+    )
+    assert (
+        _resolve_selection(wizard["outputs"]["reuseExistingFoundrySetup"], selection_names)
+        is existing
+    )
+    assert (
+        _resolve_selection(
+            wizard["outputs"]["reuseExistingFoundrySetup"], selection_names, stage="foundation"
+        )
+        is False
+    )
+
+
+@pytest.mark.parametrize(
+    "control",
+    ["foundryProjectInventoryApi", "foundryHostInventoryApi", "foundryConnectionInventoryApi"],
+)
+@pytest.mark.parametrize("failure", ["pending", "denied", "paged", "no-value"])
+def test_portal_unreadable_foundry_inventory_never_authorizes_new_setup(
+    wizard: dict, selection_names: dict, control: str, failure: str
+):
+    _existing_foundry_inventories(selection_names)
+    if failure == "pending":
+        selection_names[control] = None
+    elif failure == "denied":
+        selection_names[control]["error"] = {"code": "Forbidden"}
+    elif failure == "paged":
+        selection_names[control]["nextLink"] = "private-continuation-not-for-display"
+    else:
+        selection_names[control].pop("value")
+    assert not all(
+        _resolve_selection(rule, selection_names, eager_conditionals=True)
+        for rule in _foundry_reuse_rules(wizard)
+    )
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_foundry_safety_reads_follow_exact_manual_names_and_never_get_missing_children(
+    wizard: dict, selection_names: dict, existing: bool
+):
+    if existing:
+        _existing_foundry_inventories(selection_names)
+    controls = _ui_controls(wizard, "names")
+    account_path = (
+        f"{GROUP}/providers/Microsoft.CognitiveServices/accounts/"
+        f"{selection_names['foundryAccountName']}"
+    )
+    assert (
+        _resolve_selection(
+            controls["foundryProjectInventoryApi"]["request"]["path"], selection_names
+        )
+        == f"{account_path}/projects?api-version=2025-06-01"
+    )
+    for name, child, api in (
+        ("foundryHostInventoryApi", "capabilityHosts", "2025-04-01-preview"),
+        ("foundryConnectionInventoryApi", "connections", "2025-06-01"),
+    ):
+        expression = controls[name]["request"]["path"]
+        path = _resolve_selection(expression, selection_names)
+        if existing:
+            assert path == (
+                f"{account_path}/projects/{selection_names['projectName']}/{child}?api-version={api}"
+            )
+            selection_names["projectName"] = "different-project"
+            assert "/resources?" in _resolve_selection(expression, selection_names)
+            selection_names["projectName"] = RESOURCE_NAME_DEFAULTS["projectName"]
+        else:
+            assert "/resources?" in path
+        assert "/resources?" in _resolve_selection(
+            expression, selection_names, mode="New", stage="foundation"
+        )
+
+
+@pytest.mark.parametrize("matching", [False, True])
+def test_portal_telemetry_connection_is_reused_only_for_the_same_component(
+    wizard: dict, selection_names: dict, matching: bool
+):
+    _existing_foundry_inventories(selection_names)
+    insight_id = f"{GROUP}/providers/Microsoft.Insights/components/approved-insights"
+    selection_names["foundryConnectionInventoryApi"]["value"].append(
+        {
+            "name": "azbrief-app-insights",
+            "properties": {
+                "category": "AppInsights",
+                "authType": "ProjectManagedIdentity",
+                "target": insight_id if matching else f"{insight_id}-foreign",
+                "metadata": {"ResourceId": insight_id},
+            },
+        }
+    )
+    review = {"configureTelemetry": True, "applicationInsightsName": "approved-insights"}
+    arguments = {
+        "names": selection_names,
+        "resource_group": {"name": "rg-kt-test", "mode": "Existing"},
+        "subscription": {"subscriptionId": SUBSCRIPTION},
+        "basics": {"deploymentStage": "complete"},
+        "review": review,
+    }
+    output = wizard["outputs"]["reuseExistingTelemetryConnection"]
+    assert _evaluate_ui_expression(output, **arguments) is matching
+    validation = next(
+        rule["isValid"]
+        for rule in _ui_controls(wizard, "review")["applicationInsightsName"]["constraints"][
+            "validations"
+        ]
+        if "isValid" in rule
+    )
+    assert _evaluate_ui_expression(validation, **arguments) is matching
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "project",
+        "host-state",
+        "host-name",
+        "host-binding",
+        "storage-id",
+        "storage-url",
+        "cosmos-category",
+        "search-auth",
+    ],
+)
+def test_portal_reuse_blocks_changed_project_or_byo_bindings(
+    wizard: dict, selection_names: dict, change: str
+):
+    _existing_foundry_inventories(selection_names)
+    host = selection_names["foundryHostInventoryApi"]["value"][0]
+    connections = selection_names["foundryConnectionInventoryApi"]["value"]
+    if change == "project":
+        selection_names["projectName"] = selection_names["projectName"].replace("-", "")
+    elif change == "host-state":
+        host["properties"]["provisioningState"] = "Creating"
+    elif change == "host-name":
+        host["id"] += "-automatic"
+    elif change == "host-binding":
+        host["properties"]["storageConnections"] = ["unrelated-storage"]
+    elif change == "storage-id":
+        connections[0]["properties"]["metadata"]["ResourceId"] += "-foreign"
+    elif change == "storage-url":
+        connections[0]["properties"]["target"] = "https://unrelated.invalid"
+    elif change == "cosmos-category":
+        connections[1]["properties"]["category"] = "unrelated"
+    else:
+        connections[2]["properties"]["authType"] = "ApiKey"
+    assert not all(
+        _resolve_selection(rule, selection_names, eager_conditionals=True)
+        for rule in _foundry_reuse_rules(wizard)
+    )
+
+
+def test_initial_stage_two_cannot_change_the_foundation_project_name(values: dict, vnet: dict):
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy", "foundation")
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="exact project name bound by stage one"):
+        kt.run(cli, {**values, "projectName": "different-project"}, "deploy", "complete")
+    assert not cli.deployments
+
+
+def test_near_name_project_cannot_take_another_projects_connections(values: dict, vnet: dict):
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="exact original project name"):
+        kt.run(
+            cli,
+            {**values, "projectName": values["projectName"].replace("-", "")},
+            "deploy",
+            "complete",
+        )
+    assert not cli.deployments
+    assert cli.connection_puts == 3
+
+
+@pytest.mark.parametrize("error", [ValueError("invalid inventory"), RuntimeError("Forbidden")])
+def test_failed_connection_inventory_never_turns_into_a_connection_create_request(
+    monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict, error: Exception
+):
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    original = cli.collection
+
+    def collection(resource_id: str, api_version: str) -> list[dict]:
+        if resource_id.endswith("/connections"):
+            raise error
+        return original(resource_id, api_version)
+
+    monkeypatch.setattr(cli, "collection", collection)
+    cli.deployments.clear()
+    with pytest.raises(type(error), match=str(error)):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
+    assert cli.connection_puts == 3
+
+
+@pytest.mark.parametrize("field", ["target", "category", "authType"])
+def test_cli_reuse_requires_real_connection_properties_not_only_resource_id(
+    monkeypatch: pytest.MonkeyPatch, values: dict, vnet: dict, field: str
+):
+    cli = FakeAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    original = cli.collection
+
+    def collection(resource_id: str, api_version: str) -> list[dict]:
+        result = original(resource_id, api_version)
+        if resource_id.endswith("/connections"):
+            result[0]["properties"][field] = "unrelated"
+        return result
+
+    monkeypatch.setattr(cli, "collection", collection)
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="Refusing to redirect"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments
 
 
 def test_readback_rejects_public_network_access(values: dict, vnet: dict):

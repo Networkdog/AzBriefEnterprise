@@ -382,6 +382,25 @@ ARM/UI 조합을 사용 중인지 먼저 확인하십시오. 살아 있는 1단�
 다시 게시하십시오. 직접 ARM을 호출할 때도 1단계는 명시적 또는 기본
 `deployCapabilityHost=false`, 2단계만 `true`를 사용합니다.
 
+2단계는 **프로젝트 이름도 하이픈까지 정확히 유지**합니다. `azbrief-ms9`와 `azbriefms9`는
+서로 다른 프로젝트/workspace입니다. 이미 완료한 BYO 연결은 내부 AML workspace가 소유하므로
+다른 프로젝트에서 같은 이름의 `agent-storage`를 PUT하면 `UserError`가 발생할 수 있습니다.
+RBAC를 확대하거나 연결을 삭제해서 해결하지 마십시오.
+
+Portal은 직접 입력한 계정·프로젝트의 inventory, host, 연결을 내부 읽기 전용 control로 확인합니다.
+이름 선택 드롭다운이나 자동 이름 변경은 추가하지 않습니다. CLI도 정확한 원래 프로젝트 이름과
+`Succeeded` host 및 세 연결의 category·AAD·ResourceId·endpoint를 검증합니다. 최초 2단계는
+1단계 App에 기록된 예정 프로젝트 이름과 일치해야 합니다.
+완료한 동일 구성은 `reuseExistingFoundrySetup=true`로 프로젝트·세 BYO 연결·host PUT을 생략하고
+프로젝트 역할은 유지합니다. 기존 AppInsights도 같은 목적지일 때만 `reuseExistingTelemetryConnection`
+으로 보존합니다. 출력의 `foundrySetupReused`는 이 선택을 표시하며 운영 준비 완료를 뜻하지 않습니다.
+직접 ARM 호출은 최신 조회로 두 flag를 명시해야 합니다. 실패·페이지·미완성 host·대상 불일치를
+신규 생성이나 재사용으로 처리하지 않습니다. 부분 실패로 생긴 다른 프로젝트는 자동 삭제하지 않습니다.
+재사용용 메타데이터는 재사용 분기에서만 전체 ARM ID로 조회합니다. 별도 `existingProject`
+선언은 두지 않습니다. 무조건 선언하면 1단계에서 아직 없는 프로젝트를 조회하고, 같은 ID를
+조건부로 이중 선언하면 ARM 검증이 거부할 수 있습니다. 새 telemetry 연결은 새 프로젝트
+완료를 기다리며 1단계에서는 프로젝트 조회 없이 빈 메타데이터를 반환합니다.
+
 | 단계 | 생성·갱신 범위 | 프로젝트 상태 |
 |---|---|---|
 | 1단계 | 기존 네트워크 기반, 사설 endpoint, Foundry 계정·자동 account host, 저장소, 초기 App와 제어면 ID | 새 프로젝트·연결·프로젝트 역할·BYO project host를 생성하지 않음 |
@@ -775,6 +794,8 @@ tenant evidence Reader를 부여하지 않습니다.
 CLI는 Azure가 반환하는 [ephemeral storage 기본값](https://learn.microsoft.com/azure/container-apps/storage-mounts#ephemeral-storage)
 (0.25 vCPU App의 `1Gi`, 1 vCPU Job의 `4Gi`)을 사용자 지정으로 오인하지 않습니다.
 다른 CPU/메모리·알 수 없는 storage 값·추가 리소스 설정은 차단합니다.
+실제 Job API가 자동 storage를 빈 문자열로 반환하는 경우도 Job에 한해 수용합니다.
+빈 문자열을 storage 용량 측정으로 해석하거나 App/알 수 없는 값으로 일반화하지 않습니다.
 실제 ARM이 `True`/`False`로 반환한 기존 웹/계측 flag는 소문자와 같은 의미로 비교하며,
 새 배포 값은 명시적으로 소문자로 변환합니다. 인증 모드와 스케줄 보호는 그대로 유지합니다.
 
