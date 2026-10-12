@@ -15,7 +15,7 @@ from ipaddress import IPv4Address, IPv4Network, ip_network
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import structlog
 
@@ -31,6 +31,8 @@ NETWORK_API = "2024-05-01"
 FOUNDRY_API = "2025-06-01"
 HOST_API = "2025-04-01-preview"
 CONTAINER_ENV_API = "2026-01-01"
+COMMUNICATION_API = "2023-04-01"
+ARM_GUID_NAMESPACE = UUID("11fb06fb-712d-4ddd-98c7-e71bbd588830")
 LEGACY_BOOTSTRAP_IMAGE = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
 FOUNDATION_ENV_NAMES = frozenset(
     {
@@ -130,6 +132,17 @@ INTERNAL_PARAMETERS = {row[3] for row in SUBNETS} | {
     "existingControlPlaneRoleAssignmentNames",
     "reuseExistingFoundrySetup",
     "reuseExistingTelemetryConnection",
+    "reuseCoreModel",
+    "reuseSimpleModel",
+    "useCoreForSimpleModel",
+    "reuseCommunicationService",
+    "reuseEmailService",
+    "reuseEmailDomain",
+    "reuseEmailSenderRole",
+    "existingEmailSenderRoleDefinitionId",
+    "existingCommunicationTags",
+    "existingCommunicationIdentity",
+    "existingLinkedEmailDomains",
 }
 
 
@@ -269,6 +282,10 @@ def load_parameters(path: Path) -> dict[str, Any]:
         }
     if "schedulerJobName" not in supplied:
         values["schedulerJobName"] = f"job-{values['containerAppName']}"
+    if "communicationServicesName" not in supplied:
+        values["communicationServicesName"] = f"acs-{values['containerAppName']}"
+    if "emailServiceName" not in supplied:
+        values["emailServiceName"] = f"email-{values['containerAppName']}"
     if not isinstance(values["existingPrivateDnsZoneIds"], dict):
         raise ValueError("existingPrivateDnsZoneIds must be an object")
     if not isinstance(values["tags"], dict) or values["tags"].get("deploymentProfile") != PROFILE:
@@ -352,7 +369,26 @@ def validate_runtime_setup(values: dict[str, Any]) -> None:
     if not re.fullmatch(r"[a-z][a-z0-9-]{0,58}[a-z0-9]", values["schedulerJobName"]):
         raise ValueError("schedulerJobName must be a valid 2-60 character Container Apps Job name")
     email_fields = ("communicationServicesEndpoint", "emailSenderAddress", "emailRecipientAddress")
-    if any(values[name] for name in email_fields):
+    if values["provisionModels"]:
+        if not values["modelDeploymentName"] or not values["simpleModelDeploymentName"]:
+            raise ValueError("Automatic models need two distinct deployment aliases")
+        for name in ("coreModelName", "simpleModelName"):
+            if not re.fullmatch(r"gpt-5[A-Za-z0-9_.-]*", values[name]):
+                raise ValueError(f"{name} must identify a supported GPT-5 model")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", values["modelVersion"]):
+            raise ValueError("modelVersion must be an explicitly pinned YYYY-MM-DD version")
+        for name in ("modelCapacity", "simpleModelCapacity"):
+            if type(values[name]) is not int or not 1 <= values[name] <= 1000:
+                raise ValueError(f"{name} must be between 1 and 1000 capacity units")
+    if values["provisionEmail"]:
+        for name in ("communicationServicesName", "emailServiceName"):
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]", values[name]):
+                raise ValueError(f"{name} must be a valid service name")
+        if values["emailRecipientAddress"]:
+            from src.feedback.models import FeedbackRequest
+
+            FeedbackRequest.validate_contact_email(values["emailRecipientAddress"])
+    elif any(values[name] for name in email_fields):
         if not all(values[name] for name in email_fields):
             raise ValueError(
                 "Email setup needs an ACS endpoint, verified sender and approved recipient"
@@ -390,7 +426,7 @@ def validate_runtime_setup(values: dict[str, Any]) -> None:
             raise ValueError(
                 "Automatic email RBAC needs the existing ACS name and approved sender role GUID"
             )
-    elif values["communicationServicesName"] or values["emailSenderRoleDefinitionId"]:
+    elif values["emailSenderRoleDefinitionId"]:
         raise ValueError("An email role cannot be assigned without complete email configuration")
     if values["communicationServicesName"] and not re.fullmatch(
         r"[A-Za-z0-9][A-Za-z0-9-]{0,62}[A-Za-z0-9]", values["communicationServicesName"]
@@ -622,6 +658,241 @@ def control_plane_role_targets(values: dict[str, Any], group_id: str) -> dict[st
             values["emailSenderRoleDefinitionId"],
         )
     return targets
+
+
+def automatic_service_plan(
+    cli: AzureCli, values: dict[str, Any], resources: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Plan creation/reuse from complete live inventory without changing existing services."""
+    plan: dict[str, Any] = {
+        "reuseCoreModel": False,
+        "reuseSimpleModel": False,
+        "useCoreForSimpleModel": False,
+        "reuseCommunicationService": False,
+        "reuseEmailService": False,
+        "reuseEmailDomain": False,
+        "reuseEmailSenderRole": False,
+        "existingEmailSenderRoleDefinitionId": "",
+        "existingCommunicationTags": {},
+        "existingCommunicationIdentity": {"type": "None"},
+        "existingLinkedEmailDomains": [],
+    }
+    if not values["deployCapabilityHost"]:
+        return plan
+    if values["provisionModels"]:
+        account_id = (
+            f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/"
+            f"{values['foundryAccountName']}"
+        )
+        deployments = cli.collection(f"{account_id}/deployments", FOUNDRY_API)
+        existing = {row["name"].split("/")[-1].casefold(): row for row in deployments}
+        if len(existing) != len(deployments):
+            raise ValueError("Model inventory contains ambiguous deployment aliases")
+        missing: list[str] = []
+        for role, name in (
+            ("Core", values["modelDeploymentName"]),
+            ("Simple", values["simpleModelDeploymentName"]),
+        ):
+            deployment = existing.get(name.casefold())
+            if deployment is None:
+                missing.append(role)
+                continue
+            props = deployment["properties"]
+            model = props["model"]
+            if (
+                props.get("provisioningState") != "Succeeded"
+                or model.get("format") != "OpenAI"
+                or not model.get("name", "").startswith("gpt-5")
+            ):
+                raise ValueError(
+                    f"Existing {role.lower()} model is not a compatible ready deployment"
+                )
+            plan[f"reuse{role}Model"] = True
+        if missing:
+            catalog = cli.collection(f"{account_id}/models", FOUNDRY_API)
+            usage = cli.collection(
+                f"/subscriptions/{cli.subscription}/providers/Microsoft.CognitiveServices/"
+                f"locations/{values['location']}/usages",
+                FOUNDRY_API,
+            )
+
+            def capacity(model_name: str) -> int:
+                models = [
+                    model
+                    for model in catalog
+                    if model.get("name") == model_name
+                    and model.get("version") == values["modelVersion"]
+                    and model.get("capabilities", {}).get("responses") == "true"
+                    and model.get("capabilities", {}).get("agentsV2") == "true"
+                ]
+                skus = [
+                    sku
+                    for model in models
+                    for sku in model.get("skus", [])
+                    if sku["name"] == "GlobalStandard"
+                ]
+                if len(skus) != 1:
+                    raise ValueError(
+                        f"No verified Responses/Agents GlobalStandard model: {model_name}"
+                    )
+                rows = [row for row in usage if row["name"]["value"] == skus[0]["usageName"]]
+                if len(rows) != 1 or any(
+                    type(rows[0][key]) not in (int, float) for key in ("limit", "currentValue")
+                ):
+                    raise ValueError(f"Model quota is unreadable or ambiguous: {model_name}")
+                return int(rows[0]["limit"] - rows[0]["currentValue"])
+
+            core_required = values["modelCapacity"] if "Core" in missing else 0
+            core_available = capacity(values["coreModelName"]) if "Core" in missing else None
+            if core_available is not None and core_available < core_required:
+                raise ValueError("Insufficient core-model quota; no allocation was changed")
+            if (
+                "Simple" in missing
+                and values["coreModelName"] == values["simpleModelName"]
+                and (
+                    core_available
+                    if core_available is not None
+                    else capacity(values["coreModelName"])
+                )
+                < core_required + values["simpleModelCapacity"]
+            ):
+                raise ValueError("Insufficient combined quota for the two model deployments")
+            if (
+                "Simple" in missing
+                and capacity(values["simpleModelName"]) < values["simpleModelCapacity"]
+            ):
+                if core_available is None:
+                    core_available = capacity(values["coreModelName"])
+                if core_available < core_required + values["simpleModelCapacity"]:
+                    raise ValueError("Neither simple-model nor core fallback quota is available")
+                plan["useCoreForSimpleModel"] = True
+                logger.warning(
+                    "kt_simple_model_quota_fallback",
+                    requested_model=values["simpleModelName"],
+                    resolved_model=values["coreModelName"],
+                    deployment=values["simpleModelDeploymentName"],
+                    existing_models_unchanged=True,
+                )
+    if values["provisionEmail"]:
+        acs_id = (
+            f"{cli.group_id}/providers/Microsoft.Communication/communicationServices/"
+            f"{values['communicationServicesName']}"
+        )
+        email_id = (
+            f"{cli.group_id}/providers/Microsoft.Communication/emailServices/"
+            f"{values['emailServiceName']}"
+        )
+        domain_id = f"{email_id}/domains/AzureManagedDomain"
+        if email_id.casefold() in resources:
+            email = cli.get(email_id, COMMUNICATION_API)["properties"]
+            if email.get("provisioningState") != "Succeeded":
+                raise ValueError("Existing Email Communication Services is not ready")
+            plan["emailDataLocation"] = email["dataLocation"]
+            plan["reuseEmailService"] = True
+            domains = cli.collection(f"{email_id}/domains", COMMUNICATION_API)
+            matching = [
+                row for row in domains if row["name"].split("/")[-1] == "AzureManagedDomain"
+            ]
+            if len(matching) > 1:
+                raise ValueError("Azure-managed email domain is ambiguous")
+            if matching:
+                domain = matching[0]["properties"]
+                if (
+                    domain.get("domainManagement") != "AzureManaged"
+                    or domain.get("provisioningState") != "Succeeded"
+                    or not re.fullmatch(
+                        r"[A-Za-z0-9-]+\.azurecomm\.net", domain.get("fromSenderDomain", "")
+                    )
+                ):
+                    raise ValueError("Existing managed email domain is not ready")
+                plan["reuseEmailDomain"] = True
+                plan["emailSenderAddress"] = f"DoNotReply@{domain['fromSenderDomain']}"
+        if acs_id.casefold() in resources:
+            communication = cli.get(acs_id, COMMUNICATION_API)
+            props = communication["properties"]
+            if props.get("provisioningState") != "Succeeded" or not re.fullmatch(
+                r"[A-Za-z0-9-]+\.communication\.azure\.com", props.get("hostName", "")
+            ):
+                raise ValueError("Existing Communication Services is not ready")
+            if props["dataLocation"] != plan.get("emailDataLocation", values["emailDataLocation"]):
+                if plan["reuseEmailService"]:
+                    raise ValueError("ACS and Email Services have incompatible data locations")
+                plan["emailDataLocation"] = props["dataLocation"]
+            plan["communicationServicesEndpoint"] = f"https://{props['hostName']}"
+            links = props.get("linkedDomains", [])
+            if not isinstance(links, list):
+                raise ValueError("Existing ACS domain links are invalid")
+            plan["existingLinkedEmailDomains"] = links
+            plan["existingCommunicationTags"] = communication.get("tags") or {}
+            identity = communication.get("identity") or {"type": "None"}
+            plan["existingCommunicationIdentity"] = {
+                "type": identity["type"],
+                **(
+                    {
+                        "userAssignedIdentities": {
+                            key: {} for key in identity["userAssignedIdentities"]
+                        }
+                    }
+                    if identity.get("userAssignedIdentities")
+                    else {}
+                ),
+            }
+            plan["reuseCommunicationService"] = any(_same_id(link, domain_id) for link in links)
+        role_id = str(
+            uuid5(
+                ARM_GUID_NAMESPACE,
+                "-".join(
+                    (
+                        cli.group_id.casefold(),
+                        values["communicationServicesName"].casefold(),
+                        "azbrief-email-sender",
+                    )
+                ),
+            )
+        )
+        definitions = cli.json(
+            "role",
+            "definition",
+            "list",
+            "--custom-role-only",
+            "true",
+            "--scope",
+            cli.group_id,
+            "--subscription",
+            cli.subscription,
+        )
+        role_name = f"AzBrief Email Sender {cli.group_id.casefold()}/{values['communicationServicesName'].casefold()}"
+        matching_roles = [
+            row
+            for row in definitions
+            if row["name"].casefold() == role_id or row.get("roleName") == role_name
+        ]
+        if len(matching_roles) > 1:
+            raise ValueError("Automatic email sender role is ambiguous")
+        if matching_roles:
+            permissions = matching_roles[0]["permissions"]
+            if (
+                len(permissions) != 1
+                or {action.casefold() for action in permissions[0]["actions"]}
+                != EMAIL_SENDER_ACTIONS
+                or any(
+                    permissions[0].get(key)
+                    for key in ("notActions", "dataActions", "notDataActions")
+                )
+            ):
+                raise ValueError("Existing automatic sender role has unexpected permissions")
+            plan["reuseEmailSenderRole"] = True
+            role_id = matching_roles[0]["name"]
+            UUID(role_id)
+            plan["existingEmailSenderRoleDefinitionId"] = role_id
+        plan["emailSenderRoleDefinitionId"] = role_id
+        for name in ("communicationServicesEndpoint", "emailSenderAddress"):
+            if values[name] and values[name] != plan.get(name):
+                raise ValueError(
+                    f"Automatic email {name} does not match the existing managed service; "
+                    "use provisionEmail=false for legacy bindings"
+                )
+    return plan
 
 
 def existing_control_plane_roles(
@@ -924,6 +1195,7 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
         "resource", "list", "--resource-group", cli.group, "--subscription", cli.subscription
     )
     by_id = {resource["id"].casefold(): resource for resource in resources}
+    values = {**values, **automatic_service_plan(cli, values, by_id)}
     specs = endpoint_specs(values, cli.group_id)
     for resource in resources:
         if (
@@ -985,7 +1257,7 @@ def prepare(cli: AzureCli, values: dict[str, Any]) -> dict[str, Any]:
     if control_plane_role_targets(values, cli.group_id):
         identity = cli.get(planned_ids[-1], "2023-01-31")["properties"]
         role_names = existing_control_plane_roles(cli, values, identity["principalId"])
-        if values["communicationServicesName"]:
+        if not values["provisionEmail"] and values["communicationServicesEndpoint"]:
             acs_id = (
                 f"{cli.group_id}/providers/Microsoft.Communication/communicationServices/"
                 f"{values['communicationServicesName']}"
@@ -1547,6 +1819,7 @@ def wait_for_host(cli: AzureCli, scope: str, expected_name: str | None = None) -
 def verify_foundation(cli: AzureCli, values: dict[str, Any]) -> None:
     """Read back public-network controls and all approved endpoint/DNS bindings."""
     prepared = prepare(cli, values)
+    values = prepared
     missing_roles = (
         control_plane_role_targets(values, cli.group_id).keys()
         - prepared["existingControlPlaneRoleAssignmentNames"].keys()

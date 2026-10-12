@@ -99,11 +99,29 @@ param assignControlPlaneRoles bool = true
 @description('Existing exact-scope role assignment names discovered by the guarded CLI. Leave empty for deterministic new assignments; never provide names belonging to another principal or role.')
 param existingControlPlaneRoleAssignmentNames object = {}
 
-@description('Existing approved Foundry model deployment name, not model ID. This template does not select a model version, allocate quota or create model deployments.')
-param modelDeploymentName string = ''
+@description('Create required model deployments in stage two. Compatible existing deployments are preserved, including their versions and capacities.')
+param provisionModels bool = true
+
+@description('Core deployment alias, not model ID.')
+param modelDeploymentName string = 'gpt-5-terra'
 
 @description('Optional existing separate model deployment for the Azure MCP specialist.')
-param simpleModelDeploymentName string = ''
+param simpleModelDeploymentName string = 'gpt-5-luna'
+
+param coreModelName string = 'gpt-5.6-terra'
+param simpleModelName string = 'gpt-5.6-luna'
+param modelVersion string = '2026-07-09'
+@minValue(1)
+@maxValue(1000)
+param modelCapacity int = 200
+@minValue(1)
+@maxValue(1000)
+param simpleModelCapacity int = 200
+@description('Derived from complete deployment inventory. Existing models are not PUT again.')
+param reuseCoreModel bool = false
+param reuseSimpleModel bool = false
+@description('Derived from quota only for a missing simple deployment. Use the core model when Luna quota is exhausted and sufficient core quota is available; never change an existing model.')
+param useCoreForSimpleModel bool = false
 
 @description('Expected six Prompt Agent names. Defaults use the first 47 project-name characters plus role suffixes, within the 64-character limit. Overrides must provide six distinct names. These are targets, not Agent versions.')
 param promptAgentNames object = {
@@ -121,11 +139,25 @@ param deploySchedulerJob bool = false
 @description('Name of the optional Manual scheduler Job. Preserve the name on subsequent deployments.')
 param schedulerJobName string = 'job-${containerAppName}'
 
-@description('Existing approved Azure Communication Services HTTPS endpoint. No ACS resource/domain or secret is created; sender permission and mail acceptance remain operator tasks.')
+@description('Provision Azure Communication Services, Email Communication Services and an Azure-managed domain in stage two. Does not invent recipients or send mail.')
+param provisionEmail bool = true
+
+@description('Legacy existing-service endpoint override when automatic email provisioning is disabled.')
 param communicationServicesEndpoint string = ''
 
 @description('Existing ACS resource name in this deployment RG. Required for automatic email role assignment; its host must match communicationServicesEndpoint.')
-param communicationServicesName string = ''
+param communicationServicesName string = 'acs-${containerAppName}'
+param emailServiceName string = 'email-${containerAppName}'
+@allowed(['Africa', 'Asia Pacific', 'Europe', 'United States', 'Australia', 'Brazil', 'Canada', 'United Kingdom', 'India'])
+param emailDataLocation string = 'Asia Pacific'
+param reuseCommunicationService bool = false
+param reuseEmailService bool = false
+param reuseEmailDomain bool = false
+param reuseEmailSenderRole bool = false
+param existingEmailSenderRoleDefinitionId string = ''
+param existingCommunicationTags object = {}
+param existingCommunicationIdentity object = { type: 'None' }
+param existingLinkedEmailDomains array = []
 
 @description('GUID of an existing customer-approved minimum-permission ACS email sender role. Required for automatic email RBAC; no role definition, broad service-owner role or ACS keys are created.')
 param emailSenderRoleDefinitionId string = ''
@@ -208,6 +240,10 @@ var applicationUrl = 'https://${containerAppName}.${containerEnvironment.outputs
 var adminConfigBlobUrl = adminUiEnabled ? '${storage.outputs.primaryBlobEndpoint}azbrief-state/admin-config.json' : ''
 var schedulerRequested = deployCapabilityHost && deploySchedulerJob
 var telemetryConfigured = deployCapabilityHost && !empty(applicationInsightsName)
+var automaticEmail = deployCapabilityHost && provisionEmail
+var resolvedEmailEndpoint = automaticEmail ? email!.outputs.endpoint : (deployCapabilityHost ? communicationServicesEndpoint : '')
+var resolvedEmailSender = automaticEmail ? email!.outputs.senderAddress : (deployCapabilityHost ? emailSenderAddress : '')
+var resolvedSenderRoleId = automaticEmail ? email!.outputs.senderRoleDefinitionId : emailSenderRoleDefinitionId
 var adminReadinessSupportResources = [
   {
     id: 'managed_identity'
@@ -243,8 +279,8 @@ var operationalEnv = [
   { name: 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', value: deployCapabilityHost ? simpleModelDeploymentName : '' }
   { name: 'ADMIN_READINESS_PROMPT_AGENTS', value: base64(string(promptAgentNames)) }
   { name: 'ADMIN_READINESS_CONTAINER_JOBS', value: base64(string(schedulerRequested ? [schedulerJobName] : [])) }
-  { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: deployCapabilityHost ? communicationServicesEndpoint : '' }
-  { name: 'EMAIL_SENDER_ADDRESS', value: deployCapabilityHost ? emailSenderAddress : '' }
+  { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: resolvedEmailEndpoint }
+  { name: 'EMAIL_SENDER_ADDRESS', value: resolvedEmailSender }
   { name: 'EMAIL_RECIPIENT_ADDRESS', value: deployCapabilityHost ? emailRecipientAddress : '' }
   { name: 'OTEL_ENABLED', value: toLower(string(telemetryConfigured)) }
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: telemetryConfigured ? existingInsights!.properties.ConnectionString : '' }
@@ -612,6 +648,41 @@ resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
   name: foundryAccountName
 }
 
+module models 'models.bicep' = if (deployCapabilityHost && provisionModels) {
+  name: 'kt-required-models'
+  params: {
+    foundryAccountName: foundryAccountName
+    coreDeploymentName: modelDeploymentName
+    simpleDeploymentName: simpleModelDeploymentName
+    coreModelName: coreModelName
+    simpleModelName: simpleModelName
+    modelVersion: modelVersion
+    modelCapacity: modelCapacity
+    simpleModelCapacity: simpleModelCapacity
+    reuseCore: reuseCoreModel
+    reuseSimple: reuseSimpleModel
+    useCoreForSimple: useCoreForSimpleModel
+  }
+}
+
+module email 'email.bicep' = if (automaticEmail) {
+  name: 'kt-email-services'
+  params: {
+    communicationServicesName: communicationServicesName
+    emailServiceName: emailServiceName
+    dataLocation: emailDataLocation
+    tags: tags
+    reuseCommunication: reuseCommunicationService
+    reuseEmailService: reuseEmailService
+    reuseDomain: reuseEmailDomain
+    createSenderRole: !reuseEmailSenderRole
+    existingSenderRoleId: existingEmailSenderRoleDefinitionId
+    existingCommunicationTags: existingCommunicationTags
+    existingCommunicationIdentity: existingCommunicationIdentity
+    existingLinkedDomains: existingLinkedEmailDomains
+  }
+}
+
 var reuseFoundrySetup = deployCapabilityHost && reuseExistingFoundrySetup
 
 resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = if (deployCapabilityHost && !reuseFoundrySetup) {
@@ -627,6 +698,7 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = if
   }
   dependsOn: [
     privateEndpoints
+    models
   ]
 }
 
@@ -701,8 +773,8 @@ module controlPlaneRoles 'control-plane-roles.bicep' = if (deployCapabilityHost 
     storageAccountName: storageAccountName
     controlPlanePrincipalId: controlPlaneIdentity.outputs.principalId
     applicationInsightsName: telemetryConfigured ? applicationInsightsName : ''
-    communicationServicesName: communicationServicesName
-    emailSenderRoleDefinitionId: emailSenderRoleDefinitionId
+    communicationServicesName: automaticEmail || !empty(communicationServicesEndpoint) ? communicationServicesName : ''
+    emailSenderRoleDefinitionId: resolvedSenderRoleId
     existingAssignmentNames: existingControlPlaneRoleAssignmentNames
   }
   dependsOn: [
@@ -854,8 +926,8 @@ module containerApp 'br/public:avm/res/app/container-app:0.23.0' = {
           { name: 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', value: deployCapabilityHost ? simpleModelDeploymentName : '' }
           { name: 'ADMIN_READINESS_PROMPT_AGENTS', value: base64(string(promptAgentNames)) }
           { name: 'ADMIN_READINESS_CONTAINER_JOBS', value: base64(string(schedulerRequested ? [schedulerJobName] : [])) }
-          { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: deployCapabilityHost ? communicationServicesEndpoint : '' }
-          { name: 'EMAIL_SENDER_ADDRESS', value: deployCapabilityHost ? emailSenderAddress : '' }
+          { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: resolvedEmailEndpoint }
+          { name: 'EMAIL_SENDER_ADDRESS', value: resolvedEmailSender }
           { name: 'EMAIL_RECIPIENT_ADDRESS', value: deployCapabilityHost ? emailRecipientAddress : '' }
           { name: 'OTEL_ENABLED', value: toLower(string(telemetryConfigured)) }
           { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: telemetryConfigured ? existingInsights!.properties.ConnectionString : '' }
@@ -928,6 +1000,19 @@ output ktFoundation object = {
   logAnalyticsWorkspaceResourceId: logAnalyticsWorkspaceResourceId
   controlPlaneRolesRequested: deployCapabilityHost && assignControlPlaneRoles
   schedulerJobRequested: schedulerRequested
+  modelsProvisioned: deployCapabilityHost && provisionModels
+  modelPolicy: deployCapabilityHost && provisionModels ? {
+    core: models!.outputs.coreModel
+    simple: models!.outputs.simpleModel
+    newDeploymentSku: 'GlobalStandard'
+    reusedCore: reuseCoreModel
+    reusedSimple: reuseSimpleModel
+    quotaFallback: useCoreForSimpleModel
+  } : {}
+  emailProvisioned: automaticEmail
+  communicationServicesEndpoint: resolvedEmailEndpoint
+  emailSenderAddress: resolvedEmailSender
+  emailServiceName: automaticEmail ? emailServiceName : ''
   runtimeSetup: {
     schemaVersion: 1
     foundryAccountName: foundryAccountName

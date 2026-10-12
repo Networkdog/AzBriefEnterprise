@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "7597179491432766929"
+      "templateHash": "11169560968486208309"
     }
   },
   "parameters": {
@@ -232,18 +232,67 @@
         "description": "Existing exact-scope role assignment names discovered by the guarded CLI. Leave empty for deterministic new assignments; never provide names belonging to another principal or role."
       }
     },
+    "provisionModels": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Create required model deployments in stage two. Compatible existing deployments are preserved, including their versions and capacities."
+      }
+    },
     "modelDeploymentName": {
       "type": "string",
-      "defaultValue": "",
+      "defaultValue": "gpt-5-terra",
       "metadata": {
-        "description": "Existing approved Foundry model deployment name, not model ID. This template does not select a model version, allocate quota or create model deployments."
+        "description": "Core deployment alias, not model ID."
       }
     },
     "simpleModelDeploymentName": {
       "type": "string",
-      "defaultValue": "",
+      "defaultValue": "gpt-5-luna",
       "metadata": {
         "description": "Optional existing separate model deployment for the Azure MCP specialist."
+      }
+    },
+    "coreModelName": {
+      "type": "string",
+      "defaultValue": "gpt-5.6-terra"
+    },
+    "simpleModelName": {
+      "type": "string",
+      "defaultValue": "gpt-5.6-luna"
+    },
+    "modelVersion": {
+      "type": "string",
+      "defaultValue": "2026-07-09"
+    },
+    "modelCapacity": {
+      "type": "int",
+      "defaultValue": 200,
+      "minValue": 1,
+      "maxValue": 1000
+    },
+    "simpleModelCapacity": {
+      "type": "int",
+      "defaultValue": 200,
+      "minValue": 1,
+      "maxValue": 1000
+    },
+    "reuseCoreModel": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Derived from complete deployment inventory. Existing models are not PUT again."
+      }
+    },
+    "reuseSimpleModel": {
+      "type": "bool",
+      "defaultValue": false
+    },
+    "useCoreForSimpleModel": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Derived from quota only for a missing simple deployment. Use the core model when Luna quota is exhausted and sufficient core quota is available; never change an existing model."
       }
     },
     "promptAgentNames": {
@@ -274,19 +323,79 @@
         "description": "Name of the optional Manual scheduler Job. Preserve the name on subsequent deployments."
       }
     },
+    "provisionEmail": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Provision Azure Communication Services, Email Communication Services and an Azure-managed domain in stage two. Does not invent recipients or send mail."
+      }
+    },
     "communicationServicesEndpoint": {
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Existing approved Azure Communication Services HTTPS endpoint. No ACS resource/domain or secret is created; sender permission and mail acceptance remain operator tasks."
+        "description": "Legacy existing-service endpoint override when automatic email provisioning is disabled."
       }
     },
     "communicationServicesName": {
       "type": "string",
-      "defaultValue": "",
+      "defaultValue": "[format('acs-{0}', parameters('containerAppName'))]",
       "metadata": {
         "description": "Existing ACS resource name in this deployment RG. Required for automatic email role assignment; its host must match communicationServicesEndpoint."
       }
+    },
+    "emailServiceName": {
+      "type": "string",
+      "defaultValue": "[format('email-{0}', parameters('containerAppName'))]"
+    },
+    "emailDataLocation": {
+      "type": "string",
+      "defaultValue": "Asia Pacific",
+      "allowedValues": [
+        "Africa",
+        "Asia Pacific",
+        "Europe",
+        "United States",
+        "Australia",
+        "Brazil",
+        "Canada",
+        "United Kingdom",
+        "India"
+      ]
+    },
+    "reuseCommunicationService": {
+      "type": "bool",
+      "defaultValue": false
+    },
+    "reuseEmailService": {
+      "type": "bool",
+      "defaultValue": false
+    },
+    "reuseEmailDomain": {
+      "type": "bool",
+      "defaultValue": false
+    },
+    "reuseEmailSenderRole": {
+      "type": "bool",
+      "defaultValue": false
+    },
+    "existingEmailSenderRoleDefinitionId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingCommunicationTags": {
+      "type": "object",
+      "defaultValue": {}
+    },
+    "existingCommunicationIdentity": {
+      "type": "object",
+      "defaultValue": {
+        "type": "None"
+      }
+    },
+    "existingLinkedEmailDomains": {
+      "type": "array",
+      "defaultValue": []
     },
     "emailSenderRoleDefinitionId": {
       "type": "string",
@@ -416,6 +525,7 @@
     "archiveUiEnabled": "[or(variables('privateAnonymousWebUi'), and(variables('adminAuthConfigured'), or(variables('adminUiEnabled'), not(empty(trim(replace(parameters('archiveAllowedPrincipals'), ',', '')))))))]",
     "schedulerRequested": "[and(parameters('deployCapabilityHost'), parameters('deploySchedulerJob'))]",
     "telemetryConfigured": "[and(parameters('deployCapabilityHost'), not(empty(parameters('applicationInsightsName'))))]",
+    "automaticEmail": "[and(parameters('deployCapabilityHost'), parameters('provisionEmail'))]",
     "adminReadinessSupportResources": [
       {
         "id": "managed_identity",
@@ -521,6 +631,7 @@
         "description": "KT private AzBrief project with customer-owned agent storage."
       },
       "dependsOn": [
+        "models",
         "privateEndpoints"
       ]
     },
@@ -603,7 +714,7 @@
                 "cpu": "[json('1.0')]",
                 "memory": "2Gi"
               },
-              "env": "[concat(createArray(createObject('name', 'AZURE_TENANT_ID', 'value', tenant().tenantId), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_CLIENT_ID', 'value', reference('controlPlaneIdentity').outputs.clientId.value), createObject('name', 'FOUNDRY_PROJECT_ENDPOINT', 'value', variables('foundryProjectEndpoint')), createObject('name', 'FOUNDRY_HOSTED_AGENT_NAME', 'value', parameters('foundryHostedAgentName')), createObject('name', 'API_KEY', 'secretRef', 'orchestrator-api-key'), createObject('name', 'ARCHIVE_BLOB_CONTAINER_URL', 'value', format('{0}azbrief-archive', reference('storage').outputs.primaryBlobEndpoint.value)), createObject('name', 'CHECKPOINT_BLOB_URL', 'value', format('{0}azbrief-state/checkpoint.json', reference('storage').outputs.primaryBlobEndpoint.value)), createObject('name', 'ADMIN_CONFIG_BLOB_URL', 'value', if(variables('adminUiEnabled'), format('{0}azbrief-state/admin-config.json', reference('storage').outputs.primaryBlobEndpoint.value), '')), createObject('name', 'MAX_CONCURRENT_ANALYSES', 'value', '1')), createArray(createObject('name', 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', 'value', if(parameters('deployCapabilityHost'), parameters('modelDeploymentName'), '')), createObject('name', 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', 'value', if(parameters('deployCapabilityHost'), parameters('simpleModelDeploymentName'), '')), createObject('name', 'ADMIN_READINESS_PROMPT_AGENTS', 'value', base64(string(parameters('promptAgentNames')))), createObject('name', 'ADMIN_READINESS_CONTAINER_JOBS', 'value', base64(string(if(variables('schedulerRequested'), createArray(parameters('schedulerJobName')), createArray())))), createObject('name', 'COMMUNICATION_SERVICES_ENDPOINT', 'value', if(parameters('deployCapabilityHost'), parameters('communicationServicesEndpoint'), '')), createObject('name', 'EMAIL_SENDER_ADDRESS', 'value', if(parameters('deployCapabilityHost'), parameters('emailSenderAddress'), '')), createObject('name', 'EMAIL_RECIPIENT_ADDRESS', 'value', if(parameters('deployCapabilityHost'), parameters('emailRecipientAddress'), '')), createObject('name', 'OTEL_ENABLED', 'value', toLower(string(variables('telemetryConfigured')))), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', if(variables('telemetryConfigured'), reference('existingInsights').ConnectionString, ''))), createArray(createObject('name', 'SCHEDULE_DISPATCH_ENABLED', 'value', 'true'), createObject('name', 'RUN_TIME_BUDGET_S', 'value', '39600')))]"
+              "env": "[concat(createArray(createObject('name', 'AZURE_TENANT_ID', 'value', tenant().tenantId), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', subscription().subscriptionId), createObject('name', 'AZURE_CLIENT_ID', 'value', reference('controlPlaneIdentity').outputs.clientId.value), createObject('name', 'FOUNDRY_PROJECT_ENDPOINT', 'value', variables('foundryProjectEndpoint')), createObject('name', 'FOUNDRY_HOSTED_AGENT_NAME', 'value', parameters('foundryHostedAgentName')), createObject('name', 'API_KEY', 'secretRef', 'orchestrator-api-key'), createObject('name', 'ARCHIVE_BLOB_CONTAINER_URL', 'value', format('{0}azbrief-archive', reference('storage').outputs.primaryBlobEndpoint.value)), createObject('name', 'CHECKPOINT_BLOB_URL', 'value', format('{0}azbrief-state/checkpoint.json', reference('storage').outputs.primaryBlobEndpoint.value)), createObject('name', 'ADMIN_CONFIG_BLOB_URL', 'value', if(variables('adminUiEnabled'), format('{0}azbrief-state/admin-config.json', reference('storage').outputs.primaryBlobEndpoint.value), '')), createObject('name', 'MAX_CONCURRENT_ANALYSES', 'value', '1')), createArray(createObject('name', 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', 'value', if(parameters('deployCapabilityHost'), parameters('modelDeploymentName'), '')), createObject('name', 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', 'value', if(parameters('deployCapabilityHost'), parameters('simpleModelDeploymentName'), '')), createObject('name', 'ADMIN_READINESS_PROMPT_AGENTS', 'value', base64(string(parameters('promptAgentNames')))), createObject('name', 'ADMIN_READINESS_CONTAINER_JOBS', 'value', base64(string(if(variables('schedulerRequested'), createArray(parameters('schedulerJobName')), createArray())))), createObject('name', 'COMMUNICATION_SERVICES_ENDPOINT', 'value', if(variables('automaticEmail'), reference('email').outputs.endpoint.value, if(parameters('deployCapabilityHost'), parameters('communicationServicesEndpoint'), ''))), createObject('name', 'EMAIL_SENDER_ADDRESS', 'value', if(variables('automaticEmail'), reference('email').outputs.senderAddress.value, if(parameters('deployCapabilityHost'), parameters('emailSenderAddress'), ''))), createObject('name', 'EMAIL_RECIPIENT_ADDRESS', 'value', if(parameters('deployCapabilityHost'), parameters('emailRecipientAddress'), '')), createObject('name', 'OTEL_ENABLED', 'value', toLower(string(variables('telemetryConfigured')))), createObject('name', 'APPLICATIONINSIGHTS_CONNECTION_STRING', 'value', if(variables('telemetryConfigured'), reference('existingInsights').ConnectionString, ''))), createArray(createObject('name', 'SCHEDULE_DISPATCH_ENABLED', 'value', 'true'), createObject('name', 'RUN_TIME_BUDGET_S', 'value', '39600')))]"
             }
           ]
         }
@@ -612,6 +723,7 @@
         "containerEnvironment",
         "controlPlaneIdentity",
         "controlPlaneRoles",
+        "email",
         "existingInsights",
         "privateEndpoints",
         "storage"
@@ -28665,6 +28777,350 @@
         "storage"
       ]
     },
+    "models": {
+      "condition": "[and(parameters('deployCapabilityHost'), parameters('provisionModels'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "kt-required-models",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "foundryAccountName": {
+            "value": "[parameters('foundryAccountName')]"
+          },
+          "coreDeploymentName": {
+            "value": "[parameters('modelDeploymentName')]"
+          },
+          "simpleDeploymentName": {
+            "value": "[parameters('simpleModelDeploymentName')]"
+          },
+          "coreModelName": {
+            "value": "[parameters('coreModelName')]"
+          },
+          "simpleModelName": {
+            "value": "[parameters('simpleModelName')]"
+          },
+          "modelVersion": {
+            "value": "[parameters('modelVersion')]"
+          },
+          "modelCapacity": {
+            "value": "[parameters('modelCapacity')]"
+          },
+          "simpleModelCapacity": {
+            "value": "[parameters('simpleModelCapacity')]"
+          },
+          "reuseCore": {
+            "value": "[parameters('reuseCoreModel')]"
+          },
+          "reuseSimple": {
+            "value": "[parameters('reuseSimpleModel')]"
+          },
+          "useCoreForSimple": {
+            "value": "[parameters('useCoreForSimpleModel')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "15341119568075744444"
+            }
+          },
+          "parameters": {
+            "foundryAccountName": {
+              "type": "string"
+            },
+            "coreDeploymentName": {
+              "type": "string"
+            },
+            "simpleDeploymentName": {
+              "type": "string"
+            },
+            "coreModelName": {
+              "type": "string"
+            },
+            "simpleModelName": {
+              "type": "string"
+            },
+            "modelVersion": {
+              "type": "string"
+            },
+            "modelCapacity": {
+              "type": "int"
+            },
+            "simpleModelCapacity": {
+              "type": "int"
+            },
+            "reuseCore": {
+              "type": "bool",
+              "defaultValue": false
+            },
+            "reuseSimple": {
+              "type": "bool",
+              "defaultValue": false
+            },
+            "useCoreForSimple": {
+              "type": "bool",
+              "defaultValue": false
+            }
+          },
+          "resources": [
+            {
+              "condition": "[not(parameters('reuseCore'))]",
+              "type": "Microsoft.CognitiveServices/accounts/deployments",
+              "apiVersion": "2025-06-01",
+              "name": "[format('{0}/{1}', parameters('foundryAccountName'), parameters('coreDeploymentName'))]",
+              "sku": {
+                "name": "GlobalStandard",
+                "capacity": "[parameters('modelCapacity')]"
+              },
+              "properties": {
+                "model": {
+                  "format": "OpenAI",
+                  "name": "[parameters('coreModelName')]",
+                  "version": "[parameters('modelVersion')]"
+                },
+                "versionUpgradeOption": "NoAutoUpgrade"
+              }
+            },
+            {
+              "condition": "[not(parameters('reuseSimple'))]",
+              "type": "Microsoft.CognitiveServices/accounts/deployments",
+              "apiVersion": "2025-06-01",
+              "name": "[format('{0}/{1}', parameters('foundryAccountName'), parameters('simpleDeploymentName'))]",
+              "sku": {
+                "name": "GlobalStandard",
+                "capacity": "[parameters('simpleModelCapacity')]"
+              },
+              "properties": {
+                "model": {
+                  "format": "OpenAI",
+                  "name": "[if(parameters('useCoreForSimple'), parameters('coreModelName'), parameters('simpleModelName'))]",
+                  "version": "[parameters('modelVersion')]"
+                },
+                "versionUpgradeOption": "NoAutoUpgrade"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('foundryAccountName'), parameters('coreDeploymentName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "coreModel": {
+              "type": "object",
+              "value": "[if(parameters('reuseCore'), reference(resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('foundryAccountName'), parameters('coreDeploymentName')), '2025-06-01').model, reference(resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('foundryAccountName'), parameters('coreDeploymentName')), '2025-06-01').model)]"
+            },
+            "simpleModel": {
+              "type": "object",
+              "value": "[if(parameters('reuseSimple'), reference(resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('foundryAccountName'), parameters('simpleDeploymentName')), '2025-06-01').model, reference(resourceId('Microsoft.CognitiveServices/accounts/deployments', parameters('foundryAccountName'), parameters('simpleDeploymentName')), '2025-06-01').model)]"
+            }
+          }
+        }
+      }
+    },
+    "email": {
+      "condition": "[variables('automaticEmail')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "kt-email-services",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "communicationServicesName": {
+            "value": "[parameters('communicationServicesName')]"
+          },
+          "emailServiceName": {
+            "value": "[parameters('emailServiceName')]"
+          },
+          "dataLocation": {
+            "value": "[parameters('emailDataLocation')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          },
+          "reuseCommunication": {
+            "value": "[parameters('reuseCommunicationService')]"
+          },
+          "reuseEmailService": {
+            "value": "[parameters('reuseEmailService')]"
+          },
+          "reuseDomain": {
+            "value": "[parameters('reuseEmailDomain')]"
+          },
+          "createSenderRole": {
+            "value": "[not(parameters('reuseEmailSenderRole'))]"
+          },
+          "existingSenderRoleId": {
+            "value": "[parameters('existingEmailSenderRoleDefinitionId')]"
+          },
+          "existingCommunicationTags": {
+            "value": "[parameters('existingCommunicationTags')]"
+          },
+          "existingCommunicationIdentity": {
+            "value": "[parameters('existingCommunicationIdentity')]"
+          },
+          "existingLinkedDomains": {
+            "value": "[parameters('existingLinkedEmailDomains')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "12425987090234432875"
+            }
+          },
+          "parameters": {
+            "communicationServicesName": {
+              "type": "string"
+            },
+            "emailServiceName": {
+              "type": "string"
+            },
+            "dataLocation": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object"
+            },
+            "reuseCommunication": {
+              "type": "bool",
+              "defaultValue": false
+            },
+            "reuseEmailService": {
+              "type": "bool",
+              "defaultValue": false
+            },
+            "reuseDomain": {
+              "type": "bool",
+              "defaultValue": false
+            },
+            "createSenderRole": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "existingSenderRoleId": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "existingCommunicationTags": {
+              "type": "object",
+              "defaultValue": {}
+            },
+            "existingCommunicationIdentity": {
+              "type": "object",
+              "defaultValue": {
+                "type": "None"
+              }
+            },
+            "existingLinkedDomains": {
+              "type": "array",
+              "defaultValue": []
+            }
+          },
+          "variables": {
+            "domainId": "[resourceId('Microsoft.Communication/emailServices/domains', parameters('emailServiceName'), 'AzureManagedDomain')]",
+            "senderRoleId": "[if(empty(parameters('existingSenderRoleId')), guid(toLower(resourceGroup().id), toLower(parameters('communicationServicesName')), 'azbrief-email-sender'), parameters('existingSenderRoleId'))]"
+          },
+          "resources": [
+            {
+              "condition": "[not(parameters('reuseEmailService'))]",
+              "type": "Microsoft.Communication/emailServices",
+              "apiVersion": "2023-04-01",
+              "name": "[parameters('emailServiceName')]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "dataLocation": "[parameters('dataLocation')]"
+              }
+            },
+            {
+              "condition": "[not(parameters('reuseDomain'))]",
+              "type": "Microsoft.Communication/emailServices/domains",
+              "apiVersion": "2023-04-01",
+              "name": "[format('{0}/AzureManagedDomain', parameters('emailServiceName'))]",
+              "location": "global",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "domainManagement": "AzureManaged",
+                "userEngagementTracking": "Disabled"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Communication/emailServices', parameters('emailServiceName'))]"
+              ]
+            },
+            {
+              "condition": "[not(parameters('reuseCommunication'))]",
+              "type": "Microsoft.Communication/communicationServices",
+              "apiVersion": "2023-04-01",
+              "name": "[parameters('communicationServicesName')]",
+              "location": "global",
+              "tags": "[union(parameters('tags'), parameters('existingCommunicationTags'))]",
+              "identity": "[parameters('existingCommunicationIdentity')]",
+              "properties": {
+                "dataLocation": "[parameters('dataLocation')]",
+                "linkedDomains": "[union(parameters('existingLinkedDomains'), createArray(variables('domainId')))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[0], split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[1])]"
+              ]
+            },
+            {
+              "condition": "[parameters('createSenderRole')]",
+              "type": "Microsoft.Authorization/roleDefinitions",
+              "apiVersion": "2022-04-01",
+              "name": "[variables('senderRoleId')]",
+              "properties": {
+                "roleName": "[format('AzBrief Email Sender {0}/{1}', toLower(resourceGroup().id), toLower(parameters('communicationServicesName')))]",
+                "description": "Allows managed-identity email sending on the assigned Communication Services resource without keys or delete permissions.",
+                "type": "CustomRole",
+                "assignableScopes": [
+                  "[resourceGroup().id]"
+                ],
+                "permissions": [
+                  {
+                    "actions": [
+                      "Microsoft.Communication/CommunicationServices/read",
+                      "Microsoft.Communication/CommunicationServices/write",
+                      "Microsoft.Communication/EmailServices/write"
+                    ],
+                    "notActions": [],
+                    "dataActions": [],
+                    "notDataActions": []
+                  }
+                ]
+              }
+            }
+          ],
+          "outputs": {
+            "endpoint": {
+              "type": "string",
+              "value": "[if(parameters('reuseCommunication'), format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName))]"
+            },
+            "senderAddress": {
+              "type": "string",
+              "value": "[if(parameters('reuseDomain'), format('DoNotReply@{0}', reference(variables('domainId'), '2023-04-01').fromSenderDomain), format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[0], split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[1]), '2023-04-01').fromSenderDomain))]"
+            },
+            "senderRoleDefinitionId": {
+              "type": "string",
+              "value": "[variables('senderRoleId')]"
+            }
+          }
+        }
+      }
+    },
     "agentBindings": {
       "condition": "[parameters('deployCapabilityHost')]",
       "type": "Microsoft.Resources/deployments",
@@ -28977,12 +29433,8 @@
             "value": "[reference('controlPlaneIdentity').outputs.principalId.value]"
           },
           "applicationInsightsName": "[if(variables('telemetryConfigured'), createObject('value', parameters('applicationInsightsName')), createObject('value', ''))]",
-          "communicationServicesName": {
-            "value": "[parameters('communicationServicesName')]"
-          },
-          "emailSenderRoleDefinitionId": {
-            "value": "[parameters('emailSenderRoleDefinitionId')]"
-          },
+          "communicationServicesName": "[if(or(variables('automaticEmail'), not(empty(parameters('communicationServicesEndpoint')))), createObject('value', parameters('communicationServicesName')), createObject('value', ''))]",
+          "emailSenderRoleDefinitionId": "[if(variables('automaticEmail'), createObject('value', reference('email').outputs.senderRoleDefinitionId.value), createObject('value', parameters('emailSenderRoleDefinitionId')))]",
           "existingAssignmentNames": {
             "value": "[parameters('existingControlPlaneRoleAssignmentNames')]"
           }
@@ -29098,6 +29550,7 @@
       },
       "dependsOn": [
         "controlPlaneIdentity",
+        "email",
         "project",
         "storage"
       ]
@@ -29280,11 +29733,11 @@
                   },
                   {
                     "name": "COMMUNICATION_SERVICES_ENDPOINT",
-                    "value": "[if(parameters('deployCapabilityHost'), parameters('communicationServicesEndpoint'), '')]"
+                    "value": "[if(variables('automaticEmail'), reference('email').outputs.endpoint.value, if(parameters('deployCapabilityHost'), parameters('communicationServicesEndpoint'), ''))]"
                   },
                   {
                     "name": "EMAIL_SENDER_ADDRESS",
-                    "value": "[if(parameters('deployCapabilityHost'), parameters('emailSenderAddress'), '')]"
+                    "value": "[if(variables('automaticEmail'), reference('email').outputs.senderAddress.value, if(parameters('deployCapabilityHost'), parameters('emailSenderAddress'), ''))]"
                   },
                   {
                     "name": "EMAIL_RECIPIENT_ADDRESS",
@@ -30889,6 +31342,7 @@
         "containerEnvironment",
         "controlPlaneIdentity",
         "controlPlaneRoles",
+        "email",
         "existingInsights",
         "privateEndpoints",
         "storage"
@@ -30944,6 +31398,12 @@
         "logAnalyticsWorkspaceResourceId": "[parameters('logAnalyticsWorkspaceResourceId')]",
         "controlPlaneRolesRequested": "[and(parameters('deployCapabilityHost'), parameters('assignControlPlaneRoles'))]",
         "schedulerJobRequested": "[variables('schedulerRequested')]",
+        "modelsProvisioned": "[and(parameters('deployCapabilityHost'), parameters('provisionModels'))]",
+        "modelPolicy": "[if(and(parameters('deployCapabilityHost'), parameters('provisionModels')), createObject('core', reference('models').outputs.coreModel.value, 'simple', reference('models').outputs.simpleModel.value, 'newDeploymentSku', 'GlobalStandard', 'reusedCore', parameters('reuseCoreModel'), 'reusedSimple', parameters('reuseSimpleModel'), 'quotaFallback', parameters('useCoreForSimpleModel')), createObject())]",
+        "emailProvisioned": "[variables('automaticEmail')]",
+        "communicationServicesEndpoint": "[if(variables('automaticEmail'), reference('email').outputs.endpoint.value, if(parameters('deployCapabilityHost'), parameters('communicationServicesEndpoint'), ''))]",
+        "emailSenderAddress": "[if(variables('automaticEmail'), reference('email').outputs.senderAddress.value, if(parameters('deployCapabilityHost'), parameters('emailSenderAddress'), ''))]",
+        "emailServiceName": "[if(variables('automaticEmail'), parameters('emailServiceName'), '')]",
         "runtimeSetup": {
           "schemaVersion": 1,
           "foundryAccountName": "[parameters('foundryAccountName')]",

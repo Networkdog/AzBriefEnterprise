@@ -74,6 +74,11 @@ def values(template: dict) -> dict:
         apiKey="test-only-api-key-0123456789abcdef0123456789abcdef",
         containerRegistryAuthMode="Credentials",
         containerRegistryPassword="test-only-ghcr-read-token",
+        provisionModels=False,
+        provisionEmail=False,
+        modelDeploymentName="",
+        simpleModelDeploymentName="",
+        communicationServicesName="",
     )
     result["promptAgentNames"] = {
         role: f"{result['projectName']}-{suffix}" for role, suffix in kt._ROLE_NAME_SUFFIXES.items()
@@ -164,6 +169,9 @@ def test_network_and_key_reuse_decision_are_required(template: dict):
         "applicationInsightsName",
         "azureMcpProjectConnectionName",
         "communicationServicesName",
+        "coreModelName",
+        "simpleModelName",
+        "emailServiceName",
     }
 
 
@@ -519,6 +527,9 @@ def _evaluate_ui_expression(
             if function == "greaterOrEquals":
                 return arguments[0] >= arguments[1]
             return arguments[0] <= arguments[1]
+        if function == "sub":
+            assert len(arguments) == 2 and all(type(value) is int for value in arguments)
+            return arguments[0] - arguments[1]
         if function == "equals":
             assert len(arguments) == 2
             return type(arguments[0]) is type(arguments[1]) and arguments[0] == arguments[1]
@@ -4379,6 +4390,450 @@ def test_near_name_project_cannot_take_another_projects_connections(values: dict
         )
     assert not cli.deployments
     assert cli.connection_puts == 3
+
+
+class OperationalAzure(FakeAzure):
+    """Offline model/email inventory with observable immutable service reuse."""
+
+    def __init__(self, values: dict, vnet: dict):
+        super().__init__(values, vnet)
+        self.model_deployments: dict[str, dict] = {}
+        self.quota = {"gpt-5.6-terra": 500, "gpt-5.6-luna": 0}
+        self.model_writes = 0
+        self.email_writes = 0
+        self.email_service: dict | None = None
+        self.email_domain: dict | None = None
+        self.communication: dict | None = None
+        self.custom_roles: list[dict] = []
+
+    def json(self, *args: str) -> Any:
+        if args[:3] == ("role", "definition", "list"):
+            self.calls.append(args)
+            return copy.deepcopy(self.custom_roles)
+        return super().json(*args)
+
+    def collection(self, resource_id: str, api_version: str) -> list[dict]:
+        if resource_id.endswith("/deployments"):
+            self.calls.append(("collection", resource_id, api_version))
+            return copy.deepcopy(list(self.model_deployments.values()))
+        if resource_id.endswith("/models"):
+            return [
+                {
+                    "name": name,
+                    "version": self.values["modelVersion"],
+                    "capabilities": {"responses": "true", "agentsV2": "true"},
+                    "skus": [
+                        {"name": "GlobalStandard", "usageName": f"OpenAI.GlobalStandard.{name}"}
+                    ],
+                }
+                for name in self.quota
+            ]
+        if resource_id.endswith("/usages"):
+            return [
+                {
+                    "name": {"value": f"OpenAI.GlobalStandard.{name}"},
+                    "currentValue": 1000 - remaining,
+                    "limit": 1000,
+                }
+                for name, remaining in self.quota.items()
+            ]
+        if resource_id.endswith("/domains"):
+            return [copy.deepcopy(self.email_domain)] if self.email_domain else []
+        return super().collection(resource_id, api_version)
+
+    def get(self, resource_id: str, api_version: str) -> dict:
+        if self.email_service and resource_id == self.email_service["id"]:
+            return copy.deepcopy(self.email_service)
+        if self.communication and resource_id == self.communication["id"]:
+            return copy.deepcopy(self.communication)
+        return super().get(resource_id, api_version)
+
+    def deploy(self, values: dict, mode: str, name: str) -> dict:
+        effective = copy.deepcopy(values)
+        if mode == "create" and values["deployCapabilityHost"]:
+            if values["provisionModels"]:
+                for role, alias, model, capacity in (
+                    (
+                        "Core",
+                        values["modelDeploymentName"],
+                        values["coreModelName"],
+                        values["modelCapacity"],
+                    ),
+                    (
+                        "Simple",
+                        values["simpleModelDeploymentName"],
+                        (
+                            values["coreModelName"]
+                            if values["useCoreForSimpleModel"]
+                            else values["simpleModelName"]
+                        ),
+                        values["simpleModelCapacity"],
+                    ),
+                ):
+                    if not values[f"reuse{role}Model"]:
+                        assert (
+                            alias not in self.model_deployments
+                        ), "Existing models must not be PUT"
+                        self.model_writes += 1
+                        self.model_deployments[alias] = {
+                            "name": alias,
+                            "sku": {"name": "GlobalStandard", "capacity": capacity},
+                            "properties": {
+                                "provisioningState": "Succeeded",
+                                "model": {
+                                    "name": model,
+                                    "format": "OpenAI",
+                                    "version": values["modelVersion"],
+                                },
+                            },
+                        }
+            if values["provisionEmail"]:
+                email_id = f"{GROUP}/providers/Microsoft.Communication/emailServices/{values['emailServiceName']}"
+                acs_id = f"{GROUP}/providers/Microsoft.Communication/communicationServices/{values['communicationServicesName']}"
+                if not values["reuseEmailService"]:
+                    self.email_writes += 1
+                    self.email_service = {
+                        "id": email_id,
+                        "properties": {
+                            "provisioningState": "Succeeded",
+                            "dataLocation": values["emailDataLocation"],
+                        },
+                    }
+                    self.resources[email_id] = {"id": email_id}
+                if not values["reuseEmailDomain"]:
+                    self.email_writes += 1
+                    self.email_domain = {
+                        "id": f"{email_id}/domains/AzureManagedDomain",
+                        "name": "AzureManagedDomain",
+                        "properties": {
+                            "provisioningState": "Succeeded",
+                            "domainManagement": "AzureManaged",
+                            "fromSenderDomain": "test-only.azurecomm.net",
+                        },
+                    }
+                if not values["reuseCommunicationService"]:
+                    self.email_writes += 1
+                    self.communication = {
+                        "id": acs_id,
+                        "properties": {
+                            "provisioningState": "Succeeded",
+                            "dataLocation": values["emailDataLocation"],
+                            "hostName": "test-only.communication.azure.com",
+                            "linkedDomains": [
+                                f"{email_id}/domains/AzureManagedDomain",
+                                *values["existingLinkedEmailDomains"],
+                            ],
+                        },
+                        "tags": values["existingCommunicationTags"],
+                        "identity": values["existingCommunicationIdentity"],
+                    }
+                    self.resources[acs_id] = {"id": acs_id}
+                if not values["reuseEmailSenderRole"]:
+                    self.custom_roles.append(
+                        {
+                            "name": values["emailSenderRoleDefinitionId"],
+                            "roleName": f"AzBrief Email Sender {GROUP.casefold()}/{values['communicationServicesName'].casefold()}",
+                            "permissions": [{"actions": sorted(kt.EMAIL_SENDER_ACTIONS)}],
+                        }
+                    )
+                assert self.communication and self.email_domain
+                effective["communicationServicesEndpoint"] = (
+                    f"https://{self.communication['properties']['hostName']}"
+                )
+                effective["emailSenderAddress"] = (
+                    f"DoNotReply@{self.email_domain['properties']['fromSenderDomain']}"
+                )
+        return super().deploy(effective, mode, name)
+
+
+def _automatic_services(values: dict) -> dict:
+    return {
+        **values,
+        "provisionModels": True,
+        "provisionEmail": True,
+        "modelDeploymentName": "gpt-5-terra",
+        "simpleModelDeploymentName": "gpt-5-luna",
+        "communicationServicesName": f"acs-{values['containerAppName']}",
+        "emailServiceName": f"email-{values['containerAppName']}",
+    }
+
+
+def test_model_email_defaults_are_real_stage_two_resources(template: dict):
+    assert template["parameters"]["provisionModels"]["defaultValue"] is True
+    assert template["parameters"]["provisionEmail"]["defaultValue"] is True
+    models = template["resources"]["models"]
+    email = template["resources"]["email"]
+    assert (
+        "deployCapabilityHost" in models["condition"] and "provisionModels" in models["condition"]
+    )
+    assert "automaticEmail" in email["condition"]
+    deployments = _resources(models["properties"]["template"])
+    deployments = [row for row in deployments if row["type"].endswith("/deployments")]
+    assert len(deployments) == 2
+    assert all("reuse" in row["condition"].casefold() for row in deployments)
+    assert all(row["properties"]["versionUpgradeOption"] == "NoAutoUpgrade" for row in deployments)
+    assert "coreDeploymentName" in " ".join(deployments[1]["dependsOn"])
+    services = _resources(email["properties"]["template"])
+    assert any(row["type"] == "Microsoft.Communication/emailServices/domains" for row in services)
+    role = next(row for row in services if row["type"] == "Microsoft.Authorization/roleDefinitions")
+    assert set(role["properties"]["permissions"][0]["actions"]) == {
+        "Microsoft.Communication/CommunicationServices/read",
+        "Microsoft.Communication/CommunicationServices/write",
+        "Microsoft.Communication/EmailServices/write",
+    }
+    assert "listKeys" not in json.dumps(email)
+
+
+def test_automatic_services_create_and_replay_without_model_or_domain_writes(
+    values: dict, vnet: dict
+):
+    values = _automatic_services(values)
+    values["enablePrivateAnonymousWebUi"] = True
+    cli = OperationalAzure(values, vnet)
+    kt.run(cli, values, "deploy")
+    assert cli.model_writes == 2 and cli.email_writes == 3
+    assert cli.deployments[1]["useCoreForSimpleModel"] is True
+    assert cli.model_deployments["gpt-5-luna"]["properties"]["model"]["name"] == "gpt-5.6-terra"
+    before = copy.deepcopy((cli.model_deployments, cli.email_domain, cli.communication))
+    kt.run(cli, values, "deploy", "complete")
+    assert cli.model_writes == 2 and cli.email_writes == 3
+    assert before == (cli.model_deployments, cli.email_domain, cli.communication)
+    assert cli.deployments[-1]["reuseCoreModel"] is True
+    assert cli.deployments[-1]["reuseSimpleModel"] is True
+    assert cli.deployments[-1]["reuseEmailSenderRole"] is True
+    assert cli.deployments[-1]["emailRecipientAddress"] == ""
+
+
+def test_models_prefer_luna_when_its_quota_is_available(values: dict, vnet: dict):
+    values = _automatic_services(values)
+    cli = OperationalAzure(values, vnet)
+    cli.quota["gpt-5.6-luna"] = 500
+    kt.run(cli, values, "deploy")
+    assert cli.deployments[1]["useCoreForSimpleModel"] is False
+    assert cli.model_deployments["gpt-5-luna"]["properties"]["model"]["name"] == "gpt-5.6-luna"
+
+
+def test_model_quota_failure_does_not_modify_other_allocations(values: dict, vnet: dict):
+    values = _automatic_services(values)
+    cli = OperationalAzure(values, vnet)
+    kt.run(cli, values, "deploy", "foundation")
+    cli.quota["gpt-5.6-terra"] = 300
+    before = copy.deepcopy(cli.quota)
+    cli.deployments.clear()
+    with pytest.raises(ValueError, match="fallback quota"):
+        kt.run(cli, values, "deploy", "complete")
+    assert not cli.deployments and cli.quota == before
+
+
+def test_partial_existing_email_is_completed_without_losing_identity_or_domain_links(
+    values: dict, vnet: dict
+):
+    values = _automatic_services(values)
+    cli = OperationalAzure(values, vnet)
+    kt.run(cli, values, "deploy", "foundation")
+    acs_id = f"{GROUP}/providers/Microsoft.Communication/communicationServices/{values['communicationServicesName']}"
+    cli.resources[acs_id] = {"id": acs_id}
+    cli.communication = {
+        "id": acs_id,
+        "identity": {"type": "SystemAssigned", "principalId": "existing"},
+        "tags": {"operator": "preserved"},
+        "properties": {
+            "provisioningState": "Succeeded",
+            "hostName": "test-only.communication.azure.com",
+            "dataLocation": "Canada",
+            "linkedDomains": ["/existing/approved/domain"],
+        },
+    }
+    kt.run(cli, values, "deploy", "complete")
+    assert cli.communication["identity"]["type"] == "SystemAssigned"
+    assert cli.communication["tags"] == {"operator": "preserved"}
+    assert "/existing/approved/domain" in cli.communication["properties"]["linkedDomains"]
+    assert cli.email_service["properties"]["dataLocation"] == "Canada"
+
+
+def _automatic_service_form(names: dict, existing: bool = False) -> dict:
+    account = (
+        f"{GROUP}/providers/Microsoft.CognitiveServices/accounts/{names['foundryAccountName']}"
+    )
+    names["modelDeploymentsApi"] = {
+        "value": (
+            [
+                {
+                    "id": f"{account}/deployments/{alias}",
+                    "name": alias,
+                    "properties": {
+                        "provisioningState": "Succeeded",
+                        "model": {"format": "OpenAI", "name": "gpt-5.6-terra"},
+                    },
+                }
+                for alias in ("gpt-5-terra", "gpt-5-luna")
+            ]
+            if existing
+            else []
+        )
+    }
+    names["modelQuotaApi"] = {
+        "value": [
+            {
+                "name": {"value": "OpenAI.GlobalStandard.gpt-5.6-terra"},
+                "currentValue": 500,
+                "limit": 1000,
+            },
+            {
+                "name": {"value": "OpenAI.GlobalStandard.gpt-5.6-luna"},
+                "currentValue": 1000,
+                "limit": 1000,
+            },
+        ]
+    }
+    names["emailResourcesApi"] = {"value": []}
+    review = {
+        "provisionModels": True,
+        "provisionEmail": True,
+        "modelDeploymentName": "gpt-5-terra",
+        "simpleModelDeploymentName": "gpt-5-luna",
+        "communicationServicesName": "",
+        "emailServiceName": "",
+        "communicationServiceApi": {"value": []},
+        "emailServiceApi": {"value": []},
+        "emailDomainsApi": {"value": []},
+        "emailRolesApi": {"value": []},
+    }
+    if existing:
+        acs_id = f"{GROUP}/providers/Microsoft.Communication/communicationServices/acs-{names['containerAppName']}"
+        email_id = f"{GROUP}/providers/Microsoft.Communication/emailServices/email-{names['containerAppName']}"
+        domain_id = f"{email_id}/domains/AzureManagedDomain"
+        review["communicationServiceApi"] = {
+            "id": acs_id,
+            "properties": {
+                "provisioningState": "Succeeded",
+                "hostName": "test.communication.azure.com",
+                "dataLocation": "Asia Pacific",
+                "linkedDomains": [domain_id],
+            },
+        }
+        review["emailServiceApi"] = {
+            "id": email_id,
+            "properties": {
+                "provisioningState": "Succeeded",
+                "dataLocation": "Asia Pacific",
+            },
+        }
+        review["emailDomainsApi"] = {
+            "value": [
+                {
+                    "id": domain_id,
+                    "name": "AzureManagedDomain",
+                    "properties": {
+                        "domainManagement": "AzureManaged",
+                        "provisioningState": "Succeeded",
+                        "fromSenderDomain": "test.azurecomm.net",
+                    },
+                }
+            ]
+        }
+        review["emailRolesApi"] = {
+            "value": [
+                {
+                    "name": EMAIL_ROLE,
+                    "properties": {
+                        "roleName": f"AzBrief Email Sender {GROUP.casefold()}/acs-{names['containerAppName']}",
+                        "permissions": [{"actions": sorted(kt.EMAIL_SENDER_ACTIONS)}],
+                    },
+                }
+            ]
+        }
+    return {
+        "names": names,
+        "review": review,
+        "basics": {"deploymentStage": "complete"},
+        "resource_group": {"name": "rg-kt-test", "mode": "Existing"},
+        "subscription": {"subscriptionId": SUBSCRIPTION},
+        "network": {"virtualNetwork": {"location": "eastus2"}},
+        "eager_conditionals": True,
+    }
+
+
+@pytest.mark.parametrize("existing", [False, True])
+def test_portal_automatic_services_are_new_or_reused_without_operator_answers(
+    wizard: dict, selection_names: dict, existing: bool
+):
+    arguments = _automatic_service_form(selection_names, existing)
+    controls = _ui_controls(wizard, "review")
+    assert controls["provisionModels"]["defaultValue"] is True
+    assert controls["provisionEmail"]["defaultValue"] is True
+    for rule in controls["automaticServicesGuard"]["constraints"]["validations"]:
+        assert _evaluate_ui_expression(rule["isValid"], **arguments) is True, rule["message"]
+    for flag in (
+        "reuseCoreModel",
+        "reuseSimpleModel",
+        "reuseEmailDomain",
+        "reuseEmailService",
+        "reuseCommunicationService",
+        "reuseEmailSenderRole",
+    ):
+        assert _evaluate_ui_expression(wizard["outputs"][flag], **arguments) is existing
+    assert _evaluate_ui_expression(wizard["outputs"]["useCoreForSimpleModel"], **arguments) is (
+        not existing
+    )
+    assert _evaluate_ui_expression(
+        wizard["outputs"]["existingEmailSenderRoleDefinitionId"], **arguments
+    ) == (EMAIL_ROLE if existing else "")
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "quota-missing",
+        "quota-denied",
+        "quota-unknown",
+        "quota-insufficient",
+        "model-foreign",
+        "model-failed",
+        "email-denied",
+        "email-foreign",
+        "domain-foreign",
+        "email-location",
+        "role-wildcard",
+        "role-extra-block",
+        "empty-alias",
+    ],
+)
+def test_portal_automatic_services_block_unknown_or_incompatible_evidence(
+    wizard: dict, selection_names: dict, change: str
+):
+    arguments = _automatic_service_form(selection_names, existing=not change.startswith("quota"))
+    review = arguments["review"]
+    if change == "quota-missing":
+        selection_names["modelQuotaApi"] = {}
+    elif change == "quota-denied":
+        selection_names["modelQuotaApi"]["error"] = {"code": "Forbidden"}
+    elif change == "quota-unknown":
+        selection_names["modelQuotaApi"]["value"][1]["currentValue"] = None
+    elif change == "quota-insufficient":
+        selection_names["modelQuotaApi"]["value"][0]["currentValue"] = 900
+    elif change == "model-foreign":
+        selection_names["modelDeploymentsApi"]["value"][0]["id"] += "-foreign"
+    elif change == "model-failed":
+        selection_names["modelDeploymentsApi"]["value"][0]["properties"][
+            "provisioningState"
+        ] = "Failed"
+    elif change == "email-denied":
+        review["communicationServiceApi"]["error"] = {"code": "Forbidden"}
+    elif change == "email-foreign":
+        review["communicationServiceApi"]["id"] += "-foreign"
+    elif change == "domain-foreign":
+        review["emailDomainsApi"]["value"][0]["id"] += "-foreign"
+    elif change == "email-location":
+        review["communicationServiceApi"]["properties"]["dataLocation"] = "Canada"
+    elif change == "role-wildcard":
+        review["emailRolesApi"]["value"][0]["properties"]["permissions"][0]["actions"] = ["*"]
+    elif change == "role-extra-block":
+        review["emailRolesApi"]["value"][0]["properties"]["permissions"].append({"actions": ["*"]})
+    else:
+        review["modelDeploymentName"] = ""
+    rules = _ui_controls(wizard, "review")["automaticServicesGuard"]["constraints"]["validations"]
+    assert not all(_evaluate_ui_expression(rule["isValid"], **arguments) for rule in rules)
 
 
 @pytest.mark.parametrize("error", [ValueError("invalid inventory"), RuntimeError("Forbidden")])

@@ -212,6 +212,30 @@
             }
           },
           {
+            "name": "modelDeploymentsApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(equals(basics('deploymentStage'), 'complete'), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/deployments?api-version=2025-06-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.CognitiveServices/accounts/deployments%27'))]"
+            }
+          },
+          {
+            "name": "modelQuotaApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat('/subscriptions/', subscription().subscriptionId, '/providers/Microsoft.CognitiveServices/locations/', coalesce(steps('network').virtualNetwork.location, ''), '/usages?api-version=2025-06-01')]"
+            }
+          },
+          {
+            "name": "emailResourcesApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27')]"
+            }
+          },
+          {
             "name": "foundryProjectInventoryApi",
             "type": "Microsoft.Solutions.ArmApiControl",
             "request": {
@@ -558,7 +582,7 @@
             "visible": "[equals(basics('deploymentStage'), 'complete')]",
             "options": {
               "icon": "Info",
-              "text": "운영 설정을 이번 배포에 함께 연결할 수 있습니다. 모델은 먼저 승인된 배포를 준비하고 아래에 배포 이름을 입력하십시오. 여섯 Prompt Agent 이름은 프로젝트 이름의 앞 47자에 coordinator/resource-graph/azure-mcp/azure-api/report-writer/quality-reviewer 접미사를 붙여 자동 매핑하지만 버전 게시를 대신하지 않습니다. Hosted/Prompt 실제 게시, read-only Azure MCP, 메일 검증·스케줄 활성화는 별도입니다. Ready 수치를 만들기 위해 미배포 기능을 정상 처리하지 않습니다."
+              "text": "2단계는 기본으로 모델 두 배포와 ACS·Email Communication Services·Azure 관리 도메인을 준비하고 기존 모델/서비스를 보존합니다. GlobalStandard 모델은 Korea Central 밖에서 처리될 수 있고 이메일 저장 지역은 Asia Pacific입니다. 여섯 역할 이름 매핑은 실제 Prompt/Hosted 버전 게시를 대신하지 않습니다. MCP·Agent 게시, 승인된 수신자와 실제 발송·스케줄 인수는 별도이며 미설치 항목을 정상 표시하지 않습니다."
             }
           },
           {
@@ -574,10 +598,18 @@
             "visible": "[equals(basics('deploymentStage'), 'complete')]"
           },
           {
+            "name": "provisionModels",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "필수 Foundry 모델을 자동 배포하고 기존 배포는 보존",
+            "defaultValue": true,
+            "toolTip": "2단계에서 gpt-5.6-terra/luna 2026-07-09 GlobalStandard, 각 200 capacity units를 준비합니다. GlobalStandard는 지역 밖에서 처리될 수 있습니다. Luna quota가 부족하면 가용 Terra를 simple 배포에도 사용하며 기존 모델은 바꾸지 않습니다. Agent 버전 게시와 실제 기능/품질 검증은 별도입니다.",
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
             "name": "modelDeploymentName",
             "type": "Microsoft.Common.TextBox",
-            "label": "승인된 기존 core 모델 배포 이름 (선택)",
-            "defaultValue": "",
+            "label": "Core 모델 배포 이름",
+            "defaultValue": "gpt-5-terra",
             "constraints": {
               "required": false,
               "regex": "^(?:[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63})?$",
@@ -588,8 +620,8 @@
           {
             "name": "simpleModelDeploymentName",
             "type": "Microsoft.Common.TextBox",
-            "label": "승인된 기존 simple 모델 배포 이름 (선택)",
-            "defaultValue": "",
+            "label": "Simple 모델 배포 이름",
+            "defaultValue": "gpt-5-luna",
             "toolTip": "별도 모델 tier를 사용하는 경우 입력합니다. 모델 버전·SKU·리전·quota·strict JSON/tool 지원은 배포 전에 검증해야 합니다.",
             "constraints": {
               "required": false,
@@ -647,22 +679,135 @@
             "visible": "[equals(basics('deploymentStage'), 'complete')]"
           },
           {
+            "name": "provisionEmail",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "Communication Services와 Azure 관리 이메일 도메인 자동 배포",
+            "defaultValue": true,
+            "toolTip": "ACS와 Email Communication Services를 만들고 AzureManagedDomain을 연결합니다. 외부 DNS 없이 발신 도메인/주소를 준비하고 UAMI에 키 조회·삭제 없는 최소 발신 역할을 부여합니다. 기존 서비스/도메인은 보존합니다. 수신자를 만들거나 실제 메일을 보내지 않습니다. 데이터 저장 지역은 Asia Pacific이며 사설망 egress 승인이 필요합니다.",
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
             "name": "configureEmail",
             "type": "Microsoft.Common.CheckBox",
-            "label": "검증된 기존 ACS 이메일 설정 연결",
+            "label": "자동 배포 대신 기존 이메일 설정 직접 연결 (고급)",
             "defaultValue": false,
-            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), not(steps('review').provisionEmail))]"
           },
           {
             "name": "communicationServicesName",
             "type": "Microsoft.Common.TextBox",
-            "label": "이 RG의 기존 Azure Communication Services 리소스 이름",
+            "label": "Communication Services 이름 (빈 값은 acs-App이름)",
+            "defaultValue": "",
             "constraints": {
-              "required": true,
-              "regex": "^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}[a-zA-Z0-9]$",
+              "required": false,
+              "regex": "^(?:[a-zA-Z0-9][a-zA-Z0-9-]{0,62}[a-zA-Z0-9])?$",
               "validationMessage": "동일 RG의 기존 ACS 리소스 이름을 입력하십시오."
             },
-            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail)]"
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
+          },
+          {
+            "name": "emailServiceName",
+            "type": "Microsoft.Common.TextBox",
+            "label": "Email Communication Services 이름 (빈 값은 email-App이름)",
+            "defaultValue": "",
+            "constraints": {
+              "required": false,
+              "regex": "^(?:[a-zA-Z0-9][a-zA-Z0-9-]{0,62}[a-zA-Z0-9])?$",
+              "validationMessage": "기존 서비스 이름을 입력하거나 자동 이름을 사용하십시오."
+            },
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionEmail)]"
+          },
+          {
+            "name": "communicationServiceApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(not(empty(filter(coalesce(steps('names').emailResourcesApi.value, parse('[]')), (resource) => and(equals(toLower(resource.type), 'microsoft.communication/communicationservices'), equals(toLower(resource.name), toLower(if(empty(steps('review').communicationServicesName), concat('acs-', steps('names').containerAppName), steps('review').communicationServicesName))))))), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Communication/communicationServices/', if(empty(steps('review').communicationServicesName), concat('acs-', steps('names').containerAppName), steps('review').communicationServicesName), '?api-version=2023-04-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.Communication/communicationServices%27'))]"
+            }
+          },
+          {
+            "name": "emailServiceApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(not(empty(filter(coalesce(steps('names').emailResourcesApi.value, parse('[]')), (resource) => and(equals(toLower(resource.type), 'microsoft.communication/emailservices'), equals(toLower(resource.name), toLower(if(empty(steps('review').emailServiceName), concat('email-', steps('names').containerAppName), steps('review').emailServiceName))))))), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Communication/emailServices/', if(empty(steps('review').emailServiceName), concat('email-', steps('names').containerAppName), steps('review').emailServiceName), '?api-version=2023-04-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.Communication/emailServices%27'))]"
+            }
+          },
+          {
+            "name": "emailDomainsApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(not(empty(steps('review').emailServiceApi.id)), concat(coalesce(steps('review').emailServiceApi.id, ''), '/domains?api-version=2023-04-01'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.Communication/emailServices/domains%27'))]"
+            }
+          },
+          {
+            "name": "emailRolesApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(equals(resourceGroup().mode, 'Existing'), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Authorization/roleDefinitions?api-version=2022-04-01&$filter=type%20eq%20%27CustomRole%27'), concat('/subscriptions/', subscription().subscriptionId, '/resources?api-version=2021-04-01&$filter=resourceGroup%20eq%20%27', resourceGroup().name, '%27%20and%20resourceType%20eq%20%27Microsoft.Authorization/roleDefinitions%27'))]"
+            }
+          },
+          {
+            "name": "automaticServicesGuard",
+            "type": "Microsoft.Common.TextBox",
+            "label": "자동 구성 검사 (값 변경 불필요)",
+            "defaultValue": "검사",
+            "constraints": {
+              "required": true,
+              "validations": [
+                {
+                  "isValid": "[if(steps('review').provisionModels, and(not(empty(steps('review').modelDeploymentName)), not(empty(steps('review').simpleModelDeploymentName)), not(equals(toLower(coalesce(steps('review').modelDeploymentName, '')), toLower(coalesce(steps('review').simpleModelDeploymentName, ''))))), true)]",
+                  "message": "자동 모델 구성에는 서로 다른 두 배포 이름이 필요합니다."
+                },
+                {
+                  "isValid": "[if(steps('review').provisionModels, and(not(equals(coalesce(steps('names').modelDeploymentsApi.value, false), false)), empty(steps('names').modelDeploymentsApi.error), empty(steps('names').modelDeploymentsApi.nextLink), or(and(not(empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => equals(last(split(deployment.name, '/')), steps('review').modelDeploymentName)))), not(empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => equals(last(split(deployment.name, '/')), steps('review').simpleModelDeploymentName))))), and(not(equals(coalesce(steps('names').modelQuotaApi.value, false), false)), empty(steps('names').modelQuotaApi.error), empty(steps('names').modelQuotaApi.nextLink)))), true)]",
+                  "message": "모델/Quota 조회를 완료해야 자동 배포할 수 있습니다. 오류·미응답·추가 페이지를 신규 생성으로 처리하지 않습니다."
+                },
+                {
+                  "isValid": "[if(steps('review').provisionModels, empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => and(or(equals(last(split(deployment.name, '/')), steps('review').modelDeploymentName), equals(last(split(deployment.name, '/')), steps('review').simpleModelDeploymentName)), not(equals(toLower(coalesce(deployment.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.CognitiveServices/accounts/', steps('names').foundryAccountName, '/deployments/', last(split(deployment.name, '/'))))))))), true)]",
+                  "message": "기존 모델의 계정·구독·RG가 현재 입력과 일치해야 합니다. 이전 입력의 응답을 다른 계정에 재사용하지 않습니다."
+                },
+                {
+                  "isValid": "[if(steps('review').provisionModels, empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => and(or(equals(last(split(deployment.name, '/')), steps('review').modelDeploymentName), equals(last(split(deployment.name, '/')), steps('review').simpleModelDeploymentName)), not(and(equals(deployment.properties.provisioningState, 'Succeeded'), equals(deployment.properties.model.format, 'OpenAI'), startsWith(coalesce(deployment.properties.model.name, ''), 'gpt-5')))))), true)]",
+                  "message": "동일 이름의 기존 모델은 준비된 GPT-5 배포일 때만 보존합니다. 잘못되거나 미완료인 모델을 덮어쓰지 않습니다."
+                },
+                {
+                  "isValid": "[if(and(steps('review').provisionModels, empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => equals(last(split(deployment.name, '/')), steps('review').simpleModelDeploymentName)))), empty(filter(coalesce(steps('names').modelQuotaApi.value, parse('[]')), (quota) => and(equals(quota.name.value, 'OpenAI.GlobalStandard.gpt-5.6-luna'), or(equals(coalesce(quota.currentValue, -1), -1), equals(coalesce(quota.limit, -1), -1))))), true)]",
+                  "message": "Luna quota 값이 누락되어 대안을 결정할 수 없습니다. 알 수 없는 quota를 0이나 미사용으로 처리하지 않습니다."
+                },
+                {
+                  "isValid": "[if(steps('review').provisionModels, and(or(not(empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => equals(last(split(deployment.name, '/')), steps('review').modelDeploymentName)))), not(empty(filter(coalesce(steps('names').modelQuotaApi.value, parse('[]')), (quota) => and(equals(quota.name.value, 'OpenAI.GlobalStandard.gpt-5.6-terra'), not(equals(coalesce(quota.currentValue, -1), -1)), greaterOrEquals(sub(coalesce(quota.limit, 0), coalesce(quota.currentValue, 0)), 200)))))), or(not(empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => equals(last(split(deployment.name, '/')), steps('review').simpleModelDeploymentName)))), not(empty(filter(coalesce(steps('names').modelQuotaApi.value, parse('[]')), (quota) => and(equals(quota.name.value, 'OpenAI.GlobalStandard.gpt-5.6-luna'), not(equals(coalesce(quota.currentValue, -1), -1)), greaterOrEquals(sub(coalesce(quota.limit, 0), coalesce(quota.currentValue, 0)), 200))))), and(equals(length(filter(coalesce(steps('names').modelQuotaApi.value, parse('[]')), (quota) => equals(quota.name.value, 'OpenAI.GlobalStandard.gpt-5.6-luna'))), 1), not(empty(filter(coalesce(steps('names').modelQuotaApi.value, parse('[]')), (quota) => and(equals(quota.name.value, 'OpenAI.GlobalStandard.gpt-5.6-terra'), not(equals(coalesce(quota.currentValue, -1), -1)), greaterOrEquals(sub(coalesce(quota.limit, 0), coalesce(quota.currentValue, 0)), if(empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => equals(last(split(deployment.name, '/')), steps('review').modelDeploymentName))), 400, 200))))))))), true)]",
+                  "message": "신규 모델 quota가 부족합니다. Luna가 부족할 때만 충분한 Terra quota를 사용할 수 있으며 다른 배포 할당량을 회수하지 않습니다."
+                },
+                {
+                  "isValid": "[if(steps('review').provisionEmail, and(not(equals(coalesce(steps('names').emailResourcesApi.value, false), false)), empty(steps('names').emailResourcesApi.error), empty(steps('names').emailResourcesApi.nextLink), empty(steps('review').communicationServiceApi.error), empty(steps('review').communicationServiceApi.nextLink), empty(steps('review').emailServiceApi.error), empty(steps('review').emailServiceApi.nextLink), not(equals(coalesce(steps('review').emailDomainsApi.value, false), false)), empty(steps('review').emailDomainsApi.error), empty(steps('review').emailDomainsApi.nextLink), not(equals(coalesce(steps('review').emailRolesApi.value, false), false)), empty(steps('review').emailRolesApi.error), empty(steps('review').emailRolesApi.nextLink), or(not(empty(steps('review').communicationServiceApi.id)), not(equals(coalesce(steps('review').communicationServiceApi.value, false), false))), or(not(empty(steps('review').emailServiceApi.id)), not(equals(coalesce(steps('review').emailServiceApi.value, false), false)))), true)]",
+                  "message": "이메일 서비스·도메인·역할 조회가 완료되지 않았습니다. 읽기 실패 시 기존 서비스를 재생성하지 않습니다."
+                },
+                {
+                  "isValid": "[if(steps('review').provisionEmail, lessOrEquals(length(filter(coalesce(steps('review').emailRolesApi.value, parse('[]')), (role) => equals(role.properties.roleName, concat('AzBrief Email Sender ', toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name)), '/', toLower(if(empty(steps('review').communicationServicesName), concat('acs-', steps('names').containerAppName), steps('review').communicationServicesName)))))), 1), true)]",
+                  "message": "자동 이메일 발신 역할이 중복되어 있습니다. 임의 역할을 선택하거나 삭제하지 않습니다."
+                },
+                {
+                  "isValid": "[if(steps('review').provisionEmail, empty(filter(coalesce(steps('review').emailRolesApi.value, parse('[]')), (role) => and(equals(role.properties.roleName, concat('AzBrief Email Sender ', toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name)), '/', toLower(if(empty(steps('review').communicationServicesName), concat('acs-', steps('names').containerAppName), steps('review').communicationServicesName)))), not(equals(length(coalesce(role.properties.permissions, parse('[]'))), 1))))), true)]",
+                  "message": "기존 자동 발신 역할의 permission block은 하나여야 하며 다른 권한을 추가로 부여하지 않습니다."
+                },
+                {
+                  "isValid": "[if(steps('review').provisionEmail, empty(filter(coalesce(steps('review').emailRolesApi.value, parse('[]')), (role) => and(equals(role.properties.roleName, concat('AzBrief Email Sender ', toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name)), '/', toLower(if(empty(steps('review').communicationServicesName), concat('acs-', steps('names').containerAppName), steps('review').communicationServicesName)))), not(equals(length(filter(coalesce(role.properties.permissions, parse('[]')), (permission) => and(equals(length(coalesce(permission.actions, parse('[]'))), 3), contains(map(coalesce(permission.actions, parse('[]')), (action) => toLower(action)), 'microsoft.communication/communicationservices/read'), contains(map(coalesce(permission.actions, parse('[]')), (action) => toLower(action)), 'microsoft.communication/communicationservices/write'), contains(map(coalesce(permission.actions, parse('[]')), (action) => toLower(action)), 'microsoft.communication/emailservices/write'), empty(permission.notActions), empty(permission.dataActions), empty(permission.notDataActions)))), 1))))), true)]",
+                  "message": "기존 자동 발신 역할에 예상하지 않은 권한이 있습니다. 삭제·키 조회·wildcard 권한을 부여하거나 기존 역할을 덮어쓰지 않습니다."
+                },
+                {
+                  "isValid": "[if(steps('review').provisionEmail, and(or(empty(steps('review').communicationServiceApi.id), equals(toLower(coalesce(steps('review').communicationServiceApi.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Communication/communicationServices/', if(empty(steps('review').communicationServicesName), concat('acs-', steps('names').containerAppName), steps('review').communicationServicesName))))), or(empty(steps('review').emailServiceApi.id), equals(toLower(coalesce(steps('review').emailServiceApi.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Communication/emailServices/', if(empty(steps('review').emailServiceName), concat('email-', steps('names').containerAppName), steps('review').emailServiceName))))), empty(filter(coalesce(steps('review').emailDomainsApi.value, parse('[]')), (domain) => and(equals(last(split(domain.name, '/')), 'AzureManagedDomain'), not(equals(toLower(coalesce(domain.id, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Communication/emailServices/', if(empty(steps('review').emailServiceName), concat('email-', steps('names').containerAppName), steps('review').emailServiceName), '/domains/AzureManagedDomain'))))))), true)]",
+                  "message": "기존 이메일 서비스/도메인의 구독·RG·이름이 입력과 다릅니다. 다른 범위의 응답으로 재사용하지 않습니다."
+                },
+                {
+                  "isValid": "[if(steps('review').provisionEmail, and(or(empty(steps('review').communicationServiceApi.id), and(equals(steps('review').communicationServiceApi.properties.provisioningState, 'Succeeded'), not(empty(steps('review').communicationServiceApi.properties.hostName)))), or(empty(steps('review').emailServiceApi.id), equals(steps('review').emailServiceApi.properties.provisioningState, 'Succeeded')), or(empty(steps('review').communicationServiceApi.id), empty(steps('review').emailServiceApi.id), equals(steps('review').communicationServiceApi.properties.dataLocation, steps('review').emailServiceApi.properties.dataLocation)), empty(filter(coalesce(steps('review').emailDomainsApi.value, parse('[]')), (domain) => and(equals(last(split(domain.name, '/')), 'AzureManagedDomain'), not(and(equals(domain.properties.provisioningState, 'Succeeded'), equals(domain.properties.domainManagement, 'AzureManaged'), not(empty(domain.properties.fromSenderDomain)))))))), true)]",
+                  "message": "기존 ACS/Email/관리 도메인의 준비 상태나 저장 지역이 일치하지 않습니다. 기존 리소스를 삭제하거나 지역을 바꾸지 않습니다."
+                }
+              ]
+            },
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
           },
           {
             "name": "emailSenderRoleDefinitionId",
@@ -674,7 +819,7 @@
               "regex": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
               "validationMessage": "승인된 기존 custom role의 GUID를 입력하십시오."
             },
-            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail)]"
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), not(steps('review').provisionEmail), steps('review').configureEmail)]"
           },
           {
             "name": "communicationServicesEndpoint",
@@ -685,7 +830,7 @@
               "regex": "^https://[a-zA-Z0-9-]+\\.communication\\.azure\\.com/?$",
               "validationMessage": "기존 ACS HTTPS origin을 입력하십시오."
             },
-            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail)]"
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), not(steps('review').provisionEmail), steps('review').configureEmail)]"
           },
           {
             "name": "emailSenderAddress",
@@ -696,18 +841,18 @@
               "regex": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
               "validationMessage": "도메인 검증이 완료된 발신 주소를 입력하십시오."
             },
-            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail)]"
+            "visible": "[and(equals(basics('deploymentStage'), 'complete'), not(steps('review').provisionEmail), steps('review').configureEmail)]"
           },
           {
             "name": "emailRecipientAddress",
             "type": "Microsoft.Common.TextBox",
             "label": "승인된 수신 주소",
             "constraints": {
-              "required": true,
-              "regex": "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$",
+              "required": false,
+              "regex": "^(?:[^\\s@]+@[^\\s@]+\\.[^\\s@]+)?$",
               "validationMessage": "승인된 수신 이메일 주소를 입력하십시오."
             },
-            "visible": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail)]"
+            "visible": "[equals(basics('deploymentStage'), 'complete')]"
           },
           {
             "name": "configureTelemetry",
@@ -911,15 +1056,30 @@
       "reuseExistingTelemetryConnection": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').configureTelemetry, not(empty(filter(coalesce(steps('names').foundryConnectionInventoryApi.value, parse('[]')), (connection) => and(equals(connection.name, 'azbrief-app-insights'), equals(connection.properties.authType, 'ProjectManagedIdentity'), equals(connection.properties.category, 'AppInsights'), equals(toLower(coalesce(connection.properties.target, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Insights/components/', steps('review').applicationInsightsName))), equals(toLower(coalesce(connection.properties.metadata.ResourceId, '')), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Insights/components/', steps('review').applicationInsightsName))))))))]",
       "assignControlPlaneRoles": "[equals(basics('deploymentStage'), 'complete')]",
       "modelDeploymentName": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').modelDeploymentName, '')]",
+      "provisionModels": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionModels)]",
+      "provisionEmail": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionEmail)]",
+      "reuseCoreModel": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionModels, not(empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => equals(last(split(deployment.name, '/')), steps('review').modelDeploymentName)))))]",
+      "reuseSimpleModel": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionModels, not(empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => equals(last(split(deployment.name, '/')), steps('review').simpleModelDeploymentName)))))]",
+      "useCoreForSimpleModel": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionModels, empty(filter(coalesce(steps('names').modelDeploymentsApi.value, parse('[]')), (deployment) => equals(last(split(deployment.name, '/')), steps('review').simpleModelDeploymentName))), empty(filter(coalesce(steps('names').modelQuotaApi.value, parse('[]')), (quota) => and(equals(quota.name.value, 'OpenAI.GlobalStandard.gpt-5.6-luna'), greaterOrEquals(sub(coalesce(quota.limit, 0), coalesce(quota.currentValue, 0)), 200)))))]",
+      "reuseEmailService": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionEmail, not(empty(steps('review').emailServiceApi.id)))]",
+      "reuseEmailDomain": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionEmail, not(empty(filter(coalesce(steps('review').emailDomainsApi.value, parse('[]')), (domain) => equals(last(split(domain.name, '/')), 'AzureManagedDomain')))))]",
+      "reuseCommunicationService": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionEmail, contains(map(coalesce(steps('review').communicationServiceApi.properties.linkedDomains, parse('[]')), (id) => toLower(id)), toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '/providers/Microsoft.Communication/emailServices/', if(empty(steps('review').emailServiceName), concat('email-', steps('names').containerAppName), steps('review').emailServiceName), '/domains/AzureManagedDomain'))))]",
+      "emailDataLocation": "[coalesce(steps('review').emailServiceApi.properties.dataLocation, steps('review').communicationServiceApi.properties.dataLocation, 'Asia Pacific')]",
+      "existingCommunicationTags": "[coalesce(steps('review').communicationServiceApi.tags, parse('{}'))]",
+      "existingCommunicationIdentity": "[coalesce(steps('review').communicationServiceApi.identity, parse('{\"type\":\"None\"}'))]",
+      "existingLinkedEmailDomains": "[coalesce(steps('review').communicationServiceApi.properties.linkedDomains, parse('[]'))]",
+      "reuseEmailSenderRole": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionEmail, not(empty(filter(coalesce(steps('review').emailRolesApi.value, parse('[]')), (role) => equals(role.properties.roleName, concat('AzBrief Email Sender ', toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name)), '/', toLower(if(empty(steps('review').communicationServicesName), concat('acs-', steps('names').containerAppName), steps('review').communicationServicesName))))))))]",
+      "existingEmailSenderRoleDefinitionId": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').provisionEmail), first(if(empty(filter(coalesce(steps('review').emailRolesApi.value, parse('[]')), (role) => equals(role.properties.roleName, concat('AzBrief Email Sender ', toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name)), '/', toLower(if(empty(steps('review').communicationServicesName), concat('acs-', steps('names').containerAppName), steps('review').communicationServicesName)))))), parse('[{\"name\":\"\"}]'), filter(coalesce(steps('review').emailRolesApi.value, parse('[]')), (role) => equals(role.properties.roleName, concat('AzBrief Email Sender ', toLower(concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name)), '/', toLower(if(empty(steps('review').communicationServicesName), concat('acs-', steps('names').containerAppName), steps('review').communicationServicesName))))))).name, '')]",
       "simpleModelDeploymentName": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').simpleModelDeploymentName, '')]",
       "azureMcpServerUrl": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').azureMcpServerUrl, '')]",
       "azureMcpProjectConnectionName": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').azureMcpProjectConnectionName, '')]",
       "deploySchedulerJob": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').deploySchedulerJob)]",
-      "communicationServicesEndpoint": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail), steps('review').communicationServicesEndpoint, '')]",
-      "communicationServicesName": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail), steps('review').communicationServicesName, '')]",
-      "emailSenderRoleDefinitionId": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail), steps('review').emailSenderRoleDefinitionId, '')]",
-      "emailSenderAddress": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail), steps('review').emailSenderAddress, '')]",
-      "emailRecipientAddress": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureEmail), steps('review').emailRecipientAddress, '')]",
+      "communicationServicesEndpoint": "[if(and(equals(basics('deploymentStage'), 'complete'), not(steps('review').provisionEmail), steps('review').configureEmail), steps('review').communicationServicesEndpoint, '')]",
+      "communicationServicesName": "[if(empty(steps('review').communicationServicesName), concat('acs-', steps('names').containerAppName), steps('review').communicationServicesName)]",
+      "emailServiceName": "[if(empty(steps('review').emailServiceName), concat('email-', steps('names').containerAppName), steps('review').emailServiceName)]",
+      "emailSenderRoleDefinitionId": "[if(and(equals(basics('deploymentStage'), 'complete'), not(steps('review').provisionEmail), steps('review').configureEmail), steps('review').emailSenderRoleDefinitionId, '')]",
+      "emailSenderAddress": "[if(and(equals(basics('deploymentStage'), 'complete'), not(steps('review').provisionEmail), steps('review').configureEmail), steps('review').emailSenderAddress, '')]",
+      "emailRecipientAddress": "[if(equals(basics('deploymentStage'), 'complete'), steps('review').emailRecipientAddress, '')]",
       "applicationInsightsName": "[if(and(equals(basics('deploymentStage'), 'complete'), steps('review').configureTelemetry), steps('review').applicationInsightsName, '')]",
       "enablePrivateAnonymousWebUi": "[and(equals(basics('deploymentStage'), 'complete'), steps('review').privateAnonymousWebUi)]",
       "adminEntraClientId": "[if(and(equals(basics('deploymentStage'), 'complete'), not(steps('review').privateAnonymousWebUi), steps('review').configureWebUi), steps('review').adminClientId, '')]",
