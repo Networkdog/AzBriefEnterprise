@@ -156,6 +156,15 @@ ARM·UI 파일을 함께 게시한 뒤 실제 Portal 동작을 확인하십시�
 `azbrief.v2.*` 태그로 전달합니다. 실행 도구는 기존 API 키·인증·설정·승인된 스케줄을 보존하며
 인프라를 반복하지 않습니다. Hosted 주체 권한만 최초 코드 게시 후 늦게 완성하는 예외입니다.
 기존 Portal 템플릿은 유지하며 로컬·모의 검증을 고객 Azure 배포나 인수 성공으로 표현하지 않습니다.
+자동 MCP 인증은 Microsoft Graph 리소스도 생성합니다. ARM Owner나 디렉터리 역할만으로
+배포 클라이언트의 Graph 위임 권한까지 보장되지는 않습니다. Portal에서
+`Authorization_RequestDenied`가 발생하면 권한이 확인된 Azure CLI/PowerShell 경로를 사용하고,
+이를 감추기 위한 추가 역할 부여나 Entra 인증 우회는 하지 않습니다. MCP 연결은 문서의
+`RemoteTool` / `ProjectManagedIdentity` ARM 계약을 사용합니다.
+내부 Environment의 defaultDomain 전용 private DNS zone과 private VIP를 가리키는 wildcard·apex
+A 레코드도 승인된 VNet에 연결합니다. 이는 ACA Private Endpoint DNS와 다릅니다.
+업데이트는 구조화된 `AuthConfigNotFound`만 선택적 웹 인증 설정 부재로 인정합니다.
+거부·잘못된 응답·다른 리소스 부재 오류는 여전히 키 재사용과 배포를 차단합니다.
 
 </div>
 

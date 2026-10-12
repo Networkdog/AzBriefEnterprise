@@ -57,6 +57,13 @@ Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all three art
   verify directory approval before deployment. No authentication bypass or secret is created.
   MCP uses the same Environment/workspace and a dedicated Reader-only UAMI. Its URL comes
   from the actual Environment domain and customer-named MCP App, not a fabricated address.
+- Graph Bicep delegated deployments require both the signed-in user's directory privileges
+  and the deployment client's OAuth scopes. ARM Owner is not a Graph grant; the same user
+  can succeed through Azure CLI and fail through the Azure Portal client. Use the supported,
+  approved Azure CLI/PowerShell path for `Authorization_RequestDenied`, never broader roles,
+  secrets or an incoming-auth bypass. Validate/recover only the original failed module and
+  its exact uniqueName; a child success does not resume or prove the parent's readiness.
+  See [Graph Bicep permissions](https://learn.microsoft.com/graph/templates/bicep/concept-permissions-and-privileges).
 - Actual model catalog, Responses/Agents capabilities and quota. The completion
   preflight reuses the KT checks; aliases alone are not availability proof.
 - An approved immutable control-plane image digest and registry reachability.
@@ -169,6 +176,12 @@ The ACA Environment remains internal with PNA Disabled. ACA PE automation retain
 KT default `false`: the other four PEs and DNS preparation remain. No endpoint is
 deleted by Incremental omission. Manual ACA DNS/HTTPS and all real PE states still
 require acceptance. This is not a migration path for an old KT installation.
+Foundation creates the Environment's exact `defaultDomain` private zone with `*` and `@`
+A records to its actual `staticIp`, and a non-registering link to the approved VNet.
+This internal-ingress DNS is separate from `privatelink.<region>.azurecontainerapps.io`
+for an optional ACA PE. Verify actual MCP/App HTTPS resolution; a successful replica or
+cluster exec status is not DNS/HTTP proof. Existing installs missing this zone need a
+separately validated exact DNS-only recovery, never an account/foundation replay or PNA bypass.
 
 ## Application Install And Updates
 
@@ -222,6 +235,10 @@ rotate a key after a read failure, disable authentication, turn a Schedule Job i
 Manual or activate a new schedule. A partial App/Job install requires explicit recovery.
 Infrastructure-bound identity/endpoint/storage routes cannot be redirected in a patch.
 Temporary parameter files are removed and their values are never logged.
+An installed App without web-auth settings can return `Not Found(<JSON>)` with the exact
+`AuthConfigNotFound` code instead of an empty list. The CLI accepts only that structured
+absence. It still rejects denied, malformed and generic NotFound responses, and requires
+complete Entra configuration before enabling either protected UI. Existing auth is preserved.
 
 The Portal application form reads the same RG contract and complete App/Job inventory.
 It derives initial install versus key reuse; failed, pending, paged, foreign or partial
@@ -230,6 +247,10 @@ auth by omission and keeps the accepted trigger/cron. Secrets never enter UI con
 The MCP container uses the pinned official image, incoming Entra authentication and only
 the group/resourcehealth/advisor namespaces with `--read-only`. Initial Admin/Archive
 remain disabled until the separate approved Entra web configuration is supplied.
+The infrastructure MCP connection uses `RemoteTool`, `ProjectManagedIdentity`, its explicit
+`api://<client-id>` audience and API `2025-10-01-preview`, following the official remote-tool
+ARM example. Do not use the invalid `RemoteToolServer` category or weaken authentication to
+fix a deserialization error. Existing BYO/model/role successes are preserved on completion retry.
 
 Serialize deployments to one RG/App. This tool has no distributed deployment lock,
 image provenance/vulnerability certification, automatic live rollback or smoke acceptance.

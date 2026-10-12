@@ -69,6 +69,18 @@ Keep Bicep/ARM sources in sync and distinguish offline tests from customer Porta
 Common namingPrefix/namingSuffix inputs stay in the ARM contract and saved options.
 Hide validation rows without dropping the internal portalValidationPassed=true constraint;
 compile the current sources and verify every UI output matches an ARM parameter.
+Graph Bicep authorization is the intersection of client delegated scopes and user directory
+privileges; ARM Owner or Global Administrator membership alone does not prove Portal success.
+An approved exact-module CLI/PowerShell recovery keeps uniqueName and authentication, not a
+new broad grant. A child success is not parent/tag readiness. MCP connection requests use
+RemoteTool/ProjectManagedIdentity, explicit audience and 2025-10-01-preview, not RemoteToolServer.
+Validate actual request acceptance and preserve successful model/project/BYO/role state on retry.
+V2 foundation also owns the internal Environment's defaultDomain private DNS with private
+staticIp wildcard/apex A records and a non-registering approved VNet link; ACA PE DNS alone
+does not resolve internal ingress. Existing missing zones need exact DNS-only recovery, not
+foundation/PNA/auth replay. A cluster-success exec without a real HTTP success marker is failure.
+For v2 updates, only parsed AuthConfigNotFound/observed Not Found(JSON) is optional-auth absence;
+403, malformed/forged wrappers and other NotFound remain blocking. UI enablement still needs Entra.
 
 ## Non-Negotiable KT Contract
 

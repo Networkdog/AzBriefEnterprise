@@ -94,6 +94,17 @@ preflight/key/settings preservation remain required, never inferred from offline
 Preserve common namingPrefix/namingSuffix parameters and saved options. Removing visible
 validation rows must not remove portalValidationPassed: both ARM templates allow only true.
 Recompile and verify UI-output/ARM-parameter parity before live deployment.
+Graph Bicep needs the caller's directory privileges and deployment-client delegated scopes.
+Portal Authorization_RequestDenied can differ from same-user CLI; use the supported approved
+CLI/PowerShell path, never broader roles/auth bypasses. Recover only the exact failed Graph
+module/uniqueName and distinguish child success from parent readiness. Keep the MCP connection
+on documented RemoteTool/ProjectManagedIdentity, explicit audience and 2025-10-01-preview;
+RemoteToolServer is invalid. Preserve completed models/BYO/roles on retry.
+Internal ingress needs its own actual Environment defaultDomain DNS zone, private staticIp
+wildcard/apex A records and non-registering approved VNet link, separate from ACA PE DNS.
+Preserve PNA/internal/auth and old DNS; existing installs use validated DNS-only recovery.
+Accept only structured AuthConfigNotFound (including the observed Not Found(JSON) CLI wrapper)
+for absent optional web auth. Denied/bad/other missing reads still block; UI activation requires Entra.
 
 ---
 

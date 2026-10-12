@@ -286,11 +286,12 @@ module mcpProjectPermission '../azure-mcp-server/infra/modules/foundry-role-assi
   dependsOn: [capabilityHost]
 }
 
-resource mcpConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = if (complete && manageAzureMcp) {
+resource mcpConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-10-01-preview' = if (complete && manageAzureMcp) {
   #disable-next-line use-parent-property
   name: '${foundryAccountName}/${projectName}/${azureMcpProjectConnectionName}'
   properties: {
-    category: 'RemoteToolServer'
+    #disable-next-line BCP036
+    category: 'RemoteTool'
     #disable-next-line BCP036
     authType: 'ProjectManagedIdentity'
     target: 'https://${azureMcpContainerAppName}.${containerEnvironment.properties.defaultDomain}'

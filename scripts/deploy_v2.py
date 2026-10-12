@@ -487,7 +487,23 @@ def prepare_application(
             parameters["existingSecrets"][label] = _read_secrets(cli, resource["id"])
             parameters["tags" if label == "app" else "jobTags"] = resource["tags"]
         parameters["appConfiguration"].get("ingress", {}).pop("fqdn", None)
-        auth = cli.collection(f"{app_id}/authConfigs", CONTAINER_ENV_API)
+        try:
+            auth = cli.collection(f"{app_id}/authConfigs", CONTAINER_ENV_API)
+        except RuntimeError as error:
+            try:
+                payload = str(error).removeprefix("Azure CLI rest failed: ERROR: ")
+                if payload.startswith("Not Found(") and payload.endswith(")"):
+                    payload = payload[len("Not Found(") : -1]
+                failure = json.loads(payload)
+            except (TypeError, ValueError):
+                raise error
+            if (
+                not isinstance(failure, dict)
+                or not isinstance(failure.get("error"), dict)
+                or failure["error"].get("code") != "AuthConfigNotFound"
+            ):
+                raise
+            auth = []
         if len(auth) > 1 or (auth and auth[0]["name"].split("/")[-1] != "current"):
             raise ValueError(
                 "Unexpected authentication configuration; existing authentication is preserved"

@@ -128,6 +128,19 @@ def test_foundation_preserves_private_network_and_storage_contracts() -> None:
     assert storage["minimumTlsVersion"]["value"] == "TLS1_2"
 
 
+def test_foundation_adds_only_environment_private_ingress_dns() -> None:
+    foundation = module(template("infrastructure"), "v2-foundation")["properties"]["template"]
+    dns = module(foundation, "v2-internal-ingress-dns")["properties"]["parameters"]
+    assert "defaultDomain" in dns["name"]["value"]
+    records = json.dumps(dns["a"]["value"])
+    assert "staticIp" in records
+    assert {record["name"] for record in dns["a"]["value"]} == {"*", "@"}
+    links = json.dumps(dns["virtualNetworkLinks"]["value"])
+    assert "vnetId" in links
+    assert "false" in links.lower()
+    assert dns["enableTelemetry"]["value"] is False
+
+
 def test_compiled_foundry_and_monitoring_roles_keep_exact_resource_scopes() -> None:
     for document in (template("infrastructure"), template("runtime-roles")):
         for resource in resources(document):
@@ -191,6 +204,18 @@ def test_managed_mcp_is_split_between_identity_and_application_without_auth_bypa
     assert module(infrastructure, "v2-mcp-identity")
     assert module(infrastructure, "v2-mcp-authentication")
     assert module(infrastructure, "v2-mcp-project-permission")
+    connection = next(
+        resource
+        for resource in resources(infrastructure)
+        if resource.get("properties", {}).get("category") == "RemoteTool"
+    )
+    assert connection["apiVersion"] == "2025-10-01-preview"
+    assert connection["properties"]["authType"] == "ProjectManagedIdentity"
+    audience = connection["properties"]["audience"]
+    assert audience.startswith("[format('api://{0}', ")
+    assert "savedOptions').azureMcpClientId" in audience
+    assert "v2-mcp-authentication" in audience
+    assert "azureMcpContainerAppName" in connection["properties"]["target"]
     app = module(template("application"), "v2-managed-mcp-application")
     assert (
         app["properties"]["parameters"]["installManagedMcp"]["value"]
@@ -492,6 +517,78 @@ def test_initial_application_uses_generated_key_and_tag_names() -> None:
     assert "apiKey" not in parameters
     assert parameters["infrastructureTags"] == cli.tags
     assert parameters["existingSecrets"] == {"app": [], "job": []}
+    assert not cli.operations
+
+
+@pytest.mark.parametrize("wrapped", [False, True])
+def test_application_update_accepts_only_explicit_missing_auth_config(
+    monkeypatch: pytest.MonkeyPatch,
+    wrapped: bool,
+) -> None:
+    cli = FakeV2Azure(installed=True)
+    original_collection = cli.collection
+
+    def collection(resource_id: str, api_version: str) -> list[dict[str, Any]]:
+        if resource_id == f"{cli.app_id}/authConfigs":
+            payload = '{"error":{"code":"AuthConfigNotFound"}}'
+            if wrapped:
+                payload = f"Not Found({payload})"
+            raise RuntimeError("Azure CLI rest failed: ERROR: " + payload)
+        return original_collection(resource_id, api_version)
+
+    monkeypatch.setattr(cli, "collection", collection)
+    parameters = deploy_v2.prepare_application(cli, IMAGE)
+    assert parameters["reuseExistingApiKey"] is True
+    assert parameters["webAuthConfiguration"] == {}
+    assert parameters["existingSecrets"]["app"] == parameters["existingSecrets"]["job"]
+    with pytest.raises(ValueError, match="complete Entra authentication"):
+        deploy_v2.prepare_application(
+            cli, IMAGE, {"appEnvironment": [{"name": "ADMIN_UI_ENABLED", "value": "true"}]}
+        )
+    assert not cli.operations
+
+
+@pytest.mark.parametrize("code", ["AuthorizationFailed", "Forbidden", "ResourceNotFound"])
+def test_application_auth_config_read_errors_still_block_updates(
+    monkeypatch: pytest.MonkeyPatch, code: str
+) -> None:
+    cli = FakeV2Azure(installed=True)
+    original_collection = cli.collection
+
+    def collection(resource_id: str, api_version: str) -> list[dict[str, Any]]:
+        if resource_id == f"{cli.app_id}/authConfigs":
+            failure = {"error": {"code": code, "message": "AuthConfigNotFound in untrusted text"}}
+            raise RuntimeError("Azure CLI rest failed: ERROR: " + json.dumps(failure))
+        return original_collection(resource_id, api_version)
+
+    monkeypatch.setattr(cli, "collection", collection)
+    with pytest.raises(RuntimeError):
+        deploy_v2.prepare_application(cli, IMAGE)
+    assert not cli.operations
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        'Forbidden({"error":{"code":"AuthConfigNotFound"}})',
+        "Not Found(invalid JSON)",
+        "AuthConfigNotFound without structured evidence",
+    ],
+)
+def test_application_auth_config_untrusted_wrappers_still_block_updates(
+    monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    cli = FakeV2Azure(installed=True)
+    original_collection = cli.collection
+
+    def collection(resource_id: str, api_version: str) -> list[dict[str, Any]]:
+        if resource_id == f"{cli.app_id}/authConfigs":
+            raise RuntimeError("Azure CLI rest failed: ERROR: " + failure)
+        return original_collection(resource_id, api_version)
+
+    monkeypatch.setattr(cli, "collection", collection)
+    with pytest.raises(RuntimeError):
+        deploy_v2.prepare_application(cli, IMAGE)
     assert not cli.operations
 
 

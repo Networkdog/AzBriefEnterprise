@@ -189,6 +189,22 @@ module containerEnvironment 'br/public:avm/res/app/managed-environment:0.16.0' =
   }
 }
 
+module internalIngressDns 'br/public:avm/res/network/private-dns-zone:0.8.1' = {
+  name: 'v2-internal-ingress-dns'
+  params: {
+    name: containerEnvironment.outputs.defaultDomain
+    a: [
+      { name: '*', ttl: 300, aRecords: [{ ipv4Address: containerEnvironment.outputs.staticIp }] }
+      { name: '@', ttl: 300, aRecords: [{ ipv4Address: containerEnvironment.outputs.staticIp }] }
+    ]
+    virtualNetworkLinks: [
+      { name: 'v2-${uniqueString(vnetId)}', virtualNetworkResourceId: vnetId, registrationEnabled: false }
+    ]
+    tags: tags
+    enableTelemetry: false
+  }
+}
+
 module email '../kt/email.bicep' = {
   name: 'v2-email-services'
   params: {
