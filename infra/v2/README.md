@@ -120,6 +120,17 @@ guards initial output JSON assembly before RG tags or VNet inputs exist; no reli
 lazy branch evaluation is needed for those outputs. An initialization fallback never satisfies
 the completion guard. Test the unloaded state as well as a populated saved contract, and
 do not claim a generic Portal error is resolved from local expression tests alone.
+CreateUI tag reads project dotted keys to temporary dot-access properties through the
+documented string/replace/parse functions, rather than assuming ARM-style string-key
+indexing is accepted. Stored tag keys and option JSON values remain unchanged. A Python AST
+test harness is not the Portal parser; a repeated error after publication still requires
+the real CreateUIDef diagnostics or authenticated browser console to establish its cause.
+Comparison with the working KT definition retains its default non-wizard navigation,
+VNet selector options, three exact subnet choice expressions/defaults and five validation
+rules. `bladeTitle` is optional in the official schema and also absent from some KT steps;
+do not label its absence a proven cause. The v2-only initial tag-contract step remains a
+separate difference. Structural parity reduces candidates but does not establish a fix
+without a real Portal reload/diagnostic comparison.
 
 Prepare a protected parameter file based on
 [infrastructure.parameters.example.json](infrastructure.parameters.example.json).

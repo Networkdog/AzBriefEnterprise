@@ -57,6 +57,11 @@ KT subnet/VNet validators. Directory app/role permissions remain separate from A
 Guard initial UI output parsing with empty RG/tag/VNet state; test both conditional branches,
 not only completed selections. Preserve completion/ownership guards. A CreateUIDef
 CustomDeploymentBlade error is a Portal UI symptom, not an Azure Graph deployment verdict.
+Read dotted tag names through temporary dot-access projections, preserving stored keys and
+option JSON values. Do not equate the Python test evaluator with the actual Portal parser;
+repeat symptoms need authenticated CreateUIDef diagnostics, not another success claim.
+Use the working KT default non-wizard navigation and exact selector/subnet choice contract.
+Compare schema-required differences before editing optional titles or shared properties.
 Keep Bicep/ARM sources in sync and distinguish offline tests from customer Portal acceptance.
 
 ## Non-Negotiable KT Contract

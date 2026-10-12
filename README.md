@@ -151,6 +151,8 @@ Customer resource names remain editable. Internal model aliases/IDs/capacity and
 connection settings are automatic; foundation options are persisted in RG tags and reused.
 The form keeps initial output evaluation safe before RG/VNet responses arrive; missing
 foundation tags still block completion. Publish ARM/UI pairs together and verify the Portal.
+UI tag reads use projected dot-access properties while stored tag names/values stay unchanged.
+Navigation and subnet choice initialization follow the existing KT form's default mode.
 Complete both internal infrastructure stages and verify existing keys/settings before
 application updates; follow the guarded deployment workflow below.
 

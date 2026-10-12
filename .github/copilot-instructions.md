@@ -78,6 +78,11 @@ Keep UI output JSON assembly safe with unloaded RG/VNet/tag state even under eag
 evaluation. Empty initialization fallbacks never authorize completion; retain required tags
 and test loaded/unloaded states. A CreateUIDef CustomDeploymentBlade error is not ARM/Graph
 provisioning evidence. Local tests are not actual authenticated Portal acceptance.
+Use projected dot-access UI tag properties without altering persisted keys/values. Python
+AST string-key support is not proof of CreateUI grammar support; require real Portal
+diagnostics for a repeated CustomDeploymentBlade symptom before declaring it resolved.
+Retain the working KT default non-wizard mode, VNet selector and subnet choice contract.
+Optional bladeTitle or properties used by both profiles are not verified failure causes.
 MCP authentication/Reader UAMI/connection belong to infrastructure; its read-only pinned
 container belongs to application. Preserve
 Graph permission gates, incoming Entra and source scope. Keep all eight bounded option tags

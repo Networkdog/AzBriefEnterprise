@@ -5,10 +5,33 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
+_TAG_INDEX = re.compile(
+    r"(steps\('(?:contract|application)'\)\.resourceGroupApi\.tags)\['(azbrief\.v2\.[A-Za-z0-9]+)'\]"
+)
+
+
+def _portable_tag_access(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _portable_tag_access(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_portable_tag_access(item) for item in value]
+    if not isinstance(value, str) or not value.startswith("["):
+        return value
+
+    def replace(match: re.Match[str]) -> str:
+        tags, key = match.groups()
+        property_name = key.replace(".", "_")
+        return (
+            f"parse(replace(string(coalesce({tags}, parse('{{}}'))), "
+            f"'\"{key}\":', '\"{property_name}\":')).{property_name}"
+        )
+
+    return _TAG_INDEX.sub(replace, value)
 
 
 def _safe_initial_outputs(parameters: dict[str, Any]) -> None:
@@ -33,7 +56,7 @@ def normalize_ui(
     result = copy.deepcopy(document)
     parameters = result["parameters"]
     config = parameters.setdefault("config", {})
-    config["isWizard"] = True
+    config.pop("isWizard", None)
     config.setdefault("basics", {}).setdefault("resourceGroup", {})["allowExisting"] = True
     _safe_initial_outputs(parameters)
     for step in parameters["steps"]:
@@ -94,7 +117,7 @@ def normalize_ui(
                     },
                 }
             )
-    return result
+    return _portable_tag_access(result)
 
 
 def main() -> int:

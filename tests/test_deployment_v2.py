@@ -625,7 +625,7 @@ def test_option_tags_reject_partial_unknown_and_oversized_saved_inputs(tmp_path:
 def test_ui_uses_supported_control_schema_and_legacy_network_guards(tmp_path: Path) -> None:
     for name in ("infrastructure", "application"):
         definition = ui_definition(name)
-        assert definition["config"]["isWizard"] is True
+        assert definition["config"].get("isWizard", False) is False
         assert definition["config"]["basics"]["resourceGroup"]["allowExisting"] is True
         assert all("visible" not in step for step in definition["steps"])
         for control in ui_controls(name).values():
@@ -721,6 +721,77 @@ def test_infrastructure_initial_output_normalization_is_idempotent() -> None:
     validations = ui_controls("infrastructure")["networkGuard"]["constraints"]["validations"]
     assert normalize_ui(normalize_ui(document, validations), validations) == normalize_ui(
         document, validations
+    )
+
+
+def test_create_ui_tag_reads_use_dot_properties_without_changing_tag_values() -> None:
+    from scripts.build_v2_ui import _portable_tag_access
+
+    source = "[steps('contract').resourceGroupApi.tags['azbrief.v2.options0']]"
+    payload = '{"tags":{"azbrief.v2.schema":"2"},"endpoint":"https://example.invalid"}'
+    converted = _portable_tag_access(source)
+    assert "tags['" not in converted
+    assert converted.endswith(".azbrief_v2_options0]")
+    assert (
+        _evaluate_ui_expression(
+            converted,
+            {"contract": {"resourceGroupApi": {"tags": {"azbrief.v2.options0": payload}}}},
+        )
+        == payload
+    )
+    assert _evaluate_ui_expression(converted, {"contract": {"resourceGroupApi": None}}) is None
+
+
+def test_generated_v2_forms_do_not_use_string_key_tag_indexes() -> None:
+    for name in ("infrastructure", "application"):
+        text = (V2 / f"{name}.createUiDefinition.json").read_text(encoding="utf-8")
+        assert "tags['azbrief.v2." not in text
+    expression = ui_controls("application")["deploymentGuard"]["constraints"]["validations"][1][
+        "isValid"
+    ]
+    assert (
+        _evaluate_ui_expression(
+            expression,
+            {
+                "application": {
+                    "resourceGroupApi": {
+                        "tags": {
+                            "azbrief.v2.schema": "2",
+                            "azbrief.v2.profile": "kt-private-v2",
+                            "azbrief.v2.state": "ready",
+                            "azbrief.v2.options0": "{}",
+                        }
+                    }
+                }
+            },
+            resource_group={"mode": "Existing"},
+        )
+        is True
+    )
+
+
+def test_v2_matches_working_kt_navigation_and_subnet_choice_contract() -> None:
+    legacy = json.loads((ROOT / "infra/kt/createUiDefinition.json").read_text(encoding="utf-8"))[
+        "parameters"
+    ]
+    legacy_network = next(step for step in legacy["steps"] if step["name"] == "network")
+    legacy_controls = {element["name"]: element for element in legacy_network["elements"]}
+    for name in ("infrastructure", "application"):
+        assert ui_definition(name)["config"].get("isWizard", False) == legacy["config"].get(
+            "isWizard", False
+        )
+    for name in ("peSubnetName", "foundrySubnetName", "containerAppsSubnetName"):
+        assert (
+            ui_controls("infrastructure")[name]["constraints"]
+            == legacy_controls[name]["constraints"]
+        )
+        assert (
+            ui_controls("infrastructure")[name]["defaultValue"]
+            == legacy_controls[name]["defaultValue"]
+        )
+    assert (
+        ui_controls("infrastructure")["virtualNetwork"]["options"]
+        == legacy_controls["virtualNetwork"]["options"]
     )
 
 
