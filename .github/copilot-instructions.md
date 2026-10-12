@@ -68,6 +68,10 @@ post-publication roles use `runtime-roles.bicep` as late infrastructure completi
 App updates. Never claim application readiness from metadata. Compile all three artifacts
 with pinned Bicep 0.46.1, retain CI drift checks and offline install/two-update coverage in
 `tests/test_deployment_v2.py`. Keep `infra/v2/README.md` and both root READMEs synchronized.
+Both root READMEs expose separate v2 infrastructure/application Deploy to Azure buttons,
+in addition to the two standard Enterprise links and one KT link. The v2 buttons reference
+their compiled JSON on GitHub main without a fabricated UI definition; publication and
+equivalent live preflight/key/settings preservation are required before raw ARM use.
 
 ---
 

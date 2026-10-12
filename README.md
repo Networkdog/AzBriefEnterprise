@@ -138,6 +138,18 @@ approval from provisioning success. CLI readback requires each endpoint to be `S
 
 **Two-stage deployment template v2**
 
+**Infrastructure deployment**
+
+[![Deploy v2 infrastructure to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json)
+
+**Application installation and updates**
+
+[![Deploy v2 application to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json)
+
+These buttons open the ARM templates directly from GitHub `main` after publication.
+Complete both internal infrastructure stages and verify existing keys/settings before
+application updates; follow the guarded deployment workflow below.
+
 [v2 deployment guide](infra/v2/README.md): an opt-in existing-VNet private profile that
 deploys infrastructure, scoped roles and diagnostics once, then installs or updates App/Job
 images, environment, secrets and web authentication independently. Completed infrastructure

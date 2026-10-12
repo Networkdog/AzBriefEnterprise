@@ -427,7 +427,7 @@ def test_readme_buttons_publish_the_same_arm_and_ui_pair() -> None:
         text = (ROOT / name).read_text(encoding="utf-8")
         links = re.findall(r"\]\((https://portal\.azure\.com/#create/[^)]+)\)", text)
         decoded_links = [unquote(link) for link in links]
-        assert len(decoded_links) == 3
+        assert len(decoded_links) == 5
         enterprise_links = [
             link
             for link in decoded_links
@@ -445,6 +445,19 @@ def test_readme_buttons_publish_the_same_arm_and_ui_pair() -> None:
             )
             == 1
         )
+        for template in ("infrastructure", "application"):
+            assert (
+                decoded_links.count(
+                    f"https://portal.azure.com/#create/Microsoft.Template/uri/"
+                    f"{expected_root}v2/{template}.json"
+                )
+                == 1
+            )
+            assert (
+                f"[![Deploy v2 {template} to Azure](https://aka.ms/deploytoazurebutton)]"
+                in text
+            )
+            assert (ROOT / "infra" / "v2" / f"{template}.json").is_file()
         assert "infra/CUSTOMER_DEPLOYMENT.md" in text
         assert ".github/skills/kt-private-deployment/SKILL.md" in text
     assert (ROOT / "infra" / "CUSTOMER_DEPLOYMENT.md").is_file()

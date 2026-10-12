@@ -130,6 +130,17 @@ Private Endpoint가 실패하면 삭제 전에 배포 진단 정보를 보존하
 
 **두 단계 배포 템플릿 v2**
 
+**인프라 배포**
+
+[![Deploy v2 infrastructure to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json)
+
+**앱 최초 설치·업데이트**
+
+[![Deploy v2 application to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json)
+
+버튼은 GitHub `main`에 게시된 ARM 템플릿을 직접 엽니다. 인프라 내부 두 단계를 완료하고,
+앱 업데이트 전 기존 키·설정을 확인해야 합니다. 아래 가이드의 보호된 배포 절차를 따르십시오.
+
 [v2 배포 가이드](infra/v2/README.md): 기존 VNet 기반의 별도 프라이빗 프로필입니다.
 인프라·범위별 권한·진단 설정은 한 번 배포하고, 이후 App/Job 이미지·환경 변수·비밀·웹 인증을
 독립적으로 설치하거나 업데이트합니다. 완료한 인프라 이름은 같은 RG의 비밀이 아닌

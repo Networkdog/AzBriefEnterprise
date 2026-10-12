@@ -32,7 +32,10 @@ Private Endpoints, or supporting data services into the KT environment.
 Never hand-edit the compiled ARM JSON. Change Bicep, compile with the pinned compiler, and keep
 the ARM/UI pair from the same source revision.
 Keep the paired KT Deploy button in both top-level READMEs while this profile ships. The repository
-contract expects two standard Enterprise Portal links and one KT Portal link in each README.
+contract expects two standard Enterprise Portal links, one KT Portal link and separate v2
+infrastructure/application Deploy buttons in each README. v2 buttons use the compiled ARM
+on GitHub main after publication; they do not replace guarded live preflight or supply a
+CreateUiDefinition that does not exist.
 
 ## Two-Stage Template v2
 
