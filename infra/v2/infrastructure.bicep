@@ -82,9 +82,9 @@ var savedOptions = complete ? json(concat(
   resourceGroup().tags[?'azbrief.v2.options6'] ?? '',
   resourceGroup().tags[?'azbrief.v2.options7'] ?? ''
 )) : {}
-var mcpClientId = manageAzureMcp ? (complete ? savedOptions.azureMcpClientId : mcpAuthentication!.outputs.entraAppClientId) : ''
-var mcpServicePrincipalId = manageAzureMcp ? (complete ? savedOptions.azureMcpServicePrincipalId : mcpAuthentication!.outputs.entraAppServicePrincipalObjectId) : ''
-var mcpAppRoleId = manageAzureMcp ? (complete ? savedOptions.azureMcpAppRoleId : mcpAuthentication!.outputs.entraAppRoleId) : ''
+var mcpClientId = manageAzureMcp && complete ? (savedOptions.?azureMcpClientId ?? '') : ''
+var mcpServicePrincipalId = manageAzureMcp && complete ? (savedOptions.?azureMcpServicePrincipalId ?? '') : ''
+var mcpAppRoleId = manageAzureMcp && complete ? (savedOptions.?azureMcpAppRoleId ?? '') : ''
 var deploymentOptions = {
   emailDataLocation: emailDataLocation
   searchSku: searchSku
@@ -144,14 +144,6 @@ module mcpIdentity 'mcp-identity.bicep' = if (!complete && manageAzureMcp) {
     name: azureMcpIdentityName
     location: location
     tags: resourceTags
-  }
-}
-
-module mcpAuthentication '../azure-mcp-server/infra/modules/entra-app.bicep' = if (!complete && manageAzureMcp) {
-  name: 'v2-mcp-authentication'
-  params: {
-    entraAppDisplayName: 'AzBrief v2 Azure MCP API'
-    entraAppUniqueName: 'azbrief-v2-mcp-${uniqueString(resourceGroup().id)}'
   }
 }
 
@@ -276,36 +268,11 @@ module controlPlaneRoles '../kt/control-plane-roles.bicep' = if (complete) {
   dependsOn: [capabilityHost]
 }
 
-module mcpProjectPermission '../azure-mcp-server/infra/modules/foundry-role-assignment-entraapp.bicep' = if (complete && manageAzureMcp) {
-  name: 'v2-mcp-project-permission'
-  params: {
-    foundryProjectResourceId: projectId
-    entraAppServicePrincipalObjectId: mcpServicePrincipalId
-    entraAppRoleId: mcpAppRoleId
-  }
-  dependsOn: [capabilityHost]
-}
-
-resource mcpConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-10-01-preview' = if (complete && manageAzureMcp) {
-  #disable-next-line use-parent-property
-  name: '${foundryAccountName}/${projectName}/${azureMcpProjectConnectionName}'
-  properties: {
-    #disable-next-line BCP036
-    category: 'RemoteTool'
-    #disable-next-line BCP036
-    authType: 'ProjectManagedIdentity'
-    target: 'https://${azureMcpContainerAppName}.${containerEnvironment.properties.defaultDomain}'
-    #disable-next-line BCP037
-    audience: 'api://${mcpClientId}'
-    isSharedToAll: true
-  }
-  dependsOn: [mcpProjectPermission]
-}
-
 var infrastructureContract = {
   schemaVersion: 2
   profile: 'kt-private-v2'
   infrastructureComplete: complete
+  mcpAuthenticationPending: complete && manageAzureMcp
   portalValidationPassed: portalValidationPassed
   applicationReady: false
   hostedRuntimeRolesPending: true
@@ -350,6 +317,7 @@ var infrastructureContract = {
   promptAgentNames: promptAgentNames
   azureMcpServerUrl: manageAzureMcp ? 'https://${azureMcpContainerAppName}.${complete ? containerEnvironment.properties.defaultDomain : foundation!.outputs.environmentDefaultDomain}' : azureMcpServerUrl
   azureMcpProjectConnectionName: azureMcpProjectConnectionName
+  azureMcpEntraAppUniqueName: 'azbrief-v2-mcp-${uniqueString(resourceGroup().id)}'
   azureMcpContainerAppName: azureMcpContainerAppName
   azureMcpIdentityName: azureMcpIdentityName
 }
@@ -368,10 +336,10 @@ module handoff 'resource-group-tags.bicep' = if (complete) {
   name: 'v2-infrastructure-tags'
   params: {
     infrastructure: infrastructureContract
-    infrastructureState: 'ready'
+    infrastructureState: manageAzureMcp ? 'mcp_pending' : 'ready'
     infrastructureOptions: deploymentOptions
   }
-  dependsOn: [controlPlaneRoles, projectTelemetryRole, telemetryConnection, mcpConnection]
+  dependsOn: [controlPlaneRoles, projectTelemetryRole, telemetryConnection]
 }
 
 output infrastructure object = infrastructureContract

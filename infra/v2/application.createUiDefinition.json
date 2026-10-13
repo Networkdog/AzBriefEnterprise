@@ -70,6 +70,15 @@
               "icon": "Info",
               "text": "기존 App·Job 비밀과 설정은 ARM 내부에서 읽어 보존합니다. 키를 이 폼이나 로그에 표시하지 않습니다. 인증 설정은 생략해 유지하고 승인된 Schedule/cron을 초기화하지 않습니다. 실제 Graph 권한·MCP 인증·로그·분석·메일 인수는 배포 성공과 별개입니다."
             }
+          },
+          {
+            "name": "mcpPendingNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": "[equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.state\":', '\"azbrief_v2_state\":')).azbrief_v2_state, ''), 'mcp_pending')]",
+            "options": {
+              "icon": "Warning",
+              "text": "코어 인프라는 완료됐지만 MCP 인증 준비가 필요합니다. 같은 RG에서 python -m scripts.deploy_v2 infrastructure --prepare-mcp-authentication --subscription <구독> --tenant <테넌트> --resource-group <RG> --mode deploy를 권한이 확인된 CLI로 실행하십시오. ready가 되기 전에는 앱 설치를 차단합니다."
+            }
           }
         ]
       }

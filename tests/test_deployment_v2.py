@@ -83,9 +83,13 @@ def test_handoff_is_completed_after_control_plane_rbac() -> None:
     tags = tags_document["variables"]["contractTags"]
     assert len(deploy_v2.TAG_KEYS) == 31
     assert all(f"'{key}'" in tags for key in deploy_v2.TAG_KEYS)
-    assert handoff["properties"]["parameters"]["infrastructureState"]["value"] == "ready"
+    assert handoff["properties"]["parameters"]["infrastructureState"] == (
+        "[if(variables('manageAzureMcp'), createObject('value', 'mcp_pending'), "
+        "createObject('value', 'ready'))]"
+    )
     assert tags_document["parameters"]["infrastructureState"]["allowedValues"] == [
         "foundation",
+        "mcp_pending",
         "ready",
     ]
     assert "range(0, 8)" in tags_document["variables"]["optionsTags"]
@@ -202,20 +206,24 @@ def test_foundation_saves_options_before_completion_and_app_stays_ready_only() -
 def test_managed_mcp_is_split_between_identity_and_application_without_auth_bypass() -> None:
     infrastructure = template("infrastructure")
     assert module(infrastructure, "v2-mcp-identity")
-    assert module(infrastructure, "v2-mcp-authentication")
-    assert module(infrastructure, "v2-mcp-project-permission")
+    authentication = template("mcp-authentication")
+    assert module(authentication, "v2-mcp-authentication")
+    assert module(authentication, "v2-mcp-project-permission")
     connection = next(
         resource
-        for resource in resources(infrastructure)
+        for resource in resources(authentication)
         if resource.get("properties", {}).get("category") == "RemoteTool"
     )
     assert connection["apiVersion"] == "2025-10-01-preview"
     assert connection["properties"]["authType"] == "ProjectManagedIdentity"
     audience = connection["properties"]["audience"]
     assert audience.startswith("[format('api://{0}', ")
-    assert "savedOptions').azureMcpClientId" in audience
     assert "v2-mcp-authentication" in audience
-    assert "azureMcpContainerAppName" in connection["properties"]["target"]
+    assert "azureMcpServerUrl" in connection["properties"]["target"]
+    assert any(
+        "connection" in dependency
+        for dependency in module(authentication, "v2-mcp-ready-tags")["dependsOn"]
+    )
     app = module(template("application"), "v2-managed-mcp-application")
     assert (
         app["properties"]["parameters"]["installManagedMcp"]["value"]
@@ -231,6 +239,14 @@ def test_managed_mcp_is_split_between_identity_and_application_without_auth_bypa
     assert "AzureAd__ClientId" in body
     assert "DANGEROUSLY_DISABLE_AUTH" not in body
     assert "Microsoft.Authorization/roleAssignments" not in body
+
+
+def test_portal_infrastructure_does_not_execute_microsoft_graph() -> None:
+    document = template("infrastructure")
+    body = json.dumps(document)
+    assert "Microsoft.Graph/" not in body
+    assert "v2-mcp-authentication" not in body
+    assert "v2-mcp-project-permission" not in body
 
 
 def test_hosted_roles_only_complete_post_publication_permissions() -> None:
@@ -510,6 +526,99 @@ class FakeV2Azure(AzureCli):
         raise AssertionError("Unexpected Azure operation")
 
 
+class FakeMcpPreparation(FakeV2Azure):
+    def __init__(self) -> None:
+        super().__init__()
+        self.tags[deploy_v2.PREFIX + "state"] = "mcp_pending"
+        self.tags[deploy_v2.PREFIX + "mcpUrl"] = (
+            f"https://{self.values['azureMcpContainerAppName']}.test.koreacentral.azurecontainerapps.io"
+        )
+        options = {
+            "emailDataLocation": "Asia Pacific",
+            "searchSku": "basic",
+            "coreModelName": "gpt-5.6-terra",
+            "simpleModelName": "gpt-5.6-luna",
+            "modelVersion": "2026-07-09",
+            "modelCapacity": 200,
+            "simpleModelCapacity": 200,
+            "existingPrivateDnsZoneIds": {},
+            "tags": {"deploymentProfile": deploy_v2.PROFILE},
+            "manageAzureMcp": True,
+            "azureMcpClientId": "",
+            "azureMcpServicePrincipalId": "",
+            "azureMcpAppRoleId": "",
+        }
+        encoded = json.dumps(options, separators=(",", ":"))
+        self.tags.update(
+            {
+                key: encoded[index * 256 : (index + 1) * 256]
+                for index, key in enumerate(deploy_v2.OPTION_TAG_KEYS)
+            }
+        )
+        self.values = deploy_v2.infrastructure_values(self, self.tags)
+        mcp_identity = f"{self.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{self.values['azureMcpIdentityName']}"
+        self.documents[mcp_identity] = self.resource(mcp_identity, {})
+        self.core = {
+            **self.values,
+            "schemaVersion": 2,
+            "profile": deploy_v2.PROFILE,
+            "infrastructureComplete": True,
+            "tenantId": self.tenant,
+            "subscriptionId": self.subscription,
+            "resourceGroup": self.group,
+            "azureMcpEntraAppUniqueName": "azbrief-v2-mcp-abcdefghijklm",
+        }
+        self.apps: list[dict[str, Any]] = []
+        self.core_state = "Succeeded"
+
+    def json(self, *arguments: str) -> Any:
+        if arguments[:3] == ("deployment", "group", "show"):
+            return {"state": self.core_state, "infrastructure": copy.deepcopy(self.core)}
+        if arguments[:3] == ("ad", "app", "list"):
+            return copy.deepcopy(self.apps)
+        return super().json(*arguments)
+
+
+def test_mcp_preparation_uses_only_exact_pending_core_output() -> None:
+    cli = FakeMcpPreparation()
+    parameters = deploy_v2.prepare_mcp_authentication(cli)
+    assert (
+        parameters["infrastructure"]["azureMcpEntraAppUniqueName"]
+        == cli.core["azureMcpEntraAppUniqueName"]
+    )
+    assert parameters["infrastructureOptions"]["manageAzureMcp"] is True
+    assert not cli.operations
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("resourceGroup", "other-rg"),
+        ("azureMcpServerUrl", "https://foreign.example.invalid"),
+        ("azureMcpEntraAppUniqueName", "unrelated-app"),
+        ("infrastructureComplete", False),
+    ],
+)
+def test_mcp_preparation_rejects_redirected_core_output(field: str, value: object) -> None:
+    cli = FakeMcpPreparation()
+    cli.core[field] = value
+    with pytest.raises(ValueError):
+        deploy_v2.prepare_mcp_authentication(cli)
+    assert not cli.operations
+
+
+def test_mcp_preparation_rejects_failed_core_and_foreign_directory_app() -> None:
+    cli = FakeMcpPreparation()
+    cli.core_state = "Failed"
+    with pytest.raises(ValueError, match="successful exact core"):
+        deploy_v2.prepare_mcp_authentication(cli)
+    cli.core_state = "Succeeded"
+    cli.apps = [{"uniqueName": "foreign-app", "displayName": "other"}]
+    with pytest.raises(ValueError, match="different MCP"):
+        deploy_v2.prepare_mcp_authentication(cli)
+    assert not cli.operations
+
+
 def test_initial_application_uses_generated_key_and_tag_names() -> None:
     cli = FakeV2Azure()
     parameters = deploy_v2.prepare_application(cli, IMAGE)
@@ -517,6 +626,43 @@ def test_initial_application_uses_generated_key_and_tag_names() -> None:
     assert "apiKey" not in parameters
     assert parameters["infrastructureTags"] == cli.tags
     assert parameters["existingSecrets"] == {"app": [], "job": []}
+    assert not cli.operations
+
+
+def test_mcp_pending_core_can_only_be_read_for_authorized_preparation() -> None:
+    cli = FakeV2Azure()
+    cli.tags[deploy_v2.PREFIX + "state"] = "mcp_pending"
+    with pytest.raises(ValueError, match="completed AzBrief v2"):
+        deploy_v2.prepare_application(cli, IMAGE)
+    tags, values = deploy_v2._read_infrastructure(cli, "mcp_pending")
+    assert tags[deploy_v2.PREFIX + "state"] == "mcp_pending"
+    assert values["controlPlaneIdentityResourceId"] == cli.identity_id
+    assert not cli.operations
+
+
+def test_mcp_preparation_failure_never_runs_core_or_promotes_ready(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cli = FakeV2Azure()
+    cli.tags[deploy_v2.PREFIX + "state"] = "mcp_pending"
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(deploy_v2, "prepare_mcp_authentication", lambda target: {})
+
+    def deploy(
+        target: AzureCli, artifact: Path, parameters: dict[str, Any], mode: str, name: str
+    ) -> dict[str, Any]:
+        calls.append((artifact.name, mode))
+        if mode == "create":
+            raise RuntimeError("Graph access denied")
+        return {}
+
+    monkeypatch.setattr(deploy_v2, "deploy_template", deploy)
+    with pytest.raises(RuntimeError, match="Graph access denied"):
+        deploy_v2.run_mcp_authentication(cli, "deploy", "test")
+    assert calls == [
+        ("mcp-authentication.json", mode) for mode in ("validate", "what-if", "create")
+    ]
+    assert cli.tags[deploy_v2.PREFIX + "state"] == "mcp_pending"
     assert not cli.operations
 
 
@@ -644,6 +790,30 @@ def test_infrastructure_ui_keeps_customer_names_but_not_internal_settings() -> N
         assert field not in controls
     for name in ("infrastructure", "application"):
         assert set(ui_definition(name)["outputs"]) <= set(template(name)["parameters"])
+
+
+def test_portal_pending_mcp_notice_does_not_request_internal_identifiers() -> None:
+    controls = ui_controls("application")
+    notice = controls["mcpPendingNotice"]
+    assert "mcp_pending" in notice["visible"]
+    assert "--prepare-mcp-authentication" in notice["options"]["text"]
+    assert "azureMcpClientId" not in controls
+    tags = tag_contract()
+    tags[deploy_v2.PREFIX + "state"] = "mcp_pending"
+    expression = ui_definition("application")["outputs"]["portalValidationPassed"]
+    result = _evaluate_ui_expression(
+        expression,
+        {
+            "application": {
+                "deploymentAccepted": True,
+                "resourceGroupApi": {"tags": tags},
+                "containerAppsApi": {"value": []},
+                "jobsApi": {"value": []},
+            }
+        },
+        resource_group={"mode": "Existing"},
+    )
+    assert result is False
 
 
 def test_saved_customer_options_round_trip_and_application_rejects_foundation(

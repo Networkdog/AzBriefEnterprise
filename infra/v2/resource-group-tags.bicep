@@ -5,7 +5,7 @@ metadata description = 'Non-secret AzBrief v2 infrastructure handoff. Preserve u
 @description('Same-resource-group infrastructure contract. Never include application secrets.')
 param infrastructure object
 
-@allowed(['foundation', 'ready'])
+@allowed(['foundation', 'mcp_pending', 'ready'])
 param infrastructureState string = 'ready'
 
 @description('Explicit allow-listed non-secret deployment options, serialized in bounded tag values.')

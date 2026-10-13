@@ -134,7 +134,7 @@ def parse_tag_contract(tags: dict[str, Any], require_ready: bool = True) -> dict
         contract[PREFIX + "schema"] != "2"
         or contract[PREFIX + "profile"] != PROFILE
         or contract[PREFIX + "state"]
-        not in ({"ready"} if require_ready else {"foundation", "ready"})
+        not in ({"ready"} if require_ready else {"foundation", "mcp_pending", "ready"})
         or contract[PREFIX + "acaPeEnabled"] not in {"true", "false"}
     ):
         raise ValueError("Use the completed AzBrief v2 infrastructure contract")
@@ -203,7 +203,9 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
 
 def infrastructure_values(cli: AzureCli, tags: dict[str, str]) -> dict[str, Any]:
     """Resolve leaf names within the explicit CLI scope, not a scope supplied in tags."""
-    values = {field: tags.get(PREFIX + suffix, "") for field, suffix in TAG_FIELDS.items()}
+    values: dict[str, Any] = {
+        field: tags.get(PREFIX + suffix, "") for field, suffix in TAG_FIELDS.items()
+    }
     values.update(decode_tag_options(tags))
     values.update(
         tenantId=cli.tenant,
@@ -224,9 +226,17 @@ def _owned(resource: dict[str, Any], resource_id: str) -> None:
 
 def read_infrastructure(cli: AzureCli) -> tuple[dict[str, str], dict[str, Any]]:
     """Verify context, private ingress and immutable BYO bindings before application writes."""
+    return _read_infrastructure(cli, "ready")
+
+
+def _read_infrastructure(
+    cli: AzureCli, expected_state: str
+) -> tuple[dict[str, str], dict[str, Any]]:
     cli.assert_context()
     group = cli.json("group", "show", "--name", cli.group, "--subscription", cli.subscription)
-    tags = parse_tag_contract(group.get("tags") or {})
+    tags = parse_tag_contract(group.get("tags") or {}, require_ready=expected_state == "ready")
+    if tags[PREFIX + "state"] != expected_state:
+        raise ValueError(f"Use the {expected_state} v2 infrastructure contract for this operation")
     values = infrastructure_values(cli, tags)
     environment_id = f"{cli.group_id}/providers/Microsoft.App/managedEnvironments/{values['containerAppsEnvironmentName']}"
     environment = cli.get(environment_id, CONTAINER_ENV_API)
@@ -644,6 +654,114 @@ def run_application(
         )
 
 
+def prepare_mcp_authentication(cli: AzureCli) -> dict[str, Any]:
+    """Validate the same group's completed core before authorized directory preparation."""
+    tags, values = _read_infrastructure(cli, "mcp_pending")
+    options = decode_tag_options(tags)
+    if options.get("manageAzureMcp") is not True:
+        raise ValueError("Only managed MCP infrastructure can request directory preparation")
+    record = cli.json(
+        "deployment",
+        "group",
+        "show",
+        "--name",
+        tags[PREFIX + "deployment"],
+        "--resource-group",
+        cli.group,
+        "--subscription",
+        cli.subscription,
+        "--query",
+        "properties.{state:provisioningState,infrastructure:outputs.infrastructure.value}",
+    )
+    if not isinstance(record, dict) or record.get("state") != "Succeeded":
+        raise ValueError("MCP preparation requires the successful exact core deployment")
+    infrastructure = record.get("infrastructure")
+    if (
+        not isinstance(infrastructure, dict)
+        or infrastructure.get("schemaVersion") != 2
+        or infrastructure.get("profile") != PROFILE
+        or infrastructure.get("infrastructureComplete") is not True
+        or str(infrastructure.get("tenantId", "")).casefold() != cli.tenant.casefold()
+        or str(infrastructure.get("subscriptionId", "")).casefold() != cli.subscription.casefold()
+        or str(infrastructure.get("resourceGroup", "")).casefold() != cli.group.casefold()
+    ):
+        raise ValueError("MCP core output does not match the explicit target")
+    for field in TAG_FIELDS:
+        if str(infrastructure.get(field, "")).casefold() != str(values[field]).casefold():
+            raise ValueError(f"MCP core output binding changed: {field}")
+    expected_url = (
+        f"https://{values['azureMcpContainerAppName']}.{values['environmentDefaultDomain']}"
+    )
+    if infrastructure["azureMcpServerUrl"] != expected_url:
+        raise ValueError("MCP target must remain the owned private Environment URL")
+    unique_name = infrastructure.get("azureMcpEntraAppUniqueName", "")
+    if not isinstance(unique_name, str) or not re.fullmatch(
+        r"azbrief-v2-mcp-[a-z0-9]{13}", unique_name
+    ):
+        raise ValueError("Core output must provide the deterministic MCP directory uniqueName")
+    identity_id = f"{cli.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{values['azureMcpIdentityName']}"
+    _owned(cli.get(identity_id, "2023-01-31"), identity_id)
+    apps = cli.json(
+        "ad",
+        "app",
+        "list",
+        "--filter",
+        f"uniqueName eq '{unique_name}'",
+        "--query",
+        "[].{id:id,appId:appId,uniqueName:uniqueName,displayName:displayName}",
+    )
+    if not isinstance(apps, list) or len(apps) > 1:
+        raise ValueError("MCP directory inventory is incomplete or ambiguous")
+    if apps:
+        app = apps[0]
+        if (
+            app.get("uniqueName") != unique_name
+            or app.get("displayName") != "AzBrief v2 Azure MCP API"
+            or (options.get("azureMcpClientId") and app.get("appId") != options["azureMcpClientId"])
+        ):
+            raise ValueError("Refusing to adopt a different MCP directory application")
+        UUID(app["id"])
+        UUID(app["appId"])
+    completed_options = {
+        **options,
+        "azureMcpClientId": "0" * 36,
+        "azureMcpServicePrincipalId": "0" * 36,
+        "azureMcpAppRoleId": "0" * 36,
+    }
+    if len(json.dumps(completed_options, ensure_ascii=False, separators=(",", ":"))) > 2048:
+        raise ValueError("MCP preparation exceeds the saved option tag budget")
+    return {"infrastructure": infrastructure, "infrastructureOptions": options}
+
+
+def run_mcp_authentication(cli: AzureCli, mode: str, name: str) -> None:
+    """Prepare Graph through the authorized CLI without replaying core infrastructure."""
+    operations = ("validate", "what-if", "create") if mode == "deploy" else (mode,)
+    for operation in operations:
+        parameters = prepare_mcp_authentication(cli)
+        if operation != "preflight":
+            deploy_template(
+                cli, V2 / "mcp-authentication.json", parameters, operation, name + "-mcp-auth"
+            )
+        logger.info(
+            "v2_mcp_preparation_operation_complete", operation=operation, application_ready=False
+        )
+    if mode == "deploy":
+        tags, values = read_infrastructure(cli)
+        options = decode_tag_options(tags)
+        project_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}/projects/{values['projectName']}"
+        connection = cli.get(
+            f"{project_id}/connections/{values['azureMcpProjectConnectionName']}",
+            "2025-10-01-preview",
+        )["properties"]
+        if (
+            connection.get("category") != "RemoteTool"
+            or connection.get("authType") != "ProjectManagedIdentity"
+            or connection.get("target", "").rstrip("/") != values["azureMcpServerUrl"].rstrip("/")
+            or connection.get("audience") != f"api://{options['azureMcpClientId']}"
+        ):
+            raise ValueError("MCP connection/authentication readback does not match the handoff")
+
+
 def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
     """Resolve literal parameters and safe name defaults without reading developer .env files."""
     supplied = json.loads(path.read_text(encoding="utf-8-sig"))["parameters"]
@@ -1006,6 +1124,10 @@ def run_infrastructure(
                 cli, V2 / "infrastructure.json", prepared, operation, name + "-" + current
             )
     wait_for_host(cli, f"{account_id}/projects/{values['projectName']}", "agents")
+    group = cli.json("group", "show", "--name", cli.group, "--subscription", cli.subscription)
+    contract = parse_tag_contract(group.get("tags") or {}, require_ready=False)
+    if contract[PREFIX + "state"] == "mcp_pending":
+        run_mcp_authentication(cli, "deploy", name)
     read_infrastructure(cli)
     logger.info(
         "v2_infrastructure_deployed", application_ready=False, hosted_runtime_roles_pending=True
@@ -1055,6 +1177,7 @@ def main() -> int:
     parser.add_argument("--image")
     parser.add_argument("--configuration", type=Path)
     parser.add_argument("--hosted-principal-id", type=UUID)
+    parser.add_argument("--prepare-mcp-authentication", action="store_true")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,45}", args.name):
         parser.error("Use a deployment-name prefix of at most 46 characters")
@@ -1065,7 +1188,13 @@ def main() -> int:
         if args.phase == "infrastructure":
             if args.image or args.configuration:
                 raise ValueError("Application inputs do not belong in infrastructure deployment")
-            if args.hosted_principal_id:
+            if args.prepare_mcp_authentication:
+                if args.parameters or args.hosted_principal_id or args.stage != "both":
+                    raise ValueError(
+                        "MCP preparation never replays general infrastructure or Hosted roles"
+                    )
+                run_mcp_authentication(cli, args.mode, args.name)
+            elif args.hosted_principal_id:
                 if args.parameters or args.stage != "both":
                     raise ValueError("Hosted-role completion never replays general infrastructure")
                 run_hosted_roles(cli, str(args.hosted_principal_id), args.mode, args.name)
@@ -1083,6 +1212,7 @@ def main() -> int:
             if (
                 args.parameters
                 or args.hosted_principal_id
+                or args.prepare_mcp_authentication
                 or args.stage != "both"
                 or not args.image
             ):

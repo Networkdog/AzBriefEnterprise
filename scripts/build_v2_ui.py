@@ -7,7 +7,7 @@ import copy
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 _TAG_INDEX = re.compile(
@@ -277,7 +277,36 @@ def normalize_ui(
             )
     _group_resource_names(parameters)
     _remove_validation_surfaces(parameters)
-    return _portable_tag_access(result)
+    for step in parameters["steps"]:
+        for element in step["elements"]:
+            if element["name"] == "stageNotice":
+                element["options"]["text"] = (
+                    "인프라 내부 단계는 기반 준비 → 계정 host 준비 확인 → 기존 기반 완성입니다. "
+                    "Portal은 Microsoft Graph를 호출하지 않습니다. 코어 완성 후 mcp_pending 상태에서 "
+                    "권한이 확인된 CLI의 --prepare-mcp-authentication을 1회 실행하면 MCP 인증·연결을 "
+                    "자동 준비하고 ready로 전환합니다. 내부 ID를 수동 입력하거나 인증을 해제하지 않습니다."
+                )
+        if step["name"] == "application":
+            step["elements"] = [
+                element for element in step["elements"] if element["name"] != "mcpPendingNotice"
+            ]
+            step["elements"].append(
+                {
+                    "name": "mcpPendingNotice",
+                    "type": "Microsoft.Common.InfoBox",
+                    "visible": "[equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.state'], ''), 'mcp_pending')]",
+                    "options": {
+                        "icon": "Warning",
+                        "text": (
+                            "코어 인프라는 완료됐지만 MCP 인증 준비가 필요합니다. 같은 RG에서 "
+                            "python -m scripts.deploy_v2 infrastructure --prepare-mcp-authentication "
+                            "--subscription <구독> --tenant <테넌트> --resource-group <RG> --mode deploy를 "
+                            "권한이 확인된 CLI로 실행하십시오. ready가 되기 전에는 앱 설치를 차단합니다."
+                        ),
+                    },
+                }
+            )
+    return cast(dict[str, Any], _portable_tag_access(result))
 
 
 def main() -> int:

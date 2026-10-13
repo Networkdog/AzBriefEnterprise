@@ -16,6 +16,9 @@ The infrastructure command internally creates the foundation, waits for the acco
 Capability Host, and then completes models/project/BYO/RBAC. These are implementation
 steps inside one infrastructure operation, not another application stage. Do not
 precreate the project or replay the account's custom subdomain.
+The Portal ARM excludes all Microsoft Graph resources. For managed MCP, core completion
+stops at `mcp_pending` until the authorized CLI prepares directory authentication once.
+The full infrastructure CLI runs this automatically. App install always requires `ready`.
 
 The Hosted Agent identity is created by the platform only when its code is first
 published. Its project Foundry User, component Monitoring Metrics Publisher and
@@ -31,7 +34,8 @@ and separately approved evidence scopes remain operator-managed.
 | --- | --- |
 | [infrastructure.bicep](infrastructure.bicep) | [infrastructure.json](infrastructure.json), one-time infrastructure |
 | [foundation.bicep](foundation.bicep) | Internal foundation; reuses the pinned KT AVM modules and email module |
-| [resource-group-tags.bicep](resource-group-tags.bicep) | Foundation and ready handoff, including bounded saved options |
+| [resource-group-tags.bicep](resource-group-tags.bicep) | Foundation, mcp_pending and ready handoff, including bounded saved options |
+| [mcp-authentication.bicep](mcp-authentication.bicep) | [mcp-authentication.json](mcp-authentication.json), CLI-only Graph app/project role/RemoteTool connection and ready promotion |
 | [application.bicep](application.bicep) | [application.json](application.json), repeatable App/Job installation and updates |
 | [runtime-roles.bicep](runtime-roles.bicep) | [runtime-roles.json](runtime-roles.json), late Hosted permissions |
 | [monitoring-role.bicep](monitoring-role.bicep), [subscription-reader.bicep](subscription-reader.bicep) | Scoped role modules, never application resources |
@@ -41,7 +45,7 @@ and separately approved evidence scopes remain operator-managed.
 | [build_v2_ui.py](../../scripts/build_v2_ui.py) | Normalize supported form guards and reuse the tested KT network validation contract |
 | [mcp-identity.bicep](mcp-identity.bicep), [mcp-application.bicep](mcp-application.bicep) | Dedicated infrastructure-owned Reader UAMI and application-owned read-only MCP container |
 
-Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all three artifacts.
+Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all four artifacts.
 
 ## Prerequisites
 
@@ -53,8 +57,9 @@ Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all three art
 - Deployment and role-definition/assignment permissions, plus private DNS reads and
   any explicit canonical central-DNS IDs. Failed or incomplete reads block writes.
 - Permission to create the MCP Entra application/service principal and assign its app role
-  through the existing Microsoft Graph Bicep modules. This is separate from ARM Contributor;
-  verify directory approval before deployment. No authentication bypass or secret is created.
+  through the CLI-only Microsoft Graph Bicep modules. The Portal artifact does not perform
+  these operations. This is separate from ARM Contributor; verify directory approval before
+  authorized preparation. No authentication bypass or secret is created.
   MCP uses the same Environment/workspace and a dedicated Reader-only UAMI. Its URL comes
   from the actual Environment domain and customer-named MCP App, not a fabricated address.
 - Graph Bicep delegated deployments require both the signed-in user's directory privileges
@@ -81,8 +86,10 @@ before opting into `--mode deploy`.
 
 Infrastructure merges **39** `azbrief.v2.*` tags without removing unrelated RG tags.
 Foundation success writes `schema=2`, `profile=kt-private-v2`, `state=foundation`, customer
-names and required options. Completion reuses them and changes the state to `ready` only
-after BYO, roles and connections succeed. Application still accepts only `ready`.
+names and required options. Core completion reuses them and sets `mcp_pending` for managed
+MCP (`ready` only for the legacy externally prepared MCP path). The authorized preparation
+module promotes `ready` only after Graph authentication/project app-role and connection succeed.
+Application still accepts only `ready`; pending never becomes an anonymous install fallback.
 The eight `options0` through `options7` values each hold at most 256 characters of one
 allow-listed JSON object (2048 characters total). It preserves model IDs/version/capacity,
 Search SKU, email location, canonical DNS IDs, resource tags and non-secret MCP identifiers.
@@ -165,6 +172,22 @@ python -m scripts.deploy_v2 infrastructure --subscription <subscription-guid> --
 because the account/project do not exist yet. `deploy` runs fresh preflight, ARM validate
 and what-if immediately before **each** internal create operation. All deployments
 are Incremental; no Complete mode, resource deletion or automatic migration is used.
+
+For Portal deployments, complete the two core steps first, then prepare MCP authentication
+once from an approved CLI identity with the required directory privileges:
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.deploy_v2 infrastructure --subscription <subscription-guid> --tenant <tenant-guid> --resource-group <same-target-rg> --prepare-mcp-authentication --mode preflight
+python -m scripts.deploy_v2 infrastructure --subscription <subscription-guid> --tenant <tenant-guid> --resource-group <same-target-rg> --prepare-mcp-authentication --mode deploy
+```
+
+The command validates the successful core output, exact same-RG private/BYO bindings,
+deterministic directory uniqueName and saved option budget before touching Graph. It never
+replays core/model resources or takes internal IDs as user inputs. CLI full infrastructure
+`--mode deploy` runs this step automatically. A failed/denied setup stays `mcp_pending` and
+cannot install an App. Existing `ready` installs keep their update path. A previously failed
+old Portal foundation is not adopted by this command; diagnose and approve its recovery separately.
 
 After success, infrastructure reruns are blocked by the RG contract. If the foundation
 succeeded but completion was interrupted, use explicit `--stage complete` after

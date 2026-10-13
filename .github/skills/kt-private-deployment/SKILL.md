@@ -43,7 +43,11 @@ The opt-in [`infra/v2`](../../../infra/v2/README.md) profile reuses this existin
 security/lifecycle knowledge but does not replace the KT Portal button or adopt old resources.
 Its one-time infrastructure command internally sequences foundation, account-host readiness
 and model/project/BYO/RBAC completion without an App image. Foundation saves 39 bounded,
-non-secret `azbrief.v2.*` RG tags including customer options; completion promotes them to ready.
+non-secret `azbrief.v2.*` RG tags including customer options. Managed MCP core completion records
+mcp_pending. Portal infrastructure contains zero Microsoft.Graph resources; authorized CLI-only
+mcp-authentication prepares app/project app-role/RemoteTool then promotes ready. Full CLI deploy
+runs it automatically; Portal operators use --prepare-mcp-authentication once without internal ID
+inputs. Keep same-core-output/private/BYO/uniqueName/budget checks and ready-only App acceptance.
 The same-RG application template owns App/Job/auth and the pinned read-only MCP container;
 [`scripts/deploy_v2.py`](../../../scripts/deploy_v2.py) preserves current keys, secrets,
 environments, registry/auth settings and accepted schedules on repeated updates. Missing,

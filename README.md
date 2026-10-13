@@ -168,10 +168,12 @@ same RG instead of replaying infrastructure. The guarded CLI preserves existing 
 auth, settings and accepted schedules. Hosted identity permissions are a narrow late
 infrastructure completion after first code publication. Existing Portal templates remain
 available; local/offline checks are not a customer Azure deployment or acceptance result.
-Automatic MCP authentication also creates Microsoft Graph resources. ARM Owner and even a
-directory role alone do not establish the deployment client's delegated Graph scopes.
-Use the supported authorized Azure CLI/PowerShell path when Portal returns
-`Authorization_RequestDenied`; do not add roles or bypass Entra to conceal that failure.
+The Portal infrastructure artifact executes no Microsoft Graph operations. Managed MCP core
+completion records `mcp_pending`; run the authorized CLI once with
+`infrastructure --prepare-mcp-authentication --mode deploy` for the same explicit subscription,
+tenant and RG. It automatically prepares the Entra app/project role/connection and promotes
+`ready`; no internal IDs are entered. The full CLI infrastructure deployment performs this
+step automatically. ARM Owner alone is not a Graph grant; never add roles or bypass Entra.
 MCP connections use the documented `RemoteTool` / `ProjectManagedIdentity` ARM contract.
 The internal Environment also gets its own default-domain private DNS zone and wildcard/apex
 A records targeting its private VIP, linked to the approved VNet. This differs from ACA PE DNS.

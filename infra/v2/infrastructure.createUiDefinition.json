@@ -70,7 +70,7 @@
             "type": "Microsoft.Common.InfoBox",
             "options": {
               "icon": "Warning",
-              "text": "인프라 내부 단계는 기반 준비 → 계정 Capability Host 준비 확인 → 기존 기반 완성 순서입니다. 앱·Prompt/Hosted Agent 버전은 생성하지 않습니다. 기존 KT 설치의 인수·이전·host 초기화를 수행하지 않으며, 실제 배포 전 보호된 CLI 사전검사를 수행하십시오."
+              "text": "인프라 내부 단계는 기반 준비 → 계정 host 준비 확인 → 기존 기반 완성입니다. Portal은 Microsoft Graph를 호출하지 않습니다. 코어 완성 후 mcp_pending 상태에서 권한이 확인된 CLI의 --prepare-mcp-authentication을 1회 실행하면 MCP 인증·연결을 자동 준비하고 ready로 전환합니다. 내부 ID를 수동 입력하거나 인증을 해제하지 않습니다."
             }
           }
         ]

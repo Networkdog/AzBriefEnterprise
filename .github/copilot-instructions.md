@@ -56,8 +56,11 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 `infra/v2` is an opt-in existing-VNet private profile, not a replacement for the existing
 Enterprise/KT Portal buttons or a legacy migration. `infrastructure.bicep` owns one-time
 foundation/completion, model/project/BYO provisioning, scoped roles, logs and the completion-only
-RG handoff. Foundation stores its options/status; completion promotes the same contract to
-ready. `application.bicep` reads the same group's 39 non-secret `azbrief.v2.*` tags and
+RG handoff. Foundation stores its options/status; managed-MCP completion records mcp_pending.
+Portal infrastructure must contain no Microsoft.Graph resources. Authorized CLI-only
+mcp-authentication.bicep prepares the same Entra app/project role/RemoteTool connection and
+promotes ready; full CLI deploy runs it automatically, while Portal uses --prepare-mcp-authentication.
+`application.bicep` reads the same group's 39 non-secret `azbrief.v2.*` tags and
 writes only App/Job/auth settings. Use `scripts/deploy_v2.py` for fresh fail-closed context,
 network/DNS/ownership/BYO checks, Incremental validate/what-if/create and current key/config
 preservation. Never rotate on denied/missing secret reads, downgrade Entra auth or reset a
@@ -66,7 +69,7 @@ enforce the 50-tag/256-character budget before provisioning. Raw ARM callers mus
 equivalent checks and supply verified reuse/settings; templates alone are not adoption approval.
 Agent versions still require the guarded publication workflow. Only the Hosted principal's
 post-publication roles use `runtime-roles.bicep` as late infrastructure completion, not normal
-App updates. Never claim application readiness from metadata. Compile all three artifacts
+App updates. Never claim application readiness from metadata. Compile all four artifacts
 with pinned Bicep 0.46.1, retain CI drift checks and offline install/two-update coverage in
 `tests/test_deployment_v2.py`. Keep `infra/v2/README.md` and both root READMEs synchronized.
 Both root READMEs expose separate v2 infrastructure/application Deploy to Azure buttons,
@@ -100,6 +103,9 @@ CLI/PowerShell path, never broader roles/auth bypasses. Recover only the exact f
 module/uniqueName and distinguish child success from parent readiness. Keep the MCP connection
 on documented RemoteTool/ProjectManagedIdentity, explicit audience and 2025-10-01-preview;
 RemoteToolServer is invalid. Preserve completed models/BYO/roles on retry.
+Repeated Portal Graph failures need the Graph-free Portal artifact, not another one-off RG
+repair. Keep pending App denial, same-core-output/uniqueName/option-budget validation, no
+internal ID inputs, original completion handoff name and existing ready compatibility.
 Internal ingress needs its own actual Environment defaultDomain DNS zone, private staticIp
 wildcard/apex A records and non-registering approved VNet link, separate from ACA PE DNS.
 Preserve PNA/internal/auth and old DNS; existing installs use validated DNS-only recovery.
