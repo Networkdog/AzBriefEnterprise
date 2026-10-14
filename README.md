@@ -19,6 +19,16 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [Customer deployment guide](infra/CUSTOMER_DEPLOYMENT.md): foundation first, then guided setup and acceptance.
 
+**Infrastructure Deployment (v2)**
+
+[![Deploy Infrastructure to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.createUiDefinition.json)
+
+**Application Deployment (v2)**
+
+[![Deploy Application to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
+
+[v2 deployment guide](infra/v2/README.md): complete infrastructure in the same resource group before installing or updating the application.
+
 </div>
 
 ---
