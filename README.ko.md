@@ -167,6 +167,23 @@ MCP 연결은 문서의
 A 레코드도 승인된 VNet에 연결합니다. 이는 ACA Private Endpoint DNS와 다릅니다.
 업데이트는 구조화된 `AuthConfigNotFound`만 선택적 웹 인증 설정 부재로 인정합니다.
 거부·잘못된 응답·다른 리소스 부재 오류는 여전히 키 재사용과 배포를 차단합니다.
+RG가 `foundation` 또는 `mcp_pending`인 상태에서 앱을 시도하면 `portalValidationPassed=false`로
+정상 차단됩니다. 코어 완성·모델 quota·MCP 준비를 먼저 완료해야 합니다.
+CLI 최초 앱 설치는 검증한 배포자 디렉터리 메일을 이메일·Feedback 수신자로, 배포자 object ID를
+관리자·Archive 독자로 기본 설정합니다. 세 웹 UI를 모두 켜고 전용 단일 테넌트 Entra 로그인 앱과
+365일 시크릿을 자동 준비하며, 시크릿은 App secret에만 저장합니다. 미리보기는 Graph를 변경하지
+않으며 역할·API 권한을 확대하지 않습니다. 인증 UI는 최소 replica 1개로 동작해 유휴 비용이 있습니다.
+업데이트는 기존 수신자·접근 목록·자격 증명·스케줄을 보존하고 메일·스케줄은 자동 시작하지 않습니다.
+Portal만으로 최초 설치하면 기존 저수준 UI-off 기본값을 유지하므로 자동 초기 설정은 CLI를 사용한
+뒤 어느 경로로든 업데이트할 수 있습니다. ID·키·Foundry·저장소·서비스 경로는 계속 자동입니다.
+Agent 게시·사설 로그인·실제 이메일 발송 인수는 별도로 필요합니다.
+Archive·Feedback URL은 검증한 사설 App 주소로 Job 메일 생성에도 자동 연결합니다.
+RG 태그로 인프라만 준비됐는지 앱도 배포됐는지 구분합니다.
+`azbrief.v2.applicationState`는 `not_deployed` 또는 `deployed`이며,
+`azbrief.v2.lastApplicationDeploymentAt`은 모든 앱 리소스가 성공한 뒤 해당 성공 ARM 배포의
+시작 시각을 UTC로 기록합니다. 실패·미리보기는 이전 기록을 보존합니다. 새 설치는 41개 태그를
+사용하고 기존 39태그 설치도 과거 날짜를 추정하지 않고 호환됩니다. 이 기록은 런타임 준비나
+메일·Agent 인수 성공을 뜻하지 않습니다.
 
 </div>
 

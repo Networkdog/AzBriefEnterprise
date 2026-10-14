@@ -179,6 +179,24 @@ The internal Environment also gets its own default-domain private DNS zone and w
 A records targeting its private VIP, linked to the approved VNet. This differs from ACA PE DNS.
 Updates accept only structured `AuthConfigNotFound` as an absent optional web-auth configuration;
 denied, malformed or other missing-resource reads still block key reuse and deployment.
+`portalValidationPassed=false` also correctly blocks an App attempted while the RG is still
+`foundation` or `mcp_pending`; finish the required stages and model quota before retrying.
+The first CLI application install defaults email and feedback recipients to the verified
+deployment user's directory mail, and Admin/Archive access to that user's object ID. It enables
+all three web UIs, preparing a dedicated single-tenant Entra login app and a 365-day client
+secret stored only as an App secret. Previews do not write Graph; no roles or API permissions
+are expanded. Authenticated UI uses at least one replica (idle cost). Updates retain existing
+recipients, access, credentials and schedules; no mail or schedule is started automatically.
+Portal-only initial installs retain the low-level UI-off defaults; use the CLI for automatic
+first setup, then either update path. Identity, keys, Foundry, storage and service routes stay
+automatic. Agent publication, private login and actual email delivery still require acceptance.
+Archive/Feedback URLs are shared with Job delivery from the verified private App origin.
+RG tags also distinguish infrastructure-only from a deployed application:
+`azbrief.v2.applicationState` is `not_deployed` or `deployed`, and
+`azbrief.v2.lastApplicationDeploymentAt` records the successful application's ARM start time
+in UTC after all application resources succeed. Failed/preview runs preserve the previous
+record. New installs use 41 tags; legacy 39-tag installs remain compatible without fabricated
+dates. Deployment metadata is not runtime readiness or proof of email/Agent acceptance.
 
 </div>
 

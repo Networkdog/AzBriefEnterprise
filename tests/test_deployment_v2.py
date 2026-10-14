@@ -70,7 +70,136 @@ def test_application_reads_rg_tags_and_only_writes_application_surfaces() -> Non
         "Microsoft.App/containerApps/authConfigs",
         "Microsoft.App/jobs",
         "Microsoft.Resources/deployments",
+        "Microsoft.Resources/tags",
     }
+
+
+def test_application_deployment_record_waits_for_every_application_resource() -> None:
+    document = template("application")
+    record = next(
+        resource
+        for resource in resources(document)
+        if resource["type"] == "Microsoft.Resources/tags"
+    )
+    assert record["name"] == "default"
+    assert record["properties"]["tags"].startswith("[union(coalesce(resourceGroup().tags,")
+    assert "'azbrief.v2.applicationState', 'deployed'" in record["properties"]["tags"]
+    assert (
+        "'azbrief.v2.lastApplicationDeploymentAt', parameters('applicationDeploymentTimestamp')"
+        in record["properties"]["tags"]
+    )
+    dependencies = record["dependsOn"]
+    assert any(
+        "Microsoft.App/containerApps'" in dependency and "authConfigs" not in dependency
+        for dependency in dependencies
+    )
+    assert any("Microsoft.App/jobs'" in dependency for dependency in dependencies)
+    assert any(
+        "Microsoft.App/containerApps/authConfigs'" in dependency for dependency in dependencies
+    )
+    assert any("v2-managed-mcp-application" in dependency for dependency in dependencies)
+    assert (
+        document["parameters"]["applicationDeploymentTimestamp"]["defaultValue"]
+        == "[utcNow('yyyy-MM-ddTHH:mm:ssZ')]"
+    )
+    assert document["outputs"]["application"]["value"]["applicationReady"] is False
+
+
+def test_legacy_application_install_reserves_tag_room_before_writes() -> None:
+    cli = FakeV2Azure()
+    cli.tags.update({f"customer{index}": "keep" for index in range(49 - len(cli.tags))})
+    with pytest.raises(ValueError, match="50-tag"):
+        deploy_v2.prepare_application(cli, IMAGE)
+    assert not cli.operations
+    cli.tags.pop("customer0")
+    assert deploy_v2.prepare_application(cli, IMAGE)["reuseExistingApiKey"] is False
+    assert all(value == "keep" for key, value in cli.tags.items() if key.startswith("customer"))
+
+
+def test_application_deployment_tag_pair_accepts_legacy_and_known_states() -> None:
+    tags = tag_contract()
+    assert deploy_v2.parse_tag_contract(tags) == tags
+    tags.update(
+        {
+            deploy_v2.PREFIX + "applicationState": "not_deployed",
+            deploy_v2.PREFIX + "lastApplicationDeploymentAt": "",
+        }
+    )
+    assert deploy_v2.parse_tag_contract(tags) == tags
+    tags.update(
+        {
+            deploy_v2.PREFIX + "applicationState": "deployed",
+            deploy_v2.PREFIX + "lastApplicationDeploymentAt": "2026-10-13T07:15:30Z",
+        }
+    )
+    assert deploy_v2.parse_tag_contract(tags) == tags
+
+
+@pytest.mark.parametrize(
+    "state,timestamp",
+    [
+        ("unknown", ""),
+        ("not_deployed", "2026-10-13T07:15:30Z"),
+        ("deployed", ""),
+        ("deployed", "2026-10-13T07:15:30+09:00"),
+        ("deployed", "2026-13-40T25:15:30Z"),
+    ],
+)
+def test_application_deployment_tag_pair_rejects_corrupted_values(
+    state: str, timestamp: str
+) -> None:
+    tags = tag_contract()
+    tags.update(
+        {
+            deploy_v2.PREFIX + "applicationState": state,
+            deploy_v2.PREFIX + "lastApplicationDeploymentAt": timestamp,
+        }
+    )
+    with pytest.raises(ValueError):
+        deploy_v2.parse_tag_contract(tags)
+
+
+def test_application_deployment_tag_pair_is_complete_and_infrastructure_ready() -> None:
+    tags = tag_contract()
+    tags[deploy_v2.PREFIX + "applicationState"] = "deployed"
+    with pytest.raises(ValueError, match="Incomplete"):
+        deploy_v2.parse_tag_contract(tags)
+    tags[deploy_v2.PREFIX + "lastApplicationDeploymentAt"] = "2026-10-13T07:15:30Z"
+    tags[deploy_v2.PREFIX + "state"] = "foundation"
+    with pytest.raises(ValueError, match="Invalid application"):
+        deploy_v2.parse_tag_contract(tags, require_ready=False)
+
+
+@pytest.mark.parametrize("mode", ["preflight", "validate", "what-if", "deploy"])
+def test_preview_and_failed_application_preserve_previous_success_tags(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    cli = FakeV2Azure(installed=True)
+    cli.tags.update(
+        {
+            deploy_v2.PREFIX + "applicationState": "deployed",
+            deploy_v2.PREFIX + "lastApplicationDeploymentAt": "2026-10-12T12:00:00Z",
+            "costCenter": "customer-owned",
+        }
+    )
+    previous = copy.deepcopy(cli.tags)
+    if mode == "deploy":
+        original = deploy_v2.deploy_template
+
+        def fail_create(
+            target: AzureCli, artifact: Path, parameters: dict[str, Any], operation: str, name: str
+        ) -> dict[str, Any]:
+            if operation == "create":
+                raise RuntimeError("Application resource deployment failed")
+            return original(target, artifact, parameters, operation, name)
+
+        monkeypatch.setattr(deploy_v2, "deploy_template", fail_create)
+        with pytest.raises(RuntimeError, match="resource deployment failed"):
+            deploy_v2.run_application(cli, IMAGE, {}, mode, "failed-update")
+    else:
+        deploy_v2.run_application(cli, IMAGE, {}, mode, "preview-update")
+    assert cli.tags == previous
 
 
 def test_handoff_is_completed_after_control_plane_rbac() -> None:
@@ -83,6 +212,9 @@ def test_handoff_is_completed_after_control_plane_rbac() -> None:
     tags = tags_document["variables"]["contractTags"]
     assert len(deploy_v2.TAG_KEYS) == 31
     assert all(f"'{key}'" in tags for key in deploy_v2.TAG_KEYS)
+    assert all(f"'{key}'" in tags for key in deploy_v2.APPLICATION_TAG_KEYS)
+    assert "'not_deployed'" in tags
+    assert "resourceGroup().tags" in tags
     assert handoff["properties"]["parameters"]["infrastructureState"] == (
         "[if(variables('manageAzureMcp'), createObject('value', 'mcp_pending'), "
         "createObject('value', 'ready'))]"
@@ -526,6 +658,73 @@ class FakeV2Azure(AzureCli):
         raise AssertionError("Unexpected Azure operation")
 
 
+class FakeAutomaticV2Azure(FakeV2Azure):
+    def __init__(self) -> None:
+        super().__init__()
+        self.user = {"id": SUBSCRIPTION, "mail": "operator@example.com"}
+        self.account_type = "user"
+        self.applications: list[dict[str, Any]] = []
+        self.principals: list[dict[str, Any]] = []
+        self.owners: list[dict[str, Any]] = [{"id": SUBSCRIPTION}]
+        self.directory_writes: list[str] = []
+        self.paged = False
+
+    def json(self, *arguments: str) -> Any:
+        if arguments[:2] == ("account", "show"):
+            return {
+                "id": self.subscription,
+                "tenantId": self.tenant,
+                "user": {"type": self.account_type},
+            }
+        if arguments[:3] == ("ad", "signed-in-user", "show"):
+            return copy.deepcopy(self.user)
+        if arguments[0] == "rest" and arguments[arguments.index("--url") + 1].startswith(
+            deploy_v2.GRAPH
+        ):
+            url = arguments[arguments.index("--url") + 1]
+            path = url.removeprefix(deploy_v2.GRAPH).split("?")[0]
+            method = arguments[arguments.index("--method") + 1]
+            if method == "GET":
+                rows = self.applications if path == "applications" else self.principals
+                if path.endswith("/owners"):
+                    rows = self.owners
+                response = {"value": copy.deepcopy(rows)}
+                if self.paged:
+                    response["@odata.nextLink"] = "https://graph.microsoft.com/continued"
+                return response
+            self.directory_writes.append(path)
+            payload = json.loads(
+                Path(arguments[arguments.index("--body") + 1][1:]).read_text(encoding="utf-8")
+            )
+            if path == "applications":
+                application = {
+                    **payload,
+                    "id": "00000000-0000-0000-0000-000000000006",
+                    "appId": "00000000-0000-0000-0000-000000000007",
+                    "passwordCredentials": [],
+                }
+                self.applications.append(application)
+                return copy.deepcopy(application)
+            if path == "servicePrincipals":
+                principal = {
+                    **payload,
+                    "id": "00000000-0000-0000-0000-000000000008",
+                    "appOwnerOrganizationId": self.tenant,
+                    "servicePrincipalType": "Application",
+                    "accountEnabled": True,
+                }
+                self.principals.append(principal)
+                return copy.deepcopy(principal)
+            if path.endswith("/addPassword"):
+                self.applications[0]["passwordCredentials"] = [payload["passwordCredential"]]
+                return {
+                    "keyId": "00000000-0000-0000-0000-000000000009",
+                    "secretText": "synthetic-web-credential-never-log",
+                }
+            raise AssertionError("Unexpected directory write")
+        return super().json(*arguments)
+
+
 class FakeMcpPreparation(FakeV2Azure):
     def __init__(self) -> None:
         super().__init__()
@@ -619,6 +818,91 @@ def test_mcp_preparation_rejects_failed_core_and_foreign_directory_app() -> None
     assert not cli.operations
 
 
+def test_saved_empty_dns_defaults_accept_only_owned_same_group_zones() -> None:
+    cli = FakeV2Azure()
+    namespaces = [
+        "privatelink.cognitiveservices.azure.com",
+        "privatelink.openai.azure.com",
+        "privatelink.services.ai.azure.com",
+        "privatelink.blob.core.windows.net",
+        "privatelink.documents.azure.com",
+        "privatelink.search.windows.net",
+        "privatelink.koreacentral.azurecontainerapps.io",
+    ]
+    resolved = {
+        namespace: f"{cli.group_id}/providers/Microsoft.Network/privateDnsZones/{namespace}"
+        for namespace in namespaces
+    }
+    for resource_id in resolved.values():
+        cli.documents[resource_id] = cli.resource(resource_id, {})
+    deploy_v2._verify_saved_dns_bindings(cli, {}, resolved)
+    altered = dict(resolved)
+    altered[namespaces[0]] = resolved[namespaces[0]].replace(cli.group, "foreign-rg")
+    with pytest.raises(ValueError, match="redirect"):
+        deploy_v2._verify_saved_dns_bindings(cli, {}, altered)
+    incomplete = dict(resolved)
+    incomplete.pop(namespaces[0])
+    with pytest.raises(ValueError, match="incomplete"):
+        deploy_v2._verify_saved_dns_bindings(cli, {}, incomplete)
+    cli.documents[resolved[namespaces[0]]]["tags"] = {"deploymentProfile": "foreign"}
+    with pytest.raises(ValueError, match="foreign"):
+        deploy_v2._verify_saved_dns_bindings(cli, {}, resolved)
+    assert not cli.operations
+
+
+def test_saved_explicit_dns_override_is_preserved_not_reinterpreted() -> None:
+    cli = FakeV2Azure()
+    saved = {
+        f"zone{index}": f"/subscriptions/{SUBSCRIPTION}/resourceGroups/central/providers/Microsoft.Network/privateDnsZones/zone{index}"
+        for index in range(7)
+    }
+    deploy_v2._verify_saved_dns_bindings(cli, saved, dict(saved))
+    changed = dict(saved)
+    changed["zone0"] = changed["zone0"].replace("central", "other")
+    with pytest.raises(ValueError, match="redirect"):
+        deploy_v2._verify_saved_dns_bindings(cli, saved, changed)
+    assert not cli.operations
+
+
+def test_deployer_defaults_use_directory_mail_and_object_id() -> None:
+    user = {"id": SUBSCRIPTION, "mail": "operator@example.com", "userPrincipalName": "guest#EXT#"}
+    environment = deploy_v2.deployer_environment_defaults(user)
+    assert environment["EMAIL_RECIPIENT_ADDRESS"] == "operator@example.com"
+    assert environment["ADMIN_ALLOWED_PRINCIPALS"] == SUBSCRIPTION
+    assert environment["ARCHIVE_ALLOWED_PRINCIPALS"] == SUBSCRIPTION
+    assert all(
+        environment[name] == "true"
+        for name in (
+            "ADMIN_UI_ENABLED",
+            "ARCHIVE_UI_ENABLED",
+            "FEEDBACK_UI_ENABLED",
+            "ADMIN_REQUIRE_AUTH",
+            "ARCHIVE_REQUIRE_AUTH",
+        )
+    )
+    assert "SCHEDULE_CRON_EXPRESSION" not in environment
+    assert "SCHEDULE_DISPATCH_ENABLED" not in environment
+
+
+@pytest.mark.parametrize(
+    "user",
+    [
+        {},
+        {"id": SUBSCRIPTION, "userPrincipalName": "operator@example.com"},
+        {"id": SUBSCRIPTION, "mail": "guest#EXT#@example.com"},
+        {"id": SUBSCRIPTION, "mail": "operator@example.com,other@example.com"},
+        {"id": SUBSCRIPTION, "mail": "operator@example.com\r\nBcc:other@example.com"},
+        {"id": "not-an-object-id", "mail": "operator@example.com"},
+        {"id": "00000000-0000-0000-0000-000000000000", "mail": "operator@example.com"},
+    ],
+)
+def test_deployer_defaults_reject_missing_or_invalid_directory_profile(
+    user: dict[str, Any],
+) -> None:
+    with pytest.raises(ValueError):
+        deploy_v2.deployer_environment_defaults(user)
+
+
 def test_initial_application_uses_generated_key_and_tag_names() -> None:
     cli = FakeV2Azure()
     parameters = deploy_v2.prepare_application(cli, IMAGE)
@@ -627,6 +911,192 @@ def test_initial_application_uses_generated_key_and_tag_names() -> None:
     assert parameters["infrastructureTags"] == cli.tags
     assert parameters["existingSecrets"] == {"app": [], "job": []}
     assert not cli.operations
+
+
+def test_initial_deployer_defaults_require_auth_and_keep_explicit_settings() -> None:
+    cli = FakeV2Azure()
+    user = {"id": SUBSCRIPTION, "mail": "operator@example.com"}
+    with pytest.raises(ValueError, match="complete Entra"):
+        deploy_v2.prepare_application(cli, IMAGE, deployment_user=user)
+    cli.install()
+    auth = cli.collections[f"{cli.app_id}/authConfigs"][0]["properties"]
+    cli.collections[f"{cli.group_id}/providers/Microsoft.App/containerApps"] = []
+    cli.collections[f"{cli.group_id}/providers/Microsoft.App/jobs"] = []
+    parameters = deploy_v2.prepare_application(
+        cli,
+        IMAGE,
+        {
+            "webAuthConfiguration": auth,
+            "existingSecrets": {"app": [{"name": "registry-token", "value": "web-secret"}]},
+            "appEnvironment": [{"name": "EMAIL_RECIPIENT_ADDRESS", "value": "custom@example.com"}],
+        },
+        deployment_user=user,
+    )
+    app = {entry["name"]: entry["value"] for entry in parameters["appEnvironment"]}
+    job = {entry["name"]: entry["value"] for entry in parameters["jobEnvironment"]}
+    assert app["EMAIL_RECIPIENT_ADDRESS"] == "custom@example.com"
+    assert app["ADMIN_ALLOWED_PRINCIPALS"] == SUBSCRIPTION
+    assert app["FEEDBACK_RECIPIENT_ADDRESS"] == "operator@example.com"
+    assert job["EMAIL_RECIPIENT_ADDRESS"] == "custom@example.com"
+    assert job["FEEDBACK_UI_ENABLED"] == "true"
+    assert "ADMIN_ALLOWED_PRINCIPALS" not in job
+    assert parameters["appTemplate"]["scale"]["minReplicas"] == 1
+    assert "operator@example.com" not in json.dumps(parameters["infrastructureTags"])
+
+
+def test_application_update_never_injects_deployer_defaults() -> None:
+    cli = FakeV2Azure()
+    cli.install()
+    parameters = deploy_v2.prepare_application(cli, IMAGE, deployment_user={})
+    environment = {entry["name"]: entry for entry in parameters["appEnvironment"]}
+    assert "EMAIL_RECIPIENT_ADDRESS" not in environment
+    assert "ADMIN_ALLOWED_PRINCIPALS" not in environment
+    assert "ADMIN_UI_ENABLED" not in environment
+    assert parameters["jobConfiguration"]["triggerType"] == "Schedule"
+
+
+@pytest.mark.parametrize("mode", ["preflight", "validate", "what-if"])
+def test_automatic_application_preview_never_writes_directory(mode: str) -> None:
+    cli = FakeAutomaticV2Azure()
+    deploy_v2.run_application(cli, IMAGE, {}, mode, "automatic-preview")
+    assert not cli.directory_writes
+    assert not cli.applications
+    assert "create" not in cli.operations
+    if cli.requests:
+        parameters = cli.requests[0]["parameters"]
+        assert parameters["webAuthConfiguration"]["platform"]["enabled"] is True
+        assert parameters["existingSecrets"]["app"][0]["name"] == deploy_v2.WEB_SECRET_NAME
+
+
+def test_automatic_application_deploy_prepares_login_without_leaking_credentials(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    cli = FakeAutomaticV2Azure()
+    deploy_v2.run_application(cli, IMAGE, {}, "deploy", "automatic-install")
+    assert cli.operations == ["validate", "what-if", "validate", "what-if", "create"]
+    assert cli.directory_writes == [
+        "applications",
+        "servicePrincipals",
+        "applications/00000000-0000-0000-0000-000000000006/addPassword",
+    ]
+    parameters = cli.requests[-1]["parameters"]
+    auth = parameters["webAuthConfiguration"]["identityProviders"]["azureActiveDirectory"]
+    assert auth["registration"]["clientId"] == cli.applications[0]["appId"]
+    assert cli.applications[0]["requiredResourceAccess"] == []
+    assert cli.applications[0]["owners@odata.bind"] == [
+        deploy_v2.GRAPH + "directoryObjects/" + SUBSCRIPTION
+    ]
+    environment = {entry["name"]: entry["value"] for entry in parameters["appEnvironment"]}
+    assert environment["ADMIN_ALLOWED_PRINCIPALS"] == SUBSCRIPTION
+    assert environment["ARCHIVE_ALLOWED_PRINCIPALS"] == SUBSCRIPTION
+    assert environment["EMAIL_RECIPIENT_ADDRESS"] == "operator@example.com"
+    assert environment["FEEDBACK_UI_ENABLED"] == "true"
+    assert "clientSecretSettingName" not in environment
+    assert parameters["existingSecrets"]["app"] == [
+        {
+            "name": deploy_v2.WEB_SECRET_NAME,
+            "value": "synthetic-web-credential-never-log",
+        }
+    ]
+    assert cli.requests[-3]["parameters"] == parameters
+    assert cli.requests[-2]["parameters"] == parameters
+    assert "synthetic-web-credential" not in json.dumps(parameters["infrastructureTags"])
+    assert "operator@example.com" not in json.dumps(parameters["infrastructureTags"])
+    assert "synthetic-web-credential" not in capsys.readouterr().out
+    initial = copy.deepcopy(parameters)
+    cli.install()
+    for label, resource_id in (("app", cli.app_id), ("job", cli.job_id)):
+        resource = cli.documents[resource_id]
+        container = resource["properties"]["template"]["containers"][0]
+        environment_entries = {entry["name"]: entry for entry in container["env"]}
+        environment_entries.update(
+            {entry["name"]: entry for entry in initial[f"{label}Environment"]}
+        )
+        container["env"] = list(environment_entries.values())
+    cli.secret_values[cli.app_id] += initial["existingSecrets"]["app"]
+    cli.collections[f"{cli.app_id}/authConfigs"][0]["properties"] = initial["webAuthConfiguration"]
+    cli.user = {}
+    for revision in ("b", "c"):
+        deploy_v2.run_application(
+            cli,
+            "ghcr.io/networkdog/azbrief@sha256:" + revision * 64,
+            {},
+            "deploy",
+            "automatic-update",
+        )
+        updated = cli.requests[-1]["parameters"]
+        assert updated["webAuthConfiguration"] == initial["webAuthConfiguration"]
+        assert updated["jobConfiguration"]["triggerType"] == "Schedule"
+        assert updated["reuseExistingApiKey"] is True
+        assert {
+            entry["name"]: entry["value"] for entry in updated["appEnvironment"] if "value" in entry
+        }["EMAIL_RECIPIENT_ADDRESS"] == "operator@example.com"
+    assert len(cli.directory_writes) == 3
+
+
+@pytest.mark.parametrize("failure", ["no_mail", "service_principal", "paged", "foreign_app"])
+def test_automatic_application_blocks_untrusted_setup_before_writes(failure: str) -> None:
+    cli = FakeAutomaticV2Azure()
+    if failure == "no_mail":
+        cli.user.pop("mail")
+    elif failure == "service_principal":
+        cli.account_type = "servicePrincipal"
+    elif failure == "paged":
+        cli.paged = True
+    else:
+        cli.applications = [{"uniqueName": "foreign", "signInAudience": "AzureADMultipleOrgs"}]
+    with pytest.raises(ValueError):
+        deploy_v2.run_application(cli, IMAGE, {}, "deploy", "automatic-denied")
+    assert not cli.operations
+    assert not cli.directory_writes
+
+
+def test_existing_web_credentials_are_never_rotated_after_interrupted_install() -> None:
+    cli = FakeAutomaticV2Azure()
+    deploy_v2.run_application(cli, IMAGE, {}, "deploy", "automatic-install")
+    previous_writes = list(cli.directory_writes)
+    with pytest.raises(ValueError, match="explicit recovery"):
+        deploy_v2.run_application(cli, IMAGE, {}, "deploy", "automatic-retry")
+    assert cli.directory_writes == previous_writes
+
+
+@pytest.mark.parametrize(
+    "failure", ["foreign_owner", "redirect", "credentials", "malformed_owners"]
+)
+def test_automatic_setup_does_not_adopt_modified_or_unowned_registration(failure: str) -> None:
+    cli = FakeAutomaticV2Azure()
+    deploy_v2.run_application(cli, IMAGE, {}, "deploy", "automatic-installed")
+    cli.applications[0]["passwordCredentials"] = []
+    if failure == "foreign_owner":
+        cli.owners = [{"id": TENANT}]
+    elif failure == "redirect":
+        cli.applications[0]["web"]["redirectUris"] = ["https://foreign.example.invalid/callback"]
+    elif failure == "credentials":
+        cli.applications[0]["passwordCredentials"] = None
+    else:
+        cli.owners = ["malformed"]
+    previous_writes = list(cli.directory_writes)
+    previous_operations = list(cli.operations)
+    with pytest.raises(ValueError):
+        deploy_v2.run_application(cli, IMAGE, {}, "deploy", "automatic-rejected")
+    assert cli.directory_writes == previous_writes
+    assert cli.operations == previous_operations
+
+
+def test_explicit_web_authentication_is_not_replaced_by_automatic_setup() -> None:
+    cli = FakeAutomaticV2Azure()
+    cli.install()
+    auth = cli.collections[f"{cli.app_id}/authConfigs"][0]["properties"]
+    cli.collections[f"{cli.group_id}/providers/Microsoft.App/containerApps"] = []
+    cli.collections[f"{cli.group_id}/providers/Microsoft.App/jobs"] = []
+    configuration = {
+        "webAuthConfiguration": auth,
+        "existingSecrets": {"app": [{"name": "registry-token", "value": "supplied-web-secret"}]},
+    }
+    deploy_v2.run_application(cli, IMAGE, configuration, "deploy", "explicit-authentication")
+    assert not cli.directory_writes
+    assert not cli.applications
+    assert cli.requests[-1]["parameters"]["webAuthConfiguration"] == auth
 
 
 def test_mcp_pending_core_can_only_be_read_for_authorized_preparation() -> None:
@@ -792,6 +1262,54 @@ def test_infrastructure_ui_keeps_customer_names_but_not_internal_settings() -> N
         assert set(ui_definition(name)["outputs"]) <= set(template(name)["parameters"])
 
 
+@pytest.mark.parametrize("extra_tags,expected", [(0, True), (1, False)])
+def test_portal_reserves_two_application_tags_within_group_budget(
+    extra_tags: int, expected: bool
+) -> None:
+    tags = tag_contract()
+    tags[deploy_v2.PREFIX + "options0"] = "saved"
+    tags.update({f"customer{index}": "keep" for index in range(48 + extra_tags - len(tags))})
+    data = {
+        "application": {
+            "deploymentAccepted": True,
+            "resourceGroupApi": {"tags": tags},
+            "containerAppsApi": {"value": []},
+            "jobsApi": {"value": []},
+        }
+    }
+    expression = ui_definition("application")["outputs"]["portalValidationPassed"]
+    assert (
+        _evaluate_ui_expression(expression, data, resource_group={"mode": "Existing"}) is expected
+    )
+
+
+def test_portal_does_not_use_application_metadata_as_inventory_evidence() -> None:
+    tags = tag_contract()
+    tags[deploy_v2.PREFIX + "options0"] = "saved"
+    tags.update(
+        {
+            deploy_v2.PREFIX + "applicationState": "deployed",
+            deploy_v2.PREFIX + "lastApplicationDeploymentAt": "2026-10-13T07:15:30Z",
+        }
+    )
+    data = {
+        "application": {
+            "deploymentAccepted": True,
+            "resourceGroupApi": {"tags": tags},
+            "containerAppsApi": {"value": []},
+            "jobsApi": {"value": []},
+        }
+    }
+    expression = ui_definition("application")["outputs"]["portalValidationPassed"]
+    assert _evaluate_ui_expression(expression, data, resource_group={"mode": "Existing"}) is True
+    data["application"]["jobsApi"]["value"] = [
+        {"name": tags[deploy_v2.PREFIX + "job"], "tags": {"deploymentProfile": deploy_v2.PROFILE}}
+    ]
+    assert _evaluate_ui_expression(expression, data, resource_group={"mode": "Existing"}) is False
+    tags[deploy_v2.PREFIX + "lastApplicationDeploymentAt"] = ""
+    assert _evaluate_ui_expression(expression, data, resource_group={"mode": "Existing"}) is False
+
+
 def test_portal_pending_mcp_notice_does_not_request_internal_identifiers() -> None:
     controls = ui_controls("application")
     notice = controls["mcpPendingNotice"]
@@ -816,6 +1334,56 @@ def test_portal_pending_mcp_notice_does_not_request_internal_identifiers() -> No
     assert result is False
 
 
+def test_portal_foundation_notice_explains_blocked_application_without_bypass() -> None:
+    notice = ui_controls("application")["foundationIncompleteNotice"]
+    assert "foundation" in notice["visible"]
+    assert "기존 기반 완성" in notice["options"]["text"]
+    tags = tag_contract()
+    tags[deploy_v2.PREFIX + "state"] = "foundation"
+    expression = ui_definition("application")["outputs"]["portalValidationPassed"]
+    data = {
+        "application": {
+            "deploymentAccepted": True,
+            "resourceGroupApi": {"tags": tags},
+            "containerAppsApi": {"value": []},
+            "jobsApi": {"value": []},
+        }
+    }
+    assert _evaluate_ui_expression(expression, data, resource_group={"mode": "Existing"}) is False
+
+
+def test_portal_explains_cli_automatic_first_install_without_identity_inputs() -> None:
+    controls = ui_controls("application")
+    notice = controls["automaticSetupNotice"]
+    assert "ready" in notice["visible"]
+    assert "scripts.deploy_v2 application" in notice["options"]["text"]
+    assert "Portal만으로 최초 설치하면 웹 UI는 꺼진 상태" in notice["options"]["text"]
+    for field in ("deploymentUserMail", "deploymentUserObjectId", "webClientSecret"):
+        assert field not in controls
+
+
+def test_application_shares_verified_web_origins_with_job_delivery() -> None:
+    declared = template("application")["resources"]
+    entries = declared.values() if isinstance(declared, dict) else declared
+    surfaces = [
+        entry
+        for entry in entries
+        if entry["type"] in {"Microsoft.App/containerApps", "Microsoft.App/jobs"}
+    ]
+    assert len(surfaces) == 2
+    origin = (
+        "format('https://{0}.{1}', parameters('infrastructureTags')['azbrief.v2.app'], "
+        "reference(resourceId('Microsoft.App/managedEnvironments', "
+        "parameters('infrastructureTags')['azbrief.v2.environment']), '2026-01-01').defaultDomain)"
+    )
+    for surface in surfaces:
+        for name in ("ARCHIVE_BASE_URL", "FEEDBACK_BASE_URL"):
+            assert (
+                f"createObject('name', '{name}', 'value', {origin})"
+                in surface["properties"]["template"]
+            )
+
+
 def test_saved_customer_options_round_trip_and_application_rejects_foundation(
     tmp_path: Path,
 ) -> None:
@@ -824,7 +1392,9 @@ def test_saved_customer_options_round_trip_and_application_rejects_foundation(
         searchSku="standard", emailDataLocation="Korea", modelCapacity=450, simpleModelCapacity=300
     )
     saved = deploy_v2.make_tag_contract(values, "customer-foundation", state="foundation")
-    assert len(saved) == 39
+    assert len(saved) == 41
+    assert saved[deploy_v2.PREFIX + "applicationState"] == "not_deployed"
+    assert saved[deploy_v2.PREFIX + "lastApplicationDeploymentAt"] == ""
     assert all(len(value) <= 256 for value in saved.values())
     options = deploy_v2.decode_tag_options(saved)
     assert options["searchSku"] == "standard"
@@ -1300,7 +1870,7 @@ def test_initial_install_and_two_updates_only_submit_application_template(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     cli = FakeV2Azure()
-    deploy_v2.run_application(cli, IMAGE, {}, "deploy", "v2-install")
+    deploy_v2.run_application(cli, IMAGE, {}, "deploy", "v2-install", automatic_setup=False)
     assert cli.operations == ["validate", "what-if", "create"]
     assert cli.requests[-1]["parameters"]["reuseExistingApiKey"] is False
     cli.install()

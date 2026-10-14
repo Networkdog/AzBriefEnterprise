@@ -1,6 +1,6 @@
 targetScope = 'resourceGroup'
 
-metadata description = 'Repeatable AzBrief v2 application installation/update using the current resource-group tag contract. No infrastructure, model, BYO, RBAC or diagnostics writes.'
+metadata description = 'Repeatable AzBrief v2 application installation/update with final RG deployment metadata. No foundation, model, BYO, RBAC or diagnostics writes.'
 
 @description('Read from this resource group by default. The guarded CLI verifies version, ownership, names and live infrastructure before deployment.')
 param infrastructureTags object = resourceGroup().tags
@@ -39,6 +39,10 @@ param jobEnvironment array = []
 param webAuthConfiguration object = {}
 @description('Portal updates read current App/Job settings and secrets inside ARM; never expose them in UI controls.')
 param preserveExistingSettings bool = false
+@minLength(20)
+@maxLength(20)
+@description('UTC start time of this application deployment, recorded only after every application resource succeeds. Never infer runtime readiness from it.')
+param applicationDeploymentTimestamp string = utcNow('yyyy-MM-ddTHH:mm:ssZ')
 param tags object = {
   application: 'AzBrief'
   customer: 'KT'
@@ -115,6 +119,8 @@ var runtimeEnvironment = [
   { name: 'CHECKPOINT_BLOB_URL', value: '${stateContainerUrl}/checkpoint.json' }
   { name: 'ARCHIVE_BLOB_CONTAINER_URL', value: 'https://${infrastructureTags['azbrief.v2.storage']}.blob.${environment().suffixes.storage}/azbrief-archive' }
   { name: 'ADMIN_CONFIG_BLOB_URL', value: '${stateContainerUrl}/admin-config.json' }
+  { name: 'ARCHIVE_BASE_URL', value: applicationUrl }
+  { name: 'FEEDBACK_BASE_URL', value: applicationUrl }
   { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: 'https://${communication.properties.hostName}' }
   { name: 'EMAIL_SENDER_ADDRESS', value: 'DoNotReply@${emailDomain.properties.fromSenderDomain}' }
   { name: 'OTEL_ENABLED', value: 'true' }
@@ -133,7 +139,6 @@ var appDefaults = concat(runtimeEnvironment, [
   { name: 'ARCHIVE_UI_ENABLED', value: 'false' }
   { name: 'ARCHIVE_REQUIRE_AUTH', value: 'true' }
   { name: 'FEEDBACK_UI_ENABLED', value: 'false' }
-  { name: 'ARCHIVE_BASE_URL', value: applicationUrl }
   { name: 'ADMIN_READINESS_RESOURCE_GROUP', value: resourceGroup().name }
   { name: 'ADMIN_READINESS_FOUNDRY_ACCOUNT', value: infrastructureTags['azbrief.v2.foundry'] }
   { name: 'ADMIN_READINESS_FOUNDRY_PROJECT', value: infrastructureTags['azbrief.v2.project'] }
@@ -242,6 +247,17 @@ module mcp 'mcp-application.bicep' = if (contains(infrastructureTags, 'azbrief.v
   }
 }
 
+resource applicationDeploymentTags 'Microsoft.Resources/tags@2025-04-01' = {
+  name: 'default'
+  properties: {
+    tags: union(resourceGroup().tags ?? {}, {
+      'azbrief.v2.applicationState': 'deployed'
+      'azbrief.v2.lastApplicationDeploymentAt': applicationDeploymentTimestamp
+    })
+  }
+  dependsOn: [containerApp, schedulerJob, webAuth, mcp]
+}
+
 output application object = {
   schemaVersion: int(infrastructureSchema)
   profile: infrastructureProfile
@@ -249,6 +265,8 @@ output application object = {
   portalValidationPassed: portalValidationPassed
   infrastructureDeploymentName: infrastructureTags['azbrief.v2.deployment']
   applicationReady: false
+  applicationState: 'deployed'
+  lastApplicationDeploymentAt: applicationDeploymentTimestamp
   containerAppResourceId: containerApp.id
   schedulerJobResourceId: schedulerJob.id
   containerImage: containerImage

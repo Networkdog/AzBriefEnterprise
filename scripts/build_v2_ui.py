@@ -185,6 +185,28 @@ def _portable_tag_access(value: Any) -> Any:
     return _TAG_INDEX.sub(replace, value)
 
 
+def _application_deployment_tag_guard(parameters: dict[str, Any]) -> None:
+    if not any(step["name"] == "application" for step in parameters["steps"]):
+        return
+    existing = parameters["outputs"]["portalValidationPassed"]
+    if "azbrief_v2_applicationState" in existing or "azbrief.v2.applicationState" in existing:
+        return
+    tags = "coalesce(steps('application').resourceGroupApi.tags, parse('{}'))"
+    state_key = "azbrief.v2.applicationState"
+    timestamp_key = "azbrief.v2.lastApplicationDeploymentAt"
+    has_state = f"contains({tags}, '{state_key}')"
+    has_timestamp = f"contains({tags}, '{timestamp_key}')"
+    state = f"coalesce(steps('application').resourceGroupApi.tags['{state_key}'], '')"
+    timestamp = f"coalesce(steps('application').resourceGroupApi.tags['{timestamp_key}'], '')"
+    budget = f"lessOrEquals(length({tags}), sub(sub(50, if({has_state}, 0, 1)), if({has_timestamp}, 0, 1)))"
+    pair = (
+        f"or(and(not({has_state}), not({has_timestamp})), "
+        f"and({has_state}, {has_timestamp}, or(and(equals({state}, 'not_deployed'), empty({timestamp})), "
+        f"and(equals({state}, 'deployed'), equals(length({timestamp}), 20), equals(last(split({timestamp}, 'Z')), '')))))"
+    )
+    parameters["outputs"]["portalValidationPassed"] = f"[and({existing[1:-1]}, {budget}, {pair})]"
+
+
 def _safe_initial_outputs(parameters: dict[str, Any]) -> None:
     vnet_resource_group = (
         "first(skip(split(concat(coalesce(steps('network').virtualNetwork.id, ''), "
@@ -277,6 +299,7 @@ def normalize_ui(
             )
     _group_resource_names(parameters)
     _remove_validation_surfaces(parameters)
+    _application_deployment_tag_guard(parameters)
     for step in parameters["steps"]:
         for element in step["elements"]:
             if element["name"] == "stageNotice":
@@ -288,8 +311,27 @@ def normalize_ui(
                 )
         if step["name"] == "application":
             step["elements"] = [
-                element for element in step["elements"] if element["name"] != "mcpPendingNotice"
+                element
+                for element in step["elements"]
+                if element["name"]
+                not in {"mcpPendingNotice", "foundationIncompleteNotice", "automaticSetupNotice"}
             ]
+            step["elements"].append(
+                {
+                    "name": "foundationIncompleteNotice",
+                    "type": "Microsoft.Common.InfoBox",
+                    "visible": "[equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.state'], ''), 'foundation')]",
+                    "options": {
+                        "icon": "Warning",
+                        "text": (
+                            "이 RG는 기반 준비만 완료됐습니다. 인프라 배포 화면에서 '기존 기반 완성'을 "
+                            "같은 RG에 실행해 모델·프로젝트·BYO·권한을 먼저 완성하십시오. 모델 quota가 "
+                            "없으면 이 단계가 완료되지 않습니다. 이후 CLI MCP 인증 준비로 ready가 된 뒤 "
+                            "앱을 배포합니다. portalValidationPassed나 상태 태그를 수동 변경하지 마십시오."
+                        ),
+                    },
+                }
+            )
             step["elements"].append(
                 {
                     "name": "mcpPendingNotice",
@@ -302,6 +344,24 @@ def normalize_ui(
                             "python -m scripts.deploy_v2 infrastructure --prepare-mcp-authentication "
                             "--subscription <구독> --tenant <테넌트> --resource-group <RG> --mode deploy를 "
                             "권한이 확인된 CLI로 실행하십시오. ready가 되기 전에는 앱 설치를 차단합니다."
+                        ),
+                    },
+                }
+            )
+            step["elements"].append(
+                {
+                    "name": "automaticSetupNotice",
+                    "type": "Microsoft.Common.InfoBox",
+                    "visible": "[equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.state'], ''), 'ready')]",
+                    "options": {
+                        "icon": "Info",
+                        "text": (
+                            "메일 수신자·관리자·Archive 독자를 배포자로 기본 설정하고 모든 웹 UI를 켜려면 "
+                            "최초 설치를 python -m scripts.deploy_v2 application --subscription <구독> "
+                            "--tenant <테넌트> --resource-group <RG> --image <승인된 이미지 digest> --mode deploy로 "
+                            "실행하십시오. CLI가 전용 Entra 로그인 앱과 기간 제한 시크릿을 준비합니다. "
+                            "Portal만으로 최초 설치하면 웹 UI는 꺼진 상태이며, Portal 업데이트는 기존 "
+                            "수신자·인증·접근 목록을 보존합니다. 로그인 권한·사설 접속·실제 발송은 별도 확인합니다."
                         ),
                     },
                 }

@@ -18,6 +18,8 @@ var contractTags = union({
   'azbrief.v2.schema': '2'
   'azbrief.v2.profile': 'kt-private-v2'
   'azbrief.v2.state': infrastructureState
+  'azbrief.v2.applicationState': (resourceGroup().tags ?? {})[?'azbrief.v2.applicationState'] ?? 'not_deployed'
+  'azbrief.v2.lastApplicationDeploymentAt': (resourceGroup().tags ?? {})[?'azbrief.v2.lastApplicationDeploymentAt'] ?? ''
   'azbrief.v2.deployment': infrastructure.deploymentName
   'azbrief.v2.location': infrastructure.location
   'azbrief.v2.environment': infrastructure.containerAppsEnvironmentName

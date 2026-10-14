@@ -10,7 +10,7 @@ Use a new set of resource names in one explicitly selected resource group.
 | User stage | Owns | Does not do |
 | --- | --- | --- |
 | Infrastructure, once | Foundry account, models, project/BYO, Storage/Cosmos/Search, control-plane and MCP UAMIs, internal Environment, DNS/PEs, logs/Insights, email, scoped roles, MCP Entra application/project connection, staged RG tag handoff | No App/Job/MCP container image or Prompt/Hosted Agent versions |
-| Application, initially and repeatedly | Agent code/policies through the existing guarded publication workflow; real App/Job image, environment, secrets, registry configuration and Entra web settings | No infrastructure, model, BYO, diagnostic or RBAC replay during image/configuration updates |
+| Application, initially and repeatedly | Agent code/policies through the existing guarded publication workflow; real App/Job image, environment, secrets, registry configuration and CLI-prepared Entra web sign-in/default operators | No infrastructure, model, BYO, diagnostic or RBAC replay during image/configuration updates |
 
 The infrastructure command internally creates the foundation, waits for the account
 Capability Host, and then completes models/project/BYO/RBAC. These are implementation
@@ -74,6 +74,12 @@ Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all four arti
 - An approved immutable control-plane image digest and registry reachability.
   Public GHCR needs no token; a private registry needs explicit secret references.
   No image is built, mirrored, published or automatically sent during infrastructure setup.
+- Automatic first application setup requires a human CLI login in the explicit target tenant,
+  a readable signed-in Graph profile with a real `mail` value, and approved permission to create
+  the dedicated single-tenant web login application/service principal and bounded client secret.
+  This adds no directory/ARM roles, API grants or admin consent. Directory policy can block it;
+  never fall back to anonymous UI or guessed mail. Use explicit configuration with
+  `--no-automatic-setup` for a separately approved existing login app or app-only deployment.
 - A clean customer clone/private-network publication host for the existing Agent
   scripts. App/Job deployment does not bypass their import, pytest, roster or smoke gates.
 
@@ -84,12 +90,16 @@ before opting into `--mode deploy`.
 
 ## Resource Group Handoff
 
-Infrastructure merges **39** `azbrief.v2.*` tags without removing unrelated RG tags.
+New infrastructure merges **41** `azbrief.v2.*` tags without removing unrelated RG tags.
 Foundation success writes `schema=2`, `profile=kt-private-v2`, `state=foundation`, customer
 names and required options. Core completion reuses them and sets `mcp_pending` for managed
 MCP (`ready` only for the legacy externally prepared MCP path). The authorized preparation
 module promotes `ready` only after Graph authentication/project app-role and connection succeed.
 Application still accepts only `ready`; pending never becomes an anonymous install fallback.
+An App Review error for `portalValidationPassed=false` is a blocking prerequisite result,
+not permission to force the parameter to true. `foundation` means run the same-RG core
+completion first; `mcp_pending` means authorized MCP preparation is still required. A full
+model quota blocks completion. Inspect current inventory errors/ownership before retrying.
 The eight `options0` through `options7` values each hold at most 256 characters of one
 allow-listed JSON object (2048 characters total). It preserves model IDs/version/capacity,
 Search SKU, email location, canonical DNS IDs, resource tags and non-secret MCP identifiers.
@@ -107,7 +117,35 @@ Tags are editable, plaintext routing metadata, not identity, permission or crypt
 proof. The CLI also checks explicit context, ownership, typed internal/PNA/subnet state
 and exact BYO bindings. Unknown/corrupt/missing contracts block writes.
 
-Azure permits 50 tags per RG and 256 characters per value. v2 reserves 39 slots;
+### Application Deployment Record
+
+| RG tag | Meaning |
+| --- | --- |
+| `azbrief.v2.state` | Existing infrastructure progress: `foundation`, `mcp_pending` or `ready`; unchanged by application installation |
+| `azbrief.v2.applicationState` | `not_deployed` at new infrastructure handoff; `deployed` after App/Job/requested auth/MCP ARM resources succeed |
+| `azbrief.v2.lastApplicationDeploymentAt` | Empty before deployment; ISO 8601 UTC such as `2026-10-13T07:15:30Z` for the most recent successful application deployment |
+
+`ready` plus `not_deployed` means infrastructure only; `ready` plus `deployed` records
+application deployment too. The timestamp is the **start time of that successful ARM
+application deployment**, not a measured resource completion time. The final tag resource
+depends on App, Job, requested web auth and managed MCP; failed resource deployments and
+preflight/validate/what-if do not advance the record. An update failure retains the last
+successful timestamp, so inspect the latest deployment separately for failure details.
+
+The tag write merges the live RG tags and preserves unrelated metadata. Infrastructure/MCP
+handoff preserves existing application records rather than resetting them. Older 39-tag
+installs remain valid; absence of the optional pair means **not recorded**, not proven absence
+of an App. The next successful application deployment writes it, without guessing historical
+dates. The CLI validates complete pairs and UTC dates; Portal guards check budget/basic pair
+shape while live inventory and auth/key checks remain controlling. Tag-edit permission
+(`Microsoft.Resources/tags/write`) is needed in addition to the existing deployment permissions.
+Direct ARM callers must perform equivalent fresh budget/contract checks.
+
+These editable deployment records do not prove Hosted/Prompt publication, login, analysis,
+mail delivery or runtime readiness. Outputs retain `applicationReady=false`. No current Azure
+RG is backfilled by this source change; apply/publish the updated paired artifacts first.
+
+Azure permits 50 tags per RG and 256 characters per value. New v2 installs reserve 41 slots;
 the CLI checks the merged budget before provisioning. Resource tags have a separate
 15-tag limit because the same input also reaches Private DNS. Use canonical tag-key
 casing. Never store API keys, registry tokens, client secrets or subscriber data here.
@@ -194,6 +232,10 @@ succeeded but completion was interrupted, use explicit `--stage complete` after
 diagnosis. It verifies every foundation target and reuses matching ready models,
 project/BYO/telemetry rather than replaying their PUTs. An automatic/missing/mismatched
 project host needs separately approved recovery, never silent delete/reset.
+An empty saved DNS override object means foundation-created default zones, not missing DNS.
+Completion accepts those only after exact same-RG ownership and approved VNet-link checks;
+it preserves the empty saved choice. Explicit central-zone IDs remain immutable. Foreign,
+incomplete, paged, denied or redirected DNS reads still block completion.
 
 The ACA Environment remains internal with PNA Disabled. ACA PE automation retains the
 KT default `false`: the other four PEs and DNS preparation remain. No endpoint is
@@ -234,7 +276,7 @@ Install the control plane, then use the same command for every subsequent update
 ```powershell
 & .\.venv\Scripts\Activate.ps1
 python -m scripts.deploy_v2 application --subscription <subscription-guid> --tenant <tenant-guid> --resource-group <same-target-rg> --image '<approved-registry/repository@sha256:digest>' --mode preflight
-python -m scripts.deploy_v2 application --subscription <subscription-guid> --tenant <tenant-guid> --resource-group <same-target-rg> --image '<approved-registry/repository@sha256:digest>' --configuration <protected-application-configuration.json> --mode deploy
+python -m scripts.deploy_v2 application --subscription <subscription-guid> --tenant <tenant-guid> --resource-group <same-target-rg> --image '<approved-registry/repository@sha256:digest>' --mode deploy
 ```
 
 Use [application.configuration.example.json](application.configuration.example.json)
@@ -243,14 +285,69 @@ The file can patch `appEnvironment`, `jobEnvironment`, App/Job configuration/tem
 `webAuthConfiguration` and secure `existingSecrets.app`/`existingSecrets.job` arrays.
 Secret entries use `name` plus `value`, or existing Key Vault `keyVaultUrl`/`identity`.
 Credential environment variables use `secretRef`; never inline credentials in ordinary
-environment parameters. Use an existing same-tenant Entra client ID, customer issuer,
-allowed audiences, client-secret reference and explicit admin/reader allow-lists.
-v2 does not create directory registrations or allow anonymous Admin/Archive.
+environment parameters. Explicit existing web auth can use a same-tenant Entra client ID,
+customer issuer, allowed audiences and client-secret reference; defaults supply the access
+lists unless explicitly overridden. `--no-automatic-setup` skips only first-install defaults
+and directory preparation. It never resets existing installations or permits anonymous UI.
 
-Initial defaults: real image on `8000`/`/health`, generated API key, same UAMI/image/key
-for App and Job, Admin/Archive/Feedback off, auth required, concurrency 1 and a Manual
-Job (`replicaTimeout=43200`, retry limit 0, run budget 39600). Recipients are never
-invented. Enabling authenticated UI raises minimum replicas to at least 1 (idle cost).
+### Automatic Operational Defaults
+
+The first CLI application install reads the actual signed-in user's Graph `id` and `mail`,
+not an input field, guessed UPN or service principal. It automatically supplies:
+
+| Default | Applied to |
+| --- | --- |
+| Directory mail as `EMAIL_RECIPIENT_ADDRESS` | App and Job; an explicit App recipient/subscriber/language patch also supplies the initial Job default unless overridden there |
+| Directory mail as `FEEDBACK_RECIPIENT_ADDRESS` | App feedback notifications |
+| Directory object ID as `ADMIN_ALLOWED_PRINCIPALS` and `ARCHIVE_ALLOWED_PRINCIPALS` | App; administrators also retain normal Archive access |
+| Admin, Archive and Feedback enabled; Admin/Archive authentication required | App; Feedback retains its existing private-network public-form behavior |
+| Exact private App origin as Archive/Feedback base URLs | Shared App/Job runtime; Job feedback-link enablement follows the initial App setting |
+| Dedicated single-tenant web login app, exact HTTPS `/.auth/login/aad/callback`, bounded 365-day secret | CLI deploy; secret is stored only in the App secret inventory, never Job env, tags or outputs |
+| Korean report language, concurrency 1, Manual Job | App/Job; timeout 43200, retry 0, budget 39600 and generated matching API key remain unchanged |
+
+Authenticated UI raises minimum replicas to at least 1 (idle cost). No email is sent and
+no schedule or Agent version is started by this setup. Explicit configuration wins; normal
+updates preserve existing recipients, access, auth, secret values and accepted schedules.
+
+`preflight`, `validate` and `what-if` do not create directory objects or credentials. A missing
+login app uses provisional ID/secret values only to validate the intended ARM shape; that is
+not Entra readiness. `deploy` creates the owned registration/service principal/secret only
+after the read-only checks, then runs ARM validate/what-if again with the exact issued values.
+The registration is bound to the exact RG and private App origin; ambiguous, paged, denied,
+foreign-owner, changed callback/audience/permissions or existing orphaned credentials block.
+It never rotates a credential after failure or expands roles/API permissions. An interrupted
+install with issued credentials but no complete App/Job requires explicit recovery. The secret
+expires after 365 days and renewal remains a separately approved operation, not an image update.
+
+### Optional Operational Overrides
+
+No ordinary manual environment value makes incomplete infrastructure `ready`. Complete
+core models/project/BYO and MCP preparation, then install App/Job and publish the six
+Prompt/Hosted Agent versions through the guarded private-network workflow.
+
+| Override | When needed | Location |
+| --- | --- | --- |
+| `SUBSCRIBERS` or `EMAIL_RECIPIENT_ADDRESS` | Different/additional approved recipients or supplied role/language/scope | Optional environment patch or Admin-managed subscribers |
+| `ADMIN_ALLOWED_PRINCIPALS` | Different/additional named administrators | Optional App environment patch |
+| `ARCHIVE_ALLOWED_PRINCIPALS` | Additional authorized archive readers | Optional App environment patch |
+| `ADMIN_UI_ENABLED`, `ARCHIVE_UI_ENABLED` | Explicitly change protected UI availability | Optional App patch, retain complete Entra auth and `*_REQUIRE_AUTH=true` |
+| `SCHEDULE_CRON_EXPRESSION` | Optional deployment-owned UTC digest schedule | Job environment; actual Manual-to-Schedule trigger activation is separately approved |
+| `REPORT_LANGUAGE` | Optional default language (Korean by default) | App/Job environment; subscribers can override |
+| `FEEDBACK_UI_ENABLED`, `FEEDBACK_RECIPIENT_ADDRESS` | Explicitly change feedback availability or notification recipient | Optional App patch |
+
+Entra client ID and client secret are not ordinary plaintext application environment values.
+Automatic CLI setup prepares these without a configuration file. To use an existing tenant
+app instead, supply its client ID/issuer/audiences through `webAuthConfiguration`, store its
+secret through `existingSecrets.app`, and point `clientSecretSettingName` at that secret.
+The validated patch requires same-origin HTTPS and non-empty principal allow-lists.
+Never place the client secret in `appEnvironment`, source, tags, outputs or chat.
+
+Tenant/subscription/UAMI IDs, `API_KEY`, Foundry project/Hosted target, Blob routes,
+Insights destination, ACS endpoint/sender and readiness targets are automatic from the
+verified infrastructure. Do not hand-enter them or add an ACS connection-string secret.
+Agent role names and publishing model bindings are populated by `setup_kt_agents.ps1`;
+ARM names alone do not create a running Agent. Apply non-secret App/Job values through
+`--configuration`; preserve schedules/keys and never write the developer `.env` implicitly.
 
 Updates preserve current secrets, registry configuration, auth, environments, replicas,
 resources, unrelated resource tags and accepted scheduler trigger/cron. They never
@@ -268,8 +365,9 @@ It derives initial install versus key reuse; failed, pending, paged, foreign or 
 inventory blocks. On updates, ARM reads existing secrets/settings internally, retains
 auth by omission and keeps the accepted trigger/cron. Secrets never enter UI controls.
 The MCP container uses the pinned official image, incoming Entra authentication and only
-the group/resourcehealth/advisor namespaces with `--read-only`. Initial Admin/Archive
-remain disabled until the separate approved Entra web configuration is supplied.
+the group/resourcehealth/advisor namespaces with `--read-only`. A bare Portal initial install
+retains the low-level Admin/Archive/Feedback-off defaults; Portal cannot perform the new Graph
+web setup. Use the CLI once for automatic first application setup, then either update path.
 The infrastructure MCP connection uses `RemoteTool`, `ProjectManagedIdentity`, its explicit
 `api://<client-id>` audience and API `2025-10-01-preview`, following the official remote-tool
 ARM example. Do not use the invalid `RemoteToolServer` category or weaken authentication to
@@ -284,7 +382,7 @@ guarded publication; changing only the App/Job image does not update the Hosted 
 
 ```powershell
 & .\.venv\Scripts\Activate.ps1
-foreach ($template in @('infrastructure', 'application', 'runtime-roles')) {
+foreach ($template in @('infrastructure', 'application', 'runtime-roles', 'mcp-authentication')) {
     & "$HOME\.azure\bin\bicep.exe" build "infra/v2/$template.bicep" --outfile "infra/v2/$template.json"
     if ($LASTEXITCODE -ne 0) { throw "Build failed: $template" }
 }
@@ -300,6 +398,8 @@ temporary-file cleanup. They do not perform Azure provisioning or prove registry
 DNS routing, login/denial, PE Succeeded/Approved, actual log ingestion, Agent inference,
 Archive access, email delivery or schedule readiness. Outputs deliberately keep
 `applicationReady=false`; accept those customer paths before enabling automatic runs.
+Deployment-record tests cover optional legacy tags, state/UTC validation, reserved tag room,
+compiled success dependencies, customer-tag preservation and failed/preview timestamp retention.
 
 Offline expression tests and JSON checks are not a real Portal Sandbox acceptance. Verify
 the published ARM/UI pair in the authenticated customer Portal before production rollout.

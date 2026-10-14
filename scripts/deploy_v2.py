@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import json
 import re
 import subprocess
 import tempfile
+from datetime import datetime, timedelta, timezone
+from email.headerregistry import Address
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
-from uuid import UUID
+from urllib.parse import urlencode, urlsplit
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import structlog
 
@@ -32,6 +35,8 @@ from src.error_logging import configure_redaction
 logger = structlog.get_logger(__name__)
 ROOT = Path(__file__).resolve().parents[1]
 V2 = ROOT / "infra" / "v2"
+GRAPH = "https://graph.microsoft.com/v1.0/"
+WEB_SECRET_NAME = "azbrief-web-client-secret"
 PROFILE = "kt-private-v2"
 PREFIX = "azbrief.v2."
 TAG_FIELDS = {
@@ -81,6 +86,16 @@ TAG_KEYS = frozenset(PREFIX + suffix for suffix in TAG_FIELDS.values()) | {
     PREFIX + "state",
     PREFIX + "acaPeEnabled",
 }
+APPLICATION_TAG_KEYS = frozenset(
+    {
+        PREFIX + "applicationState",
+        PREFIX + "lastApplicationDeploymentAt",
+    }
+)
+APPLICATION_TAG_DEFAULTS = {
+    PREFIX + "applicationState": "not_deployed",
+    PREFIX + "lastApplicationDeploymentAt": "",
+}
 IMAGE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$")
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.()-]{0,254}$")
 CONFIG_FIELDS = frozenset(
@@ -107,6 +122,219 @@ INTERNAL_PARAMETERS = frozenset(
 )
 
 
+def deployer_environment_defaults(user: dict[str, Any]) -> dict[str, str]:
+    """Build first-install defaults from a verified signed-in user's directory profile."""
+    principal = user.get("id")
+    address = user.get("mail")
+    if not isinstance(principal, str) or not isinstance(address, str) or not address.strip():
+        raise ValueError(
+            "Automatic application setup requires a signed-in user with directory mail"
+        )
+    try:
+        object_id = UUID(principal)
+        email = address.strip()
+        mailbox = Address(addr_spec=email)
+        if not mailbox.username or not mailbox.domain or "#ext#" in email.casefold():
+            raise ValueError("Directory mail must identify one deliverable mailbox")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("The deployment user's directory identity or mail is invalid") from exc
+    if not object_id.int:
+        raise ValueError("The deployment user must have a non-empty directory object ID")
+    return {
+        "EMAIL_RECIPIENT_ADDRESS": email,
+        "FEEDBACK_RECIPIENT_ADDRESS": email,
+        "ADMIN_ALLOWED_PRINCIPALS": str(object_id),
+        "ARCHIVE_ALLOWED_PRINCIPALS": str(object_id),
+        "ADMIN_UI_ENABLED": "true",
+        "ARCHIVE_UI_ENABLED": "true",
+        "FEEDBACK_UI_ENABLED": "true",
+        "ADMIN_REQUIRE_AUTH": "true",
+        "ARCHIVE_REQUIRE_AUTH": "true",
+        "REPORT_LANGUAGE": "ko",
+    }
+
+
+def _deployment_user(cli: AzureCli) -> dict[str, Any]:
+    cli.assert_context()
+    account = cli.json("account", "show")
+    identity = account.get("user") if isinstance(account, dict) else None
+    if (
+        not isinstance(account, dict)
+        or str(account.get("id", "")).casefold() != cli.subscription.casefold()
+        or str(account.get("tenantId", "")).casefold() != cli.tenant.casefold()
+        or not isinstance(identity, dict)
+        or identity.get("type") != "user"
+    ):
+        raise ValueError(
+            "Automatic first-install setup requires the target tenant's signed-in user"
+        )
+    user = cli.json("ad", "signed-in-user", "show")
+    if not isinstance(user, dict):
+        raise ValueError("The signed-in directory profile is incomplete")
+    deployer_environment_defaults(user)
+    return user
+
+
+def _graph_request(
+    cli: AzureCli, path: str, payload: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    arguments = ["rest", "--method", "GET" if payload is None else "POST", "--url", GRAPH + path]
+    if payload is None:
+        response = cli.json(*arguments)
+    else:
+        with tempfile.TemporaryDirectory(prefix="azbrief-v2-directory-") as temporary:
+            body = Path(temporary) / "request.json"
+            body.write_text(json.dumps(payload), encoding="utf-8")
+            response = cli.json(*arguments, "--body", f"@{body}")
+    if not isinstance(response, dict) or response.get("@odata.nextLink"):
+        raise ValueError("Directory response is incomplete or paged; automatic setup is blocked")
+    return response
+
+
+def _web_authentication(client_id: str, tenant_id: str, origin: str) -> dict[str, Any]:
+    return {
+        "platform": {"enabled": True},
+        "httpSettings": {"requireHttps": True},
+        "globalValidation": {"unauthenticatedClientAction": "AllowAnonymous"},
+        "identityProviders": {
+            "azureActiveDirectory": {
+                "enabled": True,
+                "registration": {
+                    "clientId": client_id,
+                    "clientSecretSettingName": WEB_SECRET_NAME,
+                    "openIdIssuer": f"https://login.microsoftonline.com/{tenant_id}/v2.0",
+                },
+                "validation": {"allowedAudiences": [client_id, f"api://{client_id}"]},
+                "login": {"loginParameters": ["scope=openid profile email"]},
+            }
+        },
+        "login": {"allowedExternalRedirectUrls": [origin]},
+    }
+
+
+def _automatic_application_configuration(
+    cli: AzureCli,
+    values: dict[str, Any],
+    configuration: dict[str, Any],
+    user: dict[str, Any],
+    *,
+    create: bool = False,
+) -> dict[str, Any]:
+    """Plan web sign-in read-only, materializing directory credentials only for deployment."""
+    configuration = copy.deepcopy(configuration)
+    if configuration.get("webAuthConfiguration"):
+        return configuration
+    origin = f"https://{values['containerAppName']}.{values['environmentDefaultDomain']}"
+    binding = f"AzBrief v2 web sign-in for {cli.group_id.casefold()}"
+    unique_name = "azbrief-v2-web-" + hashlib.sha256(binding.encode("utf-8")).hexdigest()[:13]
+    query = urlencode(
+        {
+            "$filter": f"uniqueName eq '{unique_name}'",
+            "$select": "id,appId,uniqueName,displayName,notes,signInAudience,requiredResourceAccess,web,passwordCredentials",
+        }
+    )
+    response = _graph_request(cli, "applications?" + query)
+    applications = response.get("value")
+    if not isinstance(applications, list) or len(applications) > 1:
+        raise ValueError("Web directory application inventory is incomplete or ambiguous")
+    expected: dict[str, Any] = {
+        "uniqueName": unique_name,
+        "displayName": f"AzBrief v2 Web UI ({cli.group})",
+        "notes": binding,
+        "signInAudience": "AzureADMyOrg",
+        "requiredResourceAccess": [],
+        "web": {
+            "redirectUris": [origin + "/.auth/login/aad/callback"],
+            "implicitGrantSettings": {
+                "enableIdTokenIssuance": True,
+                "enableAccessTokenIssuance": False,
+            },
+        },
+    }
+    application = applications[0] if applications else None
+    if application is not None:
+        if (
+            not isinstance(application, dict)
+            or any(
+                application.get(field) != value
+                for field, value in expected.items()
+                if field != "web"
+            )
+            or any(
+                application.get("web", {}).get(field) != value
+                for field, value in expected["web"].items()
+            )
+        ):
+            raise ValueError("Refusing to adopt a redirected or modified web directory application")
+        application_id = str(UUID(application["id"]))
+        owners = _graph_request(cli, f"applications/{application_id}/owners").get("value")
+        if (
+            not isinstance(owners, list)
+            or any(not isinstance(owner, dict) for owner in owners)
+            or user["id"].casefold() not in {str(owner["id"]).casefold() for owner in owners}
+        ):
+            raise ValueError("The signed-in deployment user must own the prepared web application")
+        if application.get("passwordCredentials") != []:
+            raise ValueError(
+                "Existing web credentials require explicit recovery; never rotate on missing reads"
+            )
+    if application is None and create:
+        application = _graph_request(
+            cli,
+            "applications",
+            {
+                **expected,
+                "owners@odata.bind": [GRAPH + "directoryObjects/" + user["id"]],
+            },
+        )
+    client_id = (
+        str(UUID(application["appId"])) if application else str(uuid5(NAMESPACE_URL, binding))
+    )
+    secret_value = "azbrief-web-secret-planned-not-for-deployment"
+    if create:
+        if application is None:
+            raise ValueError("Directory application creation did not return its identity")
+        application_id = str(UUID(application["id"]))
+        principals = _graph_request(
+            cli, "servicePrincipals?" + urlencode({"$filter": f"appId eq '{client_id}'"})
+        ).get("value")
+        if not isinstance(principals, list) or len(principals) > 1:
+            raise ValueError("Web service principal inventory is incomplete or ambiguous")
+        if not principals:
+            principals = [_graph_request(cli, "servicePrincipals", {"appId": client_id})]
+        principal = principals[0]
+        if (
+            principal.get("appId") != client_id
+            or principal.get("appOwnerOrganizationId", "").casefold() != cli.tenant.casefold()
+            or principal.get("servicePrincipalType") != "Application"
+            or principal.get("accountEnabled") is not True
+        ):
+            raise ValueError("Web service principal must remain enabled in the deployment tenant")
+        credential = _graph_request(
+            cli,
+            f"applications/{application_id}/addPassword",
+            {
+                "passwordCredential": {
+                    "displayName": "AzBrief v2 Web UI",
+                    "endDateTime": (datetime.now(timezone.utc) + timedelta(days=365)).isoformat(),
+                }
+            },
+        )
+        secret_value = credential.get("secretText", "")
+        if not isinstance(secret_value, str) or not secret_value:
+            raise ValueError("Web credential creation did not return a secret; no UI is enabled")
+        configure_redaction({"v2_web_client_secret": secret_value})
+        UUID(credential["keyId"])
+    secrets = configuration.setdefault("existingSecrets", {}).setdefault("app", [])
+    if any(secret["name"] == WEB_SECRET_NAME for secret in secrets):
+        raise ValueError(
+            "Reserved web secret requires complete explicit authentication configuration"
+        )
+    secrets.append({"name": WEB_SECRET_NAME, "value": secret_value})
+    configuration["webAuthConfiguration"] = _web_authentication(client_id, cli.tenant, origin)
+    return configuration
+
+
 def validate_tag_budget(tags: dict[str, Any]) -> None:
     """Reject oversized or non-string metadata before any deployment writes."""
     if len({key.casefold() for key in tags}) != len(tags) or len(tags) > 50:
@@ -128,7 +356,9 @@ def parse_tag_contract(tags: dict[str, Any], require_ready: bool = True) -> dict
     validate_tag_budget(tags)
     contract = {key: value for key, value in tags.items() if key.casefold().startswith(PREFIX)}
     required = TAG_KEYS - {PREFIX + "mcpApp", PREFIX + "mcpIdentity"}
-    if not required <= set(contract) or set(contract) - (TAG_KEYS | set(OPTION_TAG_KEYS)):
+    if not required <= set(contract) or set(contract) - (
+        TAG_KEYS | set(OPTION_TAG_KEYS) | APPLICATION_TAG_KEYS
+    ):
         raise ValueError("Missing, unknown or non-canonical AzBrief v2 resource-group tag keys")
     if (
         contract[PREFIX + "schema"] != "2"
@@ -161,6 +391,19 @@ def parse_tag_contract(tags: dict[str, Any], require_ready: bool = True) -> dict
             raise ValueError(f"Invalid v2 resource-name tag: {suffix}")
     if not re.fullmatch(r"[a-z0-9]{3,24}", contract[PREFIX + "storage"]):
         raise ValueError("Invalid v2 Storage Account name")
+    present = APPLICATION_TAG_KEYS.intersection(contract)
+    if present:
+        if present != APPLICATION_TAG_KEYS:
+            raise ValueError("Incomplete application deployment tag pair")
+        application_state = contract[PREFIX + "applicationState"]
+        timestamp = contract[PREFIX + "lastApplicationDeploymentAt"]
+        if application_state == "not_deployed" and not timestamp:
+            return contract
+        if application_state != "deployed" or contract[PREFIX + "state"] != "ready":
+            raise ValueError("Invalid application deployment state or timestamp")
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", timestamp):
+            raise ValueError("Application deployment timestamp must be an ISO 8601 UTC value")
+        datetime.strptime(timestamp, "%Y-%m-%dT%H:%M:%SZ")
     return contract
 
 
@@ -234,6 +477,8 @@ def _read_infrastructure(
 ) -> tuple[dict[str, str], dict[str, Any]]:
     cli.assert_context()
     group = cli.json("group", "show", "--name", cli.group, "--subscription", cli.subscription)
+    current_tags = group.get("tags") or {}
+    validate_tag_budget({**APPLICATION_TAG_DEFAULTS, **current_tags})
     tags = parse_tag_contract(group.get("tags") or {}, require_ready=expected_state == "ready")
     if tags[PREFIX + "state"] != expected_state:
         raise ValueError(f"Use the {expected_state} v2 infrastructure contract for this operation")
@@ -357,7 +602,7 @@ def _surface(
         raise ValueError("Ambiguous application inventory")
     if not matches:
         return None
-    resource = cli.get(resource_id, CONTAINER_ENV_API)
+    resource: dict[str, Any] = cli.get(resource_id, CONTAINER_ENV_API)
     _owned(resource, resource_id)
     props = resource["properties"]
     identities = resource.get("identity", {})
@@ -462,7 +707,11 @@ def _validate_authentication(parameters: dict[str, Any], values: dict[str, Any])
 
 
 def prepare_application(
-    cli: AzureCli, image: str, configuration: dict[str, Any] | None = None
+    cli: AzureCli,
+    image: str,
+    configuration: dict[str, Any] | None = None,
+    *,
+    deployment_user: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Preserve existing App/Job settings and secrets while deriving a fail-closed install/update."""
     if not IMAGE_PATTERN.fullmatch(image):
@@ -487,6 +736,26 @@ def prepare_application(
         "reuseExistingApiKey": app is not None,
         "existingSecrets": {"app": [], "job": []},
     }
+    if app is None and deployment_user is not None:
+        defaults = deployer_environment_defaults(deployment_user)
+        for label in ("app", "job"):
+            parameters[f"{label}Environment"] = [
+                {"name": name, "value": value}
+                for name, value in defaults.items()
+                if label == "app"
+                or name in {"EMAIL_RECIPIENT_ADDRESS", "REPORT_LANGUAGE", "FEEDBACK_UI_ENABLED"}
+            ]
+        app_patch = _environment(configuration.get("appEnvironment", []))
+        job_defaults = _environment(parameters["jobEnvironment"])
+        for name in (
+            "EMAIL_RECIPIENT_ADDRESS",
+            "SUBSCRIBERS",
+            "REPORT_LANGUAGE",
+            "FEEDBACK_UI_ENABLED",
+        ):
+            if name in app_patch and "value" in app_patch[name]:
+                job_defaults[name] = copy.deepcopy(app_patch[name])
+        parameters["jobEnvironment"] = list(job_defaults.values())
     if app is not None and job is not None:
         for label, resource in (("app", app), ("job", job)):
             props = resource["properties"]
@@ -638,12 +907,40 @@ def deploy_template(
 
 
 def run_application(
-    cli: AzureCli, image: str, configuration: dict[str, Any], mode: str, name: str
+    cli: AzureCli,
+    image: str,
+    configuration: dict[str, Any],
+    mode: str,
+    name: str,
+    *,
+    automatic_setup: bool = True,
 ) -> None:
     """Require fresh preflight before every validate, preview and application write."""
     operations = ("validate", "what-if", "create") if mode == "deploy" else (mode,)
     for operation in operations:
-        parameters = prepare_application(cli, image, configuration)
+        baseline = prepare_application(cli, image)
+        if automatic_setup and not baseline["reuseExistingApiKey"]:
+            _, values = read_infrastructure(cli)
+            user = _deployment_user(cli)
+            planned = _automatic_application_configuration(cli, values, configuration, user)
+            parameters = prepare_application(cli, image, planned, deployment_user=user)
+            if operation == "create":
+                configured = _automatic_application_configuration(
+                    cli, values, configuration, user, create=True
+                )
+                parameters = prepare_application(cli, image, configured, deployment_user=user)
+                if parameters["reuseExistingApiKey"]:
+                    raise ValueError(
+                        "Concurrent application installation detected; never replace its defaults"
+                    )
+                for verification in ("validate", "what-if"):
+                    deploy_template(cli, V2 / "application.json", parameters, verification, name)
+            if parameters["reuseExistingApiKey"]:
+                raise ValueError(
+                    "Concurrent application installation detected; never replace its defaults"
+                )
+        else:
+            parameters = prepare_application(cli, image, configuration)
         if operation != "preflight":
             deploy_template(cli, V2 / "application.json", parameters, operation, name)
         logger.info(
@@ -843,6 +1140,7 @@ def make_tag_contract(
             PREFIX + "profile": PROFILE,
             PREFIX + "state": state,
             PREFIX + "acaPeEnabled": str(values["deployContainerAppsPrivateEndpoint"]).lower(),
+            **APPLICATION_TAG_DEFAULTS,
         }
     )
     options = {field: values[field] for field in OPTION_FIELDS}
@@ -1071,11 +1369,11 @@ def prepare_infrastructure(
         "infrastructureStage": stage,
         "existingPrivateDnsZoneIds": _private_dns_bindings(cli, values, vnet_id),
     }
-    if (
-        saved_options
-        and prepared["existingPrivateDnsZoneIds"] != saved_options["existingPrivateDnsZoneIds"]
-    ):
-        raise ValueError("Refusing to redirect saved private DNS bindings")
+    if saved_options:
+        saved_dns = saved_options["existingPrivateDnsZoneIds"]
+        resolved_dns = prepared["existingPrivateDnsZoneIds"]
+        _verify_saved_dns_bindings(cli, saved_dns, resolved_dns)
+        prepared["existingPrivateDnsZoneIds"] = saved_dns
     if stage == "complete":
         account_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}"
         reused, telemetry = validate_existing_host(cli, account_id, values)
@@ -1100,6 +1398,22 @@ def prepare_infrastructure(
             reuseExistingFoundrySetup=reused, reuseExistingTelemetryConnection=telemetry
         )
     return prepared
+
+
+def _verify_saved_dns_bindings(
+    cli: AzureCli, saved: dict[str, str], resolved: dict[str, str]
+) -> None:
+    """Keep explicit DNS overrides and recognize the owned default zones foundation created."""
+    if len(resolved) != 7 or set(saved) - set(resolved):
+        raise ValueError("Completed foundation private DNS inventory is incomplete")
+    for namespace, resource_id in resolved.items():
+        expected = saved.get(
+            namespace, f"{cli.group_id}/providers/Microsoft.Network/privateDnsZones/{namespace}"
+        )
+        if resource_id.casefold() != expected.casefold():
+            raise ValueError("Refusing to redirect saved private DNS bindings")
+        if namespace not in saved:
+            _owned(cli.get(resource_id, "2024-06-01"), resource_id)
 
 
 def run_infrastructure(
@@ -1178,6 +1492,7 @@ def main() -> int:
     parser.add_argument("--configuration", type=Path)
     parser.add_argument("--hosted-principal-id", type=UUID)
     parser.add_argument("--prepare-mcp-authentication", action="store_true")
+    parser.add_argument("--no-automatic-setup", action="store_true")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,45}", args.name):
         parser.error("Use a deployment-name prefix of at most 46 characters")
@@ -1186,7 +1501,7 @@ def main() -> int:
     try:
         cli = AzureCli(str(args.subscription), str(args.tenant), args.resource_group)
         if args.phase == "infrastructure":
-            if args.image or args.configuration:
+            if args.image or args.configuration or args.no_automatic_setup:
                 raise ValueError("Application inputs do not belong in infrastructure deployment")
             if args.prepare_mcp_authentication:
                 if args.parameters or args.hosted_principal_id or args.stage != "both":
@@ -1224,7 +1539,14 @@ def main() -> int:
                 if args.configuration
                 else {}
             )
-            run_application(cli, args.image, configuration, args.mode, args.name + "-application")
+            run_application(
+                cli,
+                args.image,
+                configuration,
+                args.mode,
+                args.name + "-application",
+                automatic_setup=not args.no_automatic_setup,
+            )
     except (
         ValueError,
         KeyError,

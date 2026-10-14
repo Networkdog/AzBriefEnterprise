@@ -60,8 +60,15 @@ RG handoff. Foundation stores its options/status; managed-MCP completion records
 Portal infrastructure must contain no Microsoft.Graph resources. Authorized CLI-only
 mcp-authentication.bicep prepares the same Entra app/project role/RemoteTool connection and
 promotes ready; full CLI deploy runs it automatically, while Portal uses --prepare-mcp-authentication.
-`application.bicep` reads the same group's 39 non-secret `azbrief.v2.*` tags and
-writes only App/Job/auth settings. Use `scripts/deploy_v2.py` for fresh fail-closed context,
+`application.bicep` reads the same group's non-secret `azbrief.v2.*` contract and
+writes App/Job/auth plus final RG deployment metadata. New infrastructure reserves 41 tags;
+legacy 39-tag installs remain valid. applicationState starts not_deployed and becomes deployed
+only after App/Job/requested auth/MCP dependencies succeed. lastApplicationDeploymentAt is
+that successful ARM deployment's UTC start time, empty before deployment. Preserve prior
+records/customer tags on failure or infrastructure handoff; previews never advance them.
+Optional paired metadata is not inventory or runtime readiness; never invent historical dates.
+Require tag-write permission and reserve both slots within the unchanged 50-tag budget in
+CLI/Portal guards. Use `scripts/deploy_v2.py` for fresh fail-closed context,
 network/DNS/ownership/BYO checks, Incremental validate/what-if/create and current key/config
 preservation. Never rotate on denied/missing secret reads, downgrade Entra auth or reset a
 Schedule Job. Keep unknown or corrupted tag contracts blocking and preserve unrelated tags;
@@ -111,6 +118,21 @@ wildcard/apex A records and non-registering approved VNet link, separate from AC
 Preserve PNA/internal/auth and old DNS; existing installs use validated DNS-only recovery.
 Accept only structured AuthConfigNotFound (including the observed Not Found(JSON) CLI wrapper)
 for absent optional web auth. Denied/bad/other missing reads still block; UI activation requires Entra.
+App foundation/pending gate failures must name the missing step, never force portalValidationPassed.
+Preserve empty saved DNS overrides after validating seven owned same-RG default zones; explicit
+central-zone bindings remain immutable. Model quota exhaustion is a blocker, not approval to
+reclaim another deployment or rewrite saved choices. First CLI application installs derive email/
+feedback recipients and Admin/Archive object-ID access from the signed-in user's verified Graph
+mail/profile; never substitute a guessed UPN or service principal. Enable all three UIs with the
+dedicated single-tenant web app, exact same-origin callback and 365-day App-only secret. Read-only
+previews use provisional credentials solely for validation; only deploy writes Graph, without new
+roles, consent or API grants. Validate/what-if the real issued parameters again before ARM create.
+Preserve explicit values and every installed setting; no automatic credential rotation, mail or
+schedule activation. Denied/paged/foreign/modified directory state and orphaned credentials block.
+Portal stays Graph-free, its bare initial install UI-off; explain CLI first setup and minReplicas=1
+idle cost. Keep optional overrides, Agent publication, renewal and live login/send gates distinct.
+Share verified private Archive/Feedback origins with Job delivery and carry initial feedback-link
+enablement without overwriting installed settings or changing report/archive contracts.
 
 ---
 

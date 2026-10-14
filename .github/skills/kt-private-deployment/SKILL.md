@@ -42,12 +42,18 @@ RG resource-name inputs, auto model/MCP internal settings, and guarded live pref
 The opt-in [`infra/v2`](../../../infra/v2/README.md) profile reuses this existing-VNet
 security/lifecycle knowledge but does not replace the KT Portal button or adopt old resources.
 Its one-time infrastructure command internally sequences foundation, account-host readiness
-and model/project/BYO/RBAC completion without an App image. Foundation saves 39 bounded,
+and model/project/BYO/RBAC completion without an App image. New foundation saves 41 bounded,
 non-secret `azbrief.v2.*` RG tags including customer options. Managed MCP core completion records
 mcp_pending. Portal infrastructure contains zero Microsoft.Graph resources; authorized CLI-only
 mcp-authentication prepares app/project app-role/RemoteTool then promotes ready. Full CLI deploy
 runs it automatically; Portal operators use --prepare-mcp-authentication once without internal ID
 inputs. Keep same-core-output/private/BYO/uniqueName/budget checks and ready-only App acceptance.
+Two application tags record not_deployed/empty initially, then deployed and the successful
+ARM application's UTC start time after App/Job/requested auth/MCP dependencies. Preserve
+customer and previous-success tags; failed/preview paths never advance them. Legacy 39-tag
+contracts remain accepted as unrecorded, not proof of an absent App; never invent old dates.
+Keep tag-write permission, two-slot budget reservation and live inventory/auth checks. These
+tags neither change infrastructure state nor prove runtime readiness or Agent publication.
 The same-RG application template owns App/Job/auth and the pinned read-only MCP container;
 [`scripts/deploy_v2.py`](../../../scripts/deploy_v2.py) preserves current keys, secrets,
 environments, registry/auth settings and accepted schedules on repeated updates. Missing,
@@ -85,6 +91,21 @@ does not resolve internal ingress. Existing missing zones need exact DNS-only re
 foundation/PNA/auth replay. A cluster-success exec without a real HTTP success marker is failure.
 For v2 updates, only parsed AuthConfigNotFound/observed Not Found(JSON) is optional-auth absence;
 403, malformed/forged wrappers and other NotFound remain blocking. UI enablement still needs Entra.
+V2 App foundation/pending failures identify unmet readiness, not a broken true-only guard.
+DNS completion distinguishes empty saved overrides from explicitly bound central zones: seven
+owned same-RG defaults with verified links are valid, redirected/denied/incomplete zones are not.
+Preserve saved options and quota allocations. Explain manual subscriber/principal/UI/schedule
+overrides separately from automatic first CLI install: directory-verified deployer mail for email/
+feedback, deployer object ID for Admin/Archive, all UIs on with an owned single-tenant web app and
+365-day App-only secret. No Graph writes in preflight/validate/what-if or Portal; materialize only
+for CLI deploy and revalidate/preview the exact issued parameters before ARM create. Missing mail,
+app-only login, paged/denied/redirected/foreign directory state and orphaned credentials block.
+Retain explicit configuration and installed settings; never rotate existing credentials or start
+mail/schedules automatically. Disclose minReplicas=1 idle cost, renewal and private login/send
+acceptance. Bare Portal first install remains UI-off; use CLI first setup then Portal or CLI updates.
+These defaults are v2-only, not a change to the existing KT profile or its manual web contract.
+Keep Archive/Feedback base URLs in the shared App/Job runtime and initial Job feedback enablement
+aligned with the App, so configured pages are also reachable through delivered report links.
 
 ## Non-Negotiable KT Contract
 
