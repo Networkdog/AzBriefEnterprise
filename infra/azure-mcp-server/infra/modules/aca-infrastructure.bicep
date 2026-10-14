@@ -17,7 +17,7 @@ param azureAdTenantId string
 @description('Microsoft Entra application client ID used for incoming authentication.')
 param azureAdClientId string
 
-@description('Optional pre-provisioned dedicated UAMI for infrastructure/application separation. Empty retains the existing system-assigned profile.')
+@description('Optional infrastructure-owned MCP identity resource ID. Empty retains the system-assigned identity.')
 param userAssignedIdentityResourceId string = ''
 
 @description('Default subscription exposed to read-only Azure MCP tools.')
@@ -49,6 +49,7 @@ param maxReplicas int = 3
 
 param tags object = {}
 
+var useUserAssignedIdentity = !empty(userAssignedIdentityResourceId)
 var baseArgs = [
   '--transport'
   'http'
@@ -60,7 +61,7 @@ var baseArgs = [
 ]
 var namespaceArgs = [for namespace in namespaces: ['--namespace', namespace]]
 var serverArgs = flatten(concat([baseArgs], namespaceArgs))
-var baseEnvironment = concat([
+var baseEnvironment = [
   {
     name: 'ASPNETCORE_ENVIRONMENT'
     value: 'Production'
@@ -117,24 +118,25 @@ var baseEnvironment = concat([
     name: 'AZURE_MCP_DANGEROUSLY_ENABLE_FORWARDED_HEADERS'
     value: 'true'
   }
-], empty(userAssignedIdentityResourceId) ? [] : [
-  {
-    name: 'AZURE_CLIENT_ID'
-    value: reference(userAssignedIdentityResourceId, '2023-01-31').clientId
-  }
-])
+]
 
-resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
+resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
   name: name
   location: location
   tags: union(tags, {
     product: 'azbrief'
     component: 'azure-mcp-server'
   })
-  identity: empty(userAssignedIdentityResourceId) ? { type: 'SystemAssigned' } : {
-    type: 'UserAssigned'
-    userAssignedIdentities: { '${userAssignedIdentityResourceId}': {} }
-  }
+  identity: useUserAssignedIdentity
+    ? {
+        type: 'UserAssigned'
+        userAssignedIdentities: {
+          '${userAssignedIdentityResourceId}': {}
+        }
+      }
+    : {
+        type: 'SystemAssigned'
+      }
   properties: {
     managedEnvironmentId: containerAppEnvironmentId
     workloadProfileName: empty(workloadProfileName) ? null : workloadProfileName
@@ -164,7 +166,14 @@ resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
             cpu: json(cpuCores)
             memory: memorySize
           }
-          env: baseEnvironment
+          env: concat(baseEnvironment, useUserAssignedIdentity
+            ? [
+                {
+                  name: 'AZURE_CLIENT_ID'
+                  value: reference(userAssignedIdentityResourceId, '2023-01-31').clientId
+                }
+              ]
+            : [])
           probes: [
             {
               type: 'Startup'
@@ -206,5 +215,7 @@ resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
 output containerAppResourceId string = containerApp.id
 output containerAppUrl string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
 output containerAppName string = containerApp.name
-output containerAppPrincipalId string = empty(userAssignedIdentityResourceId) ? containerApp.identity.principalId : reference(userAssignedIdentityResourceId, '2023-01-31').principalId
+output containerAppPrincipalId string = useUserAssignedIdentity
+  ? reference(userAssignedIdentityResourceId, '2023-01-31').principalId
+  : containerApp.identity.principalId
 output containerAppEnvironmentId string = containerAppEnvironmentId

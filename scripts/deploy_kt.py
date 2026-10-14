@@ -535,8 +535,13 @@ class AzureCli:
         executable = shutil.which("az")
         if executable is None:
             raise RuntimeError("Azure CLI is required; install it before running this script")
+        command = [executable]
+        if Path(executable).suffix.casefold() == ".cmd":
+            bundled_python = Path(executable).resolve().parent.parent / "python.exe"
+            if bundled_python.is_file():
+                command = [str(bundled_python), "-IBm", "azure.cli"]
         result = subprocess.run(
-            [executable, *args, "--only-show-errors", "--output", "json"],
+            [*command, *args, "--only-show-errors", "--output", "json"],
             check=False,
             capture_output=True,
             encoding="utf-8",

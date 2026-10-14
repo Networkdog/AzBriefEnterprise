@@ -1,6 +1,6 @@
 # Two-Stage Deployment v2
 
-An opt-in, existing-VNet private profile derived from the existing
+An opt-in private profile with new/existing VNet selection, derived from the existing
 [KT template](../kt/README.md) and [Enterprise template](../enterprise/main.bicep).
 It does not replace their Portal buttons or adopt an existing KT installation.
 Use a new set of resource names in one explicitly selected resource group.
@@ -55,6 +55,9 @@ Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all four arti
 - An approved same-region existing VNet with three distinct prepared IPv4 subnets.
   Preserve the KT CIDR, RFC1918, delegation, exclusivity and free-address requirements.
   The tool does not PUT the VNet or create/change subnets.
+- Or choose `virtualNetworkMode=new` for a dedicated VNet in the target RG. The infrastructure
+  creates that VNet and its three subnets before foundation; it never adopts or overwrites an
+  existing same-name VNet. Existing mode remains the backward-compatible default.
 - Deployment and role-definition/assignment permissions, plus private DNS reads and
   any explicit canonical central-DNS IDs. Failed or incomplete reads block writes.
 - Permission to create the MCP Entra application/service principal and assign its app role
@@ -63,6 +66,8 @@ Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all four arti
   authorized preparation. No authentication bypass or secret is created.
   MCP uses the same Environment/workspace and a dedicated Reader-only UAMI. Its URL comes
   from the actual Environment domain and customer-named MCP App, not a fabricated address.
+  The shared MCP app module accepts that infrastructure-owned identity and sets its outgoing
+  `AZURE_CLIENT_ID`; its empty optional identity input retains legacy system-assigned behavior.
 - Graph Bicep delegated deployments require both the signed-in user's directory privileges
   and the deployment client's OAuth scopes. ARM Owner is not a Graph grant; the same user
   can succeed through Azure CLI and fail through the Azure Portal client. Use the supported,
@@ -88,6 +93,32 @@ Model defaults retain the KT physical Terra/Luna version `2026-07-09`, GlobalSta
 and 200 capacity units each. GlobalStandard processing can leave Korea Central.
 ACS/email data location defaults to Asia Pacific. Validate policy, price and capacity
 before opting into `--mode deploy`.
+
+## New Or Existing VNet
+
+Choose the mode in the Portal network tab or `virtualNetworkMode` in the protected CLI
+parameter file. `existing` retains the approved VNet selector, three exact subnet choices
+and original CIDR/delegation/occupancy/DNS checks. CIDR inputs for new mode never resize or
+reinterpret existing subnets. Cross-RG existing VNet selection remains supported.
+
+`new` creates only a dedicated target-RG VNet, with no peering, NSG, route, public IP, NAT
+or changes to customer networks. Defaults are VNet `10.240.0.0/16`, Foundry `10.240.0.0/24`,
+Container Apps `10.240.1.0/27` and private endpoints `10.240.1.32/28`. Portal offers validated
+`10.240`, `10.241` or `172.28` /16 profiles and explicit customer names. The CLI accepts
+advanced `virtualNetworkAddressPrefix`, `foundrySubnetAddressPrefix`,
+`containerAppsSubnetAddressPrefix` and `peSubnetAddressPrefix` after the same fail-closed
+private IPv4, containment, overlap, size and delegation validation. Choose a range that
+does not overlap existing/on-prem networks before any later peering or connectivity work.
+
+New mode requires `virtualNetworkResourceGroupName` to be the explicit target RG; Portal
+derives it automatically. The new network module runs only in foundation. Completion verifies
+ownership and exact saved addresses and never PUTs the VNet. Mode/prefix choices persist in
+the existing option chunks without changing the 41-tag budget. Missing legacy mode means
+`existing`. Changed saved choices, unknown inventory and name collisions block, not adopt.
+
+Both modes retain the same private Foundry/Container Apps, Basic managed agent data, internal
+ingress DNS, Entra and API-key protections. An installed App update remains network-free.
+Offline expression/compile tests are not authenticated Portal acceptance or actual deployment.
 
 ## Agent Data Storage
 
@@ -145,6 +176,12 @@ Names include `environment`, `app`, `job`, `identity`, `storage`, `cosmos`, `sea
 `simpleModel`, `vnetRg`, `vnet`, `peSubnet`, `foundrySubnet` and `appSubnet`.
 `deployment` identifies the successful completion output used by the guarded Agent
 handoff. Optional MCP URL/connection and the ACA PE flag are also recorded.
+The core output includes the saved VNet RG/name, three subnet names and control-plane identity
+name. MCP preparation accepts older missing name fields only when their corresponding ARM IDs
+match the exact saved targets. A present wrong name, missing ID or redirected ID still blocks;
+this compatibility path never replays successful foundation/model/project resources.
+On Windows MSI installations, the shared CLI adapter calls bundled Python directly so a Graph
+query URL containing encoded fields and `&` stays one argument, without shell parsing.
 
 Application defaults to `resourceGroup().tags` and resolves IDs/endpoints from names
 and actual existing resources in **that same RG**. Operators do not re-enter all

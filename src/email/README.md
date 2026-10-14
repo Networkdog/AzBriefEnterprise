@@ -15,12 +15,6 @@ Azure Communication Services로 전달합니다. 분석 판단은 이 계층에�
 
 ## 렌더링 흐름
 
-[report_presentation.py](../report_presentation.py)의 개요·영향 정규화를 Archive와 공유합니다.
-개요에 잘못 붙은 단독 문단 번호는 제거하고 실제 목록·시작 번호·코드는 유지합니다. 영향 항목은
-`impact_details`의 실질적인 값을 우선하고 없으면 과거 JSON 요약을 항목별로 복구하거나 서술형 요약을
-표시합니다. 빈 JSON·공백·`N/A`는 출력하지 않습니다. 단건·digest의 HTML과 plain text에 같은 정책을
-적용하며 `AnalysisResult`를 수정하지 않습니다. 범주 상수와 설명 박스의 공통 단어 정책도 이 모듈이 소유합니다.
-
 ```text
 AnalysisResult + AzureUpdate
   -> section formatters
@@ -33,20 +27,6 @@ AnalysisResult + AzureUpdate
 두 template은 `_EMAIL_DOCUMENT_START` / `_EMAIL_DOCUMENT_END`를 공유합니다.
 `format_email_masthead_html()`, `format_report_header_html()`, `format_email_section_html()`,
 `format_email_footer_html()`, `format_digest_intro_html()`이 지면의 공통 위계를 구성합니다.
-단건·digest의 본문은 `_build_report_body_html()`을 공유합니다. 환경 설명과 리소스 표·대량 요약은
-`format_environment_resources_html/text()`가 하나의 환경 연관성 섹션으로 묶고, 리소스 이름표와
-건수는 안쪽의 11px 설명으로 표시합니다. 리소스가 없는 경우의 근거와 불완전한 조회 한계도 유지합니다.
-
-`format_report_annotations_html/text()`는 참고문서를 본문의 설명 박스로 배치합니다. 문단 안의
-동일 문서 링크를 우선하고, 문서 제목·`related_content`의 충분한 핵심 단어 일치를 다음으로 사용합니다.
-일치가 불명확하면 개요 끝에 둡니다. 제목·설명·확인 내용·안전한 링크를 모두 보존하며 5개 이후 문서를
-임의로 버리지 않습니다. 용어 박스는 첫 명시적 용어 언급 뒤로 옮기고, 연결할 문단이 없으면 원래
-자리에 유지합니다. 같은 문단의 박스 순서와 코드 블록을 보존합니다. 원격 모델 호출이나 의미 추론은
-하지 않으며, `html.parser`는 본문 조각에만 사용해 MSO 외곽·원본 모델·Archive를 변경하지 않습니다.
-
-목차와 상세 제목은 `AzureUpdate.title` 원문을 그대로 사용합니다. 제목 아래 `one_line_summary`는
-선택 언어의 공지 전용 한 문장이고, 렌더러는 줄바꿈 등 공백만 정리합니다. 환경 판정·작업량을 추가하거나
-누락된 요약을 영문 제목으로 대신하지 않습니다. 실제 번역과 요약은 Report Writer가 담당합니다.
 `MicrosoftLearnService`가 공식 Learn 본문에서 설명 있는 PNG/JPEG/GIF 후보를 추출하면
 `AnalysisResult.visual_assets`가 이를 전달 전용으로 보존합니다. `format_visual_assets_html()`은
 HTTPS와 별도 Microsoft 호스트 allow-list, 확장자, 비어 있지 않은 `alt`를 다시 검사한 뒤 이미지,
@@ -89,8 +69,7 @@ html = markdown_to_html(
 실제 `AnalysisResult` fixture를 통한 단건·digest 렌더링은 테스트에서 확인합니다.
 
 `relevance_evidence`는 단건 및 digest 상세에 공통 **환경 연관성** 제목으로 표시하며 plain text도
-같은 현지화 label을 사용합니다. 리소스 표는 이 섹션에 포함하고 독립 섹션으로 반복하지 않습니다.
-적용/가치 근거와 불확실성은 수정 없이 전달하고 리소스가 없다는
+같은 현지화 label을 사용합니다. 적용/가치 근거와 불확실성은 수정 없이 전달하고 리소스가 없다는
 이유로 숨기지 않습니다. 구독자 맞춤화도 역할·관심 서비스가 있으면 리소스 수와 독립적으로
 직무연관성을 평가하며, 입력 JSON에 원본 `relevance_evidence`를 포함합니다.
 
@@ -265,10 +244,8 @@ HTML 제목과 일반 텍스트 모두 주 1회 발송을 암시하는 표현을
 - 추가 확인은 번호가 있는 참고 문서 목록보다 앞에 둡니다. 참고 문서는 `description`의
   1~2문장 요약과 `related_content`의 보고서별 확인 지점을 제목 링크 아래에 표시합니다.
   이전 데이터에 `related_content`만 있으면 이를 설명으로 표시합니다.
-- 주요 일정과 종료 countdown은 날짜/D-day와 항목을 나란히 놓는 2열 목록입니다. 설명이 붙은
-  정확한 날짜도 ISO 날짜로 정규화하고, 지난 항목을 먼저 둔 뒤 예정 항목을 가까운 날짜순으로
-  정렬해 `D-000`/`D+000`으로 표시합니다. 실제 날짜가 확인되지 않은 항목은 기한을 만들지 않고
-  `D-???`로 구분합니다. 갱신 경로가 없는 이행 진행 상태는 추정하거나 표시하지 않습니다.
+- 주요 일정과 종료 countdown은 날짜/D-day와 항목을 나란히 놓는 2열 목록입니다. Countdown의
+  이행 상태는 이모지 대신 현지화된 텍스트로 표시합니다.
 - `str.format()` template의 literal brace는 `_escape_braces()`로 보호합니다.
 - Markdown link는 허용 목록의 HTTPS URL과 in-page anchor만 `<a>`로 만들고 나머지는 텍스트로 남깁니다.
 - 원격 이미지는 공식 Learn 본문의 설명 있는 PNG/JPEG/GIF만 허용합니다. 단건 2개, digest는

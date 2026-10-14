@@ -260,10 +260,10 @@ resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01'
   parent: existingStorage
   name: 'default'
 }
-resource existingCosmos 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' existing = {
+resource existingCosmos 'Microsoft.DocumentDB/databaseAccounts@2024-11-15' existing = if (!useMicrosoftManagedAgentData) {
   name: cosmosAccountName
 }
-resource existingSearch 'Microsoft.Search/searchServices@2023-11-01' existing = {
+resource existingSearch 'Microsoft.Search/searchServices@2023-11-01' existing = if (!useMicrosoftManagedAgentData) {
   name: searchServiceName
 }
 
@@ -287,7 +287,7 @@ resource blobDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-previ
   }
   dependsOn: [storage]
 }
-resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!useMicrosoftManagedAgentData) {
   scope: existingCosmos
   name: 'azbrief-v2'
   properties: {
@@ -297,7 +297,7 @@ resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
   }
   dependsOn: [cosmos]
 }
-resource searchDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+resource searchDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (!useMicrosoftManagedAgentData) {
   scope: existingSearch
   name: 'azbrief-v2'
   properties: {

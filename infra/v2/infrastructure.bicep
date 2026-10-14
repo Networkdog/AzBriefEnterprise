@@ -12,11 +12,17 @@ param namingPrefix string = ''
 @maxLength(10)
 param namingSuffix string = ''
 param location string
+@allowed(['existing', 'new'])
+param virtualNetworkMode string = 'existing'
 param virtualNetworkResourceGroupName string
 param virtualNetworkName string
+param virtualNetworkAddressPrefix string = '10.240.0.0/16'
 param peSubnetName string
+param peSubnetAddressPrefix string = '10.240.1.32/28'
 param foundrySubnetName string
+param foundrySubnetAddressPrefix string = '10.240.0.0/24'
 param containerAppsSubnetName string
+param containerAppsSubnetAddressPrefix string = '10.240.1.0/27'
 param foundryAccountName string
 @minLength(3)
 @maxLength(24)
@@ -71,7 +77,8 @@ var complete = infrastructureStage == 'complete'
 var resourceTags = union(tags, { application: 'AzBrief', customer: 'KT', deploymentProfile: 'kt-private-v2' })
 var projectId = resourceId('Microsoft.CognitiveServices/accounts/projects', foundryAccountName, projectName)
 var projectEndpoint = 'https://${foundryAccountName}.services.ai.azure.com/api/projects/${projectName}'
-var vnetId = resourceId(virtualNetworkResourceGroupName, 'Microsoft.Network/virtualNetworks', virtualNetworkName)
+var networkResourceGroup = virtualNetworkMode == 'new' ? resourceGroup().name : virtualNetworkResourceGroupName
+var vnetId = resourceId(networkResourceGroup, 'Microsoft.Network/virtualNetworks', virtualNetworkName)
 var reuseFoundry = complete && reuseExistingFoundrySetup
 var manageAzureMcp = empty(azureMcpServerUrl)
 var savedOptions = complete ? json(concat(
@@ -88,6 +95,11 @@ var mcpClientId = manageAzureMcp && complete ? (savedOptions.?azureMcpClientId ?
 var mcpServicePrincipalId = manageAzureMcp && complete ? (savedOptions.?azureMcpServicePrincipalId ?? '') : ''
 var mcpAppRoleId = manageAzureMcp && complete ? (savedOptions.?azureMcpAppRoleId ?? '') : ''
 var deploymentOptions = {
+  virtualNetworkMode: virtualNetworkMode
+  virtualNetworkAddressPrefix: virtualNetworkAddressPrefix
+  peSubnetAddressPrefix: peSubnetAddressPrefix
+  foundrySubnetAddressPrefix: foundrySubnetAddressPrefix
+  containerAppsSubnetAddressPrefix: containerAppsSubnetAddressPrefix
   useMicrosoftManagedAgentData: useMicrosoftManagedAgentData
   emailDataLocation: emailDataLocation
   searchSku: searchSku
@@ -114,11 +126,27 @@ var promptAgentNames = {
   quality_reviewer: '${take(projectName, 47)}-quality-reviewer'
 }
 
+module network 'new-network.bicep' = if (!complete && virtualNetworkMode == 'new') {
+  name: 'v2-new-network'
+  params: {
+    location: location
+    virtualNetworkName: virtualNetworkName
+    virtualNetworkAddressPrefix: virtualNetworkAddressPrefix
+    peSubnetName: peSubnetName
+    peSubnetAddressPrefix: peSubnetAddressPrefix
+    foundrySubnetName: foundrySubnetName
+    foundrySubnetAddressPrefix: foundrySubnetAddressPrefix
+    containerAppsSubnetName: containerAppsSubnetName
+    containerAppsSubnetAddressPrefix: containerAppsSubnetAddressPrefix
+    tags: resourceTags
+  }
+}
+
 module foundation 'foundation.bicep' = if (!complete) {
   name: 'v2-foundation'
   params: {
     location: location
-    virtualNetworkResourceGroupName: virtualNetworkResourceGroupName
+    virtualNetworkResourceGroupName: networkResourceGroup
     virtualNetworkName: virtualNetworkName
     peSubnetName: peSubnetName
     foundrySubnetName: foundrySubnetName
@@ -140,6 +168,7 @@ module foundation 'foundation.bicep' = if (!complete) {
     deployContainerAppsPrivateEndpoint: deployContainerAppsPrivateEndpoint
     tags: resourceTags
   }
+  dependsOn: [network]
 }
 
 module mcpIdentity 'mcp-identity.bicep' = if (!complete && manageAzureMcp) {
@@ -296,9 +325,14 @@ var infrastructureContract = {
   resourceGroup: resourceGroup().name
   location: location
   tags: resourceTags
+  virtualNetworkResourceGroupName: networkResourceGroup
+  virtualNetworkName: virtualNetworkName
   virtualNetworkResourceId: vnetId
+  foundrySubnetName: foundrySubnetName
   foundrySubnetResourceId: '${vnetId}/subnets/${foundrySubnetName}'
+  containerAppsSubnetName: containerAppsSubnetName
   infrastructureSubnetId: '${vnetId}/subnets/${containerAppsSubnetName}'
+  peSubnetName: peSubnetName
   privateEndpointSubnetId: '${vnetId}/subnets/${peSubnetName}'
   deployContainerAppsPrivateEndpoint: deployContainerAppsPrivateEndpoint
   containerAppsEnvironmentName: containerAppsEnvironmentName
@@ -306,6 +340,7 @@ var infrastructureContract = {
   environmentDefaultDomain: complete ? containerEnvironment.properties.defaultDomain : foundation!.outputs.environmentDefaultDomain
   containerAppName: containerAppName
   schedulerJobName: schedulerJobName
+  controlPlaneIdentityName: controlPlaneIdentityName
   controlPlaneIdentityResourceId: identity.id
   controlPlanePrincipalId: complete ? identity.properties.principalId : foundation!.outputs.identityPrincipalId
   controlPlaneClientId: complete ? identity.properties.clientId : foundation!.outputs.identityClientId

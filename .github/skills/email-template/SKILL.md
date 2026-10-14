@@ -5,9 +5,19 @@ description: 'Edit HTML email templates for AzBrief reports. Use when: email tem
 
 # Email Template Editing
 
-This is a GitHub Copilot developer skill, not an AzBrief Agent runtime instruction.
-Foundry operational guidance is maintained in
-[foundry_instructions.py](../../../src/agent/foundry_instructions.py), independently of this file.
+## Foundry Runtime Guidance
+
+- As the report writer, return only the requested schema; the deterministic renderer owns HTML, CSS, labels,
+    responsiveness, and client compatibility.
+- Layer the content for scanning: decisive summary, compact evidence, operational detail,
+    then executable actions. Do not repeat conclusions across fields.
+- Keep resource reasons and action fields concise, self-contained, and renderable without
+    reconstructing missing context.
+- Use the requested language and verified HTTP(S) links only. Never expose HTML, tracking
+    wrappers, unsafe URLs, fabricated links, schema names, tools, queries, or delivery details in
+    narrative text. Runtime-owned resource query references belong only in the declared structured field.
+
+<!-- End Foundry Runtime Guidance -->
 
 ## When to Use
 
@@ -191,7 +201,7 @@ results remain renderable. Both channels use the same identity and reason groupi
 ### Email/Archive Markdown parity
 
 The editorial redesign adds no Markdown vocabulary and changes no analysis behavior, transport,
-or Archive schema. Keep application-owned Foundry instructions unchanged for styling-only work.
+or Archive schema. Keep the bounded Foundry Runtime Guidance section unchanged for styling-only work.
 
 The existing `relevance_evidence` key is labeled Environment Relevance / 환경 연관성 /
 環境との関連性 in Archive, single/digest HTML and plain text, and the judge's rendered report.
@@ -200,15 +210,9 @@ rewrite a historical Archive value while rendering. Generation, not the renderer
 category-aware applicability/value decision.
 
 Archive omits optional sections and list entries whose rendered text is empty or whitespace-only,
-and builds the outline only from displayed sections. `src/report_presentation.py` owns shared
-analysis-numbering and impact normalization. If dimensions are blank, parse legacy JSON summaries
-into known populated dimensions, omit empty JSON/placeholders, or preserve actual prose. Never
-render internal JSON keys. Strip isolated outline prefixes only from analysis prose, preserving
-real lists, explicit starting numbers and code. Cover both email channels and Archive browser.
-Archive requests `view=report` for a separate display projection; stored/default API data stays intact.
-It shares the plain lead, capability-in-overview, merged environment/resources and contextual notes
-composition; browser CSS, complete archived identities and subscriber privacy remain channel-specific.
-Do not use HTML injection or mutate immutable values to obtain visual parity.
+and builds the outline only from displayed sections. If all structured impact/opportunity dimensions
+are blank, preserve a populated `impact_summary` as safe Markdown or omit the section. Never mutate
+archived values or hide non-empty evidence. `tests/browser/archive_reports.cjs` covers these cases.
 
 The email narrative and the shared canonical Archive use the same restricted Markdown vocabulary.
 When adding or changing headings, lists, blockquotes/concept boxes, code, bold text, or links in

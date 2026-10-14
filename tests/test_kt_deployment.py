@@ -5382,6 +5382,31 @@ def test_cli_uses_incremental_json_what_if_and_removes_temporary_file(
     assert not Path(args[args.index("--parameters") + 1][1:]).exists()
 
 
+def test_windows_cli_preserves_graph_query_as_one_argument(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    wrapper = tmp_path / "CLI2" / "wbin" / "az.cmd"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.write_text("@echo off", encoding="ascii")
+    bundled_python = wrapper.parent.parent / "python.exe"
+    bundled_python.write_bytes(b"")
+    monkeypatch.setattr(kt.shutil, "which", lambda name: str(wrapper))
+    commands = []
+
+    def capture(command, **kwargs):
+        commands.append(command)
+        assert not kwargs.get("shell", False)
+        return subprocess.CompletedProcess(command, 0, '{"value": []}', "")
+
+    monkeypatch.setattr(kt.subprocess, "run", capture)
+    query = "https://graph.microsoft.com/v1.0/applications?%24filter=owned&%24select=id"
+    assert kt.AzureCli(SUBSCRIPTION, TENANT, "rg-kt-test").json(
+        "rest", "--method", "GET", "--url", query
+    ) == {"value": []}
+    assert commands[0][:3] == [str(bundled_python), "-IBm", "azure.cli"]
+    assert commands[0][commands[0].index("--url") + 1] == query
+
+
 def test_cli_failures_are_not_success_shaped(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(kt.shutil, "which", lambda name: "az.cmd")
     monkeypatch.setattr(

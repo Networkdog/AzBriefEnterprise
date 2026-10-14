@@ -16,6 +16,9 @@ Azure MCP Server 배포의 resource ownership을 기능별 Bicep module로 분�
 Environment와 관측 리소스는 여기서 생성하지 않습니다. Root Bicep이 기존 Application Insights를
 참조하며 MCP 콘솔 로그는 공용 Environment가 같은 Log Analytics에 수집합니다. MCP 직접
 Application Insights 추적·메트릭과 Microsoft telemetry는 비활성화합니다.
+`userAssignedIdentityResourceId`를 전달하면 v2 인프라가 만든 MCP UAMI를 사용하고 해당 client ID를
+`AZURE_CLIENT_ID`로 연결합니다. 빈 기본값은 기존 SystemAssigned 경로를 유지합니다. Identity를
+선택하는 이 모듈은 역할 할당을 만들지 않습니다.
 
 ## Runtime 안전성
 

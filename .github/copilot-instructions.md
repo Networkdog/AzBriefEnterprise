@@ -51,100 +51,6 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 > Do not add other top-level localized README variants unless explicitly requested.
 > Code changes that affect the documentation must update both top-level README files.
 
-### Deployment Template v2
-
-`infra/v2` is an opt-in existing-VNet private profile, not a replacement for the existing
-Enterprise/KT Portal buttons or a legacy migration. `infrastructure.bicep` owns one-time
-foundation/completion, model/project/Host provisioning, scoped roles, logs and the completion-only
-RG handoff. Foundation stores its options/status; managed-MCP completion records mcp_pending.
-Portal infrastructure must contain no Microsoft.Graph resources. Authorized CLI-only
-mcp-authentication.bicep prepares the same Entra app/project role/RemoteTool connection and
-promotes ready; full CLI deploy runs it automatically, while Portal uses --prepare-mcp-authentication.
-`application.bicep` reads the same group's non-secret `azbrief.v2.*` contract and
-writes App/Job/auth plus final RG deployment metadata. New infrastructure reserves 41 tags;
-legacy 39-tag installs remain valid. applicationState starts not_deployed and becomes deployed
-only after App/Job/requested auth/MCP dependencies succeed. lastApplicationDeploymentAt is
-that successful ARM deployment's UTC start time, empty before deployment. Preserve prior
-records/customer tags on failure or infrastructure handoff; previews never advance them.
-Optional paired metadata is not inventory or runtime readiness; never invent historical dates.
-Require tag-write permission and reserve both slots within the unchanged 50-tag budget in
-CLI/Portal guards. Use `scripts/deploy_v2.py` for fresh fail-closed context,
-network/DNS/ownership/BYO checks, Incremental validate/what-if/create and current key/config
-preservation. Never rotate on denied/missing secret reads, downgrade Entra auth or reset a
-Schedule Job. Keep unknown or corrupted tag contracts blocking and preserve unrelated tags;
-enforce the 50-tag/256-character budget before provisioning. Raw ARM callers must perform
-equivalent checks and supply verified reuse/settings; templates alone are not adoption approval.
-Agent versions still require the guarded publication workflow. Only the Hosted principal's
-post-publication roles use `runtime-roles.bicep` as late infrastructure completion, not normal
-App updates. Never claim application readiness from metadata. Compile all four artifacts
-with pinned Bicep 0.46.1, retain CI drift checks and offline install/two-update coverage in
-`tests/test_deployment_v2.py`. Keep `infra/v2/README.md` and both root READMEs synchronized.
-Both root READMEs expose separate v2 infrastructure/application Deploy to Azure buttons,
-in addition to the two standard Enterprise links and one KT link. Pair them with the actual
-infrastructure/application CreateUI definitions. RG-visible names remain customer inputs;
-model aliases/IDs/capacity, Hosted and MCP connection settings are automatic. Use the tested
-KT network guards through scripts/build_v2_ui.py.
-Fresh v2 defaults useMicrosoftManagedAgentData=true and the official Basic VNet Host shape:
-keep scenario=agent/PNA Disabled/private ingress and omit all three BYO connection properties.
-Do not create Foundry-only Cosmos/Search/BYO connections/data roles/associated PE-DNS. Keep
-application Blob Storage for Archive/state/Admin/Feedback, with no project data access to it.
-Persist mode within existing option chunks; missing legacy flag means BYO. Never silently
-switch an existing Host, drop saved choices, delete old stores or weaken network/auth. Legacy
-Foundation completion uses explicit false and original names; unknown/redirected mode/Host/
-telemetry remains blocking. Admin readiness and Portal names exclude uncreated services.
-Basic VNet platform-managed data is documented separately from Standard-private BYO; do not
-generalize Standard's resource requirements to every injected VNet. Actual region/API/Agent/
-MCP acceptance is separate from compile/tests. Standard Enterprise/KT profiles remain unchanged.
-Keep UI output JSON assembly safe with unloaded RG/VNet/tag state even under eager branch
-evaluation. Empty initialization fallbacks never authorize completion; retain required tags
-and test loaded/unloaded states. A CreateUIDef CustomDeploymentBlade error is not ARM/Graph
-provisioning evidence. Local tests are not actual authenticated Portal acceptance.
-Use projected dot-access UI tag properties without altering persisted keys/values. Python
-AST string-key support is not proof of CreateUI grammar support; require real Portal
-diagnostics for a repeated CustomDeploymentBlade symptom before declaring it resolved.
-Retain the working KT default non-wizard mode, VNet selector and subnet choice contract.
-Optional bladeTitle or properties used by both profiles are not verified failure causes.
-Derive virtualNetworkResourceGroupName from the selected VNet ARM ID, as the KT UI does;
-never assume ResourceSelector exposes resourceGroup or substitute the application RG.
-Keep unloaded-output safety and completion's saved-tag value, including customer casing.
-MCP authentication/Reader UAMI/connection belong to infrastructure; its read-only pinned
-container belongs to application. Preserve
-Graph permission gates, incoming Entra and source scope. Keep all eight bounded option tags
-and reject changed saved choices. Publication, actual Portal acceptance and equivalent live
-preflight/key/settings preservation remain required, never inferred from offline JSON tests.
-Preserve common namingPrefix/namingSuffix parameters and saved options. Removing visible
-validation rows must not remove portalValidationPassed: both ARM templates allow only true.
-Recompile and verify UI-output/ARM-parameter parity before live deployment.
-Graph Bicep needs the caller's directory privileges and deployment-client delegated scopes.
-Portal Authorization_RequestDenied can differ from same-user CLI; use the supported approved
-CLI/PowerShell path, never broader roles/auth bypasses. Recover only the exact failed Graph
-module/uniqueName and distinguish child success from parent readiness. Keep the MCP connection
-on documented RemoteTool/ProjectManagedIdentity, explicit audience and 2025-10-01-preview;
-RemoteToolServer is invalid. Preserve completed models/BYO/roles on retry.
-Repeated Portal Graph failures need the Graph-free Portal artifact, not another one-off RG
-repair. Keep pending App denial, same-core-output/uniqueName/option-budget validation, no
-internal ID inputs, original completion handoff name and existing ready compatibility.
-Internal ingress needs its own actual Environment defaultDomain DNS zone, private staticIp
-wildcard/apex A records and non-registering approved VNet link, separate from ACA PE DNS.
-Preserve PNA/internal/auth and old DNS; existing installs use validated DNS-only recovery.
-Accept only structured AuthConfigNotFound (including the observed Not Found(JSON) CLI wrapper)
-for absent optional web auth. Denied/bad/other missing reads still block; UI activation requires Entra.
-App foundation/pending gate failures must name the missing step, never force portalValidationPassed.
-Preserve empty saved DNS overrides after validating seven owned same-RG default zones; explicit
-central-zone bindings remain immutable. Model quota exhaustion is a blocker, not approval to
-reclaim another deployment or rewrite saved choices. First CLI application installs derive email/
-feedback recipients and Admin/Archive object-ID access from the signed-in user's verified Graph
-mail/profile; never substitute a guessed UPN or service principal. Enable all three UIs with the
-dedicated single-tenant web app, exact same-origin callback and 365-day App-only secret. Read-only
-previews use provisional credentials solely for validation; only deploy writes Graph, without new
-roles, consent or API grants. Validate/what-if the real issued parameters again before ARM create.
-Preserve explicit values and every installed setting; no automatic credential rotation, mail or
-schedule activation. Denied/paged/foreign/modified directory state and orphaned credentials block.
-Portal stays Graph-free, its bare initial install UI-off; explain CLI first setup and minReplicas=1
-idle cost. Keep optional overrides, Agent publication, renewal and live login/send gates distinct.
-Share verified private Archive/Feedback origins with Job delivery and carry initial feedback-link
-enablement without overwriting installed settings or changing report/archive contracts.
-
 ---
 
 ## Agentic AI Design Principles
@@ -186,25 +92,6 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 - **Model fallback**: After `MAX_CONSECUTIVE_OVERLOAD_ERRORS` (3) consecutive 529 errors, raise `ModelFallbackError` to trigger model switch. Cleanly separates retry exhaustion from model switching logic
 - **Stale connection detection**: Detect ECONNRESET/EPIPE for targeted recovery (disable keep-alive pooling + reconnect) instead of generic retry
 - **LLM-assisted tool repair**: On tool failure, the Resource Graph specialist repairs KQL and the coordinator repairs other tool arguments, with bounded retries and a circuit breaker. Never fall back across specialist roles; use meaning-preserving lexical repair or preserve a gap, never replace a failed question with a generic builder/count
-- **Learn transport recovery**: `FOUNDRY_COORDINATOR_LEARN_TRANSPORT=hosted` is an explicit
-  provisioning alternative to the default `managed_mcp`. It removes only the coordinator's
-  managed Learn MCP attachment and uses the existing allow-listed public-document tools through
-  `local_tool_calls`. Keep Learn-first evidence, the same Agent/model and all scope/URL/validation
-  guards. A managed discovery 504 may surface as 400 `tool_user_error` even with `tool_choice=none`;
-  do not broadly retry 400s or infer an Azure MCP permission problem. Publish the coordinator and
-  run `--check` with the same setting; never edit developer `.env` implicitly.
-- **Reviewer output integrity**: Persist Quality Reviewer JSON-object mode for evidence verdicts,
-  dimension scores and action reviews. Keep their distinct runtime schemas, rubrics and fail-closed
-  parsing; valid JSON is not a sufficient verdict. `--check` must reject missing output mode.
-  Foundry logprob normalization stays disabled, so no plain single-digit response is required.
-- **Public MCP discovery retry**: `foundry_backend.py` allows three retries after the initial
-  request for structured 400 `tool_user_error` discovery failures at the explicit public endpoint
-  allow-list (currently only HTTPS `learn.microsoft.com/api/mcp`), with upstream
-  408/429/500/502/503/504/529. Honor server retry hints or 10/20/40 seconds plus jitter within one
-  existing Agent timeout. Never retry auth/invalid requests, unknown or tenant MCP endpoints, or
-  replay native local-tool invocations. Cancellation stops retries; exhaustion propagates the
-  original failure without another sleep. Log trace/task and attempt metadata, not error bodies.
-  This is Hosted runtime policy; a control-plane deployment alone does not activate it.
 - **Multi-turn output recovery**: If LLM hits output token limit, inject meta-message ("Resume directly — no apology, no recap") and retry up to 3 times
 - **Error withholding**: Recoverable errors (prompt-too-long, max-output-tokens) are not surfaced to callers until recovery is attempted. Surface only if recovery fails
 - **Graceful degradation**: If Resource Graph, Azure MCP, or Azure API evidence fails, preserve an explicit `partial` gap and reduce confidence. Missing specialist evidence never becomes confirmed absence and never falls back to a general-purpose Prompt Agent
@@ -302,8 +189,8 @@ updated Prompt Agent definitions, and Hosted deployment are separate from local 
 | AI Runtime | Microsoft Foundry Hosted Agent + persisted Prompt Agents |
 | Web/MCP Framework | FastAPI + Uvicorn + MCP Python SDK v2 |
 | Settings | pydantic-settings (`.env` → `Settings` class) |
-| Logging | structlog JSON + OpenTelemetry/Application Insights + failure-only Logs Ingestion |
-| Azure SDKs | `azure-identity`, `azure-mgmt-resourcegraph`, `azure-mgmt-costmanagement`, `azure-communication-email`, `azure-monitor-query`, `azure-monitor-ingestion` |
+| Logging | structlog (JSON structured logging) |
+| Azure SDKs | `azure-identity`, `azure-mgmt-resourcegraph`, `azure-mgmt-costmanagement`, `azure-communication-email`, `azure-monitor-query` |
 | HTTP | httpx (async) |
 | HTML Parsing | BeautifulSoup4 with `html.parser` (stdlib, **NOT** lxml) |
 | IaC | Bicep (`infra/main.bicep`) |
@@ -392,202 +279,6 @@ AzBriefEnterprise/
 
 ## Deployment Topology
 
-The separate KT profile ships as the paired top-level README button
-(`infra/kt/azuredeploy.json` + `infra/kt/createUiDefinition.json`). Keep exactly one KT Portal
-link in each top-level README in addition to the two standard Enterprise links. Storage or topology
-refactors must not remove the button while the KT profile remains supported. Follow
-`infra/kt/README.md` and the `kt-private-deployment` skill for that profile.
-`infra/NETWORK_REQUIREMENTS.md` is the customer-facing KT firewall/DNS reference. Keep requirements
-scoped by source, phase and enabled feature; distinguish Internet, private and platform-local paths.
-Retain citations, the research date and unresolved acceptance gates. Neither VNet injection nor a
-successful developer-network download proves customer NVA traversal or customer connectivity.
-Section 3.1 is an initial platform/core-analysis request, not the union of every allowed URL.
-Extra document sources and telemetry need feature-specific approval. Excluding default-on community
-egress requires verifying `COMMUNITY_INSIGHTS_ENABLED=false` in the Hosted runtime; documentation
-edits do not change live settings or guarantee equal evidence coverage with fewer sources.
-KT now uses the actual GHCR control-plane image, pinned by digest in the compatibility parameter
-`bootstrapImage`, with port 8000 and `/health`. Anonymous is the template default; verify package
-Public visibility and anonymous layer downloads before deployment. Credentials remains explicit
-and read-only; never put the publisher PAT in Azure. ARM generates the initial 64-character API
-key through a secure random default. Portal/CLI derive `reuseExistingApiKey` from complete owned
-ARM inventory; reuse the existing App secret with `listSecrets`, never rotate on read failure.
-Use the RG-scoped Container Apps list API when `resourceGroup().mode` is `Existing`; retain the
-filtered generic inventory for `New` so a not-yet-created RG does not require a 404 bypass.
-Portal completeness checks must reference the returned `value`, `error` and `nextLink` fields
-directly, not test keys on the whole API control. Accept an empty array only after a result arrives;
-null/empty error fields are not failures. Preserve error, pagination and ownership guards, and
-show only response state, error code and page presence, never error bodies or continuation URLs.
-The KT names tab is manual in both New and Existing RG modes. Remove optional existing-resource
-dropdowns, generic-resource/project discovery and automatic subnet defaults after the observed
-`existingContainerAppsEnvironment` control-creation failure. Do not restore those dependencies
-merely because local expression tests pass. Preserve direct name outputs, endpoint-name uniqueness,
-manual live-subnet eligibility and current VNet-response identity. The requested subnet selection
-uses three simple independent dropdowns populated only from the chosen VNet's subnet names in
-both stages, with a literal empty-choice default. Keep resource-name TextBoxes unchanged.
-Do not restore complex prefix/delegation calculation, other-role dependencies or auto-defaults
-inside dropdown initialization. Validate selected names separately with ARM CIDR/delegation;
-do not request CIDRs or allow free-text subnet names. Validation must evaluate safely
-without lazy-branch assumptions: choose a non-empty fallback array before first(), avoid numeric casts
-on unknown/IPv6 data, and reject multiple or conflicting prefixes. Keep subnet size, RFC1918,
-reserved-range and distinct-role checks plus exact outputs. CreateUiDefinition concat is documented
-for strings, not ARM-style array merging; build choice JSON with string functions and parse it,
-and test the Portal expression contract separately from compiled ARM expressions.
-Keep essential owned App/key
-inventory fail-closed, and read the exact typed Environment in stage two through the 2026-01-01
-ARM API. Verify internal=true, PNA Disabled, ownership and the selected infrastructure subnet.
-First-stage/New-RG paths must not GET an absent Environment. Other ownership/BYO investigation
-remains in read-only CLI preflight and operator confirmation, not success-shaped UI fallbacks.
-Select the KT stage in Basics and resolve it through `basics('deploymentStage')` everywhere;
-Review summarizes it without another selector. An Existing RG is not itself evidence of stage two.
-Block stage two on a New RG or without the existing App rather than silently switching phases.
-Stage two still omits the account module; manual name entry must not register a new subdomain.
-Require live-subnet membership and complete essential reads before deployment. Manual choice
-does not prove subnet occupancy or customer network acceptance and is not arbitrary adoption,
-data migration or BYO repair.
-Keep Container App/Hosted name inputs and all networking/identity protections unchanged.
-Distinguish actual Portal validation from offline expression tests or live ARM reads; a prior
-guard-only patch did not resolve the reported Portal symptom.
-Do not pass ARM default expressions as literal CLI secrets or expose keys in UI/outputs. Direct
-ARM callers must explicitly choose reuse from fresh inventory; serialize deployments to one app.
-Retain validation for optional 32–256-character initial keys and App secret refs, not literal
-environment values. Bind tenant/UAMI/project/Hosted name and durable
-archive/checkpoint paths, but keep Admin/Archive/Feedback disabled and auth required until setup.
-KT stage-two web setup accepts an existing customer-tenant Entra client ID, secure client secret,
-administrator allow-list and optional Archive readers. Stage one ignores those inputs and keeps
-the surfaces off. Complete credentials and non-empty reader lists gate Entra-protected surfaces;
-never disable `*_REQUIRE_AUTH` in that mode. The sole KT exception is an explicitly approved,
-temporary stage-two `enablePrivateAnonymousWebUi` option (ARM default false; Portal requires risk
-acknowledgement). It enables both pages and turns off their auth plus EasyAuth explicitly, not via
-an Incremental omission. Every reachable private client can administer and read; it is not read-only,
-production authorization or user-level auditing. Keep the Environment internal/PNA Disabled,
-reject unknown/public state before CLI writes, retain API/MCP keys and Azure Managed Identity.
-Anonymous and Entra inputs must not mix; hidden Portal Entra values are cleared. Do not silently
-downgrade an authenticated app. Known anonymous settings may later be upgraded to explicit Entra.
-Keep global `AllowAnonymous`
-for health/API-key routes, application-level authorization, HTTPS and same-origin redirects.
-Store the Entra value only as an App secret; bind Admin config in `azbrief-state/admin-config.json`,
-Archive links and readiness targets. Admin activation sets minReplicas=1 with disclosed idle cost.
-Do not create Entra registrations, issue secrets or mark applicationReady=true from web setup alone.
-Operators register the exact Web callback and accept actual login, refusal and Blob access.
-CLI `--stage complete` requires the existing foundation and avoids account replay. It may reuse
-only matching known web settings; default `both`/`foundation` must reject an authenticated or
-otherwise promoted app, including a private anonymous one. Preserve legacy GHCR foundation compatibility, case-insensitive resource
-names/principal sets, API-key reuse, post-stage auth readback and credential redaction.
-CLI may replace an uncustomized legacy hello-world app; the same pinned image must not permit
-overwriting promoted settings. Reuse the shared redactor for parameter/CLI diagnostics. These
-image changes do not create models, Agent versions, Entra apps, Jobs or email configuration.
-KT stage two reuses the stage-one Environment's RG/name. The current typed ARM GET returns Boolean
-`internal`; validate it strictly with true and reject numeric/string/unknown substitutes. The old
-ARG normalization was a workaround for numeric objectArray projections, not the current read path.
-Preserve PNA/ownership checks and reject unknown field values;
-do not bypass validation for stage two or recommend deletion solely because the name exists.
-Do not create the Foundry project during KT stage one: the default project host can finalize
-before a later BYO request. Gate the project, agentBindings and capabilityHost together on
-`deployCapabilityHost`. Stage-one project ID/endpoint are planned values;
-return an empty project principal without evaluating a missing project. After the account host is
-ready, stage two creates the project and its BYO dependencies in one deployment. The Foundry account
-module is stage-one-only; stage two must reference the live account as `existing` and must not
-resubmit `customSubDomainName`, because the service can reject that replay as `CustomDomainInUse`.
-Keep `deployCapabilityHost=false` as the direct-ARM default and require stage two to opt in
-explicitly. Never delete or purge the live stage-one account to recover from a stale ARM/UI pair.
-Keep Incremental replay and matching BYO connections. CLI rejects pre-existing projects with missing, automatic,
-unready or mismatched hosts before touching connections; never delete/reset them automatically.
-Stage-two replay also requires the exact original project name, including hyphens. A near-name
-project is a different internal AML workspace and must not overwrite inherited workspace-owned
-connections. Portal/CLI derive reuseExistingFoundrySetup only after complete exact-project,
-ready-host and three connection category/AAD/ResourceId/endpoint checks. A successful match skips
-project, BYO connection and host PUTs while retaining existing project roles; matching AppInsights
-connections skip their PUT too. Keep first-stage and initial stage-two creation unchanged.
-Read reused project metadata by its fully qualified ARM ID only inside the verified reuse branch.
-Do not declare a second existing-project alias: ARM eagerly checks an unconditional alias and
-rejects complementary same-ID conditional declarations even when stage one needs neither.
-Stage one returns empty project metadata without a lookup; new telemetry depends on the new project.
-Missing, paged, denied or mismatched evidence blocks; never infer create/reuse from a read error.
-Direct ARM callers must explicitly choose reuse from verified fresh inventory. Keep name TextBoxes
-and simple subnet dropdowns; the new internal safety reads are not optional discovery controls.
-Old installations need separately approved, data-loss-aware recovery. Do not move Korea Central
-to capabilitySettings preview based on documentation for other regions, or invent a BYO grace period.
-KT stage two automatically assigns the control-plane UAMI RG Reader, project Foundry User and
-Blob Data Contributor on each application container. Existing approved Insights/email inputs add
-only component-scoped Monitoring Metrics Publisher or the supplied minimum ACS sender role.
-Require deployment roleAssignments/write; Portal confirms this and always enables the stage-two
-grants. `assignControlPlaneRoles=false` remains an advanced CLI-only manual exception. Preserve
-principal outputs, `applicationReady=false`, distinct project BYO permissions and operator-managed
-Hosted evidence/data roles. Never give the control plane tenant evidence scope, account-wide Blob
-access or ACS deletion/key-management rights. The explicitly requested automatic email profile
-creates only the three-action minimal sender custom role and resource-scoped UAMI assignment;
-legacy manual email retains approved existing roles. CLI derives
-existing assignment names from fresh exact principal/role/scope inventory; failures and conditional
-assignments block, never become an empty create plan. Portal deterministic names do not adopt
-different legacy manual names; use CLI for those. Never delete or expand old grants implicitly.
-KT Admin readiness binds actual Environment/App names and UAMI/Storage/Cosmos/Search descriptors
-through the existing Base64-JSON settings. Preserve legacy App projections in CLI preflight and
-reject redirected, extended or malformed metadata; descriptor keys remain case-sensitive.
-These descriptors themselves are non-secret lookup targets, not new resources or permissions. Account/
-project ARM 403s concern the control-plane UAMI's scoped reads, while Agent listing requires project
-data permissions and private reachability. A failed Agent listing cannot prove an absent Hosted
-version; 0/6 mappings and unset model names are not inventory results. Stage two wires approved
-actual model deployments and six distinct names (47-character project prefix plus role suffix, maximum
-64 characters without changing the project name), an opt-in same-image Manual Job, automatic ACS email,
-and existing Entra-only Insights with its project AppInsights connection. Guard existing runtime
-bindings, Job identity/command/limits/secret refs and telemetry destination; do not reset a Schedule
-Job to Manual or drop customized settings. Prompt/Hosted versions are not created by ARM.
-KT models/email are stage-two defaults with provisionModels/provisionEmail true. Pin physical
-gpt-5.6-terra/luna at 2026-07-09, GlobalStandard and 200 units each, using the existing deployment
-aliases. Verify live catalog/Responses/Agents and quota for new models. Only a missing simple
-deployment may use the explicit, logged core-model fallback after combined quota validation.
-Never reclaim another allocation or change a ready existing deployment's model/version/SKU/capacity.
-Core/simple creation is serialized before initial project creation; reuse emits no model PUTs.
-Email creates ACS, Email Communication Services, AzureManagedDomain and the minimal sender role.
-Resolve real endpoint/fromSenderDomain, retain existing domains/links/tags/identity and roles, and
-never read/regenerate ACS keys or invent recipients. Default storage geography is Asia Pacific;
-ACS can return a regional host such as name.asiapacific.communication.azure.com; allow valid
-labels under communication.azure.com and never derive the host from the resource name.
-GlobalStandard inference can leave Korea Central. No automatic send, schedule or all-ready claim.
-Portal and CLI require complete scoped inventory and derive flags before writes; raw ARM callers
-must choose reuse explicitly. Role definition/assignment write permissions and HTTPS egress remain
-real requirements, not reasons for broader roles, auth or network bypasses.
-Keep conditional resource symbols bare in role-assignment scope (communication/insights), not
-null-forgiving scope expressions. The pinned compiler dropped the latter's ARM scope; lock the
-compiled resource scope in tests and verify actual readback. Never leave a task-created broader
-grant in place or remove unrelated customer assignments.
-Normalize only the documented ARM-injected ephemeralStorage default (App 1Gi, Job 4Gi), never
-ignore other resource drift. The live Job API also returns an empty string for automatic storage;
-accept that representation for Job only, without treating it as a measured capacity or allowing
-unknown/non-default sizes. Runtime inventory keeps a typed lazy TokenCredential and safe status
-diagnostics; denied reads remain errors.
-Accept existing ARM True/False casing semantically and emit lowercase boolean env values.
-This normalization must not permit auth-mode downgrades or bypass other projection checks.
-`scripts/setup_kt_agents.ps1` uses only successful exact-scope ktFoundation.runtimeSetup outputs,
-a clean customer clone, matching default CLI login and an isolated named azd environment for
-Configure/Publish/Check. Set the local user agent before every azd call; restore process variables
-and any previous azd default on failure or success. Keep import/full tests, roster, guarded Hosted
-deployment/smoke and intended-name ACTIVE checks.
-Guarded initial Hosted publication permits explicit not_deployed metadata, never denied/malformed
-lookups; existing and newly active names must match the declared target.
-Both publication scripts disable OTel SDK export only around local pytest and restore it in finally;
-never persist that flag.
-Windows deployment-test assertions normalize only PowerShell ANSI/continuation presentation;
-retain the exact refusal message, nonzero exit, no-secret and no-mutation checks rather than
-skipping the suite to pass publication.
-Existing Insights connection metadata is validated without exposing its value or redeclaring the Hosted-reserved
-APPLICATIONINSIGHTS_CONNECTION_STRING. Project/Hosted publishers, MCP permission/routing, approved
-model capabilities, mail/domain/recipient, and schedule acceptance remain explicit operator work.
-Keep actual failures explicit and report only completed live validation;
-Configured endpoint/identity/checkpoint/Archive checks are not live analysis or storage acceptance.
-Do not turn intentionally absent Jobs/Insights or unpublished names into fabricated Ready status.
-For Private Endpoint failures, compare the exact customer deployment operations and resource
-states before attributing a generic InternalServerError to Azure or changing the topology.
-An Approved connection is not provisioning success: final KT readback requires every PE to be
-Succeeded. Preserve internal/PNA restrictions, correlate service request IDs, and never use a
-different subscription's validation or a static dependency test as proof of customer recovery.
-KT temporarily defaults `deployContainerAppsPrivateEndpoint=false` for operator-led diagnosis.
-Skip only the ACA PE module at index 4 and its child DNS zone group, preserving stable indices
-0–3, the Environment/App, DNS zone preparation, internal=true and Disabled PNA. CLI ownership and
-network-isolation checks must still cover the Environment, while manual/failed ACA PEs remain
-outside managed-endpoint reads, writes and readiness checks. Incremental omission never deletes
-an existing endpoint; applicationReady remains false until manual DNS/HTTPS acceptance.
-
 New customer installations start from the paired README ARM/UI button
 (`infra/azbrief-enterprise-deploy.json` + `infra/createUiDefinition.json`) and follow
 `infra/CUSTOMER_DEPLOYMENT.md`. Bootstrap hello-world uses port 80 and `/`; real AzBrief uses
@@ -610,45 +301,25 @@ The guided VNet profile must bind Foundry and the VNet to the same deployment re
 Keep CI `contents: read` permissions at the workflow root, never inside an event. Include the CI
 file itself in both push/PR path filters and retain its deployment-contract regression assertions.
 
-Control-plane images may reside in a publisher/developer tenant. Keep
-`containerRegistryAuthMode=ManagedIdentity` as the same-tenant default; `Credentials` uses a
-customer-specific repository pull token stored in the customer Key Vault and referenced by both
-App and Job. Never enable the ACR administrator, grant customer Managed Identity across tenants,
-copy registry credentials into application settings/setup outputs, or switch the deployment
-tenant implicitly. Setup outputs carry only the mode and ordinary Key Vault base URI; validate
-the fixed secret path locally. Initial Application/Verify/EnableSchedule check both bindings.
-`deploy_dev.ps1 -PrebuiltImage` accepts an approved immutable digest without ACR lookup/build;
-preserve health, import-only Job smoke, unchanged authentication and rollback gates. Its local
-checkout fingerprint is not publisher-image provenance. Network access, fresh pulls and token
-rotation require separate customer acceptance. Do not change Hosted/Prompt Agent policy for this.
-
 Customer setup v3 binds one shared Container Apps environment, workload profile, Application
-Insights component and its Log Analytics workspace. New v3 outputs may additionally carry the
-Direct DCR endpoint/immutable ID/stream/resource ID for the `AzBriefFailures_CL` custom table;
-older v3 outputs without that optional binding remain valid. App/Job get DCR-scoped Monitoring
-Metrics Publisher automatically, while the dedicated Hosted identity needs it after publication.
-MCP remains a separate app/system identity, not a separate environment. Its deployment requires
-the existing environment ID and Insights name; never create a second component/workspace as an
-empty-input fallback. Mcp preflight/readback and v3 Verify/EnableSchedule check shared targets.
-Legacy v1/v2 remain valid for non-MCP stages only.
+Insights component and its Log Analytics workspace. MCP remains a separate app/system identity,
+not a separate environment. Its deployment requires the existing environment ID and Insights name;
+never create a second component/workspace as an empty-input fallback. Mcp preflight/readback and
+v3 Verify/EnableSchedule check shared targets. Legacy v1/v2 remain valid for non-MCP stages only.
 The pinned MCP exporter does not configure TokenCredential. Disable its direct Application Insights
 traces/metrics and Microsoft telemetry, retain stdout/stderr in the environment's shared workspace,
 and preserve Entra-only Insights; do not add ineffective auth environment variables or unused roles.
 Do not auto-delete or move a legacy MCP app. Follow the customer consolidation procedure, update
 the changed MCP URL/project connection and Agent definitions, and retain historical logs until
 approved retirement. Internal environments require verified Foundry-to-MCP routing and DNS.
-
-New standard and KT deployments create one dedicated Entra-only StorageV2 account. Keep
-`azbrief-state` (including feedback) and `azbrief-archive` separate from Foundry-managed containers.
-App/Job Blob Data Contributor grants are container-scoped (operator-assigned for KT); retain Foundry's required account-level
-roles and state honestly that this shares the trust, throughput and failure boundary, not hard
-account isolation. Standard evaluation keeps its existing connection name as an alias to the shared
-account. Use one Blob Private Endpoint/NSP association and one readiness storage entry. KT exposes
-only `storageAccountName`, uses four managed PEs/seven-IP budget by default (five/eight when ACA PE
-automation is explicitly enabled), and rejects legacy two-name inputs or
-additional KT-profile storage accounts. Preserve Capability Host no-redirect checks. Incremental
-ARM does not remove old accounts, PEs or broad role grants; migrations and retirement require
-separate approval and verified data/reference/RBAC cutover. Never silently copy or delete data.
+The shared MCP app module accepts an optional infrastructure-owned UAMI for v2 and injects its
+outgoing AZURE_CLIENT_ID. Empty input retains the legacy SystemAssigned identity; application
+deployment never recreates the UAMI or its Reader assignment.
+V2 core outputs must include every saved network/identity name. Older missing names can be
+resolved only from exact saved ARM IDs; present mismatches and redirected IDs still fail closed.
+On Windows MSI installations, AzureCli uses the bundled Python entry point to preserve Graph
+query URLs as single arguments. Docker fingerprint reads use Get-Item -Force only for explicitly
+selected inputs, so Linux hidden-file semantics cannot omit .dockerignore.
 
 This repository ships **one** topology. There is no Automation Account, no Function App and
 no fat wheel. Analysis runs in a Foundry Hosted Agent; Container Apps hosts only control-plane
@@ -704,25 +375,6 @@ report success. Failed/pending/deferred analyses or failed requested delivery ma
 Weekly delivery events carry `run_id`, `week_range`, count and outcome. Hosted failures preserve
 the request trace ID through the proxy into run logs and expose only the exception type, never
 the private message or traceback. Verify log access separately from application health.
-Log safe Hosted HTTP response metadata before validation so trace/update IDs join to the Foundry
-session and service request even for failed responses. Never log authorization headers or bodies.
-Hosted `setup_logging()` owns redaction and Entra-authenticated telemetry. Pass
-`configure_observability=None` to the Responses server so SDK auto-configuration cannot replace
-that pipeline or flood the bounded session log with console metrics; do not disable application OTel.
-Foundry injects the reserved `APPLICATIONINSIGHTS_CONNECTION_STRING` only after the project has an
-`AppInsights` connection. Never redeclare it in the Hosted manifest. Bind the shared component with
-`ProjectManagedIdentity`, `ResourceId`, and required `ApplicationInsightsConnectionString` metadata,
-and grant component-scoped Monitoring Metrics Publisher to project and Hosted identities separately.
-The Hosted identity also requires project-scoped Foundry User for native FunctionTool conversations;
-subscription Reader does not grant those data actions. Large-run acceptance starts at concurrency 1
-unless actual shared model TPM, including parallel specialists and judges, supports more.
-Record consecutive-failure termination as `orchestrator_analysis_halted`; a finished run's Pending
-count is not an automatically resuming queue. Before stopping queued work, wait for in-flight
-analyses: a late success resets the streak. Preserve sustained-failure stopping, recheck the deadline
-after waiting, and keep the configured concurrency limit and contiguous watermark.
-Route critic revisions through the same bounded schema-repair parser as initial reports. Retain
-the critique feedback and evidence in repair state; do not rescore or accept an invalid candidate,
-weaken validation, or replace the keep-only-if-improved rule.
 Run diagnostics expose only the safe `RunRecord` projection. Console-managed subscribers may be
 updated with ETag protection, while deployment subscribers remain immutable and cannot be shadowed.
 
@@ -751,18 +403,9 @@ is planning memory, not the browser archive source of truth.
 The Archive detail renderer must preserve the email narrative's restricted Markdown structure,
 including `> **Term**:` concept boxes, while constructing DOM nodes without `innerHTML`. A Markdown
 feature added to email requires the matching safe Archive rendering path and behavior coverage.
-`src/report_presentation.py` is the shared display boundary for narrative numbering, capability
-placement and impact values. Normalize isolated outline-style paragraph prefixes only in the analysis
-body; retain real lists, explicit start numbers, nested content and code. Parse legacy impact JSON
-into known non-empty dimensions; never print its internal keys or empty objects. Preserve real prose.
-The authenticated detail `view=report` adds a separate `presentation`; default API documents and
-immutable stored bytes remain unchanged. Do not import delivery-only data or subscriber context.
 Archive detail uses a pure white editorial canvas with a 48px/32px title, 25px/21px section headings,
-16px/14px prose, a numbered sticky/horizontal outline, a plain 18px/16px lead, and flat rule-separated
-facts and lists. Put capability dimensions in the overview, resources with environment evidence,
-and reference/glossary boxes near related prose. No separate Opportunity/References footer or tinted
-summary panel. Keep all stored action explanations, verification notes and safe links. Hide the
-duplicate list-page introduction only while detail is open; preserve the
+16px/14px prose, a numbered sticky/horizontal outline, one emphasized lead, and flat rule-separated
+facts and lists. Hide the duplicate list-page introduction only while detail is open; preserve the
 responsive toolbar, visible focus, and all report content.
 The Admin and Archive shells keep explicit `width: 100%`, bounded `max-width`, and `margin: 0 auto`
 on their main content so operational panels stay centered on wide viewports without mobile overflow.
@@ -795,8 +438,8 @@ screenshots in `out/` and do not substitute Python renderer tests for browser in
 
 | Mode | What it does |
 |------|--------------|
-| `vnetInjection` (**default**) | Foundry `networkInjections` (`scenario: 'agent'`) into a `/24` subnet delegated to `Microsoft.App/environments`, Container Apps workload-profile environment on a second delegated subnet, and three private endpoints with private DNS for Foundry, Key Vault and the shared Storage Account. Their public network access is disabled by default; Foundry and the VNet share a region |
-| `perimeter` | Four associations for the Foundry account, Key Vault, Log Analytics and the shared Storage Account, plus an `NSPAccessLogs` diagnostic setting. Defaults to `Learning` (Transition), which logs without blocking |
+| `vnetInjection` (**default**) | Foundry `networkInjections` (`scenario: 'agent'`) into a `/24` subnet delegated to `Microsoft.App/environments`, Container Apps workload-profile environment on a second delegated subnet, and four private endpoints with private DNS for Foundry, Key Vault, state/archive storage and evaluation storage. Their public network access is disabled by default; Foundry and the VNet share a region |
+| `perimeter` | Five associations for the Foundry account, Key Vault, Log Analytics, state/archive storage and evaluation storage, plus an `NSPAccessLogs` diagnostic setting. Defaults to `Learning` (Transition), which logs without blocking |
 | `public` | Public endpoints; Entra auth, the API key and `allowedIpRanges` are the only boundary. Evaluation use only |
 
 Constraints that are easy to get wrong:
@@ -915,20 +558,6 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 
 ### Email Rendering
 
-- `one_line_summary` comes from `_summarize_announcement()`, an isolated tool-disabled Report Writer
-  call with only the original title/body and target language. Never pass tenant evidence, role hints,
-  analysis text or custom system context into it. Preserve the exact English source title. Require a
-  non-empty source excerpt, valid bounded JSON, completed output and ko/ja script presence; these are
-  basic checks, not semantic proof. Keep the accepted summary through critic rescoring and subscriber
-  editing. Generate the target-language summary separately before customization, including skipped
-  items; failure cannot silently return the old summary. Foreground calls honor bounded retry hints
-  and allow one output correction against unchanged source; customization stays fail-fast without
-  output recovery. The mechanical length warning starts above 240 characters, not 100.
-  Publishing only the control-plane image does not update Hosted summarization or Prompt Agent policy.
-- Keep Korean GA phrasing aligned in the language guide, translation notes and isolated summary
-  prompt: use direct support/launch predicates, not literal release-status narration. Preserve
-  Preview and source scope without inferring SLA/support entitlements. Test both the reported
-  defect and valid wording; never rewrite immutable reports with a display-time phrase replacement.
 - Keep `HTML_EMAIL_TEMPLATE` and `HTML_DIGEST_TEMPLATE` on the shared `_EMAIL_DOCUMENT_START` /
   `_EMAIL_DOCUMENT_END` shell and masthead/header/section/footer/intro formatters. `EMAIL_COLORS`
   defines white paper, graphite `#202124`, editorial red `#a92336`, and blue `#365b8c` links.
@@ -1487,7 +1116,7 @@ Past mistakes and workarounds discovered during development.
   - The `RunStore` stays deliberately non-durable. Losing it now only means a poller stops seeing a run; the checkpoint is elsewhere.
   - `replicaRetryLimit: 0` on the job is deliberate — a failed execution did not advance the checkpoint, so the *next schedule* re-covers the window rather than paying twice in one night.
   - Blob access uses the **REST API over httpx** with an Entra token, not `azure-storage-blob`: the fat wheel that ships to the Automation sandbox stays unchanged, and the store touches the blob twice per run.
-  - The identity gets `Storage Blob Data Contributor` **scoped to the application containers** in the current single-account topology. A checkpoint is not a secret and must not earn write access to the vault that holds the real ones.
+  - The identity gets `Storage Blob Data Contributor` **scoped to the state account only**. A checkpoint is not a secret and must not earn write access to the vault that holds the real ones.
   - `automation/runbook_python.py` keeps its `enterprise` branch (stdlib-only, `https`-only base URL) for driving the topology from an existing Automation Account, but the template no longer creates one.
 - **Bicep catches what hand-written ARM JSON cannot, but only for what it type-checks (2026-08).** `infra/enterprise/main.bicep` compiles to `infra/azbrief-enterprise-deploy.json`; **never hand-edit the JSON**. Two errors surfaced only at compile time and would have failed a live deployment: `BCP178` twice, because a `for` loop's source array cannot reference a runtime value (`containerApp.properties…fqdn`, `managedIdentity.properties.clientId`) — copy loops over Automation Variables had to be unrolled into individual resources; and `BCP318` on `secretAdminClientSecret.properties.secretUri`, since a conditional resource is null-typed (fixed with the `!` null-forgiving operator inside the branch that already guarantees it exists). Two things Bicep does **not** check: built-in role GUIDs (verified against the Learn built-in-roles page — note *Foundry User* is the renamed *Azure AI User*, ID `53ca6127-db72-4b80-b1b0-d745d6d5456d`, unchanged by the rename) and `enablePurgeProtection: false`, which ARM rejects outright — the property must be `true` or absent, hence `enableKeyVaultPurgeProtection ? true : null`.
   - Honest limit: `az deployment group validate` could not be run in this environment (the subscription requires interactive MFA), so the template is **statically** validated only. Run a preflight before the first real deployment.
@@ -1588,9 +1217,6 @@ When implementing changes, verify against this checklist:
   □ G-Eval, action verification, trajectory, report, and Hosted request events share trace_id
   □ State transitions logged with trace_id
   □ Total analysis time and token usage tracked
-  □ Error/Critical, exception, failure-suffixed, failed/partial-status and positive failure-count events enter `AzBriefFailures_CL`
-  □ Ordinary successful INFO/WARNING events do not enter the failure table
-  □ Failure-log payloads are redacted; exporter failures stay local and never recurse or change run status
 
 □ Quality Campaign
   □ Period payloads and dataset hash are frozen before source changes

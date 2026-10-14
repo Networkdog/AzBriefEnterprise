@@ -1433,9 +1433,30 @@ def test_impact_label_column_has_outlook_safe_width():
         assert "word-break: keep-all" in attributes
 
 
-def test_reference_notes_belong_to_the_report_body_not_a_footer_section():
-    assert "{report_body_html}" in HTML_EMAIL_TEMPLATE
-    assert "{reference_docs_section_html}" not in HTML_EMAIL_TEMPLATE
+@pytest.mark.parametrize("builder", ["single", "digest"])
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+def test_additional_checks_precede_references(
+    sample_update, sample_analysis_result, builder, language
+):
+    """Additional checks precede references in rendered single and digest reports."""
+    check = "Check the installed version before deployment."
+    reference = "Deployment verification reference"
+    sample_analysis_result.additional_checks = [check]
+    sample_analysis_result.reference_docs = [
+        {"title": reference, "url": "https://learn.microsoft.com/azure/storage/"}
+    ]
+    service = EmailService()
+    if builder == "single":
+        content = service.build_email_content(
+            sample_update, sample_analysis_result, language=language
+        )
+    else:
+        content = service.build_digest_content(
+            [{"update": sample_update, "result": sample_analysis_result, "skip_reason": ""}],
+            language=language,
+        )
+    html = content["html_content"]
+    assert html.index(check) < html.index(reference)
 
 
 def test_save_html_to_out_survives_an_unwritable_directory(tmp_path, monkeypatch):

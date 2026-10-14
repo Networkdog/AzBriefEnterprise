@@ -306,7 +306,7 @@ function Get-DockerInputFingerprint {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Docker input not found: $path"
         }
-        [void]$files.Add((Get-Item -LiteralPath $path))
+        [void]$files.Add((Get-Item -LiteralPath $path -Force))
     }
 
     $sourceRoot = Join-Path $repoRoot "src"

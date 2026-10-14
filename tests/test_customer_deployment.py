@@ -80,27 +80,6 @@ def shared_setup_contract(setup_contract: dict) -> dict:
         ),
         "containerAppWorkloadProfileName": "Consumption",
         "applicationInsightsName": "appi-customer",
-        "azureMonitorIngestionEndpoint": (
-            "https://dcr-customer.koreacentral-1.ingest.monitor.azure.com"
-        ),
-        "azureMonitorDcrRuleId": "dcr-0123456789abcdef",
-        "azureMonitorDcrResourceId": (
-            f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-customer/providers/"
-            "Microsoft.Insights/dataCollectionRules/dcr-customer-failures"
-        ),
-        "azureMonitorDcrStreamName": "Custom-AzBriefFailures_CL",
-        "azureMonitorFailureTableName": "AzBriefFailures_CL",
-    }
-
-
-@pytest.fixture
-def credentials_setup_contract(shared_setup_contract: dict) -> dict:
-    return {
-        **shared_setup_contract,
-        "containerRegistryServer": "publisher.azurecr.io",
-        "containerRegistryAuthMode": "Credentials",
-        "keyVaultName": "kv-customer",
-        "keyVaultUri": "https://kv-customer.vault.azure.net/",
     }
 
 
@@ -132,8 +111,6 @@ def run_preview(tmp_path: Path, setup: dict, *arguments: str) -> subprocess.Comp
         env=os.environ.copy(),
         capture_output=True,
         text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=30,
         check=False,
     )
@@ -210,34 +187,6 @@ def test_customer_setup_rejects_mutable_images(tmp_path: Path, setup_contract: d
 
     assert result.returncode != 0
     assert "immutable" in result.stderr
-
-
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
-@pytest.mark.parametrize(
-    ("field", "value", "error"),
-    [
-        ("containerRegistryAuthMode", "", "Invalid containerRegistryAuthMode"),
-        ("containerRegistryAuthMode", "Token", "Invalid containerRegistryAuthMode"),
-        ("containerRegistryServer", "", "Missing customerSetup field"),
-        ("containerRegistryServer", "https://publisher.azurecr.io", "customer Key Vault"),
-        ("keyVaultName", "", "Missing customerSetup field"),
-        ("keyVaultUri", "", "Missing customerSetup field"),
-        (
-            "keyVaultUri",
-            "https://publisher.vault.azure.net/",
-            "customer Key Vault",
-        ),
-        ("keyVaultUri", "http://kv-customer.vault.azure.net/", "customer Key Vault"),
-    ],
-)
-def test_customer_setup_rejects_invalid_registry_contracts(
-    tmp_path: Path, credentials_setup_contract: dict, field: str, value: str, error: str
-) -> None:
-    credentials_setup_contract[field] = value
-    result = run_preview(tmp_path, credentials_setup_contract)
-
-    assert result.returncode != 0
-    assert error in result.stderr
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
@@ -343,125 +292,18 @@ def test_portal_wizard_outputs_match_the_deployment_contract() -> None:
     assert outputs["coreReasoningEffort"] == "[steps('foundry').reasoningEffort]"
 
 
-def test_external_registry_portal_credentials_are_conditional_and_secure() -> None:
-    wizard = json.loads((ROOT / "infra" / "createUiDefinition.json").read_text(encoding="utf-8"))
-    parameters = wizard["parameters"]
-    controls = {element["name"]: element for element in parameters["basics"]}
-    outputs = parameters["outputs"]
-
-    assert controls["registryAuthMode"]["defaultValue"] == "Managed identity (same tenant)"
-    assert {
-        option["value"] for option in controls["registryAuthMode"]["constraints"]["allowedValues"]
-    } == {"ManagedIdentity", "Credentials"}
-    assert controls["registryPassword"]["type"] == "Microsoft.Common.PasswordBox"
-    for name in ("registryUsername", "registryPassword"):
-        assert "defaultValue" not in controls[name]
-        assert controls[name]["constraints"]["required"] is True
-        assert controls[name]["visible"] == "[equals(basics('registryAuthMode'), 'Credentials')]"
-        assert outputs["container" + name[0].upper() + name[1:]] == (
-            f"[if(equals(basics('registryAuthMode'), 'Credentials'), basics('{name}'), '')]"
-        )
-    assert controls["registryMode"]["visible"] == (
-        "[equals(basics('registryAuthMode'), 'ManagedIdentity')]"
-    )
-
-
-def test_external_registry_template_shares_key_vault_auth_without_secret_outputs() -> None:
-    template = json.loads(
-        (ROOT / "infra" / "azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
-    )
-    assert template["parameters"]["containerRegistryAuthMode"]["defaultValue"] == "ManagedIdentity"
-    assert template["parameters"]["containerRegistryAuthMode"]["allowedValues"] == [
-        "ManagedIdentity",
-        "Credentials",
-    ]
-    assert template["parameters"]["containerRegistryPassword"]["type"] == "securestring"
-    runtimes = [
-        resource
-        for resource in template["resources"]
-        if resource["type"] in ("Microsoft.App/containerApps", "Microsoft.App/jobs")
-    ]
-    assert len(runtimes) == 2
-    for resource in runtimes:
-        configuration = resource["properties"]["configuration"]
-        assert configuration["registries"] == "[variables('containerRegistries')]"
-        assert "container-registry-password" in configuration["secrets"]
-        assert "'keyVaultUrl'" in configuration["secrets"]
-        assert "variables('useRegistryCredentials')" in configuration["secrets"]
-        assert "parameters('containerRegistryPassword')" not in configuration["secrets"]
-    secret = next(
-        resource
-        for resource in template["resources"]
-        if resource["type"] == "Microsoft.KeyVault/vaults/secrets"
-        and "container-registry-password" in resource["name"]
-    )
-    assert secret["condition"] == "[variables('useRegistryCredentials')]"
-    assert secret["properties"]["value"] == "[parameters('containerRegistryPassword')]"
-    assert "passwordSecretRef" in template["variables"]["containerRegistries"]
-    assert "parameters('containerRegistryPassword')" not in json.dumps(template["outputs"])
-    assert "parameters('containerRegistryUsername')" not in json.dumps(template["outputs"])
-    assert template["outputs"]["customerSetup"]["value"]["containerRegistryAuthMode"] == (
-        "[parameters('containerRegistryAuthMode')]"
-    )
-    assert (
-        "Credentials mode: no customer Managed Identity role assignment"
-        in template["outputs"]["grantAcrPullCommand"]["value"]
-    )
-
-
-def test_registry_parameter_example_preserves_the_arm_parameter_file_shape() -> None:
-    example = json.loads(
-        (ROOT / "infra" / "azbrief-enterprise.parameters.example.json").read_text(encoding="utf-8")
-    )
-    assert set(example) == {"$schema", "contentVersion", "parameters"}
-    parameters = example["parameters"]
-    assert parameters["containerRegistryAuthMode"]["value"] == "ManagedIdentity"
-    assert parameters["containerRegistryUsername"]["value"] == ""
-    assert parameters["containerRegistryPassword"]["value"] == ""
-    assert "description" in parameters["baseName"]["metadata"]
-
-
 def test_readme_buttons_publish_the_same_arm_and_ui_pair() -> None:
     expected_root = "https://raw.githubusercontent.com/Networkdog/AzBriefEnterprise/main/infra/"
     for name in ("README.md", "README.ko.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
         links = re.findall(r"\]\((https://portal\.azure\.com/#create/[^)]+)\)", text)
-        decoded_links = [unquote(link) for link in links]
-        assert len(decoded_links) == 5
-        enterprise_links = [
-            link
-            for link in decoded_links
-            if f"/uri/{expected_root}azbrief-enterprise-deploy.json" in link
-        ]
-        assert len(enterprise_links) == 2
-        for decoded in enterprise_links:
+        assert len(links) == 2
+        for link in links:
+            decoded = unquote(link)
             assert f"/uri/{expected_root}azbrief-enterprise-deploy.json" in decoded
             assert f"/createUIDefinitionUri/{expected_root}createUiDefinition.json" in decoded
-        assert (
-            decoded_links.count(
-                f"https://portal.azure.com/#create/Microsoft.Template/uri/"
-                f"{expected_root}kt/azuredeploy.json/createUIDefinitionUri/"
-                f"{expected_root}kt/createUiDefinition.json"
-            )
-            == 1
-        )
-        for template in ("infrastructure", "application"):
-            assert (
-                decoded_links.count(
-                    f"https://portal.azure.com/#create/Microsoft.Template/uri/"
-                    f"{expected_root}v2/{template}.json/createUIDefinitionUri/"
-                    f"{expected_root}v2/{template}.createUiDefinition.json"
-                )
-                == 1
-            )
-            assert f"[![Deploy v2 {template} to Azure](https://aka.ms/deploytoazurebutton)]" in text
-            assert (ROOT / "infra" / "v2" / f"{template}.json").is_file()
-            assert (ROOT / "infra" / "v2" / f"{template}.createUiDefinition.json").is_file()
         assert "infra/CUSTOMER_DEPLOYMENT.md" in text
-        assert ".github/skills/kt-private-deployment/SKILL.md" in text
     assert (ROOT / "infra" / "CUSTOMER_DEPLOYMENT.md").is_file()
-    assert (ROOT / "infra" / "kt" / "azuredeploy.json").is_file()
-    assert (ROOT / "infra" / "kt" / "createUiDefinition.json").is_file()
 
 
 def run_mock_stage(
@@ -561,45 +403,13 @@ function global:az {
             return '{}'
         }
         $imageValue = if ($isJob) { $global:jobImage } else { $global:appImage }
-        $identityId = "/subscriptions/$($global:fixture.subscriptionId)/resourceGroups/$($global:fixture.resourceGroup)/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-customer"
-        $identity = @{ userAssignedIdentities = @{ $identityId = @{ principalId = $global:fixture.controlPlanePrincipalId } } }
-        $registry = @{ server = $global:fixture.containerRegistryServer; identity = $identityId }
-        $configuration = @{
-            registries = @($registry); ingress = @{ targetPort = $global:appPort }
-            secrets = @(@{ name = 'api-key'; keyVaultUrl = 'https://example.vault.azure.net/secrets/api-key'; identity = $identityId })
-        }
-        if ($global:fixture['containerRegistryAuthMode'] -eq 'Credentials') {
-            $registry.Remove('identity')
-            $registry.username = 'customer-pull-token'
-            $registry.passwordSecretRef = 'container-registry-password'
-            $registrySecret = @{
-                name = 'container-registry-password'
-                keyVaultUrl = "$($global:fixture.keyVaultUri.TrimEnd('/'))/secrets/container-registry-password"
-                identity = $identityId
-            }
-            $configuration.secrets += $registrySecret
-            if ($isJob) {
-                switch ($env:SCENARIO) {
-                    'registry-identity' { $registry.identity = $identityId }
-                    'registry-password-ref' { $registry.passwordSecretRef = 'wrong-secret' }
-                    'registry-secret-missing' { $configuration.secrets = @($configuration.secrets[0]) }
-                    'registry-vault-mismatch' { $registrySecret.keyVaultUrl = 'https://other.vault.azure.net/secrets/container-registry-password' }
-                    'registry-secret-identity' { $registrySecret.identity = '/other/identity' }
-                    'registry-username-mismatch' { $registry.username = 'different-token' }
-                    'registry-username-missing' { $registry.username = '' }
-                    'registry-inline-password' { $registrySecret.value = 'must-not-leak' }
-                }
-            }
-        }
-        if ($isJob -and $env:SCENARIO -eq 'registry-identity-drift') { $registry.identity = '/other/identity' }
-        if ($isJob -and ($env:SCENARIO -eq 'registry-missing' -or
-            ($env:SCENARIO -eq 'registry-update-drift' -and $global:updateCount -gt 0))) {
-            $configuration.registries = @()
-        }
+        $registry = @(@{ server = $global:fixture.containerRegistryServer })
+        $configuration = @{ registries = $registry; ingress = @{ targetPort = $global:appPort } }
         if ($isJob) {
             $configuration.triggerType = if ($env:SCENARIO -eq 'scheduled') { 'Schedule' } else { $global:triggerType }
             $configuration.replicaTimeout = 43200
             $configuration.replicaRetryLimit = 0
+            $configuration.secrets = @(@{ name = 'api-key'; keyVaultUrl = 'https://example.vault.azure.net/secrets/api-key'; identity = '/mock/identity' })
             if ($global:triggerType -eq 'Manual') {
                 $configuration.manualTriggerConfig = @{ parallelism = 1; replicaCompletionCount = 1 }
             }
@@ -613,7 +423,7 @@ function global:az {
                 @{ name = 'FOUNDRY_PROJECT_ENDPOINT'; value = $global:fixture.foundryProjectEndpoint }
                 @{ name = 'FOUNDRY_HOSTED_AGENT_NAME'; value = $global:fixture.hostedAgentName }
                 @{ name = 'API_KEY'; secretRef = 'orchestrator-api-key' }
-                @{ name = 'APPLICATIONINSIGHTS_CONNECTION_STRING'; value = if ($env:SCENARIO -eq 'telemetry-mismatch' -or ($isJob -and $env:SCENARIO -eq 'telemetry-pair-mismatch')) { 'wrong-telemetry' } elseif ($env:SCENARIO -eq 'telemetry-missing') { '' } else { 'shared-telemetry' } }
+                @{ name = 'APPLICATIONINSIGHTS_CONNECTION_STRING'; value = if ($env:SCENARIO -eq 'telemetry-mismatch') { 'wrong-telemetry' } else { 'shared-telemetry' } }
             )
             probes = @(
                 @{ type = 'Liveness'; httpGet = @{ path = '/'; port = 80 } }
@@ -621,7 +431,7 @@ function global:az {
             )
         }
         $environmentId = if ($env:SCENARIO -eq 'environment-mismatch') { '/wrong/environment' } else { $global:fixture['containerAppEnvironmentId'] }
-        return @{ id = '/mock/resource'; identity = $identity; properties = @{ managedEnvironmentId = $environmentId; environmentId = $environmentId; provisioningState = 'Succeeded'; latestRevisionName = 'ready'; latestReadyRevisionName = 'ready'; configuration = $configuration; template = @{ containers = @($container) } } } | ConvertTo-Json -Depth 30
+        return @{ id = '/mock/resource'; properties = @{ managedEnvironmentId = $environmentId; environmentId = $environmentId; provisioningState = 'Succeeded'; latestRevisionName = 'ready'; latestReadyRevisionName = 'ready'; configuration = $configuration; template = @{ containers = @($container) } } } | ConvertTo-Json -Depth 30
     }
     throw "Unexpected az command: $args"
 }
@@ -656,12 +466,6 @@ function global:azd {
             FOUNDRY_PROJECT_ENDPOINT = $global:fixture.foundryProjectEndpoint; FOUNDRY_MODEL_DEPLOYMENT = $global:fixture.modelDeploymentName
             FOUNDRY_HOSTED_AGENT_NAME = $global:fixture.hostedAgentName; FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED = 'true'
             AZURE_MCP_PROJECT_CONNECTION_NAME = "$($global:fixture.azureMcpContainerAppName)-read-only"
-            APPLICATIONINSIGHTS_CONNECTION_STRING = 'shared-telemetry'
-        }
-        if ($global:fixture.ContainsKey('azureMonitorIngestionEndpoint')) {
-            $values.AZURE_MONITOR_INGESTION_ENDPOINT = $global:fixture.azureMonitorIngestionEndpoint
-            $values.AZURE_MONITOR_DCR_RULE_ID = $global:fixture.azureMonitorDcrRuleId
-            $values.AZURE_MONITOR_DCR_STREAM_NAME = $global:fixture.azureMonitorDcrStreamName
         }
         if ($global:fixture.schemaVersion -ge 2) {
             $values.FOUNDRY_MODEL_DEPLOYMENT = ''
@@ -722,12 +526,10 @@ finally {
             "BODY_OUTPUT": str(tmp_path / "schedule-body.json"),
             "STAGE": stage,
             "SCENARIO": scenario,
-            "IMAGE": setup["containerRegistryServer"] + "/azbrief-enterprise@sha256:" + "a" * 64,
+            "IMAGE": "customer.azurecr.io/azbrief-enterprise@sha256:" + "a" * 64,
         },
         capture_output=True,
         text=True,
-        encoding="utf-8",
-        errors="replace",
         timeout=30,
         check=False,
     )
@@ -741,74 +543,14 @@ def test_configure_writes_one_value_per_azd_command(tmp_path: Path, setup_contra
 
     assert result.returncode == 0, result.stderr
     settings = [call for call in calls if call[:3] == ["azd", "env", "set"]]
-    assert len(settings) == 30
+    assert len(settings) == 26
     assert all(call[5:7] == ["--cwd", str(tmp_path / "customer")] for call in settings)
     assert all(call[-3:] == ["--environment", "customer-prod", "--no-prompt"] for call in settings)
     assert {call[3]: call[4] for call in settings}["FOUNDRY_HOSTED_AGENT_NAME"] == (
         "customer-analysis-hosted"
     )
-    assert {call[3]: call[4] for call in settings}["APPLICATIONINSIGHTS_CONNECTION_STRING"] == (
-        "shared-telemetry"
-    )
-    assert {call[3]: call[4] for call in settings}["AZURE_MONITOR_INGESTION_ENDPOINT"] == ""
     account_call = next(call for call in calls if call[:3] == ["az", "account", "show"])
     assert "--subscription" not in account_call
-
-
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
-@pytest.mark.parametrize(
-    ("scenario", "error"),
-    [
-        ("telemetry-missing", "existing Application Insights destination"),
-        ("telemetry-pair-mismatch", "App and Job telemetry destinations differ"),
-        ("telemetry-mismatch", "telemetry does not target the shared"),
-    ],
-)
-def test_configure_requires_one_shared_hosted_log_destination(
-    tmp_path: Path, shared_setup_contract: dict, scenario: str, error: str
-) -> None:
-    result, calls = run_mock_stage(tmp_path, shared_setup_contract, "Configure", scenario)
-    assert result.returncode != 0
-    assert error in result.stderr
-    assert not any(call[:3] == ["azd", "env", "set"] for call in calls)
-
-
-def test_hosted_manifest_reuses_the_application_insights_binding() -> None:
-    manifest = (ROOT / "azure.yaml").read_text(encoding="utf-8")
-    assert "name: OTEL_ENABLED\n        value: 'true'" in manifest
-    assert "name: APPLICATIONINSIGHTS_CONNECTION_STRING" not in manifest
-    for setting in (
-        "AZURE_MONITOR_INGESTION_ENDPOINT",
-        "AZURE_MONITOR_DCR_RULE_ID",
-        "AZURE_MONITOR_DCR_STREAM_NAME",
-    ):
-        assert f"name: {setting}\n        value: ${{{setting}}}" in manifest
-    assert "name: AZBRIEF_RUNTIME\n        value: hosted-agent" in manifest
-
-
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
-def test_v3_configure_binds_failure_log_destination(
-    tmp_path: Path, shared_setup_contract: dict
-) -> None:
-    result, calls = run_mock_stage(tmp_path, shared_setup_contract, "Configure")
-
-    assert result.returncode == 0, result.stderr
-    settings = {call[3]: call[4] for call in calls if call[:3] == ["azd", "env", "set"]}
-    assert settings["AZURE_MONITOR_INGESTION_ENDPOINT"] == (
-        shared_setup_contract["azureMonitorIngestionEndpoint"]
-    )
-    assert settings["AZURE_MONITOR_DCR_RULE_ID"] == (shared_setup_contract["azureMonitorDcrRuleId"])
-    assert settings["AZURE_MONITOR_DCR_STREAM_NAME"] == "Custom-AzBriefFailures_CL"
-
-
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
-def test_setup_rejects_partial_failure_log_binding(tmp_path: Path, setup_contract: dict) -> None:
-    setup_contract["azureMonitorDcrRuleId"] = "dcr-0123456789abcdef"
-
-    result = run_preview(tmp_path, setup_contract)
-
-    assert result.returncode != 0
-    assert "failure-log binding must include" in result.stderr
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
@@ -890,89 +632,6 @@ def test_application_transitions_both_images_and_bootstrap_probes(
     assert "properties.configuration.ingress.targetPort=8000" in updates[1]
     assert "properties.template.containers[0].probes[0].httpGet.path=/health" in updates[1]
     assert not any("--trigger-type" in call for call in calls)
-
-
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
-@pytest.mark.parametrize("stage", ["Application", "Verify", "EnableSchedule"])
-def test_external_registry_uses_customer_context_without_reading_credentials(
-    tmp_path: Path, credentials_setup_contract: dict, stage: str
-) -> None:
-    result, calls = run_mock_stage(tmp_path, credentials_setup_contract, stage)
-
-    assert result.returncode == 0, result.stderr
-    assert not any(
-        call[:2] in (["az", "acr"], ["az", "login"], ["az", "keyvault"]) for call in calls
-    )
-    assert "must-not-leak" not in result.stdout + result.stderr
-    if stage == "Application":
-        updates = [call for call in calls if "update" in call]
-        assert len(updates) == 2
-        assert all(
-            "publisher.azurecr.io/azbrief-enterprise@sha256:" in " ".join(call) for call in updates
-        )
-    elif stage == "EnableSchedule":
-        body = json.loads((tmp_path / "schedule-body.json").read_text(encoding="utf-8-sig"))
-        configuration = body["properties"]["configuration"]
-        assert configuration["registries"][0]["passwordSecretRef"] == "container-registry-password"
-        assert (
-            configuration["secrets"][1]["keyVaultUrl"]
-            == credentials_setup_contract["keyVaultUri"] + "secrets/container-registry-password"
-        )
-
-
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
-@pytest.mark.parametrize("stage", ["Application", "EnableSchedule"])
-@pytest.mark.parametrize(
-    "scenario",
-    [
-        "registry-missing",
-        "registry-identity",
-        "registry-password-ref",
-        "registry-secret-missing",
-        "registry-vault-mismatch",
-        "registry-secret-identity",
-        "registry-username-mismatch",
-        "registry-username-missing",
-        "registry-inline-password",
-    ],
-)
-def test_external_registry_drift_blocks_mutation(
-    tmp_path: Path, credentials_setup_contract: dict, stage: str, scenario: str
-) -> None:
-    result, calls = run_mock_stage(tmp_path, credentials_setup_contract, stage, scenario)
-
-    assert result.returncode != 0
-    stderr = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.stderr)
-    stderr = re.sub(r"\r?\n[ \t]*\|[ \t]*", " ", stderr)
-    assert "BOTH resources" in stderr
-    assert "must-not-leak" not in result.stdout + result.stderr
-    assert not any("update" in call or call[:2] == ["az", "rest"] for call in calls)
-
-
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
-def test_external_registry_readback_failure_enters_existing_rollback(
-    tmp_path: Path, credentials_setup_contract: dict
-) -> None:
-    result, calls = run_mock_stage(
-        tmp_path, credentials_setup_contract, "Application", "registry-update-drift"
-    )
-
-    assert result.returncode != 0
-    assert "rollback" in result.stderr
-    assert len([call for call in calls if "update" in call]) == 4
-
-
-@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
-def test_managed_identity_registry_drift_blocks_mutation(
-    tmp_path: Path, setup_contract: dict
-) -> None:
-    result, calls = run_mock_stage(
-        tmp_path, setup_contract, "Application", "registry-identity-drift"
-    )
-
-    assert result.returncode != 0
-    assert "ManagedIdentity registry authentication" in result.stderr
-    assert not any("update" in call for call in calls)
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")

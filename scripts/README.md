@@ -11,11 +11,7 @@ entry point입니다.
 | Module | 용도 | 부작용 |
 |---|---|---|
 | [setup_customer.ps1](setup_customer.ps1) | ARM 출력 기반 고객 환경 구성, MCP/Agent 게시, 초기 이미지 전환, 준비 검사·스케줄 활성화 | 단계별 로컬/원격 변경. 일반 `-WhatIf`도 ARM은 조회하며 완전 오프라인은 `-SetupFile ... -WhatIf`만 해당. `Verify`는 읽기 전용이며 모델·이메일 호출 없음 |
-| [deploy_kt.py](deploy_kt.py) | KT 기반/2단계 배포의 읽기 전용 사전검사, 기존 역할 이름 재사용 및 ARM 배포/검증 | deploy만 원격 변경. 2단계 모델/관리 도메인 Email 기본 생성과 UAMI 최소 역할, 기존 구성 보존, 선택적 Manual Job; 모델 quota 회수·기존 버전/용량 변경·키 조회/메일 발송 없음 |
-| [deploy_v2.py](deploy_v2.py) | [v2](../infra/v2/README.md) 인프라 1회와 같은 RG 태그 기반 App/Job 반복 설치·업데이트 | 기본 preflight는 읽기 전용, deploy는 Incremental validate/what-if/create. Portal 코어는 Graph 없이 mcp_pending; --prepare-mcp-authentication이 승인된 CLI로 인증을 자동 준비해 ready로 전환. CLI 전체 deploy는 자동 호출. 기존 키·비밀·인증·환경·스케줄과 별도 Hosted 역할 완성을 보존 |
-| [build_v2_ui.py](build_v2_ui.py) | v2 Portal UI 정규화·KT 네트워크 검증식 재사용 | 기본은 두 로컬 JSON 갱신, --check는 읽기 전용. Azure 호출 없음 |
-| [setup_kt_agents.ps1](setup_kt_agents.ps1) | 성공한 KT `runtimeSetup` 출력으로 Configure/Publish/Check | Configure는 지정한 로컬 azd binding 변경, Publish는 여섯 Prompt/Hosted 게시·smoke, Check는 원격 읽기만 수행. WhatIf는 출력 조회만, 모델·MCP·메일·스케줄 생성 없음 |
-| [deploy_dev.ps1](deploy_dev.ps1) | 이미 기동한 App/Job의 동일 digest 업그레이드와 실패 시 되돌림 | 기본 ACR 빌드 또는 `-PrebuiltImage`의 승인된 digest로 두 이미지 갱신. 새 설치의 포트 전환에는 사용하지 않음 |
+| [deploy_dev.ps1](deploy_dev.ps1) | 이미 기동한 App/Job의 동일 digest 업그레이드와 실패 시 되돌림 | ACR 빌드와 두 리소스 이미지 갱신. 새 설치의 포트 전환에는 사용하지 않음 |
 | [deploy_hosted_agent.ps1](deploy_hosted_agent.ps1) | 검토된 Hosted 패키지의 검사·게시·smoke | Foundry 버전 생성 및 명시적 모델 smoke 호출 |
 | [`test_local.py`](test_local.py) | 설정, RSS, resource 요약, 단건/기간 분석 | Azure/Foundry 조회; `--jsonl` 없으면 이메일 경로 사용 가능 |
 | [smoke_hosted_agent.py](smoke_hosted_agent.py) | 배포된 Hosted 계약으로 단건 분석·trace 요약 확인 | 모델 비용 발생. 이메일·제어면 archive 저장 없음 |
@@ -34,38 +30,12 @@ entry point입니다.
 `deploy_dev.ps1`은 테스트와 ACR 빌드 직후 Docker 입력 지문을 다시 비교합니다. 검증 중 소스가
 바뀌면 원격 빌드 전, 빌드 중 바뀌면 App/Job 갱신 전에 중단합니다. 검토가 끝난 안정된 소스로
 재실행하며 테스트·검증을 건너뛰어 배포하지 않습니다.
+명시적으로 선택한 `.dockerignore`는 `Get-Item -Force`로 읽어 Linux의 숨김 파일 처리에도
+같은 지문 입력을 유지합니다. 공유 `AzureCli`는 Windows MSI 설치에 동봉된 Python으로 호출해
+Graph URL의 `&`와 인코딩된 쿼리를 인자 하나로 보존하며 batch shell로 해석하지 않습니다.
 로컬 pytest 실행 구간에만 `OTEL_SDK_DISABLED=true`를 설정하고 성공·실패 후 기존 프로세스
 환경값을 복원합니다. 닫힌 pytest 출력 스트림에 exporter가 쓰는 오류를 방지하며, Azure
 리소스의 계측 설정이나 `.env`는 변경하지 않습니다.
-
-KT Agent handoff와 guarded Hosted 게시도 로컬 pytest 구간에만 같은 OTel export 제한을
-적용하고 기존 값을 복원합니다. KT handoff는 성공한 정확한 범위의 배포 출력과 기존 모델/MCP
-binding을 요구하며 개발 `.env`나 다른 고객의 azd 환경을 거부합니다. 기본 여섯 역할 이름은
-프로젝트 이름의 앞 47자와 접미사로 64자 이내를 유지합니다. 모델/Agent 게시나 실제 인수 없이
-구성값만으로 운영 준비 완료를 표시하지 않습니다.
-Windows의 PowerShell 오류 표시에서 ANSI와 자동 줄바꿈만 정규화해 배포 차단 메시지를
-검사합니다. 비정상 종료·비밀 미노출·원격 변경 없음의 회귀 검사는 그대로 유지하며 게시 시
-실패 테스트를 제외하지 않습니다.
-KT 모델/메일 사전검사는 필요한 신규 모델의 실제 catalog/Responses/Agents/quota를 확인하고
-신규 simple의 명시적 Terra 대안만 허용합니다. 기존 GPT-5 모델과 준비된 ACS/Email/도메인/역할은
-재생성하지 않으며 누락된 링크를 연결할 때도 태그·identity·기존 도메인을 보존합니다.
-수신자를 임의 등록하지 않고 코드 게시·네트워크·실제 발송 인수는 별도로 유지합니다.
-
-KT 2단계의 Foundry 재사용은 정확한 기존 프로젝트 이름과 준비된 BYO host/연결을 검사한 뒤
-프로젝트·세 연결·host PUT을 생략합니다. 비슷한 프로젝트 이름은 다른 내부 AML workspace이므로
-소유권 오류를 재시도하거나 연결 삭제로 우회하지 않습니다. 직접 ARM에서는
-`reuseExistingFoundrySetup`과 선택적 `reuseExistingTelemetryConnection`을 최신 검증 결과로
-지정합니다. CLI parameter 파일에서는 예약된 flag를 직접 설정하지 않습니다.
-
-외부 테넌트의 ACR은 기반 배포의 `containerRegistryAuthMode=Credentials`와 고객별 pull-only
-토큰으로 연결합니다. 비밀번호는 고객사 Key Vault에만 저장하며 설치 스크립트는 값을 읽지
-않고 App/Job의 인증 방식·연결 ID·비밀 참조를 검증합니다. 기존 출력에서 인증 모드가 없으면
-ManagedIdentity로 처리합니다. `deploy_dev.ps1 -PrebuiltImage '<registry>/azbrief-enterprise@sha256:<digest>'`는
-ACR 조회·빌드를 건너뛰지만 로컬 검사, 상태 확인, import-only Job 스모크와 롤백을 유지합니다.
-빌드 옵션 `-AcrName`·`-ImageName`·`-ImageTag`와 함께 쓸 수 없고 레지스트리 인증도 자동 변경하지
-않습니다. 로컬 소스 지문과 개발자 이미지의 출처 증명은 구분합니다.
-[고객 가이드](../infra/CUSTOMER_DEPLOYMENT.md#external-tenant-registry)의 토큰 회전·네트워크·실제 pull 검증이 별도로 필요합니다.
-
 Archive 평가 fixture는 운영 v1 투영과 같이 `job_relevance`, `visual_assets`, `resource_queries`를
 제외합니다. 전달 전용 필드를 수용하려고 불변 Archive 스키마를 완화하지 않습니다.
 단위 테스트는 통제된 시간으로 P95 임계값의 양쪽을 검사하고, 독립 평가 CLI는 실제 시간을
@@ -80,27 +50,11 @@ Archive 평가 fixture는 운영 v1 투영과 같이 `job_relevance`, `visual_as
 모델 변경 시 이전 생성 옵션은 제거합니다. 고객 설정 v2/v3는 두 모델을 전달하고 v1은 기존
 단일 모델을 유지합니다. 모델 가용성·호환성과 실제 품질·지연·비용 검증은 별도입니다.
 
-Coordinator의 `FOUNDRY_COORDINATOR_LEARN_TRANSPORT`는 기본 `managed_mcp`와 명시적 `hosted`를
-지원합니다. `hosted`는 관리형 Learn MCP attachment만 제거하고 기존 Hosted 공개 문서 도구를
-사용합니다. 같은 프로비저닝 환경에서 `--roles coordinator` 게시와 `--check`를 수행합니다.
-기존 모델·다른 전문가·근거 검증은 바꾸지 않으며 개발용 `.env`는 자동 수정하지 않습니다.
-
-고객 설정 v3는 공용 Environment·workload profile·Application Insights를 MCP 배포에 전달하고,
-현재 출력은 Hosted용 `AzBriefFailures_CL` Direct DCR binding도 선택적으로 제공합니다.
+고객 설정 v3는 공용 Environment·workload profile·Application Insights를 MCP 배포에 전달합니다.
 `Mcp`는 v3를 요구하며 App/Job의 Environment와 Application Insights, 같은 Log Analytics 목적지를
 확인합니다. 배포 후와 `Verify`·`EnableSchedule`에서도 MCP 연결과 로그 설정을 다시 확인합니다.
 MCP는 콘솔 로그를 공유하고 직접 Application Insights 추적·메트릭은 비활성화합니다. 다른
 Environment에 있는 기존 MCP를 자동 삭제하지 않으며 [통합 절차](../infra/CUSTOMER_DEPLOYMENT.md#consolidating-existing-installations)를 따릅니다.
-
-`Configure`는 기존 App/Job의 Application Insights 목적지가 비어 있지 않고 일치하는지 확인한 뒤
-같은 `APPLICATIONINSIGHTS_CONNECTION_STRING`을 로컬 도구용 azd 환경에 기록합니다. Hosted에는
-직접 선언하지 않습니다. Foundry 프로젝트의 `AppInsights` 연결이 예약 환경 변수를 주입하며,
-foundation은 공용 component를 `ProjectManagedIdentity` 방식으로 연결합니다. 기존 프로젝트는
-같은 연결을 별도로 확인해야 합니다. v3는 공유 component와도 대조합니다.
-DCR binding이 있는 v3는 endpoint·immutable ID·stream도 Hosted 환경에 연결합니다.
-기존 azd 환경은 이 단계로 설정을 갱신하고 Hosted 전용 identity에 Application Insights component와
-failure DCR 각각의 범위로 Monitoring Metrics Publisher를 별도 부여해야 합니다. 루트 `.env`나 공개 ARM 출력에는 값을
-추가하지 않습니다. 상세 오류의 실제 workspace 수신은 별도 인수 검증입니다.
 
 ## 자주 쓰는 예시
 
@@ -113,11 +67,6 @@ failure DCR 각각의 범위로 Monitoring Metrics Publisher를 별도 부여해
 단계별 사전 조건과 완료 의미는 고객 가이드의 **Setup Stages** 표를 기준으로 확인합니다.
 `AcceptOperationalChecks`는 고객 운영자의 인수 확인이며 실제 분석·메일 테스트를 대신 실행하는
 옵션이 아닙니다.
-
-v2는 [전용 가이드](../infra/v2/README.md)의 `python -m scripts.deploy_v2 infrastructure`와
-`application`을 사용합니다. 완료한 인프라 이름을 RG 태그로 전달하므로 앱 업데이트에 인프라
-parameter 파일을 다시 제출하지 않습니다. Agent 코드는 기존 guarded 게시 절차를 따르며
-ARM이나 App 이미지 갱신만으로 Hosted 버전이 바뀌지 않습니다. 같은 앱의 배포는 직렬화합니다.
 
 ```powershell
 & .\.venv\Scripts\Activate.ps1; python -m scripts.test_local config

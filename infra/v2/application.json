@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "15795648670060818315"
+      "templateHash": "8168328456752382359"
     },
     "description": "Repeatable AzBrief v2 application installation/update with final RG deployment metadata. No foundation, model, BYO, RBAC or diagnostics writes."
   },
@@ -235,7 +235,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "534701092691372967"
+              "templateHash": "5840276562424158923"
             }
           },
           "parameters": {
@@ -299,7 +299,7 @@
                     "_generator": {
                       "name": "bicep",
                       "version": "0.46.1.21595",
-                      "templateHash": "11405705341763862812"
+                      "templateHash": "7175359503333602926"
                     }
                   },
                   "parameters": {
@@ -346,7 +346,7 @@
                       "type": "string",
                       "defaultValue": "",
                       "metadata": {
-                        "description": "Optional pre-provisioned dedicated UAMI for infrastructure/application separation. Empty retains the existing system-assigned profile."
+                        "description": "Optional infrastructure-owned MCP identity resource ID. Empty retains the system-assigned identity."
                       }
                     },
                     "targetSubscriptionId": {
@@ -415,6 +415,7 @@
                         "input": "[createArray('--namespace', parameters('namespaces')[copyIndex('namespaceArgs')])]"
                       }
                     ],
+                    "useUserAssignedIdentity": "[not(empty(parameters('userAssignedIdentityResourceId')))]",
                     "baseArgs": [
                       "--transport",
                       "http",
@@ -424,16 +425,74 @@
                       "all",
                       "--read-only"
                     ],
-                    "serverArgs": "[flatten(concat(createArray(variables('baseArgs')), variables('namespaceArgs')))]"
+                    "serverArgs": "[flatten(concat(createArray(variables('baseArgs')), variables('namespaceArgs')))]",
+                    "baseEnvironment": [
+                      {
+                        "name": "ASPNETCORE_ENVIRONMENT",
+                        "value": "Production"
+                      },
+                      {
+                        "name": "ASPNETCORE_URLS",
+                        "value": "http://+:8080"
+                      },
+                      {
+                        "name": "AZURE_TOKEN_CREDENTIALS",
+                        "value": "managedidentitycredential"
+                      },
+                      {
+                        "name": "AZURE_MCP_INCLUDE_PRODUCTION_CREDENTIALS",
+                        "value": "true"
+                      },
+                      {
+                        "name": "AZURE_MCP_COLLECT_TELEMETRY",
+                        "value": "false"
+                      },
+                      {
+                        "name": "AZURE_MCP_COLLECT_TELEMETRY_MICROSOFT",
+                        "value": "false"
+                      },
+                      {
+                        "name": "AZURE_SUBSCRIPTION_ID",
+                        "value": "[parameters('targetSubscriptionId')]"
+                      },
+                      {
+                        "name": "AZURE_TENANT_ID",
+                        "value": "[parameters('azureAdTenantId')]"
+                      },
+                      {
+                        "name": "AzureAd__Instance",
+                        "value": "[environment().authentication.loginEndpoint]"
+                      },
+                      {
+                        "name": "AzureAd__TenantId",
+                        "value": "[parameters('azureAdTenantId')]"
+                      },
+                      {
+                        "name": "AzureAd__ClientId",
+                        "value": "[parameters('azureAdClientId')]"
+                      },
+                      {
+                        "name": "AZURE_LOG_LEVEL",
+                        "value": "Information"
+                      },
+                      {
+                        "name": "AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION",
+                        "value": "true"
+                      },
+                      {
+                        "name": "AZURE_MCP_DANGEROUSLY_ENABLE_FORWARDED_HEADERS",
+                        "value": "true"
+                      }
+                    ]
                   },
                   "resources": [
                     {
                       "type": "Microsoft.App/containerApps",
-                      "apiVersion": "2026-01-01",
+                      "apiVersion": "2024-03-01",
                       "name": "[parameters('name')]",
                       "location": "[parameters('location')]",
                       "tags": "[union(parameters('tags'), createObject('product', 'azbrief', 'component', 'azure-mcp-server'))]",
-                      "identity": "[if(empty(parameters('userAssignedIdentityResourceId')), createObject('type', 'SystemAssigned'), createObject('type', 'UserAssigned', 'userAssignedIdentities', createObject(format('{0}', parameters('userAssignedIdentityResourceId')), createObject())))]",
+                      "identity": "[if(variables('useUserAssignedIdentity'), createObject('type', 'UserAssigned', 'userAssignedIdentities', createObject(format('{0}', parameters('userAssignedIdentityResourceId')), createObject())), createObject('type', 'SystemAssigned'))]",
                       "properties": {
                         "managedEnvironmentId": "[parameters('containerAppEnvironmentId')]",
                         "workloadProfileName": "[if(empty(parameters('workloadProfileName')), null(), parameters('workloadProfileName'))]",
@@ -463,7 +522,7 @@
                                 "cpu": "[json(parameters('cpuCores'))]",
                                 "memory": "[parameters('memorySize')]"
                               },
-                              "env": "[concat(createArray(createObject('name', 'ASPNETCORE_ENVIRONMENT', 'value', 'Production'), createObject('name', 'ASPNETCORE_URLS', 'value', 'http://+:8080'), createObject('name', 'AZURE_TOKEN_CREDENTIALS', 'value', 'managedidentitycredential'), createObject('name', 'AZURE_MCP_INCLUDE_PRODUCTION_CREDENTIALS', 'value', 'true'), createObject('name', 'AZURE_MCP_COLLECT_TELEMETRY', 'value', 'false'), createObject('name', 'AZURE_MCP_COLLECT_TELEMETRY_MICROSOFT', 'value', 'false'), createObject('name', 'AZURE_SUBSCRIPTION_ID', 'value', parameters('targetSubscriptionId')), createObject('name', 'AZURE_TENANT_ID', 'value', parameters('azureAdTenantId')), createObject('name', 'AzureAd__Instance', 'value', environment().authentication.loginEndpoint), createObject('name', 'AzureAd__TenantId', 'value', parameters('azureAdTenantId')), createObject('name', 'AzureAd__ClientId', 'value', parameters('azureAdClientId')), createObject('name', 'AZURE_LOG_LEVEL', 'value', 'Information'), createObject('name', 'AZURE_MCP_DANGEROUSLY_DISABLE_HTTPS_REDIRECTION', 'value', 'true'), createObject('name', 'AZURE_MCP_DANGEROUSLY_ENABLE_FORWARDED_HEADERS', 'value', 'true')), if(empty(parameters('userAssignedIdentityResourceId')), createArray(), createArray(createObject('name', 'AZURE_CLIENT_ID', 'value', reference(parameters('userAssignedIdentityResourceId'), '2023-01-31').clientId))))]",
+                              "env": "[concat(variables('baseEnvironment'), if(variables('useUserAssignedIdentity'), createArray(createObject('name', 'AZURE_CLIENT_ID', 'value', reference(parameters('userAssignedIdentityResourceId'), '2023-01-31').clientId)), createArray()))]",
                               "probes": [
                                 {
                                   "type": "Startup",
@@ -509,7 +568,7 @@
                     },
                     "containerAppUrl": {
                       "type": "string",
-                      "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', parameters('name')), '2026-01-01').configuration.ingress.fqdn)]"
+                      "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', parameters('name')), '2024-03-01').configuration.ingress.fqdn)]"
                     },
                     "containerAppName": {
                       "type": "string",
@@ -517,7 +576,7 @@
                     },
                     "containerAppPrincipalId": {
                       "type": "string",
-                      "value": "[if(empty(parameters('userAssignedIdentityResourceId')), reference(resourceId('Microsoft.App/containerApps', parameters('name')), '2026-01-01', 'full').identity.principalId, reference(parameters('userAssignedIdentityResourceId'), '2023-01-31').principalId)]"
+                      "value": "[if(variables('useUserAssignedIdentity'), reference(parameters('userAssignedIdentityResourceId'), '2023-01-31').principalId, reference(resourceId('Microsoft.App/containerApps', parameters('name')), '2024-03-01', 'full').identity.principalId)]"
                     },
                     "containerAppEnvironmentId": {
                       "type": "string",

@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 from datetime import datetime, timedelta, timezone
 from email.headerregistry import Address
+from ipaddress import IPv4Network, ip_network
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlsplit
@@ -96,6 +97,15 @@ APPLICATION_TAG_DEFAULTS = {
     PREFIX + "applicationState": "not_deployed",
     PREFIX + "lastApplicationDeploymentAt": "",
 }
+NETWORK_OPTION_FIELDS = frozenset(
+    {
+        "virtualNetworkMode",
+        "virtualNetworkAddressPrefix",
+        "peSubnetAddressPrefix",
+        "foundrySubnetAddressPrefix",
+        "containerAppsSubnetAddressPrefix",
+    }
+)
 IMAGE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$")
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.()-]{0,254}$")
 CONFIG_FIELDS = frozenset(
@@ -335,6 +345,45 @@ def _automatic_application_configuration(
     return configuration
 
 
+def planned_virtual_network(values: dict[str, Any]) -> dict[str, Any]:
+    """Validate a dedicated new network with the same role/subnet rules as existing networks."""
+    network = ip_network(values["virtualNetworkAddressPrefix"], strict=True)
+    private_ranges = (
+        IPv4Network("10.0.0.0/8"),
+        IPv4Network("172.16.0.0/12"),
+        IPv4Network("192.168.0.0/16"),
+    )
+    if not isinstance(network, IPv4Network) or not any(
+        network.subnet_of(private) for private in private_ranges
+    ):
+        raise ValueError("New VNet address space must be one RFC1918 IPv4 network")
+    subnets = []
+    for role, name, prefix in (
+        ("private_endpoint", "peSubnetName", "peSubnetAddressPrefix"),
+        ("foundry", "foundrySubnetName", "foundrySubnetAddressPrefix"),
+        ("container_apps", "containerAppsSubnetName", "containerAppsSubnetAddressPrefix"),
+    ):
+        subnets.append(
+            {
+                "name": values[name],
+                "properties": {
+                    "addressPrefix": values[prefix],
+                    "delegations": (
+                        []
+                        if role == "private_endpoint"
+                        else [{"properties": {"serviceName": "Microsoft.App/environments"}}]
+                    ),
+                },
+            }
+        )
+    virtual_network = {
+        "location": values["location"],
+        "properties": {"addressSpace": {"addressPrefixes": [str(network)]}, "subnets": subnets},
+    }
+    plan_subnets(values, virtual_network)
+    return virtual_network
+
+
 def validate_tag_budget(tags: dict[str, Any]) -> None:
     """Reject oversized or non-string metadata before any deployment writes."""
     if len({key.casefold() for key in tags}) != len(tags) or len(tags) > 50:
@@ -429,7 +478,7 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
         "azureMcpAppRoleId",
         "namingPrefix",
         "namingSuffix",
-    }
+    } | NETWORK_OPTION_FIELDS
     if not isinstance(options, dict) or set(options) - (set(OPTION_FIELDS) | optional):
         raise ValueError("Unknown or secret-valued infrastructure options")
     if set(OPTION_FIELDS) - set(options):
@@ -443,12 +492,26 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
         and type(options["useMicrosoftManagedAgentData"]) is not bool
     ):
         raise ValueError("Invalid agent data storage mode")
-    for field in optional - {
-        "manageAzureMcp",
-        "useMicrosoftManagedAgentData",
-        "namingPrefix",
-        "namingSuffix",
-    }:
+    if options.get("virtualNetworkMode", "existing") not in {"existing", "new"}:
+        raise ValueError("Invalid saved VNet deployment mode")
+    for field in NETWORK_OPTION_FIELDS - {"virtualNetworkMode"}:
+        if field in options:
+            if not isinstance(options[field], str):
+                raise ValueError("Saved network prefixes must be strings")
+            if not isinstance(ip_network(options[field], strict=True), IPv4Network):
+                raise ValueError("Saved network prefixes must remain IPv4")
+    if options.get("virtualNetworkMode") == "new" and not NETWORK_OPTION_FIELDS <= set(options):
+        raise ValueError("New VNet mode requires every saved network address choice")
+    for field in (
+        optional
+        - {
+            "manageAzureMcp",
+            "useMicrosoftManagedAgentData",
+            "namingPrefix",
+            "namingSuffix",
+        }
+        - NETWORK_OPTION_FIELDS
+    ):
         if options.get(field):
             UUID(options[field])
     for field in ("namingPrefix", "namingSuffix"):
@@ -469,6 +532,7 @@ def infrastructure_values(cli: AzureCli, tags: dict[str, str]) -> dict[str, Any]
     }
     values.update(decode_tag_options(tags))
     values.setdefault("useMicrosoftManagedAgentData", False)
+    values.setdefault("virtualNetworkMode", "existing")
     values.update(
         tenantId=cli.tenant,
         subscriptionId=cli.subscription,
@@ -1002,7 +1066,38 @@ def prepare_mcp_authentication(cli: AzureCli) -> dict[str, Any]:
         or str(infrastructure.get("resourceGroup", "")).casefold() != cli.group.casefold()
     ):
         raise ValueError("MCP core output does not match the explicit target")
+    vnet_id = (
+        f"/subscriptions/{cli.subscription}/resourceGroups/"
+        f"{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/"
+        f"virtualNetworks/{values['virtualNetworkName']}"
+    )
+    id_backed_bindings = {
+        "controlPlaneIdentityName": (
+            "controlPlaneIdentityResourceId",
+            f"{cli.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+            f"{values['controlPlaneIdentityName']}",
+        ),
+        "virtualNetworkResourceGroupName": ("virtualNetworkResourceId", vnet_id),
+        "virtualNetworkName": ("virtualNetworkResourceId", vnet_id),
+        "peSubnetName": (
+            "privateEndpointSubnetId",
+            f"{vnet_id}/subnets/{values['peSubnetName']}",
+        ),
+        "foundrySubnetName": (
+            "foundrySubnetResourceId",
+            f"{vnet_id}/subnets/{values['foundrySubnetName']}",
+        ),
+        "containerAppsSubnetName": (
+            "infrastructureSubnetId",
+            f"{vnet_id}/subnets/{values['containerAppsSubnetName']}",
+        ),
+    }
     for field in TAG_FIELDS:
+        if field not in infrastructure and field in id_backed_bindings:
+            id_field, expected_id = id_backed_bindings[field]
+            if str(infrastructure.get(id_field, "")).casefold() != expected_id.casefold():
+                raise ValueError(f"MCP core output binding changed: {field}")
+            infrastructure[field] = values[field]
         if str(infrastructure.get(field, "")).casefold() != str(values[field]).casefold():
             raise ValueError(f"MCP core output binding changed: {field}")
     expected_url = (
@@ -1179,6 +1274,7 @@ def make_tag_contract(
             "namingSuffix": values.get("namingSuffix", ""),
         }
     )
+    options.update({field: values[field] for field in NETWORK_OPTION_FIELDS if field in values})
     encoded = json.dumps(options, ensure_ascii=False, separators=(",", ":"))
     if len(encoded) > 8 * 256:
         raise ValueError("Saved infrastructure options exceed the 2048-character tag budget")
@@ -1285,6 +1381,14 @@ def prepare_infrastructure(
 ) -> dict[str, Any]:
     """Keep infrastructure one-time, reuse the approved network and derive completion decisions."""
     cli.assert_context()
+    values = copy.deepcopy(values)
+    network_mode = values.get("virtualNetworkMode", "existing")
+    if network_mode not in {"existing", "new"}:
+        raise ValueError("Choose new or existing VNet deployment")
+    if network_mode == "new":
+        if values["virtualNetworkResourceGroupName"].casefold() != cli.group.casefold():
+            raise ValueError("A new VNet is created only in the explicit target resource group")
+        values["virtualNetworkResourceGroupName"] = cli.group
     group = cli.json("group", "show", "--name", cli.group, "--subscription", cli.subscription)
     group_tags = group.get("tags") or {}
     if (
@@ -1309,6 +1413,13 @@ def prepare_infrastructure(
             raise ValueError(
                 "Agent data storage mode is immutable; never convert an existing Capability Host"
             )
+        if network_mode != saved_options.get("virtualNetworkMode", "existing"):
+            raise ValueError("Saved VNet deployment mode is immutable")
+        if network_mode == "new" and any(
+            values.get(field) != saved_options.get(field)
+            for field in NETWORK_OPTION_FIELDS - {"virtualNetworkMode"}
+        ):
+            raise ValueError("Saved new VNet address choices are immutable")
         for field, suffix in TAG_FIELDS.items():
             if field in {"deploymentName", "azureMcpServerUrl"}:
                 continue
@@ -1324,8 +1435,34 @@ def prepare_infrastructure(
                 raise ValueError(f"Refusing to change saved foundation option: {field}")
     validate_tag_budget({**group_tags, **contract})
     vnet_id = f"/subscriptions/{cli.subscription}/resourceGroups/{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
-    vnet = cli.get(vnet_id, NETWORK_API)
-    plans = plan_subnets(values, vnet)
+    if network_mode == "new" and stage == "foundation":
+        networks = cli.collection(
+            f"{cli.group_id}/providers/Microsoft.Network/virtualNetworks", NETWORK_API
+        )
+        if any(row.get("id", "").casefold() == vnet_id.casefold() for row in networks):
+            raise ValueError("Refusing to overwrite an existing VNet in new-network mode")
+        vnet = planned_virtual_network(values)
+    else:
+        vnet = cli.get(vnet_id, NETWORK_API)
+        if network_mode == "new":
+            _owned(vnet, vnet_id)
+            if vnet["properties"]["addressSpace"]["addressPrefixes"] != [
+                values["virtualNetworkAddressPrefix"]
+            ]:
+                raise ValueError("The saved new VNet address space changed")
+    subnet_parameters = (
+        values
+        if network_mode == "new"
+        else {
+            **values,
+            **{
+                field: ""
+                for field in NETWORK_OPTION_FIELDS
+                if field.endswith("SubnetAddressPrefix")
+            },
+        }
+    )
+    plans = plan_subnets(subnet_parameters, vnet)
     if any(plan.create for plan in plans):
         raise ValueError(
             "Prepare all three approved existing subnets before v2 infrastructure deployment"

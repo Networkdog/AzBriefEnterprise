@@ -2,12 +2,10 @@
 
 [프로젝트 README](../README.md) > `infra`
 
-일반 AzBrief Enterprise의 Azure 인프라를 두 배포 단위로 나눠 보관합니다. 제품 전체 topology와
+AzBrief Enterprise의 Azure 인프라를 두 배포 단위로 나눠 보관합니다. 제품 전체 topology와
 읽기 전용 Azure MCP Server는 identity와 lifecycle이 다르므로 같은 template에 합치지 않습니다.
 두 배포 단위는 Container Apps Environment, Application Insights, Log Analytics를 각각 하나씩
 공유합니다. MCP는 공용 Environment의 콘솔 로그 수집을 사용하고 직접 추적·메트릭 전송은 끕니다.
-별도의 [KT 인프라 프로필](kt/README.md)은 기존 VNet과 no-Insights 요건을 위한 초기 배포이며,
-위 일반 고객 setup의 준비 상태나 모니터링 계약을 그대로 사용하지 않습니다.
 
 ## 구성
 
@@ -17,9 +15,6 @@
 | [`azbrief-enterprise-deploy.json`](azbrief-enterprise-deploy.json) | Deploy to Azure 버튼이 사용하는 compiled ARM template |
 | [createUiDefinition.json](createUiDefinition.json) | 같은 버튼의 모델·레지스트리·메일·Entra 입력 폼 |
 | [CUSTOMER_DEPLOYMENT.md](CUSTOMER_DEPLOYMENT.md) | 고객 사전 조건, 단계별 설정, 인수·정기 실행·복구 절차 |
-| [NETWORK_REQUIREMENTS.md](NETWORK_REQUIREMENTS.md) | KT 기준 고객 방화벽·DNS 요청 목록. 출발지·기능별 인터넷/사설 통신, 포트, 출처와 인수 체크리스트 |
-| [kt/](kt/README.md) | KT 전용 기존-VNet 프라이빗 인프라 bootstrap. Capability Host, 최소 subnet/Consumption, Application Insights 제외. 일반 고객 설정과 별도 |
-| [v2/](v2/README.md) | 별도 기존-VNet 프로필. 인프라·RBAC·로그 1회, RG 태그 전달, App/Job·인증·환경의 반복 설치/업데이트 |
 | [`azbrief-enterprise.parameters.example.json`](azbrief-enterprise.parameters.example.json) | 비밀값 없는 deployment parameter 예시 |
 | [`azure-mcp-server/`](azure-mcp-server/README.md) | Azure MCP specialist가 호출하는 별도 Entra 인증 read-only Container App |
 
@@ -54,10 +49,6 @@ Azure MCP template은 별도로 정적 compile할 수 있습니다.
 - `enterprise/main.bicep`이 제품 topology의 원본입니다. checkpoint와 immutable analysis archive
   container도 여기서 함께 정의하며 compiled JSON을 손으로 수정하지 않습니다.
 - Azure MCP는 `azure-mcp-server/infra/main.bicep`과 그 module이 원본입니다.
-- v2는 [infrastructure.bicep](v2/infrastructure.bicep), [application.bicep](v2/application.bicep),
-  [runtime-roles.bicep](v2/runtime-roles.bicep)이 원본이며 세 JSON을 함께 compile합니다.
-  기존 Portal 버튼이나 기존 고객 리소스를 변경하는 경로가 아닙니다. Hosted 주체 권한의 늦은
-  완성과 실제 네트워크·로그·분석·메일 인수는 [v2 가이드](v2/README.md)를 따릅니다.
 - `enterprise/main.json`은 현재 CI나 Deploy 버튼이 참조하지 않는 별도 snapshot입니다. 배포
   산출물로 사용하지 말고, 필요성이 확인될 때 원본/생성 경로를 정리해야 합니다.
 - parameter example에는 실제 client secret, API key, 구독자 개인정보를 넣지 않습니다.
@@ -69,7 +60,5 @@ CI는 Enterprise Bicep을 임시 JSON으로 compile한 뒤 추적 중인
 오류를 잡지만 subscription policy, quota, RBAC 전파, private DNS 연결까지 증명하지는 않습니다.
 실제 배포 전에는 대상 환경에서 what-if/validate를 별도로 수행해야 합니다.
 CI의 Bicep 버전은 산출물 생성에 사용한 0.46.1로 고정하며 Azure MCP 템플릿도 컴파일합니다.
-KT의 [main.bicep](kt/main.bicep)과 [azuredeploy.json](kt/azuredeploy.json)도 별도 drift 검사 대상입니다.
-KT CLI는 기존 subnet을 수정하지 않고 누락된 child subnet만 생성하며, live 인수는 별도로 필요합니다.
 고객 설정은 별도 Windows CI에서 가짜 CLI로 검증합니다. Portal 폼은 공식 CreateUIDefinition
 스키마와 함께 검사하고 고객 배포 전에 Portal sandbox에서도 확인합니다.

@@ -39,7 +39,7 @@ RG resource-name inputs, auto model/MCP internal settings, and guarded live pref
 
 ## Two-Stage Template v2
 
-The opt-in [`infra/v2`](../../../infra/v2/README.md) profile reuses this existing-VNet
+The opt-in [`infra/v2`](../../../infra/v2/README.md) profile reuses this private-network
 security/lifecycle knowledge but does not replace the KT Portal button or adopt old resources.
 Its one-time infrastructure command internally sequences foundation, account-host readiness
 and model/project/Host/RBAC completion without an App image. New foundation saves 41 bounded,
@@ -57,6 +57,12 @@ network/auth or confuse Basic VNet with Standard-private BYO requirements. Only 
 standard/KT profiles keep BYO. Five canonical DNS namespaces and five/six conservative PE IPs
 replace the old seven/eight budget for the new managed mode; keep stable skipped PE indices.
 Verify actual Host/API/region and private MCP behavior separately from offline validation.
+Only v2 adds existing/new network choice. Existing mode keeps all customer VNet guards and
+never PUTs it; new mode creates one target-RG VNet and validated role subnets before foundation,
+with explicit name-collision refusal and no peering/NSG/routes/public IP changes. Save mode and
+CIDRs in bounded options; completion verifies exact owned network and never recreates it.
+Legacy missing mode is existing; App updates are still network-free. Network-only acceptance
+is not full infrastructure/App success, especially when model quota blocks completion.
 Two application tags record not_deployed/empty initially, then deployed and the successful
 ARM application's UTC start time after App/Job/requested auth/MCP dependencies. Preserve
 customer and previous-success tags; failed/preview paths never advance them. Legacy 39-tag
@@ -64,6 +70,15 @@ contracts remain accepted as unrecorded, not proof of an absent App; never inven
 Keep tag-write permission, two-slot budget reservation and live inventory/auth checks. These
 tags neither change infrastructure state nor prove runtime readiness or Agent publication.
 The same-RG application template owns App/Job/auth and the pinned read-only MCP container;
+the shared MCP module must accept its existing infrastructure-owned UAMI and bind the outgoing
+AZURE_CLIENT_ID. Preserve the optional empty-input SystemAssigned path for other profiles and
+never move Reader grants into the application template. Compile the parent and test the source
+parameter declaration as well as the compiled identity/credential expressions.
+Core output must carry all saved network/identity names. For older absent names, recover only
+from exact saved ARM IDs; reject present mismatches, missing IDs and redirected targets without
+replaying successful infrastructure. Windows MSI AzureCli uses bundled Python, not the batch
+shim, so encoded Graph query separators cannot become shell commands. Docker fingerprinting
+includes the explicitly selected hidden .dockerignore with Get-Item -Force on Linux.
 [`scripts/deploy_v2.py`](../../../scripts/deploy_v2.py) preserves current keys, secrets,
 environments, registry/auth settings and accepted schedules on repeated updates. Missing,
 paged, denied, foreign or redirected reads remain blocking. Retain canonical linked DNS,

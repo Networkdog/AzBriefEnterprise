@@ -159,6 +159,145 @@ def _managed_agent_data_outputs(parameters: dict[str, Any]) -> None:
                 element["visible"] = False
 
 
+def _network_mode_controls(
+    parameters: dict[str, Any], network_validations: list[dict[str, Any]]
+) -> None:
+    step = next((step for step in parameters["steps"] if step["name"] == "network"), None)
+    if step is None:
+        return
+    foundation = "equals(basics('infrastructureStage'), 'foundation')"
+    mode = "coalesce(steps('network').virtualNetworkMode, 'existing')"
+    new = f"and({foundation}, equals({mode}, 'new'))"
+    existing = f"and({foundation}, equals({mode}, 'existing'))"
+    step["label"] = "네트워크 선택"
+    new_names = {
+        "virtualNetworkMode",
+        "newVirtualNetworkName",
+        "newNetworkRange",
+        "newPeSubnetName",
+        "newFoundrySubnetName",
+        "newContainerAppsSubnetName",
+    }
+    step["elements"] = [element for element in step["elements"] if element["name"] not in new_names]
+    step["elements"].insert(
+        0,
+        {
+            "name": "virtualNetworkMode",
+            "type": "Microsoft.Common.DropDown",
+            "label": "VNet 배포 방식",
+            "defaultValue": "기존 VNet 사용",
+            "visible": f"[{foundation}]",
+            "constraints": {
+                "required": True,
+                "allowedValues": [
+                    {"label": "기존 VNet 사용", "value": "existing"},
+                    {"label": "신규 VNet 생성", "value": "new"},
+                ],
+            },
+        },
+    )
+    for name, label, default in (
+        ("newVirtualNetworkName", "신규 VNet 이름", "vnet-azbrief-v2"),
+        ("newPeSubnetName", "Private Endpoint 서브넷 이름", "private-endpoints"),
+        ("newFoundrySubnetName", "Foundry 전용 서브넷 이름", "foundry-agents"),
+        ("newContainerAppsSubnetName", "Container Apps 전용 서브넷 이름", "container-apps"),
+    ):
+        control: dict[str, Any] = {
+            "name": name,
+            "type": "Microsoft.Common.TextBox",
+            "label": label,
+            "defaultValue": default,
+            "visible": f"[{new}]",
+            "constraints": {
+                "required": True,
+                "regex": "^[A-Za-z][A-Za-z0-9_-]{0,62}$",
+                "validationMessage": "영문자로 시작하는 영문·숫자·하이픈·밑줄 1~63자를 입력하십시오.",
+            },
+        }
+        if name != "newVirtualNetworkName":
+            others = {"newPeSubnetName", "newFoundrySubnetName", "newContainerAppsSubnetName"} - {
+                name
+            }
+            control["constraints"]["validations"] = [
+                {
+                    "isValid": "[and("
+                    + ", ".join(
+                        f"not(equals(toLower(coalesce(steps('network').{name}, '')), toLower(coalesce(steps('network').{other}, ''))))"
+                        for other in sorted(others)
+                    )
+                    + ")]",
+                    "message": "세 역할의 서브넷 이름은 서로 달라야 합니다.",
+                }
+            ]
+        step["elements"].append(control)
+    step["elements"].append(
+        {
+            "name": "newNetworkRange",
+            "type": "Microsoft.Common.DropDown",
+            "label": "신규 VNet 주소 범위",
+            "defaultValue": "10.240.0.0/16",
+            "visible": f"[{new}]",
+            "toolTip": "세 서브넷은 /24, /27, /28로 자동 분리합니다. 기존·연결 예정 네트워크와 겹치지 않는 범위를 선택하십시오. 임의 CIDR은 보호된 CLI 매개변수와 검증을 사용합니다.",
+            "constraints": {
+                "required": True,
+                "allowedValues": [
+                    {"label": value + ".0.0/16", "value": value}
+                    for value in ("10.240", "10.241", "172.28")
+                ],
+            },
+        }
+    )
+    for element in step["elements"]:
+        if element["name"] in {
+            "virtualNetwork",
+            "virtualNetworkApi",
+            "peSubnetName",
+            "foundrySubnetName",
+            "containerAppsSubnetName",
+        }:
+            element["visible"] = f"[{existing}]"
+        if element["name"] == "virtualNetworkApi":
+            element["request"][
+                "path"
+            ] = f"[if({existing}, concat(coalesce(steps('network').virtualNetwork.id, ''), '?api-version=2024-05-01'), concat('/subscriptions/', subscription().subscriptionId, '?api-version=2022-12-01'))]"
+    outputs = parameters["outputs"]
+    chunks = [
+        f"coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.options{index}'], '')"
+        for index in range(8)
+    ]
+    combined = "concat(" + ", ".join(chunks) + ")"
+    saved = f"parse(if(empty({combined}), '{{}}', {combined}))"
+    base = "coalesce(steps('network').newNetworkRange, '10.240')"
+    if "virtualNetworkMode" not in outputs:
+        for name, new_value in {
+            "virtualNetworkResourceGroupName": "resourceGroup().name",
+            "virtualNetworkName": "steps('network').newVirtualNetworkName",
+            "peSubnetName": "steps('network').newPeSubnetName",
+            "foundrySubnetName": "steps('network').newFoundrySubnetName",
+            "containerAppsSubnetName": "steps('network').newContainerAppsSubnetName",
+        }.items():
+            outputs[name] = f"[if({new}, {new_value}, {outputs[name][1:-1]})]"
+        outputs["virtualNetworkMode"] = (
+            f"[if({foundation}, {mode}, coalesce({saved}.virtualNetworkMode, 'existing'))]"
+        )
+        for name, suffix, default in (
+            ("virtualNetworkAddressPrefix", ".0.0/16", "10.240.0.0/16"),
+            ("foundrySubnetAddressPrefix", ".0.0/24", "10.240.0.0/24"),
+            ("containerAppsSubnetAddressPrefix", ".1.0/27", "10.240.1.0/27"),
+            ("peSubnetAddressPrefix", ".1.32/28", "10.240.1.32/28"),
+        ):
+            outputs[name] = (
+                f"[if({foundation}, concat({base}, '{suffix}'), coalesce({saved}.{name}, '{default}'))]"
+            )
+    guard = outputs["portalValidationPassed"]
+    if "newVirtualNetworkName" not in guard:
+        for validation in network_validations:
+            original = validation["isValid"][1:-1]
+            guard = guard.replace(original, f"if({new}, true, {original})")
+        guard = f"[and({guard[1:-1]}, if({new}, and(not(empty(coalesce(steps('network').newVirtualNetworkName, ''))), not(empty(coalesce(steps('network').newPeSubnetName, ''))), not(equals(toLower(coalesce(steps('network').newFoundrySubnetName, '')), toLower(coalesce(steps('network').newContainerAppsSubnetName, ''))))), true))]"
+    outputs["portalValidationPassed"] = guard
+
+
 def _remove_validation_surfaces(parameters: dict[str, Any]) -> None:
     validations: list[str] = []
     existing = parameters["outputs"].get("portalValidationPassed")
@@ -329,6 +468,7 @@ def normalize_ui(
     _group_resource_names(parameters)
     _managed_agent_data_outputs(parameters)
     _remove_validation_surfaces(parameters)
+    _network_mode_controls(parameters, network_validations)
     _application_deployment_tag_guard(parameters)
     for step in parameters["steps"]:
         for element in step["elements"]:

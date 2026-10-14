@@ -3,6 +3,7 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "location": { "value": "koreacentral" },
+    "virtualNetworkMode": { "value": "existing" },
     "virtualNetworkResourceGroupName": { "value": "<existing-network-resource-group>" },
     "virtualNetworkName": { "value": "<approved-existing-vnet>" },
     "peSubnetName": { "value": "<private-endpoint-subnet>" },

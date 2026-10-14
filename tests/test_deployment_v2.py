@@ -150,6 +150,56 @@ def test_portal_new_foundation_hides_byo_inputs_and_uses_managed_defaults() -> N
     assert "searchServiceName:" not in preview
 
 
+def test_new_network_plans_three_private_role_subnets(tmp_path: Path) -> None:
+    values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    network = deploy_v2.planned_virtual_network(values)
+    assert network["properties"]["addressSpace"]["addressPrefixes"] == ["10.240.0.0/16"]
+    assert len(network["properties"]["subnets"]) == 3
+    document = template("infrastructure")
+    assert document["parameters"]["virtualNetworkMode"]["allowedValues"] == ["existing", "new"]
+    assert (
+        module(document, "v2-new-network")["condition"]
+        == "[and(not(variables('complete')), equals(parameters('virtualNetworkMode'), 'new'))]"
+    )
+    assert any(
+        "v2-new-network" in value for value in module(document, "v2-foundation")["dependsOn"]
+    )
+
+
+@pytest.mark.parametrize(
+    "patch",
+    [
+        {"virtualNetworkAddressPrefix": "0.0.0.0/0"},
+        {"virtualNetworkAddressPrefix": "2001:db8::/48"},
+        {"containerAppsSubnetAddressPrefix": "10.240.0.0/27"},
+        {"peSubnetAddressPrefix": "10.241.1.32/28"},
+        {"containerAppsSubnetAddressPrefix": "10.240.1.0/28"},
+    ],
+)
+def test_new_network_rejects_invalid_or_overlapping_ranges(
+    tmp_path: Path, patch: dict[str, str]
+) -> None:
+    values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    with pytest.raises(ValueError):
+        deploy_v2.planned_virtual_network({**values, **patch})
+
+
+def test_managed_foundation_never_evaluates_omitted_store_references_or_diagnostics() -> None:
+    foundation = module(template("infrastructure"), "v2-foundation")["properties"]["template"]
+    declared = foundation["resources"]
+    assert isinstance(declared, dict)
+    for name in ("existingCosmos", "existingSearch", "cosmosDiagnostics", "searchDiagnostics"):
+        assert declared[name]["condition"] == "[not(parameters('useMicrosoftManagedAgentData'))]"
+    assert (
+        declared["cosmosDiagnostics"]["scope"]
+        == "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]"
+    )
+    assert (
+        declared["searchDiagnostics"]["scope"]
+        == "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]"
+    )
+
+
 def test_infrastructure_excludes_application_installation() -> None:
     types = {resource["type"] for resource in resources(template("infrastructure"))}
     assert "Microsoft.App/containerApps" not in types
@@ -472,6 +522,30 @@ def test_managed_mcp_is_split_between_identity_and_application_without_auth_bypa
     assert "AzureAd__ClientId" in body
     assert "DANGEROUSLY_DISABLE_AUTH" not in body
     assert "Microsoft.Authorization/roleAssignments" not in body
+
+
+def test_shared_mcp_module_accepts_infrastructure_identity_and_keeps_legacy_default() -> None:
+    source = (
+        ROOT / "infra" / "azure-mcp-server" / "infra" / "modules" / "aca-infrastructure.bicep"
+    ).read_text(encoding="utf-8")
+    assert "param userAssignedIdentityResourceId string = ''" in source
+    wrapper = module(template("application"), "v2-managed-mcp-application")
+    server = module(wrapper["properties"]["template"], "v2-mcp-server-application")
+    identity = server["properties"]["parameters"]["userAssignedIdentityResourceId"]["value"]
+    assert "userAssignedIdentities" in identity
+    child = server["properties"]["template"]
+    assert child["parameters"]["userAssignedIdentityResourceId"]["defaultValue"] == ""
+    container_app = next(
+        resource
+        for resource in resources(child)
+        if resource["type"] == "Microsoft.App/containerApps"
+    )
+    assignment = json.dumps(container_app["identity"])
+    assert "UserAssigned" in assignment
+    assert "SystemAssigned" in assignment
+    environment = json.dumps(container_app["properties"]["template"]["containers"][0]["env"])
+    assert "AZURE_CLIENT_ID" in environment
+    assert "userAssignedIdentityResourceId" in environment
 
 
 def test_portal_infrastructure_does_not_execute_microsoft_graph() -> None:
@@ -1015,6 +1089,50 @@ def test_mcp_preparation_uses_only_exact_pending_core_output() -> None:
         == cli.core["azureMcpEntraAppUniqueName"]
     )
     assert parameters["infrastructureOptions"]["manageAzureMcp"] is True
+    assert not cli.operations
+
+
+def test_compiled_infrastructure_handoff_contains_every_tag_binding() -> None:
+    contract = template("infrastructure")["outputs"]["infrastructure"]["value"]
+    assert set(deploy_v2.TAG_FIELDS) <= set(contract)
+
+
+@pytest.mark.parametrize("redirect", [False, True])
+def test_mcp_preparation_accepts_legacy_names_only_from_exact_arm_ids(redirect: bool) -> None:
+    cli = FakeMcpPreparation()
+    values = cli.values
+    vnet_id = (
+        f"/subscriptions/{cli.subscription}/resourceGroups/"
+        f"{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/"
+        f"virtualNetworks/{values['virtualNetworkName']}"
+    )
+    cli.core.update(
+        controlPlaneIdentityResourceId=(
+            f"{cli.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+            f"{values['controlPlaneIdentityName']}"
+        ),
+        virtualNetworkResourceId=vnet_id,
+        privateEndpointSubnetId=f"{vnet_id}/subnets/{values['peSubnetName']}",
+        foundrySubnetResourceId=f"{vnet_id}/subnets/{values['foundrySubnetName']}",
+        infrastructureSubnetId=f"{vnet_id}/subnets/{values['containerAppsSubnetName']}",
+    )
+    missing = (
+        "controlPlaneIdentityName",
+        "virtualNetworkResourceGroupName",
+        "virtualNetworkName",
+        "peSubnetName",
+        "foundrySubnetName",
+        "containerAppsSubnetName",
+    )
+    for field in missing:
+        cli.core.pop(field)
+    if redirect:
+        cli.core["controlPlaneIdentityResourceId"] += "-foreign"
+        with pytest.raises(ValueError, match="binding changed"):
+            deploy_v2.prepare_mcp_authentication(cli)
+    else:
+        result = deploy_v2.prepare_mcp_authentication(cli)
+        assert all(result["infrastructure"][field] == values[field] for field in missing)
     assert not cli.operations
 
 
@@ -1931,6 +2049,7 @@ def test_completion_reuses_saved_vnet_rg_without_a_picker_value() -> None:
         {"contract": {"resourceGroupApi": {"tags": {"azbrief.v2.vnetRg": "rg-approved-network"}}}},
         network={},
         basics={"infrastructureStage": "complete"},
+        resource_group={"name": "rg-application", "mode": "Existing"},
         eager_conditionals=True,
     )
     assert actual == "rg-approved-network"
@@ -2218,6 +2337,89 @@ def test_infrastructure_preflight_uses_existing_network_and_no_application(tmp_p
     assert prepared["containerAppName"] == values["containerAppName"]
     assert not any(key.startswith("create") for key in prepared)
     assert not cli.operations
+
+
+def test_new_vnet_preflight_uses_plan_without_reading_missing_target(tmp_path: Path) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    values.update(virtualNetworkMode="new", virtualNetworkResourceGroupName=cli.group)
+    vnet_id = (
+        f"{cli.group_id}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
+    )
+    cli.collections[f"{cli.group_id}/providers/Microsoft.Network/virtualNetworks"] = []
+    cli.denied.add(vnet_id)
+    prepared = deploy_v2.prepare_infrastructure(cli, values, "foundation", "new-test")
+    assert prepared["virtualNetworkMode"] == "new"
+    assert prepared["virtualNetworkResourceGroupName"] == cli.group
+    assert not cli.operations
+    saved = deploy_v2.make_tag_contract(values, "new-foundation", "foundation")
+    options = deploy_v2.decode_tag_options(saved)
+    assert options["virtualNetworkMode"] == "new"
+    assert options["virtualNetworkAddressPrefix"] == "10.240.0.0/16"
+
+
+def test_new_vnet_preflight_never_overwrites_existing_or_foreign_group(tmp_path: Path) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    values["virtualNetworkMode"] = "new"
+    with pytest.raises(ValueError, match="explicit target"):
+        deploy_v2.prepare_infrastructure(cli, values, "foundation", "new-test")
+    values["virtualNetworkResourceGroupName"] = cli.group
+    vnet_id = (
+        f"{cli.group_id}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
+    )
+    cli.collections[f"{cli.group_id}/providers/Microsoft.Network/virtualNetworks"] = [
+        {"id": vnet_id}
+    ]
+    with pytest.raises(ValueError, match="overwrite an existing VNet"):
+        deploy_v2.prepare_infrastructure(cli, values, "foundation", "new-test")
+    assert not cli.operations
+
+
+@pytest.mark.parametrize("change", ["virtualNetworkMode", "virtualNetworkAddressPrefix"])
+def test_saved_new_vnet_mode_and_prefixes_are_immutable(tmp_path: Path, change: str) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    values.update(virtualNetworkMode="new", virtualNetworkResourceGroupName=cli.group)
+    cli.tags = deploy_v2.make_tag_contract(values, "new-foundation", "foundation")
+    values[change] = "existing" if change == "virtualNetworkMode" else "10.241.0.0/16"
+    with pytest.raises(ValueError, match="immutable"):
+        deploy_v2.prepare_infrastructure(cli, values, "complete", "must-not-switch")
+    assert not cli.operations
+
+
+def test_portal_new_vnet_outputs_are_target_group_and_safe_nonoverlapping_ranges() -> None:
+    outputs = ui_definition("infrastructure")["outputs"]
+    network = {
+        "virtualNetworkMode": "new",
+        "newVirtualNetworkName": "vnet-new-test",
+        "newNetworkRange": "172.28",
+        "newPeSubnetName": "pe",
+        "newFoundrySubnetName": "agents",
+        "newContainerAppsSubnetName": "apps",
+    }
+    data = {"contract": {"resourceGroupApi": None}}
+    expected = {
+        "virtualNetworkMode": "new",
+        "virtualNetworkResourceGroupName": "rg-new-test",
+        "virtualNetworkName": "vnet-new-test",
+        "virtualNetworkAddressPrefix": "172.28.0.0/16",
+        "foundrySubnetAddressPrefix": "172.28.0.0/24",
+        "containerAppsSubnetAddressPrefix": "172.28.1.0/27",
+        "peSubnetAddressPrefix": "172.28.1.32/28",
+        "peSubnetName": "pe",
+        "foundrySubnetName": "agents",
+        "containerAppsSubnetName": "apps",
+    }
+    for field, value in expected.items():
+        assert (
+            _evaluate_ui_expression(
+                outputs[field],
+                data,
+                network=network,
+                basics={"infrastructureStage": "foundation"},
+                resource_group={"name": "rg-new-test", "mode": "New"},
+                eager_conditionals=True,
+            )
+            == value
+        )
 
 
 def test_infrastructure_rejects_tag_overflow_and_resource_collision_before_write(
