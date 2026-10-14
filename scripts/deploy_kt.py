@@ -1127,12 +1127,19 @@ def validate_existing_host(
         raise ValueError(
             "Existing project Capability Host is not ready; no connections were changed"
         )
+    managed_agent_data = values.get("useMicrosoftManagedAgentData", False) is True
     expected = {
         "storageConnections": ["agent-storage"],
         "threadStorageConnections": ["agent-cosmos"],
         "vectorStoreConnections": ["agent-search"],
     }
-    if any(hosts[0]["properties"].get(key) != value for key, value in expected.items()):
+    host_properties = hosts[0]["properties"]
+    invalid_bindings = (
+        any(host_properties.get(key) not in (None, []) for key in expected)
+        if managed_agent_data
+        else any(host_properties.get(key) != value for key, value in expected.items())
+    )
+    if invalid_bindings:
         raise ValueError(
             "Capability Host bindings are immutable; a migration needs separate approval"
         )
@@ -1140,30 +1147,39 @@ def validate_existing_host(
     connections = {item["name"].split("/")[-1]: item["properties"] for item in connection_rows}
     if len(connections) != len(connection_rows):
         raise ValueError("Foundry connection inventory contains duplicate names")
-    targets = endpoint_specs(values, cli.group_id)
-    for name, target, category, endpoints in (
-        (
-            "agent-storage",
-            targets[1]["target"],
-            "AzureStorageAccount",
-            {f"https://{values['storageAccountName']}.blob.core.windows.net"},
-        ),
-        (
-            "agent-cosmos",
-            targets[2]["target"],
-            "CosmosDb",
-            {
-                f"https://{values['cosmosAccountName']}.documents.azure.com",
-                f"https://{values['cosmosAccountName']}.documents.azure.com:443",
-            },
-        ),
-        (
-            "agent-search",
-            targets[3]["target"],
-            "CognitiveSearch",
-            {f"https://{values['searchServiceName']}.search.windows.net"},
-        ),
+    if managed_agent_data and {"agent-storage", "agent-cosmos", "agent-search"}.intersection(
+        connections
     ):
+        raise ValueError("Microsoft-managed agent data cannot adopt existing BYO connections")
+    targets = endpoint_specs(values, cli.group_id)
+    required_connections = (
+        ()
+        if managed_agent_data
+        else (
+            (
+                "agent-storage",
+                targets[1]["target"],
+                "AzureStorageAccount",
+                {f"https://{values['storageAccountName']}.blob.core.windows.net"},
+            ),
+            (
+                "agent-cosmos",
+                targets[2]["target"],
+                "CosmosDb",
+                {
+                    f"https://{values['cosmosAccountName']}.documents.azure.com",
+                    f"https://{values['cosmosAccountName']}.documents.azure.com:443",
+                },
+            ),
+            (
+                "agent-search",
+                targets[3]["target"],
+                "CognitiveSearch",
+                {f"https://{values['searchServiceName']}.search.windows.net"},
+            ),
+        )
+    )
+    for name, target, category, endpoints in required_connections:
         connection = connections.get(name, {})
         if (
             connection.get("authType") != "AAD"

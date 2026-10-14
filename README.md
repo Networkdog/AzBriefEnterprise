@@ -197,6 +197,13 @@ RG tags also distinguish infrastructure-only from a deployed application:
 in UTC after all application resources succeed. Failed/preview runs preserve the previous
 record. New installs use 41 tags; legacy 39-tag installs remain compatible without fabricated
 dates. Deployment metadata is not runtime readiness or proof of email/Agent acceptance.
+New v2 infrastructure uses Basic VNet with Microsoft-managed agent data: Capability Host,
+agent subnet injection and PNA Disabled remain, but the three BYO connection properties are
+omitted. Foundry-only Cosmos/Search, connections, data roles and their PE/DNS resources are
+not created. The private app Storage remains for Archive/state/Feedback. Saved legacy BYO
+installs are never converted implicitly; existing resources are not deleted. See the
+[official Basic VNet options](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/networking-options).
+Local validation does not prove live region/Host/MCP acceptance.
 
 </div>
 

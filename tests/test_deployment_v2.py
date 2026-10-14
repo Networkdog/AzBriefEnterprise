@@ -49,6 +49,107 @@ def module(document: dict[str, Any], name: str) -> dict[str, Any]:
     return next(resource for resource in entries if resource["name"] == name)
 
 
+def test_default_basic_vnet_host_omits_byo_and_keeps_private_injection() -> None:
+    document = template("infrastructure")
+    assert document["parameters"]["useMicrosoftManagedAgentData"]["defaultValue"] is True
+    managed = module(document, "v2-managed-project-host")
+    assert "useMicrosoftManagedAgentData" in managed["condition"]
+    host = next(
+        resource
+        for resource in resources(managed["properties"]["template"])
+        if resource["type"] == "Microsoft.CognitiveServices/accounts/projects/capabilityHosts"
+    )
+    assert host["properties"] == {"capabilityHostKind": "Agents"}
+    assert not any(
+        resource["type"]
+        in {
+            "Microsoft.Authorization/roleAssignments",
+            "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
+        }
+        for resource in resources(managed["properties"]["template"])
+    )
+    foundation = module(document, "v2-foundation")["properties"]["template"]
+    for name in ("v2-cosmos", "v2-search"):
+        assert (
+            module(foundation, name)["condition"]
+            == "[not(parameters('useMicrosoftManagedAgentData'))]"
+        )
+    assert "useMicrosoftManagedAgentData" in module(document, "v2-agent-bindings")["condition"]
+    account = module(foundation, "v2-foundry")["properties"]["parameters"]
+    assert account["publicNetworkAccess"]["value"] == "Disabled"
+    assert account["networkInjections"]["value"]["scenario"] == "agent"
+    assert account["networkInjections"]["value"]["useMicrosoftManagedNetwork"] is False
+    endpoint = next(
+        resource
+        for resource in resources(foundation)
+        if resource.get("copy", {}).get("name") == "privateEndpoints"
+    )
+    assert "useMicrosoftManagedAgentData" in endpoint["condition"]
+    assert "2" in endpoint["condition"] and "3" in endpoint["condition"]
+    dns = next(
+        resource
+        for resource in resources(foundation)
+        if resource.get("copy", {}).get("name") == "dnsZones"
+    )
+    assert "useMicrosoftManagedAgentData" in dns["condition"]
+    assert "4" in dns["condition"] and "5" in dns["condition"]
+
+
+def test_managed_default_keeps_app_storage_and_roundtrips_mode(tmp_path: Path) -> None:
+    values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    assert values["useMicrosoftManagedAgentData"] is True
+    assert values["cosmosAccountName"] == values["searchServiceName"] == ""
+    saved = deploy_v2.make_tag_contract(values, "managed-foundation", "foundation")
+    assert saved[deploy_v2.PREFIX + "storage"]
+    assert saved[deploy_v2.PREFIX + "cosmos"] == saved[deploy_v2.PREFIX + "search"] == ""
+    assert deploy_v2.decode_tag_options(saved)["useMicrosoftManagedAgentData"] is True
+    assert deploy_v2.parse_tag_contract(saved, require_ready=False)
+
+
+def test_legacy_byo_parameters_require_explicit_mode_false(tmp_path: Path) -> None:
+    path = infrastructure_parameter_file(tmp_path)
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["parameters"]["useMicrosoftManagedAgentData"] = {"value": False}
+    document["parameters"]["cosmosAccountName"] = {"value": "legacy-cosmos"}
+    document["parameters"]["searchServiceName"] = {"value": "legacy-search"}
+    path.write_text(json.dumps(document), encoding="utf-8")
+    values = deploy_v2.load_infrastructure_parameters(path)
+    assert values["useMicrosoftManagedAgentData"] is False
+    assert values["cosmosAccountName"] and values["searchServiceName"]
+    saved = deploy_v2.make_tag_contract(values, "legacy-foundation", "foundation")
+    assert deploy_v2.decode_tag_options(saved)["useMicrosoftManagedAgentData"] is False
+    assert deploy_v2.parse_tag_contract(saved, require_ready=False)
+
+
+def test_portal_new_foundation_hides_byo_inputs_and_uses_managed_defaults() -> None:
+    outputs = ui_definition("infrastructure")["outputs"]
+    data = {
+        "contract": {"resourceGroupApi": None},
+        "options": {},
+        "namingPrefix": "test",
+        "namingSuffix": "managed",
+    }
+    for field, expected in (
+        ("useMicrosoftManagedAgentData", True),
+        ("cosmosAccountName", ""),
+        ("searchServiceName", ""),
+        ("searchSku", "basic"),
+    ):
+        assert (
+            _evaluate_ui_expression(
+                outputs[field],
+                data,
+                basics={"infrastructureStage": "foundation"},
+                eager_conditionals=True,
+            )
+            == expected
+        )
+    assert ui_controls("infrastructure")["searchSku"]["visible"] is False
+    preview = ui_controls("infrastructure")["resourceNamePreview"]["options"]["text"]
+    assert "cosmosAccountName:" not in preview
+    assert "searchServiceName:" not in preview
+
+
 def test_infrastructure_excludes_application_installation() -> None:
     types = {resource["type"] for resource in resources(template("infrastructure"))}
     assert "Microsoft.App/containerApps" not in types
@@ -513,6 +614,32 @@ class FakeV2Azure(AzureCli):
             "properties": properties,
         }
 
+    def use_managed_agent_data(self) -> None:
+        schema = template("infrastructure")["parameters"]
+        options = {
+            field: copy.deepcopy(schema[field]["defaultValue"]) for field in deploy_v2.OPTION_FIELDS
+        }
+        options["useMicrosoftManagedAgentData"] = True
+        encoded = json.dumps(options, separators=(",", ":"))
+        self.tags.update(
+            {
+                key: encoded[index * 256 : (index + 1) * 256]
+                for index, key in enumerate(deploy_v2.OPTION_TAG_KEYS)
+            }
+        )
+        self.tags[deploy_v2.PREFIX + "cosmos"] = ""
+        self.tags[deploy_v2.PREFIX + "search"] = ""
+        self.values = deploy_v2.infrastructure_values(self, self.tags)
+        self.collections[f"{self.project_id}/capabilityHosts"][0]["properties"] = {
+            "capabilityHostKind": "Agents",
+            "provisioningState": "Succeeded",
+        }
+        self.collections[f"{self.project_id}/connections"] = [
+            row
+            for row in self.collections[f"{self.project_id}/connections"]
+            if row["name"] == "azbrief-app-insights"
+        ]
+
     def connection(
         self, name: str, category: str, resource_type: str, field: str, suffix: str
     ) -> dict[str, Any]:
@@ -776,6 +903,108 @@ class FakeMcpPreparation(FakeV2Azure):
         if arguments[:3] == ("ad", "app", "list"):
             return copy.deepcopy(self.apps)
         return super().json(*arguments)
+
+
+def test_managed_host_readback_and_app_preflight_require_no_byo_inventory() -> None:
+    cli = FakeV2Azure()
+    cli.use_managed_agent_data()
+    parameters = deploy_v2.prepare_application(cli, IMAGE)
+    assert parameters["infrastructureTags"][deploy_v2.PREFIX + "cosmos"] == ""
+    assert parameters["infrastructureTags"][deploy_v2.PREFIX + "search"] == ""
+    assert not cli.operations
+
+
+@pytest.mark.parametrize(
+    "field", ["storageConnections", "threadStorageConnections", "vectorStoreConnections"]
+)
+def test_managed_host_rejects_customer_connection_redirects(field: str) -> None:
+    cli = FakeV2Azure()
+    cli.use_managed_agent_data()
+    cli.collections[f"{cli.project_id}/capabilityHosts"][0]["properties"][field] = [
+        "customer-connection"
+    ]
+    with pytest.raises(ValueError, match="immutable"):
+        deploy_v2.prepare_application(cli, IMAGE)
+    assert not cli.operations
+
+
+def test_managed_host_does_not_adopt_existing_byo_connection_names() -> None:
+    cli = FakeV2Azure()
+    cli.use_managed_agent_data()
+    cli.collections[f"{cli.project_id}/connections"].append(
+        {"name": "agent-storage", "properties": {}}
+    )
+    with pytest.raises(ValueError, match="BYO connections"):
+        deploy_v2.prepare_application(cli, IMAGE)
+    assert not cli.operations
+
+
+def test_byo_host_cannot_be_read_as_a_managed_mode() -> None:
+    cli = FakeV2Azure()
+    cli.use_managed_agent_data()
+    cli.tags[deploy_v2.PREFIX + "cosmos"] = "old-cosmos"
+    with pytest.raises(ValueError, match="must not bind"):
+        deploy_v2.prepare_application(cli, IMAGE)
+
+
+def test_saved_byo_foundation_cannot_silently_switch_to_managed(tmp_path: Path) -> None:
+    managed = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    legacy = {
+        **managed,
+        "useMicrosoftManagedAgentData": False,
+        "cosmosAccountName": "legacy-cosmos",
+        "searchServiceName": "legacy-search",
+    }
+    cli = FakeV2Azure()
+    cli.tags = deploy_v2.make_tag_contract(legacy, "legacy-foundation", state="foundation")
+    with pytest.raises(ValueError, match="storage mode is immutable"):
+        deploy_v2.prepare_infrastructure(cli, managed, "complete", "must-not-convert")
+    assert not cli.operations
+
+
+@pytest.mark.parametrize("managed", [True, False])
+def test_portal_completes_only_the_saved_agent_data_mode(tmp_path: Path, managed: bool) -> None:
+    values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    values["useMicrosoftManagedAgentData"] = managed
+    if not managed:
+        values.update(cosmosAccountName="old-cosmos", searchServiceName="old-search")
+    saved = deploy_v2.make_tag_contract(values, "foundation", state="foundation")
+    outputs = ui_definition("infrastructure")["outputs"]
+    data = {"contract": {"resourceGroupApi": {"tags": saved}}, "names": {}, "options": {}}
+    for field in ("useMicrosoftManagedAgentData", "cosmosAccountName", "searchServiceName"):
+        actual = _evaluate_ui_expression(
+            outputs[field],
+            data,
+            basics={"infrastructureStage": "complete"},
+            eager_conditionals=True,
+        )
+        assert actual == values[field]
+
+
+def test_managed_dns_completion_accepts_only_five_owned_default_zones() -> None:
+    cli = FakeV2Azure()
+    namespaces = [
+        "privatelink.cognitiveservices.azure.com",
+        "privatelink.openai.azure.com",
+        "privatelink.services.ai.azure.com",
+        "privatelink.blob.core.windows.net",
+        "privatelink.koreacentral.azurecontainerapps.io",
+    ]
+    resolved = {
+        name: f"{cli.group_id}/providers/Microsoft.Network/privateDnsZones/{name}"
+        for name in namespaces
+    }
+    for resource_id in resolved.values():
+        cli.documents[resource_id] = cli.resource(resource_id, {})
+    deploy_v2._verify_saved_dns_bindings(cli, {}, resolved, use_microsoft_managed_agent_data=True)
+    with pytest.raises(ValueError, match="incomplete"):
+        deploy_v2._verify_saved_dns_bindings(
+            cli,
+            {},
+            {**resolved, "privatelink.search.windows.net": "foreign"},
+            use_microsoft_managed_agent_data=True,
+        )
+    assert not cli.operations
 
 
 def test_mcp_preparation_uses_only_exact_pending_core_output() -> None:
@@ -1732,7 +1961,9 @@ def test_common_name_inputs_generate_unique_rule_compliant_resource_names(
     }
     assert names["containerAppName"] == f"ca-{prefix}-{suffix}"
     assert names["storageAccountName"] == f"st{prefix}{suffix}"
-    assert len(set(names.values())) == len(names)
+    assert names["cosmosAccountName"] == names["searchServiceName"] == ""
+    provisioned_names = {name: value for name, value in names.items() if value}
+    assert len(set(provisioned_names.values())) == len(provisioned_names)
     assert re.fullmatch(r"[a-z0-9]{3,24}", names["storageAccountName"])
     for name in ("containerAppName", "schedulerJobName", "azureMcpContainerAppName"):
         assert len(names[name]) <= 32

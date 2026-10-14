@@ -21,8 +21,10 @@ param foundryAccountName string
 @minLength(3)
 @maxLength(24)
 param storageAccountName string
-param cosmosAccountName string
-param searchServiceName string
+@description('Use the official Basic VNet Capability Host with no customer agent-data connections. Existing BYO installs must retain false.')
+param useMicrosoftManagedAgentData bool = true
+param cosmosAccountName string = ''
+param searchServiceName string = ''
 param projectName string
 param containerAppsEnvironmentName string
 param containerAppName string
@@ -86,6 +88,7 @@ var mcpClientId = manageAzureMcp && complete ? (savedOptions.?azureMcpClientId ?
 var mcpServicePrincipalId = manageAzureMcp && complete ? (savedOptions.?azureMcpServicePrincipalId ?? '') : ''
 var mcpAppRoleId = manageAzureMcp && complete ? (savedOptions.?azureMcpAppRoleId ?? '') : ''
 var deploymentOptions = {
+  useMicrosoftManagedAgentData: useMicrosoftManagedAgentData
   emailDataLocation: emailDataLocation
   searchSku: searchSku
   coreModelName: coreModelName
@@ -124,6 +127,7 @@ module foundation 'foundation.bicep' = if (!complete) {
     storageAccountName: storageAccountName
     cosmosAccountName: cosmosAccountName
     searchServiceName: searchServiceName
+    useMicrosoftManagedAgentData: useMicrosoftManagedAgentData
     containerAppsEnvironmentName: containerAppsEnvironmentName
     controlPlaneIdentityName: controlPlaneIdentityName
     logAnalyticsWorkspaceName: logAnalyticsWorkspaceName
@@ -190,7 +194,7 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = if
   identity: { type: 'SystemAssigned' }
   properties: {
     displayName: projectName
-    description: 'AzBrief v2 project with customer-owned agent storage.'
+    description: useMicrosoftManagedAgentData ? 'AzBrief v2 Basic VNet project with Microsoft-managed agent data.' : 'AzBrief v2 project with customer-owned agent storage.'
   }
   dependsOn: [models]
 }
@@ -198,9 +202,9 @@ resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' = if
 #disable-next-line use-resource-symbol-reference
 var projectPrincipalId = complete ? (reuseFoundry ? reference(projectId, '2025-06-01', 'full').identity.principalId : project!.identity.principalId) : ''
 #disable-next-line BCP053 use-resource-symbol-reference
-var projectInternalId = complete ? (reuseFoundry ? reference(projectId, '2025-06-01', 'full').properties.internalId : project!.properties.internalId) : ''
+var projectInternalId = complete && !useMicrosoftManagedAgentData ? (reuseFoundry ? reference(projectId, '2025-06-01', 'full').properties.internalId : project!.properties.internalId) : ''
 
-module bindings '../kt/agent-bindings.bicep' = if (complete) {
+module bindings '../kt/agent-bindings.bicep' = if (complete && !useMicrosoftManagedAgentData) {
   name: 'v2-agent-bindings'
   params: {
     foundryAccountName: foundryAccountName
@@ -213,7 +217,7 @@ module bindings '../kt/agent-bindings.bicep' = if (complete) {
   }
 }
 
-module capabilityHost '../kt/capability-host.bicep' = if (complete) {
+module capabilityHost '../kt/capability-host.bicep' = if (complete && !useMicrosoftManagedAgentData) {
   name: 'v2-project-host'
   params: {
     foundryAccountName: foundryAccountName
@@ -225,6 +229,16 @@ module capabilityHost '../kt/capability-host.bicep' = if (complete) {
     createHost: !reuseFoundry
   }
   dependsOn: [bindings]
+}
+
+module managedCapabilityHost 'managed-capability-host.bicep' = if (complete && useMicrosoftManagedAgentData) {
+  name: 'v2-managed-project-host'
+  params: {
+    foundryAccountName: foundryAccountName
+    projectName: projectName
+    createHost: !reuseFoundry
+  }
+  dependsOn: [project]
 }
 
 resource telemetryConnection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-06-01' = if (complete && !reuseExistingTelemetryConnection) {
@@ -265,7 +279,7 @@ module controlPlaneRoles '../kt/control-plane-roles.bicep' = if (complete) {
     communicationServicesName: communicationServicesName
     emailSenderRoleDefinitionId: guid(toLower(resourceGroup().id), toLower(communicationServicesName), 'azbrief-email-sender')
   }
-  dependsOn: [capabilityHost]
+  dependsOn: [capabilityHost, managedCapabilityHost]
 }
 
 var infrastructureContract = {
@@ -296,8 +310,9 @@ var infrastructureContract = {
   controlPlanePrincipalId: complete ? identity.properties.principalId : foundation!.outputs.identityPrincipalId
   controlPlaneClientId: complete ? identity.properties.clientId : foundation!.outputs.identityClientId
   storageAccountName: storageAccountName
-  cosmosAccountName: cosmosAccountName
-  searchServiceName: searchServiceName
+  cosmosAccountName: useMicrosoftManagedAgentData ? '' : cosmosAccountName
+  searchServiceName: useMicrosoftManagedAgentData ? '' : searchServiceName
+  useMicrosoftManagedAgentData: useMicrosoftManagedAgentData
   logAnalyticsWorkspaceName: logAnalyticsWorkspaceName
   applicationInsightsName: applicationInsightsName
   communicationServicesName: communicationServicesName

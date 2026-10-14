@@ -42,12 +42,21 @@ RG resource-name inputs, auto model/MCP internal settings, and guarded live pref
 The opt-in [`infra/v2`](../../../infra/v2/README.md) profile reuses this existing-VNet
 security/lifecycle knowledge but does not replace the KT Portal button or adopt old resources.
 Its one-time infrastructure command internally sequences foundation, account-host readiness
-and model/project/BYO/RBAC completion without an App image. New foundation saves 41 bounded,
+and model/project/Host/RBAC completion without an App image. New foundation saves 41 bounded,
 non-secret `azbrief.v2.*` RG tags including customer options. Managed MCP core completion records
 mcp_pending. Portal infrastructure contains zero Microsoft.Graph resources; authorized CLI-only
 mcp-authentication prepares app/project app-role/RemoteTool then promotes ready. Full CLI deploy
 runs it automatically; Portal operators use --prepare-mcp-authentication once without internal ID
 inputs. Keep same-core-output/private/BYO/uniqueName/budget checks and ready-only App acceptance.
+New v2 uses the documented Basic VNet Microsoft-managed agent data mode: keep injection,
+PNA Disabled and project Host but omit the three BYO connection properties. Create no default
+Cosmos/Search/BYO data roles or their PE/DNS; retain app-owned private Blob state/Archive.
+Mode lives in option tags; missing old flag means BYO and explicit false/original names is
+required for legacy completion. Never switch/reset old Host data, delete old stores, weaken
+network/auth or confuse Basic VNet with Standard-private BYO requirements. Only v2 changes;
+standard/KT profiles keep BYO. Five canonical DNS namespaces and five/six conservative PE IPs
+replace the old seven/eight budget for the new managed mode; keep stable skipped PE indices.
+Verify actual Host/API/region and private MCP behavior separately from offline validation.
 Two application tags record not_deployed/empty initially, then deployed and the successful
 ARM application's UTC start time after App/Job/requested auth/MCP dependencies. Preserve
 customer and previous-success tags; failed/preview paths never advance them. Legacy 39-tag

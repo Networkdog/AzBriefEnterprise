@@ -106,6 +106,12 @@ trusted application, not a hard isolation boundary from the project identity. Sh
 and storage readiness entry; never invent a container-only Foundry connection contract. Existing
 accounts, artifact references and broad grants need an approved migration, not an automatic
 Incremental-template cleanup. This infrastructure change does not alter Prompt Agent policy.
+New v2 separately follows official Basic VNet with Microsoft-managed agent data while keeping
+VNet injection/PNA Disabled/Capability Host. Omit the three BYO Host properties and skip
+Foundry-only Cosmos/Search/connections/data roles/PE-DNS. Its Blob Storage is app-owned state/
+Archive/Feedback, not the project's agent data resource. Preserve saved legacy BYO mode and
+require separate migration/retirement approval. Do not change Agent/runtime prompts for this
+IaC choice or infer live Host/MCP readiness from local compile/tests.
 
 Local preparation also checks the CI workflow schema, its self-change triggers, full-source
 Black/isort/Flake8, imports, and full pytest with the 40% coverage gate. Passing these checks does

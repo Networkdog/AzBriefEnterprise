@@ -184,6 +184,12 @@ RG 태그로 인프라만 준비됐는지 앱도 배포됐는지 구분합니다
 시작 시각을 UTC로 기록합니다. 실패·미리보기는 이전 기록을 보존합니다. 새 설치는 41개 태그를
 사용하고 기존 39태그 설치도 과거 날짜를 추정하지 않고 호환됩니다. 이 기록은 런타임 준비나
 메일·Agent 인수 성공을 뜻하지 않습니다.
+신규 v2 인프라는 Basic VNet의 Microsoft 관리형 Agent 데이터를 기본 사용합니다. Capability Host,
+Agent 서브넷 주입과 PNA Disabled는 유지하고 세 BYO 연결 속성은 생략합니다. Foundry 전용
+Cosmos DB·Search·연결·데이터 역할과 관련 PE/DNS는 생성하지 않습니다. Archive·상태·Feedback용
+프라이빗 앱 Storage는 남깁니다. 저장된 기존 BYO 설치를 자동 전환하거나 기존 리소스를 삭제하지
+않습니다. [공식 Basic VNet 옵션](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/networking-options)을
+따르며, 로컬 검증은 실제 리전·Host·MCP 동작 검증과 구분합니다.
 
 </div>
 

@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "4750424779464013112"
+      "templateHash": "15795648670060818315"
     },
     "description": "Repeatable AzBrief v2 application installation/update with final RG deployment metadata. No foundation, model, BYO, RBAC or diagnostics writes."
   },
@@ -145,36 +145,7 @@
       "report_writer": "[format('{0}-report-writer', take(parameters('infrastructureTags')['azbrief.v2.project'], 47))]",
       "quality_reviewer": "[format('{0}-quality-reviewer', take(parameters('infrastructureTags')['azbrief.v2.project'], 47))]"
     },
-    "supportResources": [
-      {
-        "id": "managed_identity",
-        "label": "User-assigned managed identity",
-        "name": "[parameters('infrastructureTags')['azbrief.v2.identity']]",
-        "resource_type": "Microsoft.ManagedIdentity/userAssignedIdentities",
-        "api_version": "2023-01-31"
-      },
-      {
-        "id": "state_storage",
-        "label": "Shared Storage (State, Archive, Foundry)",
-        "name": "[parameters('infrastructureTags')['azbrief.v2.storage']]",
-        "resource_type": "Microsoft.Storage/storageAccounts",
-        "api_version": "2023-05-01"
-      },
-      {
-        "id": "cosmos",
-        "label": "Cosmos DB",
-        "name": "[parameters('infrastructureTags')['azbrief.v2.cosmos']]",
-        "resource_type": "Microsoft.DocumentDB/databaseAccounts",
-        "api_version": "2024-11-15"
-      },
-      {
-        "id": "search",
-        "label": "Azure AI Search",
-        "name": "[parameters('infrastructureTags')['azbrief.v2.search']]",
-        "resource_type": "Microsoft.Search/searchServices",
-        "api_version": "2023-11-01"
-      }
-    ]
+    "supportResources": "[filter(createArray(createObject('id', 'managed_identity', 'label', 'User-assigned managed identity', 'name', parameters('infrastructureTags')['azbrief.v2.identity'], 'resource_type', 'Microsoft.ManagedIdentity/userAssignedIdentities', 'api_version', '2023-01-31'), createObject('id', 'state_storage', 'label', if(empty(parameters('infrastructureTags')['azbrief.v2.cosmos']), 'Application Storage (State, Archive, Feedback)', 'Shared Storage (State, Archive, Foundry)'), 'name', parameters('infrastructureTags')['azbrief.v2.storage'], 'resource_type', 'Microsoft.Storage/storageAccounts', 'api_version', '2023-05-01'), createObject('id', 'cosmos', 'label', 'Cosmos DB', 'name', parameters('infrastructureTags')['azbrief.v2.cosmos'], 'resource_type', 'Microsoft.DocumentDB/databaseAccounts', 'api_version', '2024-11-15'), createObject('id', 'search', 'label', 'Azure AI Search', 'name', parameters('infrastructureTags')['azbrief.v2.search'], 'resource_type', 'Microsoft.Search/searchServices', 'api_version', '2023-11-01')), lambda('resource', not(empty(lambdaVariables('resource').name))))]"
   },
   "resources": [
     {

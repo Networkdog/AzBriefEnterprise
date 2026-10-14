@@ -55,7 +55,7 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 
 `infra/v2` is an opt-in existing-VNet private profile, not a replacement for the existing
 Enterprise/KT Portal buttons or a legacy migration. `infrastructure.bicep` owns one-time
-foundation/completion, model/project/BYO provisioning, scoped roles, logs and the completion-only
+foundation/completion, model/project/Host provisioning, scoped roles, logs and the completion-only
 RG handoff. Foundation stores its options/status; managed-MCP completion records mcp_pending.
 Portal infrastructure must contain no Microsoft.Graph resources. Authorized CLI-only
 mcp-authentication.bicep prepares the same Entra app/project role/RemoteTool connection and
@@ -84,6 +84,17 @@ in addition to the two standard Enterprise links and one KT link. Pair them with
 infrastructure/application CreateUI definitions. RG-visible names remain customer inputs;
 model aliases/IDs/capacity, Hosted and MCP connection settings are automatic. Use the tested
 KT network guards through scripts/build_v2_ui.py.
+Fresh v2 defaults useMicrosoftManagedAgentData=true and the official Basic VNet Host shape:
+keep scenario=agent/PNA Disabled/private ingress and omit all three BYO connection properties.
+Do not create Foundry-only Cosmos/Search/BYO connections/data roles/associated PE-DNS. Keep
+application Blob Storage for Archive/state/Admin/Feedback, with no project data access to it.
+Persist mode within existing option chunks; missing legacy flag means BYO. Never silently
+switch an existing Host, drop saved choices, delete old stores or weaken network/auth. Legacy
+Foundation completion uses explicit false and original names; unknown/redirected mode/Host/
+telemetry remains blocking. Admin readiness and Portal names exclude uncreated services.
+Basic VNet platform-managed data is documented separately from Standard-private BYO; do not
+generalize Standard's resource requirements to every injected VNet. Actual region/API/Agent/
+MCP acceptance is separate from compile/tests. Standard Enterprise/KT profiles remain unchanged.
 Keep UI output JSON assembly safe with unloaded RG/VNet/tag state even under eager branch
 evaluation. Empty initialization fallbacks never authorize completion; retain required tags
 and test loaded/unloaded states. A CreateUIDef CustomDeploymentBlade error is not ARM/Graph

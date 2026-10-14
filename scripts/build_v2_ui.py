@@ -67,6 +67,11 @@ def _group_resource_names(parameters: dict[str, Any]) -> None:
         name: f"concat('{start}', {prefix}, '{separator}', {suffix})"
         for name, (start, separator) in RESOURCE_NAME_PARTS.items()
     }
+    displayed_expressions = {
+        name: expression
+        for name, expression in expressions.items()
+        if name not in {"cosmosAccountName", "searchServiceName"}
+    }
     retained = [
         element
         for element in step["elements"]
@@ -109,8 +114,8 @@ def _group_resource_names(parameters: dict[str, Any]) -> None:
                 "text": "[concat("
                 + ", ".join(
                     f"'{name}: ', {expression}"
-                    + (", ' | '" if index < len(expressions) - 1 else "")
-                    for index, (name, expression) in enumerate(expressions.items())
+                    + (", ' | '" if index < len(displayed_expressions) - 1 else "")
+                    for index, (name, expression) in enumerate(displayed_expressions.items())
                 )
                 + ")]",
             },
@@ -128,6 +133,30 @@ def _group_resource_names(parameters: dict[str, Any]) -> None:
             saved_options.replace(".emailDataLocation", f".{name}")
             + f", coalesce(steps('names').{name}, ''))]"
         )
+
+
+def _managed_agent_data_outputs(parameters: dict[str, Any]) -> None:
+    if not any(step["name"] == "contract" for step in parameters["steps"]):
+        return
+    chunks = [
+        f"coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.options{index}'], '')"
+        for index in range(8)
+    ]
+    combined = "concat(" + ", ".join(chunks) + ")"
+    options = f"parse(if(empty({combined}), '{{}}', {combined}))"
+    managed = f"if(equals(basics('infrastructureStage'), 'foundation'), true, coalesce({options}.useMicrosoftManagedAgentData, false))"
+    if "useMicrosoftManagedAgentData" not in parameters["outputs"]:
+        for name in ("cosmosAccountName", "searchServiceName"):
+            existing = parameters["outputs"][name]
+            parameters["outputs"][name] = f"[if({managed}, '', {existing[1:-1]})]"
+        parameters["outputs"]["useMicrosoftManagedAgentData"] = f"[{managed}]"
+    parameters["outputs"][
+        "searchSku"
+    ] = f"[if(equals(basics('infrastructureStage'), 'complete'), coalesce({options}.searchSku, 'basic'), 'basic')]"
+    for step in parameters["steps"]:
+        for element in step["elements"]:
+            if element["name"] == "searchSku":
+                element["visible"] = False
 
 
 def _remove_validation_surfaces(parameters: dict[str, Any]) -> None:
@@ -298,6 +327,7 @@ def normalize_ui(
                 }
             )
     _group_resource_names(parameters)
+    _managed_agent_data_outputs(parameters)
     _remove_validation_surfaces(parameters)
     _application_deployment_tag_guard(parameters)
     for step in parameters["steps"]:

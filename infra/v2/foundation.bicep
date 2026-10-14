@@ -10,6 +10,7 @@ param foundryAccountName string
 param storageAccountName string
 param cosmosAccountName string
 param searchServiceName string
+param useMicrosoftManagedAgentData bool
 param containerAppsEnvironmentName string
 param controlPlaneIdentityName string
 param logAnalyticsWorkspaceName string
@@ -57,7 +58,7 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
 }
 
 module dnsZones 'br/public:avm/res/network/private-dns-zone:0.8.1' = [
-  for (zoneName, index) in dnsZoneNames: if (!contains(existingPrivateDnsZoneIds, zoneName)) {
+  for (zoneName, index) in dnsZoneNames: if (!contains(existingPrivateDnsZoneIds, zoneName) && (!useMicrosoftManagedAgentData || (index != 4 && index != 5))) {
     name: 'v2-dns-${index}'
     params: {
       name: zoneName
@@ -121,7 +122,7 @@ module storage 'br/public:avm/res/storage/storage-account:0.33.1' = {
   }
 }
 
-module cosmos 'br/public:avm/res/document-db/database-account:0.21.1' = {
+module cosmos 'br/public:avm/res/document-db/database-account:0.21.1' = if (!useMicrosoftManagedAgentData) {
   name: 'v2-cosmos'
   params: {
     name: cosmosAccountName
@@ -145,7 +146,7 @@ module cosmos 'br/public:avm/res/document-db/database-account:0.21.1' = {
   }
 }
 
-module search 'br/public:avm/res/search/search-service:0.13.0' = {
+module search 'br/public:avm/res/search/search-service:0.13.0' = if (!useMicrosoftManagedAgentData) {
   name: 'v2-search'
   params: {
     name: searchServiceName
@@ -225,7 +226,7 @@ var endpointSpecs = [
 
 @batchSize(1)
 module privateEndpoints 'br/public:avm/res/network/private-endpoint:0.12.1' = [
-  for (endpoint, index) in endpointSpecs: if (endpoint.groupId != 'managedEnvironments' || deployContainerAppsPrivateEndpoint) {
+  for (endpoint, index) in endpointSpecs: if ((endpoint.groupId != 'managedEnvironments' || deployContainerAppsPrivateEndpoint) && (!useMicrosoftManagedAgentData || (index != 2 && index != 3))) {
     name: 'v2-private-endpoint-${index}'
     params: {
       name: endpoint.name

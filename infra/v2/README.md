@@ -9,11 +9,11 @@ Use a new set of resource names in one explicitly selected resource group.
 
 | User stage | Owns | Does not do |
 | --- | --- | --- |
-| Infrastructure, once | Foundry account, models, project/BYO, Storage/Cosmos/Search, control-plane and MCP UAMIs, internal Environment, DNS/PEs, logs/Insights, email, scoped roles, MCP Entra application/project connection, staged RG tag handoff | No App/Job/MCP container image or Prompt/Hosted Agent versions |
+| Infrastructure, once | Foundry account, models, project/Capability Host with Microsoft-managed agent data, application Blob Storage, control-plane and MCP UAMIs, internal Environment, DNS/PEs, logs/Insights, email, scoped roles, MCP Entra application/project connection, staged RG tag handoff | No Foundry-only Cosmos/Search/BYO stores by default; no App/Job/MCP image or Prompt/Hosted Agent versions |
 | Application, initially and repeatedly | Agent code/policies through the existing guarded publication workflow; real App/Job image, environment, secrets, registry configuration and CLI-prepared Entra web sign-in/default operators | No infrastructure, model, BYO, diagnostic or RBAC replay during image/configuration updates |
 
 The infrastructure command internally creates the foundation, waits for the account
-Capability Host, and then completes models/project/BYO/RBAC. These are implementation
+Capability Host, and then completes models/project/Host/RBAC. These are implementation
 steps inside one infrastructure operation, not another application stage. Do not
 precreate the project or replay the account's custom subdomain.
 The Portal ARM excludes all Microsoft Graph resources. For managed MCP, core completion
@@ -34,6 +34,7 @@ and separately approved evidence scopes remain operator-managed.
 | --- | --- |
 | [infrastructure.bicep](infrastructure.bicep) | [infrastructure.json](infrastructure.json), one-time infrastructure |
 | [foundation.bicep](foundation.bicep) | Internal foundation; reuses the pinned KT AVM modules and email module |
+| [managed-capability-host.bicep](managed-capability-host.bicep) | Basic VNet project Host with `capabilityHostKind=Agents` and no BYO connection properties or data roles |
 | [resource-group-tags.bicep](resource-group-tags.bicep) | Foundation, mcp_pending and ready handoff, including bounded saved options |
 | [mcp-authentication.bicep](mcp-authentication.bicep) | [mcp-authentication.json](mcp-authentication.json), CLI-only Graph app/project role/RemoteTool connection and ready promotion |
 | [application.bicep](application.bicep) | [application.json](application.json), repeatable App/Job installation and updates |
@@ -88,6 +89,40 @@ and 200 capacity units each. GlobalStandard processing can leave Korea Central.
 ACS/email data location defaults to Asia Pacific. Validate policy, price and capacity
 before opting into `--mode deploy`.
 
+## Agent Data Storage
+
+New v2 installations default to `useMicrosoftManagedAgentData=true`, following the official
+[Basic VNet data options](https://learn.microsoft.com/en-us/azure/foundry/agents/concepts/networking-options#bring-your-own-virtual-network-requirements)
+and [Basic VNet sample](https://github.com/microsoft-foundry/foundry-samples/tree/main/infrastructure/infrastructure-setup-bicep/11-private-network-basic-vnet).
+The account retains `networkInjections.scenario=agent`, the approved delegated subnet,
+`useMicrosoftManagedNetwork=false`, PNA Disabled and its private endpoint. The project
+Capability Host remains and uses API `2025-04-01-preview` with only `capabilityHostKind=Agents`.
+It **omits**, rather than empties, `storageConnections`, `threadStorageConnections` and
+`vectorStoreConnections`. Foundry uses platform-managed agent data resources; this is not a
+claim that each project gets newly provisioned, dedicated backing resources in the customer RG.
+
+The default template creates no Foundry-only Cosmos DB, Search, their PE/DNS resources, BYO
+project connections or Foundry data-plane role assignments. It still creates the app's private
+Storage account and Blob PE for `azbrief-state`/`azbrief-archive`: checkpoint, Admin settings,
+Feedback and canonical Archive are app responsibilities, not Foundry conversation storage.
+Admin readiness excludes absent Cosmos/Search targets. Default PE automation creates only
+Foundry and app Blob PEs; ACA PE remains optional. The conservative IP budget drops to 5
+(6 with ACA PE), with five canonical DNS namespaces plus the separate internal ingress zone.
+
+The data mode is saved inside the existing eight bounded option tags; the 41-tag budget and
+schema remain unchanged. Existing options without this flag mean the original BYO mode.
+Old Foundation completion requires explicit `useMicrosoftManagedAgentData=false` and its
+original Cosmos/Search names; Portal completion reuses the saved mode. An existing BYO Host
+cannot be silently treated as a Basic Host. The CLI rejects changed modes, non-ready Host state,
+unexpected data connections or modified telemetry instead of resetting resources or broadening
+permissions. Existing standard Enterprise/KT templates keep their original BYO behavior.
+
+Incremental omission does not delete previously created Cosmos/Search/PE/DNS resources or old
+grants, nor migrate files/conversations. Those require separate approved retirement/migration.
+Actual region/API acceptance, private runtime/MCP connectivity and Agent creation still require
+live validation. Standard-private guides require BYO for **Standard** setup; that does not rule
+out the documented **Basic VNet** path. No network/auth restriction is removed by this change.
+
 ## Resource Group Handoff
 
 New infrastructure merges **41** `azbrief.v2.*` tags without removing unrelated RG tags.
@@ -102,7 +137,8 @@ completion first; `mcp_pending` means authorized MCP preparation is still requir
 model quota blocks completion. Inspect current inventory errors/ownership before retrying.
 The eight `options0` through `options7` values each hold at most 256 characters of one
 allow-listed JSON object (2048 characters total). It preserves model IDs/version/capacity,
-Search SKU, email location, canonical DNS IDs, resource tags and non-secret MCP identifiers.
+the agent-data mode, legacy Search SKU, email location, canonical DNS IDs, resource tags and
+non-secret MCP identifiers. `cosmos` and `search` name tags are empty in managed mode.
 
 Names include `environment`, `app`, `job`, `identity`, `storage`, `cosmos`, `search`,
 `workspace`, `insights`, `acs`, `email`, `foundry`, `project`, `hosted`, `coreModel`,
@@ -115,7 +151,7 @@ and actual existing resources in **that same RG**. Operators do not re-enter all
 infrastructure names or pass a copied infrastructure-output object on every update.
 Tags are editable, plaintext routing metadata, not identity, permission or cryptographic
 proof. The CLI also checks explicit context, ownership, typed internal/PNA/subnet state
-and exact BYO bindings. Unknown/corrupt/missing contracts block writes.
+and exact saved Host/data-mode bindings. Unknown/corrupt/missing contracts block writes.
 
 ### Application Deployment Record
 

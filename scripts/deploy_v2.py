@@ -368,8 +368,15 @@ def parse_tag_contract(tags: dict[str, Any], require_ready: bool = True) -> dict
         or contract[PREFIX + "acaPeEnabled"] not in {"true", "false"}
     ):
         raise ValueError("Use the completed AzBrief v2 infrastructure contract")
+    managed_agent_data = decode_tag_options(contract).get("useMicrosoftManagedAgentData", False)
     for suffix in TAG_FIELDS.values():
         value = contract.get(PREFIX + suffix, "")
+        if suffix in {"cosmos", "search"} and managed_agent_data:
+            if value:
+                raise ValueError(
+                    "Microsoft-managed agent data must not bind customer Cosmos or Search"
+                )
+            continue
         if suffix in {"mcpApp", "mcpIdentity"} and not value:
             continue
         if suffix in {"mcpUrl", "mcpConnection"} and not value:
@@ -415,6 +422,7 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
         raise ValueError("Incomplete infrastructure option tags")
     options = json.loads("".join(tags[key] for key in OPTION_TAG_KEYS))
     optional = {
+        "useMicrosoftManagedAgentData",
         "manageAzureMcp",
         "azureMcpClientId",
         "azureMcpServicePrincipalId",
@@ -430,7 +438,17 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
         raise ValueError("Invalid saved infrastructure option type")
     if "manageAzureMcp" in options and type(options["manageAzureMcp"]) is not bool:
         raise ValueError("Invalid managed MCP setting")
-    for field in optional - {"manageAzureMcp", "namingPrefix", "namingSuffix"}:
+    if (
+        "useMicrosoftManagedAgentData" in options
+        and type(options["useMicrosoftManagedAgentData"]) is not bool
+    ):
+        raise ValueError("Invalid agent data storage mode")
+    for field in optional - {
+        "manageAzureMcp",
+        "useMicrosoftManagedAgentData",
+        "namingPrefix",
+        "namingSuffix",
+    }:
         if options.get(field):
             UUID(options[field])
     for field in ("namingPrefix", "namingSuffix"):
@@ -450,6 +468,7 @@ def infrastructure_values(cli: AzureCli, tags: dict[str, str]) -> dict[str, Any]
         field: tags.get(PREFIX + suffix, "") for field, suffix in TAG_FIELDS.items()
     }
     values.update(decode_tag_options(tags))
+    values.setdefault("useMicrosoftManagedAgentData", False)
     values.update(
         tenantId=cli.tenant,
         subscriptionId=cli.subscription,
@@ -1124,6 +1143,11 @@ def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
         "deploymentProfile": PROFILE,
     }
     validate_tag_budget(values["tags"])
+    if values["useMicrosoftManagedAgentData"]:
+        values["cosmosAccountName"] = ""
+        values["searchServiceName"] = ""
+    elif not values["cosmosAccountName"] or not values["searchServiceName"]:
+        raise ValueError("Existing BYO mode requires Cosmos DB and Search names")
     if len(values["tags"]) > 15:
         raise ValueError("Resource tags must also fit the Private DNS 15-tag limit")
     return values
@@ -1147,6 +1171,7 @@ def make_tag_contract(
     options.update(
         {
             "manageAzureMcp": not bool(values.get("azureMcpServerUrl")),
+            "useMicrosoftManagedAgentData": values.get("useMicrosoftManagedAgentData", False),
             "azureMcpClientId": values.get("azureMcpClientId", ""),
             "azureMcpServicePrincipalId": values.get("azureMcpServicePrincipalId", ""),
             "azureMcpAppRoleId": values.get("azureMcpAppRoleId", ""),
@@ -1173,6 +1198,8 @@ def _private_dns_bindings(cli: AzureCli, values: dict[str, Any], vnet_id: str) -
         "privatelink.search.windows.net",
         f"privatelink.{values['location']}.azurecontainerapps.io",
     }
+    if values.get("useMicrosoftManagedAgentData", False):
+        required -= {"privatelink.documents.azure.com", "privatelink.search.windows.net"}
     explicit = values["existingPrivateDnsZoneIds"]
     if set(explicit) - required:
         raise ValueError("Unexpected private DNS namespace")
@@ -1276,6 +1303,12 @@ def prepare_infrastructure(
         saved_options = decode_tag_options(saved)
         if not saved_options:
             raise ValueError("Completion requires saved foundation options")
+        if values.get("useMicrosoftManagedAgentData", False) != saved_options.get(
+            "useMicrosoftManagedAgentData", False
+        ):
+            raise ValueError(
+                "Agent data storage mode is immutable; never convert an existing Capability Host"
+            )
         for field, suffix in TAG_FIELDS.items():
             if field in {"deploymentName", "azureMcpServerUrl"}:
                 continue
@@ -1317,7 +1350,11 @@ def prepare_infrastructure(
             raise ValueError(
                 "Private Endpoint IP occupancy is unknown; verify free addresses before deployment"
             )
-        needed = 8 if values["deployContainerAppsPrivateEndpoint"] else 7
+        needed = (
+            (6 if values["deployContainerAppsPrivateEndpoint"] else 5)
+            if values.get("useMicrosoftManagedAgentData", False)
+            else (8 if values["deployContainerAppsPrivateEndpoint"] else 7)
+        )
         if pe_plan.network.num_addresses - 5 - len(used) < needed:
             raise ValueError(
                 "The Private Endpoint subnet does not have the required address budget"
@@ -1342,6 +1379,9 @@ def prepare_infrastructure(
         "communicationServicesName": "Microsoft.Communication/communicationServices",
         "emailServiceName": "Microsoft.Communication/emailServices",
     }
+    if values.get("useMicrosoftManagedAgentData", False):
+        expected.pop("cosmosAccountName")
+        expected.pop("searchServiceName")
     for field, resource_type in expected.items():
         resource_id = f"{cli.group_id}/providers/{resource_type}/{values[field]}"
         existing = by_id.get(resource_id.casefold())
@@ -1372,7 +1412,12 @@ def prepare_infrastructure(
     if saved_options:
         saved_dns = saved_options["existingPrivateDnsZoneIds"]
         resolved_dns = prepared["existingPrivateDnsZoneIds"]
-        _verify_saved_dns_bindings(cli, saved_dns, resolved_dns)
+        _verify_saved_dns_bindings(
+            cli,
+            saved_dns,
+            resolved_dns,
+            use_microsoft_managed_agent_data=values.get("useMicrosoftManagedAgentData", False),
+        )
         prepared["existingPrivateDnsZoneIds"] = saved_dns
     if stage == "complete":
         account_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}"
@@ -1401,10 +1446,16 @@ def prepare_infrastructure(
 
 
 def _verify_saved_dns_bindings(
-    cli: AzureCli, saved: dict[str, str], resolved: dict[str, str]
+    cli: AzureCli,
+    saved: dict[str, str],
+    resolved: dict[str, str],
+    *,
+    use_microsoft_managed_agent_data: bool = False,
 ) -> None:
     """Keep explicit DNS overrides and recognize the owned default zones foundation created."""
-    if len(resolved) != 7 or set(saved) - set(resolved):
+    if len(resolved) != (5 if use_microsoft_managed_agent_data else 7) or set(saved) - set(
+        resolved
+    ):
         raise ValueError("Completed foundation private DNS inventory is incomplete")
     for namespace, resource_id in resolved.items():
         expected = saved.get(

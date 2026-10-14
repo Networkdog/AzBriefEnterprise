@@ -126,12 +126,12 @@ var runtimeEnvironment = [
   { name: 'OTEL_ENABLED', value: 'true' }
   { name: 'APPLICATIONINSIGHTS_CONNECTION_STRING', value: insights.properties.ConnectionString }
 ]
-var supportResources = [
+var supportResources = filter([
   { id: 'managed_identity', label: 'User-assigned managed identity', name: infrastructureTags['azbrief.v2.identity'], resource_type: 'Microsoft.ManagedIdentity/userAssignedIdentities', api_version: '2023-01-31' }
-  { id: 'state_storage', label: 'Shared Storage (State, Archive, Foundry)', name: infrastructureTags['azbrief.v2.storage'], resource_type: 'Microsoft.Storage/storageAccounts', api_version: '2023-05-01' }
+  { id: 'state_storage', label: empty(infrastructureTags['azbrief.v2.cosmos']) ? 'Application Storage (State, Archive, Feedback)' : 'Shared Storage (State, Archive, Foundry)', name: infrastructureTags['azbrief.v2.storage'], resource_type: 'Microsoft.Storage/storageAccounts', api_version: '2023-05-01' }
   { id: 'cosmos', label: 'Cosmos DB', name: infrastructureTags['azbrief.v2.cosmos'], resource_type: 'Microsoft.DocumentDB/databaseAccounts', api_version: '2024-11-15' }
   { id: 'search', label: 'Azure AI Search', name: infrastructureTags['azbrief.v2.search'], resource_type: 'Microsoft.Search/searchServices', api_version: '2023-11-01' }
-]
+], resource => !empty(resource.name))
 var appDefaults = concat(runtimeEnvironment, [
   { name: 'MAX_CONCURRENT_ANALYSES', value: '1' }
   { name: 'ADMIN_UI_ENABLED', value: 'false' }
