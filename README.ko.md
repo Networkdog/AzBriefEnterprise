@@ -15,17 +15,8 @@
 Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication Services
 · Container App 제어면 + `/admin` + `/mcp` · 기본값은 VNet 주입 + Private Endpoint
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
-
-[고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md): 기반 배포 후 고객별 설정과 인수 검증을 진행합니다.
-
-**인프라 배포 (v2)**
-
-[![Azure 인프라 배포](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.createUiDefinition.json)
-
-**앱 배포 (v2)**
-
-[![Azure 앱 배포](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
+1. [v2 인프라 배포](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.createUiDefinition.json)
+2. [v2 앱 배포](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
 
 [v2 배포 가이드](infra/v2/README.md): 같은 리소스 그룹의 인프라 준비를 완료한 뒤 앱을 설치하거나 업데이트합니다.
 
@@ -35,7 +26,10 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 기존 설치를 옮기거나 모델만 원격 지역으로 연결하는 기능은 아닙니다. 모델·프로젝트가
 없는 기반의 명시적 모델 재선택 방법은 가이드에서 안내합니다.
 
-네트워크 탭의 **LLM 배포 리전**은 RG의 메타데이터 리전과 별개이며 기본값은 **East US**입니다.
+새 설치는 v2 인프라 배포에서 **기반 준비**를 선택한 뒤 **네트워크 선택**의
+**LLM 모델·Foundry·VNet 배포 리전**에서 리전을 고릅니다. **기존 기반 완성** 단계에서는
+저장된 리전을 유지하므로 메뉴가 숨겨지며, 앱 배포 템플릿에서도 모델 리전을 바꾸지 않습니다.
+이 리전은 RG의 메타데이터 리전과 별개이며 기본값은 **East US**입니다.
 새 Foundry 계정·하위 모델·VNet을 함께 선택한 리전에 배포하며 기존 VNet은 리전이 같아야 합니다.
 완료 단계는 저장된 리전을 유지하고 기존 리소스를 이동하지 않습니다.
 
@@ -72,7 +66,7 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 - [엔드투엔드 동작](#엔드투엔드-동작)
 - [빠른 시작](#빠른-시작)
 - [배포](#배포)
-  - [원클릭 배포](#원클릭-배포)
+  - [v2 단계 배포](#v2-단계-배포)
   - [네트워크 격리](#네트워크-격리-networkisolationmode)
   - [배포 후 단계](#배포-후-단계)
   - [예약 실행 운영](#예약-실행-운영)
@@ -562,7 +556,7 @@ Admin의 "run now"와 외부 API가 시작한 실행도 같은 `execute_run()`�
 
 ## 빠른 시작
 
-새 고객 설치는 [고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md)를 따릅니다. 이 절은 로컬 개발용이며
+새 고객 설치는 [v2 배포 가이드](infra/v2/README.md)를 따릅니다. 이 절은 로컬 개발용이며
 여기서 만드는 루트 `.env`를 고객 설정에 재사용하지 않습니다.
 
 로컬 개발에서는 Azure CLI identity로 Microsoft Foundry 프로젝트에 이미 배포된 Agent를
@@ -635,53 +629,32 @@ archive 저장까지 검증하지는 않습니다.
 
 ## 배포
 
-### 원클릭 배포
+### v2 단계 배포
 
-Foundry 계정과 모델 배포가 포함된 프로젝트, Container App(API + Admin + MCP), 예약 digest를
-실행하는 Container Apps Job, Key Vault, 상태·archive 저장소, 별도 평가 저장소, Communication Services로 구성된 Azure
-기반과 제어면을 배포합니다. Prompt Agent와 Hosted Agent는 Foundry 데이터 평면 객체이므로
-배포 후 단계에서 별도로 배포합니다.
+이 README 상단의 v2 배포 링크 두 개와 [v2 배포 가이드](infra/v2/README.md)만 사용합니다.
+인프라는 Foundry 계정·모델·프로젝트, 사설 네트워크, 앱 저장소, identity, 관측·이메일과
+RG 인계 정보를 한 번 준비합니다. 앱 배포는 이 인프라를 다시 만들지 않고 App·Job·MCP
+컨테이너를 설치하거나 업데이트합니다. Prompt/Hosted Agent 게시는 별도 검증 절차를 따릅니다.
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
+인프라 폼에서 **기반 준비 → 네트워크 선택 → LLM 모델·Foundry·VNet 배포 리전**을 선택합니다.
+기본값은 RG 메타데이터 리전과 독립적인 **East US**이며, 기존 기반 완성과 앱 업데이트에서는
+저장된 리전을 보존하므로 이 메뉴가 표시되지 않습니다.
 
-**먼저 [고객 배포 가이드](infra/CUSTOMER_DEPLOYMENT.md)를 확인하십시오.** 버튼은 승인된 모델과 버전,
-기존 고객 ACR, 이메일, Entra 접근을 입력하는 탭형 폼을 엽니다. VNet 격리를 유지하고 임시 공용
-접근과 정기 실행은 끄며 Key Vault purge protection을 켭니다. 준비용 앱은 80 포트와 `/`로
-응답하지만 아직 AzBrief 서비스는 아닙니다. 초기 동시 분석 수는 1입니다. 후속 설정은 VNet에
-연결된 배포 호스트에서 수행하며 고객별 소스 폴더와 azd 환경을 개발 환경과 분리합니다.
-폼은 Foundry와 VNet을 같은 리전에 배치합니다. 해당 리전의 모델·Hosted Agent 지원을 먼저 확인하십시오.
+**인프라와 앱의 역할:**
 
-**배포되는 항목**([infra/azbrief-enterprise-deploy.json](infra/azbrief-enterprise-deploy.json),
-[infra/enterprise/main.bicep](infra/enterprise/main.bicep)에서 작성):
-
-| 리소스 | 이름 | 비고 |
+| 리소스 | 단계 | 비고 |
 |----------|------|-------|
-| User Assigned Managed Identity | `id-{baseName}` | Container App과 scheduler Job이 공유 |
-| Microsoft Foundry account | `aif-{baseName}-{suffix}` | `AIServices` · `allowProjectManagement` · **`disableLocalAuth`** |
-| Foundry project | `{baseName}-agents` | Hosted Agent와 Prompt Agent의 데이터 평면 작업 공간 |
-| Model deployment | 고객이 승인한 모델과 버전 | 리전·SKU·capacity 단위·할당량 확인 필요. 원본 ARM 기본값이 호환성을 보장하지는 않음 |
-| Key Vault | `kv-{baseName}-{suffix}` | RBAC 전용, 모든 런타임 secret 보관 |
-| 상태·archive 저장소 | `st{baseName}{suffix}` | Private `azbrief-state`·`azbrief-archive` container, **`allowSharedKeyAccess: false`** |
-| 평가 저장소 + Foundry AAD connection | `steval{baseName}{suffix}` | 평가 산출물용 별도 Entra 전용 Blob 계정. 고객 archive와 분리 |
-| Container Apps Environment | `cae-{baseName}-{suffix}` | 제어면 App·Job과 Azure MCP App이 하나를 공유. 기본값에서 VNet 통합 |
-| Container App | `ca-{baseName}` | 제어면 API, `/admin`, `/archive`, `/feedback`, 인증된 `/mcp` |
-| Container Apps Job | `caj-{baseName}` | 인수 전에는 수동. 인수 후 cron, Hosted 호출, archive, checkpoint, email |
-| Hosted Agent(후속 `azd deploy`) | `{baseName}-analysis-hosted` | 전체 LangGraph 분석과 구독자 맞춤화, 전용 Entra identity |
-| Container App authConfig | `current` | 인증 설정을 제공했을 때 구성하는 Entra ID 로그인 |
-| Communication Services + Email | `acs-{baseName}-{suffix}` | Azure 관리 도메인 자동 연결 |
-| Log Analytics + Application Insights | `log-` / `appi-` | 각각 하나. 공용 콘솔 로그와 Entra 인증 AzBrief tracing |
-| 제어면 role assignment | 5개 | Key Vault Secrets User · Storage Blob Data Contributor · Foundry User · Monitoring Metrics Publisher · RG Reader |
-| Foundry project role assignment | 2개 | Foundry 계정의 Foundry User, 평가 저장소에만 Storage Blob Data Owner |
-| Azure MCP Server(후속 `Mcp` 단계) | `ca-{baseName}-mcp` | 별도 Entra 인증 읽기 전용 서버, identity, project connection |
+| Foundry 계정·모델·프로젝트·Capability Host | 인프라 | Microsoft 관리형 Agent 데이터를 사용하는 Basic VNet 구성. GlobalStandard 전용 |
+| VNet·서브넷·Private Endpoint·DNS | 인프라 | 신규 또는 승인된 기존 VNet. Foundry·모델·VNet은 선택한 리전에 함께 배포 |
+| 앱 상태·archive Blob 저장소 | 인프라 | 사설 container와 Entra 인증. Foundry 대화 저장소와 구분 |
+| 제어면·MCP UAMI와 범위를 제한한 역할 | 인프라 | 별도 identity 유지. Hosted 런타임 권한은 검증된 Agent 게시 후 구성 |
+| 공용 Container Apps Environment·로그·Insights·이메일 | 인프라 | Environment·Workspace·Insights를 각각 하나씩 공유. Entra 인증 유지 |
+| App·Manual Job·MCP 컨테이너·설정된 웹 로그인 | 앱 | 실제 이미지 설치와 반복 업데이트. 인프라 재배포 없음 |
+| Prompt Agent 6개와 Hosted Agent 1개 | 검증된 게시 절차 | 데이터 평면 버전과 런타임 검증은 ARM 템플릿에서 생성하지 않음 |
 
-MCP 배포는 기반 Environment와 관측 리소스를 재사용하며 별도 Environment, Application Insights,
-Workspace를 생성하지 않습니다. MCP의 system-assigned identity와 subscription Reader는 유지합니다.
-고정된 MCP exporter가 Entra 자격 증명을 설정하지 않으므로 MCP의 직접 Application Insights
-추적·메트릭 전송과 Microsoft telemetry는 비활성화합니다. MCP `stdout`/`stderr`는 공용
-Log Analytics에서 앱 이름으로 구분해 조회합니다. Application Insights는 Entra 전용으로 유지하며
-별도 수집기는 추가하지 않습니다.
-선택형 v2 프로필은 공용 모듈의 선택적 identity 입력으로 인프라가 만든 MCP UAMI를 연결하며,
-앱 업데이트에서 Reader 권한을 다시 만들지 않습니다.
+MCP는 인프라가 소유한 UAMI와 공용 Environment·관측 대상을 재사용합니다. 앱 업데이트에서는
+Reader 권한을 다시 만들지 않습니다. MCP의 직접 Insights 추적·메트릭과 Microsoft telemetry는
+비활성화하며 stdout/stderr는 공용 Log Analytics에 수집합니다. Insights는 Entra 전용으로 유지합니다.
 Core 출력에는 저장한 네트워크·identity 이름을 모두 포함합니다. 이전 출력에 이름이 빠져 있으면
 대응 ARM ID가 저장한 정확한 대상과 일치할 때만 MCP 준비 단계에서 보완하며, 이미 있는 이름의
 불일치나 다른 대상의 ID는 계속 차단합니다. Windows MSI CLI는 동봉 Python 진입점으로 호출해
@@ -693,11 +666,9 @@ Graph 쿼리 URL을 인자 하나로 보존합니다. Docker 지문에는 Linux 
 - **Foundry에는 로컬 키가 없습니다.** `disableLocalAuth: true`가 Entra ID token만 허용하므로
   유출되거나 교체할 모델 키가 없습니다.
 - **상태 저장소도 Entra 전용입니다.** Storage account는 `allowSharedKeyAccess: false`를 사용하며,
-  관리 ID의 쓰기 권한은 해당 계정 하나로 제한됩니다. Checkpoint는 secret이 아니므로 실제
-  secret을 보관하는 vault의 쓰기 권한을 부여하지 않습니다. `azbrief-archive` container도 public
-  access 없이 같은 identity만 사용합니다.
-- **런타임 secret은 Key Vault에만 보관합니다.** Container App과 scheduler Job은 managed
-  identity로 값을 참조하며, template output이나 API response에 값이 나타나지 않습니다.
+  제어면 권한은 상태·archive container 범위로 제한합니다.
+- **앱 자격 증명은 Container Apps secret 또는 승인된 secret 참조로 보관합니다.**
+  RG 태그·공개 output·커밋하는 고객 매개변수 파일에 넣지 않습니다.
 - **관리자 콘솔은 두 조건을 모두 충족해야 열립니다.** Entra app registration
   (`adminEntraClientId` + secret)과 명시적인 허용 목록(`adminAllowedPrincipals`)이 모두
   필요합니다. 하나라도 비어 있으면 `/admin`은 404를 반환합니다.
@@ -1331,15 +1302,16 @@ Container Apps proxy가 외부 envelope를 구성합니다.
 
 ### 인프라
 
-`infra/azbrief-enterprise-deploy.json`은 **컴파일된 output**입니다. Bicep을 수정하고 다시
-컴파일하십시오.
+v2 인프라·앱 JSON은 **컴파일된 output**입니다. Bicep을 수정하고 저장소에서 고정한
+컴파일러로 다시 생성하십시오. ARM JSON을 직접 수정하지 않습니다.
 
 ```bash
-az bicep build --file infra/enterprise/main.bicep \
-  --outfile infra/azbrief-enterprise-deploy.json
+az bicep build --file infra/v2/infrastructure.bicep --outfile infra/v2/infrastructure.json
+az bicep build --file infra/v2/application.bicep --outfile infra/v2/application.json
 ```
 
-Deploy 버튼이 JSON을 가리키므로 컴파일된 template이 Bicep source와 다르면 CI가 실패합니다.
+CI는 컴파일된 ARM과 생성된 Portal UI의 차이를 검사합니다. v2 링크 두 개는 같은 게시
+리비전에서 생성한 ARM/UI 파일 쌍을 가리켜야 합니다.
 
 CI workflow 자체를 변경해도 검사가 실행되며, `contents: read` 권한은 workflow 최상위에 선언합니다.
 배포 전에는 `src/`, `tests/`, `scripts/` 전체에 Black, isort, Flake8 검사를 실행하고,
@@ -1456,12 +1428,13 @@ AzBriefEnterprise/
 │   ├── web_fonts.py            # browser font and CSP policy
 │   └── services/               # Azure data access (incl. checkpoint.py + archive.py)
 ├── infra/
-│   ├── enterprise/main.bicep           # source of truth — edit here
-│   ├── enterprise/modules/             # modules inlined into the compiled template
-│   ├── azure-mcp-server/               # separate authenticated Azure MCP deployment
-│   ├── azbrief-enterprise-deploy.json  # compiled ARM template (Deploy button)
-│   ├── createUiDefinition.json        # guided Portal form paired with the ARM template
-│   └── CUSTOMER_DEPLOYMENT.md         # prerequisites, setup, acceptance, upgrades and recovery
+│   ├── v2/
+│   │   ├── infrastructure.bicep/json  # one-time infrastructure source/compiled ARM
+│   │   ├── application.bicep/json     # initial application install and repeatable updates
+│   │   ├── infrastructure.createUiDefinition.json
+│   │   ├── application.createUiDefinition.json
+│   │   └── README.md                 # prerequisites, stages and acceptance
+│   └── azure-mcp-server/             # shared authenticated Azure MCP modules
 ├── scripts/                    # Customer setup, local CLI, provisioning, quality evaluation
 │   ├── setup_customer.ps1      # customer-scoped staged setup and schedule activation
 │   ├── deploy_hosted_agent.ps1 # guarded Hosted Agent package/deployment/smoke

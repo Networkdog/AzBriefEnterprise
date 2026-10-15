@@ -285,9 +285,12 @@ AzBriefEnterprise/
 
 ## Deployment Topology
 
-New customer installations start from the paired README ARM/UI button
-(`infra/azbrief-enterprise-deploy.json` + `infra/createUiDefinition.json`) and follow
-`infra/CUSTOMER_DEPLOYMENT.md`. Bootstrap hello-world uses port 80 and `/`; real AzBrief uses
+Top-level README files expose only the v2 infrastructure/application Portal links with their
+paired CreateUiDefinition files. Never restore image Deploy buttons or legacy Enterprise/KT
+template links there. The model-region menu belongs to v2 foundation/network, not completion/App;
+check the exact public ARM/UI pair before claiming the customer's visible menu is fixed.
+The preserved legacy Enterprise profile follows `infra/CUSTOMER_DEPLOYMENT.md`.
+Bootstrap hello-world uses port 80 and `/`; real AzBrief uses
 8000 and `/health`. Jobs default to Manual (`enableScheduledRuns=false`), bootstrap images can
 never enable scheduling, and `maxConcurrentAnalyses=1` is the initial customer default.
 `scripts/setup_customer.ps1` reads only the versioned non-secret `customerSetup` output, requires

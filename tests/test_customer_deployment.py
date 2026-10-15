@@ -298,11 +298,10 @@ def test_readme_buttons_publish_the_same_arm_and_ui_pair() -> None:
         text = (ROOT / name).read_text(encoding="utf-8")
         links = re.findall(r"\]\((https://portal\.azure\.com/#create/[^)]+)\)", text)
         decoded_links = [unquote(link) for link in links]
-        links = [link for link in decoded_links if f"/uri/{expected_root}v2/" not in link]
-        assert len(links) == 2
-        for decoded in links:
-            assert f"/uri/{expected_root}azbrief-enterprise-deploy.json" in decoded
-            assert f"/createUIDefinitionUri/{expected_root}createUiDefinition.json" in decoded
+        assert len(decoded_links) == 2
+        assert "deploytoazurebutton" not in text
+        assert "azbrief-enterprise-deploy.json" not in text
+        assert "infra/enterprise/main.bicep" not in text
         for stage in ("infrastructure", "application"):
             stage_links = [
                 link for link in decoded_links if f"/uri/{expected_root}v2/{stage}.json" in link
@@ -312,9 +311,21 @@ def test_readme_buttons_publish_the_same_arm_and_ui_pair() -> None:
                 f"/createUIDefinitionUri/{expected_root}v2/{stage}.createUiDefinition.json"
                 in stage_links[0]
             )
-        assert len(decoded_links) == 4
-        assert "infra/CUSTOMER_DEPLOYMENT.md" in text
-    assert (ROOT / "infra" / "CUSTOMER_DEPLOYMENT.md").is_file()
+        destinations = [unquote(link) for link in re.findall(r"\]\(([^)]+)\)", text)]
+        assert not any(
+            destination.endswith(
+                (
+                    "infra/azbrief-enterprise-deploy.json",
+                    "infra/enterprise/main.bicep",
+                    "infra/kt/azuredeploy.json",
+                    "infra/createUiDefinition.json",
+                    "infra/kt/createUiDefinition.json",
+                )
+            )
+            for destination in destinations
+        )
+        assert "infra/v2/README.md" in text
+    assert (ROOT / "infra" / "v2" / "README.md").is_file()
 
 
 def run_mock_stage(

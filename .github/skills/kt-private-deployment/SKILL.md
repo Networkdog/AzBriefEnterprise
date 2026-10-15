@@ -31,10 +31,11 @@ Private Endpoints, or supporting data services into the KT environment.
 
 Never hand-edit the compiled ARM JSON. Change Bicep, compile with the pinned compiler, and keep
 the ARM/UI pair from the same source revision.
-Keep the paired KT Deploy button in both top-level READMEs while this profile ships. The repository
-contract expects two standard Enterprise Portal links, one KT Portal link and separate v2
-infrastructure/application Deploy buttons in each README. v2 buttons pair their compiled ARM
-with the corresponding real CreateUiDefinition on GitHub main after publication. Keep customer
+Top-level READMEs expose only two plain-text v2 infrastructure/application Portal links, paired
+with their exact CreateUiDefinition files. Do not restore Deploy image buttons or legacy
+Enterprise/KT template links there; preserved legacy templates remain internal compatibility
+assets. Check the public v2 UI for modelDeploymentRegion and its foundation-only visibility,
+not just local source, before diagnosing a missing menu. Keep customer
 RG resource-name inputs, automatic aliases/MCP settings, explicit v2 models and guarded live
 preflight.
 

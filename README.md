@@ -15,17 +15,8 @@
 Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication Services
 · Container App control plane + `/admin` + `/mcp` · VNet injection + Private Endpoint by default
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
-
-[Customer deployment guide](infra/CUSTOMER_DEPLOYMENT.md): foundation first, then guided setup and acceptance.
-
-**Infrastructure Deployment (v2)**
-
-[![Deploy Infrastructure to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.createUiDefinition.json)
-
-**Application Deployment (v2)**
-
-[![Deploy Application to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
+1. [v2 Infrastructure Deployment](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.createUiDefinition.json)
+2. [v2 Application Deployment](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
 
 [v2 deployment guide](infra/v2/README.md): complete infrastructure in the same resource group before installing or updating the application.
 
@@ -35,6 +26,10 @@ capacities and the deployment region. Check catalog, quota and provider capacity
 this does not move an existing installation or route only its models remotely. The guide
 covers explicit model reselection for a foundation with no models or projects.
 
+For a new installation, choose **기반 준비 (Foundation)** in v2 Infrastructure Deployment, then
+open **네트워크 선택 (Network selection)** to select **LLM 모델·Foundry·VNet 배포 리전**. It is hidden
+during **Complete existing foundation**, which must preserve the saved region; the application
+template also cannot change model regions.
 The network tab's **LLM deployment region** is independent of the resource group's metadata
 location and defaults to **East US**. It selects the new Foundry account, child models and VNet
 together; an existing VNet must match. Completion retains the saved region without moving resources.
@@ -72,7 +67,7 @@ before installation; a template update does not publish a new image.
 - [End-to-end operation](#end-to-end-operation)
 - [Quick Start](#quick-start)
 - [Deployment](#deployment)
-  - [One-click deploy](#one-click-deploy)
+  - [Two-stage deployment](#two-stage-deployment)
   - [Network isolation](#network-isolation-networkisolationmode)
   - [Post-deployment steps](#post-deployment-steps)
   - [Scheduling operations](#scheduling-operations)
@@ -588,7 +583,7 @@ records are for observability; the checkpoint alone owns processing state that m
 
 ## Quick Start
 
-For a new customer installation, use the [customer deployment guide](infra/CUSTOMER_DEPLOYMENT.md).
+For a new customer installation, use the [v2 deployment guide](infra/v2/README.md).
 This section is for local development; its root `.env` must not be reused by customer setup.
 
 Local development uses your Azure CLI identity to invoke agents already published in a
@@ -662,55 +657,33 @@ email and does not test control-plane archive persistence.
 
 ## Deployment
 
-### One-click deploy
+### Two-stage deployment
 
-Deploys the Azure foundation and control plane: a Foundry account and project with a model
-deployment, the Container App (API + Admin + MCP), the Container Apps Job that drives the
-scheduled digest, Key Vault, state/archive storage, separate evaluation storage, and Communication
-Services. Prompt Agents and the
-Hosted Agent are Foundry data-plane objects and are deployed in the post-deployment steps.
+Use only the two v2 deployment links at the top of this README, with the
+[v2 deployment guide](infra/v2/README.md). Infrastructure prepares the Foundry account, models,
+project, private network, app-owned storage, identities, monitoring, email and RG handoff once.
+Application deployment installs or updates the App, Job and managed MCP container without replaying
+that infrastructure. Prompt/Hosted Agent publication and runtime acceptance remain guarded steps.
 
-[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2FcreateUiDefinition.json)
+In the infrastructure form, select **Foundation**, then open **Network selection**. The
+**LLM model / Foundry / VNet deployment region** menu defaults to **East US** independently of
+the RG's metadata location. It is intentionally hidden for completion and application updates.
 
-**Start with the [customer deployment guide](infra/CUSTOMER_DEPLOYMENT.md).** The button now opens
-a tabbed form for an approved model/version, existing customer registry, email and Entra access.
-It keeps VNet isolation, disables temporary public access and automatic runs, and enables Key
-Vault purge protection. The bootstrap application uses port 80 and `/`; it is not AzBrief yet.
-Initial analysis concurrency is 1. Use a VNet-connected deployment host for the follow-up steps,
-and keep each customer's source checkout and azd environment separate from local development.
-The form binds Foundry and the VNet to the same region; confirm model/Hosted availability in that region.
+**Infrastructure and application responsibilities:**
 
-**What gets deployed** ([infra/azbrief-enterprise-deploy.json](infra/azbrief-enterprise-deploy.json),
-authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
+| Resource | Stage | Notes |
+|----------|-------|-------|
+| Foundry account, models, project and Capability Host | Infrastructure | Basic VNet setup with Microsoft-managed agent data; GlobalStandard only |
+| VNet/subnets, Private Endpoints and DNS | Infrastructure | New or approved existing VNet; Foundry, models and VNet share the selected region |
+| App state/archive Blob storage | Infrastructure | Private containers and Entra-only access; not Foundry conversation storage |
+| Control-plane and MCP UAMIs with scoped roles | Infrastructure | Separate identities; Hosted runtime grants follow guarded Agent publication |
+| Shared Container Apps Environment, logs, Insights and email | Infrastructure | One environment/workspace/Insights component; Entra authentication retained |
+| App, Manual Job, managed MCP container and configured web sign-in | Application | Real image and repeatable updates; no infrastructure replay |
+| Six Prompt Agents and one Hosted Agent | Guarded publication | Data-plane versions and runtime smoke are not created by ARM templates |
 
-| Resource | Name | Notes |
-|----------|------|-------|
-| User Assigned Managed Identity | `id-{baseName}` | Shared by the Container App and scheduler Job |
-| Microsoft Foundry account | `aif-{baseName}-{suffix}` | `AIServices` · `allowProjectManagement` · **`disableLocalAuth`** |
-| Foundry project | `{baseName}-agents` | Data-plane workspace for the Hosted Agent and Prompt Agents |
-| Model deployment | Customer-approved model/version | Confirm region, SKU, capacity-unit mapping and quota; raw ARM defaults are not a compatibility guarantee |
-| Key Vault | `kv-{baseName}-{suffix}` | RBAC-only store for all runtime secrets |
-| State/archive storage | `st{baseName}{suffix}` | Private `azbrief-state` and `azbrief-archive` containers, **`allowSharedKeyAccess: false`** |
-| Evaluation storage + Foundry AAD connection | `steval{baseName}{suffix}` | Separate Entra-only Blob account for evaluation artifacts, not customer archives |
-| Container Apps Environment | `cae-{baseName}-{suffix}` | One environment shared by the control-plane App, Job, and Azure MCP App; VNet-integrated by default |
-| Container App | `ca-{baseName}` | Control-plane API, `/admin`, `/archive`, `/feedback`, and authenticated `/mcp` |
-| Container Apps Job | `caj-{baseName}` | Manual until acceptance; then cron, Hosted invocation, checkpoint, and email |
-| Hosted Agent (subsequent `azd deploy`) | `{baseName}-analysis-hosted` | Complete LangGraph analysis and subscriber customization with a dedicated Entra identity |
-| Container App authConfig | `current` | Entra ID sign-in when authentication is configured |
-| Communication Services + Email | `acs-{baseName}-{suffix}` | Azure-managed domain connected automatically |
-| Log Analytics + Application Insights | `log-` / `appi-` | One of each: shared console logs and Entra-authenticated AzBrief tracing |
-| Control-plane role assignments | 5 assignments | Key Vault Secrets User · Storage Blob Data Contributor · Foundry User · Monitoring Metrics Publisher · RG Reader |
-| Foundry project role assignments | 2 assignments | Foundry User on the account and Storage Blob Data Owner on evaluation storage only |
-| Azure MCP Server (subsequent `Mcp` stage) | `ca-{baseName}-mcp` | Separate Entra-authenticated read-only server, identity, and project connection |
-
-The MCP deployment reuses the foundation environment and monitoring resources; it creates no
-additional environment, Application Insights component, or workspace. MCP retains its own
-system-assigned identity and subscription Reader. Its pinned exporter does not configure Entra
-credentials, so direct MCP Application Insights traces/metrics and Microsoft telemetry are disabled.
-MCP `stdout`/`stderr` remains available in the shared Log Analytics workspace, identified by app
-name. The existing Application Insights component remains Entra-only; no collector is added.
-The opt-in v2 profile instead attaches its infrastructure-owned MCP UAMI through the shared
-module's optional identity input; it does not recreate Reader grants during application updates.
+MCP reuses the infrastructure-owned UAMI, shared environment and monitoring targets. Application
+updates do not recreate Reader grants. Direct MCP Insights traces/metrics and Microsoft telemetry
+remain disabled; stdout/stderr use the shared Log Analytics workspace. Insights remains Entra-only.
 Its core output includes every saved network and identity name. MCP preparation accepts an
 older output's missing names only when the corresponding ARM IDs match the exact saved targets;
 present mismatches or redirected IDs still block. Windows MSI CLI calls use the bundled Python
@@ -722,11 +695,9 @@ selected `.dockerignore` even when PowerShell treats it as hidden on Linux.
 - **Foundry has no local key** — `disableLocalAuth: true` accepts only Entra ID tokens. There is
   no model key to leak or rotate.
 - **The state store is Entra-only too** — the Storage account uses
-  `allowSharedKeyAccess: false`, and the managed identity's write permission is scoped to that
-  account alone. A checkpoint is not a secret, so it does not earn write access to the vault that
-  holds real secrets.
-- **Runtime secrets stay in Key Vault.** The Container App and scheduler Job reference them through
-  managed identity, and values do not appear in template outputs or API responses.
+  `allowSharedKeyAccess: false`, with control-plane access scoped to the state/archive containers.
+- **Application credentials stay in Container Apps secrets or approved secret references.**
+  Never place them in RG tags, public outputs or committed customer parameter files.
 - **The admin console requires both conditions** — an Entra app registration
   (`adminEntraClientId` + secret) and an explicit allow-list (`adminAllowedPrincipals`). If either
   is empty, `/admin` returns 404.
@@ -1386,15 +1357,16 @@ Container Apps proxy builds the outer envelope itself in production.
 
 ### Infrastructure
 
-`infra/azbrief-enterprise-deploy.json` is **compiled output** — edit the Bicep and recompile:
+The v2 infrastructure/application JSON files are **compiled output**. Edit their Bicep sources
+and compile with the repository's pinned compiler; never hand-edit the ARM JSON:
 
 ```bash
-az bicep build --file infra/enterprise/main.bicep \
-  --outfile infra/azbrief-enterprise-deploy.json
+az bicep build --file infra/v2/infrastructure.bicep --outfile infra/v2/infrastructure.json
+az bicep build --file infra/v2/application.bicep --outfile infra/v2/application.json
 ```
 
-CI fails when the compiled template drifts from the Bicep source, because the Deploy button
-points at the JSON.
+CI checks compiled ARM and generated Portal UI drift. The two v2 links must reference matching
+ARM/UI files from the same published revision.
 
 CI also runs when its own workflow changes and declares `contents: read` at the workflow root.
 Before deployment, check Black, isort, and Flake8 across `src/`, `tests/`, and `scripts/`, then
@@ -1513,12 +1485,13 @@ AzBriefEnterprise/
 │   ├── web_fonts.py            # browser font and CSP policy
 │   └── services/               # Azure data access (incl. checkpoint.py + archive.py)
 ├── infra/
-│   ├── enterprise/main.bicep           # source of truth — edit here
-│   ├── enterprise/modules/             # modules inlined into the compiled template
-│   ├── azure-mcp-server/               # separate authenticated Azure MCP deployment
-│   ├── azbrief-enterprise-deploy.json  # compiled ARM template (Deploy button)
-│   ├── createUiDefinition.json        # guided Portal form paired with the ARM template
-│   └── CUSTOMER_DEPLOYMENT.md         # prerequisites, setup, acceptance, upgrades and recovery
+│   ├── v2/
+│   │   ├── infrastructure.bicep/json  # one-time infrastructure source/compiled ARM
+│   │   ├── application.bicep/json     # initial application install and repeatable updates
+│   │   ├── infrastructure.createUiDefinition.json
+│   │   ├── application.createUiDefinition.json
+│   │   └── README.md                 # prerequisites, stages and acceptance
+│   └── azure-mcp-server/             # shared authenticated Azure MCP modules
 ├── scripts/                    # Customer setup, local CLI, provisioning, quality evaluation
 │   ├── setup_customer.ps1      # customer-scoped staged setup and schedule activation
 │   ├── deploy_hosted_agent.ps1 # guarded Hosted Agent package/deployment/smoke
