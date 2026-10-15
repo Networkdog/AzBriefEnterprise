@@ -71,13 +71,14 @@ profiles and KT defaults. New omitted Simple version uses its independent defaul
 and old missing saved versions use Core. --list-model-options is read-only catalog/quota/provider
 capacity discovery, not runtime acceptance. Strict v2 selection never uses KT's fallback and
 reuses models only on exact model/version/SKU match. Combine shared quota separately from
-version-specific provider capacity. The network-tab modelDeploymentRegion dropdown defaults
-to East US; hide native Basics location instead of assuming an unsupported defaultValue.
-Block mismatched/unknown existing-VNet locations, show mismatch guidance and preserve saved
-location on completion. New region means a new same-region Foundry/VNet/models
+version-specific provider capacity. New region means a new same-region Foundry/VNet/models
 installation, not remote routing or account migration. --stage complete --reselect-models changes
 only six physical model fields on saved foundation with zero deployments/projects; all other
 choices stay immutable. Block partial/existing state, denied reads, tag forcing and Host resets.
+V2 Portal modelDeploymentRegion is separate from RG metadata location, with East US default.
+Hide native Basics location; use documented VNet location=all while retaining subscription scope
+and explicit matching-region checks. Unknown/mismatching VNet regions block, not substitute the
+selection. Completed KRC profiles keep their saved region; no model-only remote routing is implied.
 Two application tags record not_deployed/empty initially, then deployed and the successful
 ARM application's UTC start time after App/Job/requested auth/MCP dependencies. Preserve
 customer and previous-success tags; failed/preview paths never advance them. Legacy 39-tag

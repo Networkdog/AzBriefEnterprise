@@ -296,19 +296,6 @@ def test_new_defaults_match_portal_cli_and_global_standard(tmp_path: Path) -> No
     schema = template("infrastructure")["parameters"]
     values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
     controls = ui_controls("infrastructure")
-    assert controls["modelDeploymentRegion"]["defaultValue"] == "East US"
-    assert ui_definition("infrastructure")["config"]["basics"]["location"]["visible"] is False
-    assert (
-        _evaluate_ui_expression(
-            ui_definition("infrastructure")["outputs"]["location"],
-            {"contract": {"resourceGroupApi": None}},
-            network={},
-            basics={"infrastructureStage": "foundation"},
-            selected_location="koreacentral",
-            eager_conditionals=True,
-        )
-        == "eastus"
-    )
     for field, value in expected.items():
         assert schema[field]["defaultValue"] == value
         assert values[field] == value
@@ -333,6 +320,21 @@ def test_new_defaults_match_portal_cli_and_global_standard(tmp_path: Path) -> No
     ]
     assert len(deployments) == 2
     assert all(resource["sku"]["name"] == "GlobalStandard" for resource in deployments)
+    assert controls["modelDeploymentRegion"]["defaultValue"] == "East US"
+    assert controls["virtualNetwork"]["options"]["filter"]["location"] == "all"
+    assert ui_definition("infrastructure")["config"]["basics"]["location"]["visible"] is False
+    assert (
+        _evaluate_ui_expression(
+            ui_definition("infrastructure")["outputs"]["location"],
+            {"contract": {"resourceGroupApi": None}},
+            network={"virtualNetworkMode": "new"},
+            basics={"infrastructureStage": "foundation"},
+            resource_group={"location": "koreacentral"},
+            selected_location="koreacentral",
+            eager_conditionals=True,
+        )
+        == "eastus"
+    )
 
 
 def test_new_defaults_do_not_replace_saved_legacy_models(tmp_path: Path) -> None:
@@ -371,47 +373,6 @@ def test_new_defaults_do_not_replace_saved_legacy_models(tmp_path: Path) -> None
             )
             == values[field]
         )
-
-
-@pytest.mark.parametrize(
-    "selected,actual,expected",
-    [
-        ("eastus", "eastus", True),
-        ("koreacentral", "koreacentral", True),
-        ("eastus", "koreacentral", False),
-        ("eastus", None, False),
-    ],
-)
-def test_model_region_must_match_existing_vnet(
-    tmp_path: Path, selected: str, actual: str | None, expected: bool
-) -> None:
-    cli, values = infrastructure_cli(tmp_path)
-    vnet_id = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
-    network = {
-        **values,
-        "modelDeploymentRegion": selected,
-        "virtualNetwork": {"id": vnet_id, "location": actual},
-        "virtualNetworkApi": {**cli.documents[vnet_id], "location": actual},
-    }
-    arguments = {
-        "names": {
-            "contract": {"contractAccepted": True, "resourceGroupApi": None},
-            "names": {"namingPrefix": "kt", "namingSuffix": "dev"},
-        },
-        "network": network,
-        "resource_group": {"mode": "New"},
-        "basics": {"infrastructureStage": "foundation"},
-        "eager_conditionals": True,
-    }
-    assert (
-        _evaluate_ui_expression(
-            ui_definition("infrastructure")["outputs"]["portalValidationPassed"], **arguments
-        )
-        is expected
-    )
-    assert _evaluate_ui_expression(
-        ui_controls("infrastructure")["modelRegionMismatchNotice"]["visible"], **arguments
-    ) is bool(actual and selected != actual)
 
 
 @pytest.mark.parametrize(
@@ -2226,6 +2187,63 @@ def test_independent_versions_roundtrip_and_legacy_version_falls_back(tmp_path: 
     )
 
 
+@pytest.mark.parametrize(
+    "api_region,picker_region,expected",
+    [
+        ("eastus", "eastus", True),
+        ("koreacentral", "koreacentral", False),
+        (None, None, False),
+        (None, "eastus", True),
+    ],
+)
+def test_model_region_is_independent_from_rg_but_matches_existing_vnet(
+    tmp_path: Path, api_region: str | None, picker_region: str | None, expected: bool
+) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    vnet_id = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
+    api = copy.deepcopy(cli.documents[vnet_id])
+    api.pop("location", None)
+    picker: dict[str, Any] = {"id": vnet_id}
+    if api_region is not None:
+        api["location"] = api_region
+    if picker_region is not None:
+        picker["location"] = picker_region
+    network = {
+        **values,
+        "modelDeploymentRegion": "eastus",
+        "virtualNetwork": picker,
+        "virtualNetworkApi": api,
+    }
+    data = {
+        "contract": {"contractAccepted": True, "resourceGroupApi": None},
+        "names": {"namingPrefix": "kt", "namingSuffix": "dev"},
+    }
+    assert (
+        _evaluate_ui_expression(
+            ui_definition("infrastructure")["outputs"]["location"],
+            data,
+            network=network,
+            basics={"infrastructureStage": "foundation"},
+            resource_group={"mode": "New", "location": "koreacentral"},
+            selected_location="koreacentral",
+            eager_conditionals=True,
+        )
+        == "eastus"
+    )
+    assert (
+        _evaluate_ui_expression(
+            ui_definition("infrastructure")["outputs"]["portalValidationPassed"],
+            data,
+            network=network,
+            basics={"infrastructureStage": "foundation"},
+            resource_group={"mode": "New", "location": "koreacentral"},
+            selected_location="koreacentral",
+            eager_conditionals=True,
+        )
+        is expected
+    )
+
+
 def test_core_and_mcp_customer_names_never_merge_identities(tmp_path: Path) -> None:
     cli, values = infrastructure_cli(tmp_path)
     values["azureMcpIdentityName"] = values["controlPlaneIdentityName"]
@@ -2362,10 +2380,9 @@ def test_v2_matches_working_kt_navigation_and_subnet_choice_contract() -> None:
             ui_controls("infrastructure")[name]["defaultValue"]
             == legacy_controls[name]["defaultValue"]
         )
-    assert (
-        ui_controls("infrastructure")["virtualNetwork"]["options"]
-        == legacy_controls["virtualNetwork"]["options"]
-    )
+    expected_options = copy.deepcopy(legacy_controls["virtualNetwork"]["options"])
+    expected_options["filter"]["location"] = "all"
+    assert ui_controls("infrastructure")["virtualNetwork"]["options"] == expected_options
 
 
 @pytest.mark.parametrize("network_group", ["rg-customer-network", "RG-Customer-Network"])

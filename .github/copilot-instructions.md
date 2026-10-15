@@ -337,9 +337,11 @@ catalog, exact SKU quota and provider capacity, not a reservation or runtime/qua
 Strict v2 completion never substitutes models and compares reused model/version/SKU exactly.
 Combine shared quota without conflating distinct versions' provider capacity. New region means
 a new same-region Foundry/VNet/model installation, not an account move or remote-only routing.
-Portal uses the network-tab modelDeploymentRegion selector, default East US; hide the native
-Basics location rather than adding its undocumented defaultValue. Existing VNet location must
-match the selection; missing/mismatched location blocks and completion retains saved location.
+Portal modelDeploymentRegion is independent of RG metadata location and defaults to East US;
+hide native Basics location, never add unsupported defaultValue configuration. The VNet selector
+keeps subscription scope but uses documented location=all so RG location cannot hide candidates.
+Require known matching VNet region before submission, never silently override the selected region.
+Completion retains saved location, including older Korea Central installs.
 Explicit --stage complete --reselect-models allows only six model fields to change on saved
 foundation with zero model deployments and zero projects. All other choices stay immutable;
 existing/partial model or project state requires diagnosis, never overwrite, tag forcing or reset.

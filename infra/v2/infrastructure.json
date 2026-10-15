@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "9094470895957670650"
+      "templateHash": "5770095477345338705"
     },
     "description": "One-time AzBrief v2 infrastructure. Foundation and completion are internal orchestration stages; application containers and Agent versions are excluded."
   },
@@ -40,7 +40,10 @@
     },
     "location": {
       "type": "string",
-      "defaultValue": "eastus"
+      "defaultValue": "eastus",
+      "metadata": {
+        "description": "Foundry, child model and private-network deployment region, independent of the resource-group metadata location. An existing VNet must match."
+      }
     },
     "virtualNetworkMode": {
       "type": "string",

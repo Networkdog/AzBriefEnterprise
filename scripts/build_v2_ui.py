@@ -395,20 +395,24 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
     names = set(fields) | {"modelCapacity", "simpleModelCapacity", "modelRegionNotice"}
     step["elements"] = [element for element in step["elements"] if element["name"] not in names]
     foundation = "equals(basics('infrastructureStage'), 'foundation')"
+    region = "coalesce(steps('network').modelDeploymentRegion, 'eastus')"
+    new_network = "equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'new')"
+    vnet_region = "toLower(coalesce(steps('network').virtualNetworkApi.location, steps('network').virtualNetwork.location, ''))"
+    same_region = f"and(not(empty({vnet_region})), equals({vnet_region}, {region}))"
     network_step = next(step for step in parameters["steps"] if step["name"] == "network")
-    selected_region = "coalesce(steps('network').modelDeploymentRegion, 'eastus')"
-    existing_network = (
-        "equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'existing')"
-    )
-    actual_region = "toLower(coalesce(steps('network').virtualNetworkApi.location, steps('network').virtualNetwork.location, ''))"
     network_step["elements"] = [
+        element
+        for element in network_step["elements"]
+        if element["name"] not in {"modelDeploymentRegion", "modelRegionMismatchNotice"}
+    ]
+    network_step["elements"][:0] = [
         {
             "name": "modelDeploymentRegion",
             "type": "Microsoft.Common.DropDown",
             "label": "LLM 모델·Foundry·VNet 배포 리전",
             "defaultValue": "East US",
             "visible": f"[{foundation}]",
-            "toolTip": "모델 배포는 부모 Foundry 계정과 같은 리전을 사용합니다. 신규 VNet도 이 리전에 생성하며 기존 VNet은 같은 리전이어야 합니다. GlobalStandard의 추론 처리 위치를 이 리전으로 제한하지는 않습니다.",
+            "toolTip": "RG의 메타데이터 리전과 독립적입니다. 모델은 부모 Foundry 계정과 같은 리전을 사용합니다. 신규 VNet도 이 리전에 생성하며 기존 VNet은 같은 리전이어야 합니다. GlobalStandard의 추론 처리 위치를 이 리전으로 제한하지는 않습니다.",
             "constraints": {
                 "required": True,
                 "allowedValues": [
@@ -426,23 +430,21 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
         {
             "name": "modelRegionMismatchNotice",
             "type": "Microsoft.Common.InfoBox",
-            "visible": f"[and({foundation}, {existing_network}, not(empty({actual_region})), not(equals({actual_region}, {selected_region})))]",
+            "visible": f"[and({foundation}, not({new_network}), not(empty({vnet_region})), not(equals({vnet_region}, {region})))]",
             "options": {
                 "icon": "Warning",
                 "text": "선택한 모델 배포 리전과 기존 VNet의 리전이 다릅니다. 같은 리전의 VNet을 선택하거나 모델 배포 리전을 변경하십시오. 기존 VNet이나 Foundry 계정을 다른 리전으로 이동하지 않습니다.",
             },
         },
-        *[
-            element
-            for element in network_step["elements"]
-            if element["name"] not in {"modelDeploymentRegion", "modelRegionMismatchNotice"}
-        ],
     ]
+    for element in network_step["elements"]:
+        if element["name"] == "virtualNetwork":
+            element["options"]["filter"]["location"] = "all"
     guard = parameters["outputs"]["portalValidationPassed"]
     if "modelDeploymentRegion" not in guard:
         parameters["outputs"][
             "portalValidationPassed"
-        ] = f"[and({guard[1:-1]}, if(and({foundation}, {existing_network}), equals({actual_region}, {selected_region}), true))]"
+        ] = f"[and({guard[1:-1]}, if(and({foundation}, not({new_network})), {same_region}, true))]"
     chunks = [
         f"coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.options{index}'], '')"
         for index in range(8)
@@ -455,7 +457,7 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
             "type": "Microsoft.Common.InfoBox",
             "options": {
                 "icon": "Warning",
-                "text": "신규 기본값은 Core gpt-5.2 / Simple gpt-5-mini, GlobalStandard 각 200단위이며 PTU는 사용하지 않습니다. CLI --list-model-options --model-regions로 quota·공급 용량을 배포 전에 확인하십시오. 다른 지역은 신규 Foundry·VNet도 함께 배포합니다. 기존 계정을 옮기거나 원격 모델로 자동 우회하지 않습니다. 완료 단계는 저장된 선택을 보존합니다.",
+                "text": "신규 기본 리전은 RG 리전과 독립적인 East US입니다. Core gpt-5.2 / Simple gpt-5-mini, GlobalStandard 각 200단위이며 PTU는 사용하지 않습니다. CLI --list-model-options --model-regions로 quota·공급 용량을 먼저 확인하십시오. 신규 Foundry·VNet도 선택한 리전에 배포하며 기존 배포의 리전을 옮기지는 않습니다. 완료 단계는 저장된 선택을 보존합니다.",
             },
         }
     )
@@ -518,9 +520,7 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
     complete_location = (
         "coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.location'], '')"
     )
-    parameters["outputs"][
-        "location"
-    ] = f"[if({foundation}, {selected_region}, {complete_location})]"
+    parameters["outputs"]["location"] = f"[if({foundation}, {region}, {complete_location})]"
 
 
 def _safe_initial_outputs(parameters: dict[str, Any]) -> None:

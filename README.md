@@ -35,11 +35,13 @@ capacities and the deployment region. Check catalog, quota and provider capacity
 this does not move an existing installation or route only its models remotely. The guide
 covers explicit model reselection for a foundation with no models or projects.
 
+The network tab's **LLM deployment region** is independent of the resource group's metadata
+location and defaults to **East US**. It selects the new Foundry account, child models and VNet
+together; an existing VNet must match. Completion retains the saved region without moving resources.
+
 New v2 defaults are East US, Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-mini` /
 `2025-08-07`, each with 200 `GlobalStandard` capacity units. No PTU deployment or reservation
 is used. Existing saved profiles stay unchanged; check current quota and capacity before deployment.
-Choose the LLM deployment region in the network tab; it also selects the new Foundry account
-and VNet region. Existing VNets must match; completion keeps the saved region.
 
 `foundation` success is only the first infrastructure phase. Reopen the infrastructure button
 with **Complete existing foundation** for the same RG, finish authorized MCP preparation,

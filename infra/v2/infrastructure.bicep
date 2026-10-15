@@ -11,6 +11,7 @@ param portalValidationPassed bool = true
 param namingPrefix string = ''
 @maxLength(10)
 param namingSuffix string = ''
+@description('Foundry, child model and private-network deployment region, independent of the resource-group metadata location. An existing VNet must match.')
 param location string = 'eastus'
 @allowed(['existing', 'new'])
 param virtualNetworkMode string = 'existing'

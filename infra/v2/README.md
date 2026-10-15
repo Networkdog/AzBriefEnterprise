@@ -90,8 +90,8 @@ Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all four arti
   scripts. App/Job deployment does not bypass their import, pytest, roster or smoke gates.
 
 New v2 defaults use Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-mini` / `2025-08-07`,
-with 200 `GlobalStandard` capacity units each. ARM/CLI location defaults to `eastus`;
-the Portal's explicit LLM deployment-region selector also defaults to East US. No PTU SKU,
+with 200 `GlobalStandard` capacity units each. ARM/CLI `location` and the separate Portal
+**LLM deployment region** default to `eastus`, independent of RG metadata location. No PTU SKU,
 reservation or automatic PTU fallback is used. Logical aliases remain `gpt-5-terra` / `gpt-5-luna`.
 The existing KT profile and saved v2 choices retain their previous defaults/configuration.
 GlobalStandard processing can leave the account region.
@@ -105,7 +105,13 @@ another subscription's availability nor runtime performance. Recheck both gates 
 
 ## Model And Region Selection
 
-The Portal exposes `coreModelName`, `simpleModelName`, `modelVersion`, `simpleModelVersion`,
+The network tab exposes `modelDeploymentRegion` (default **East US**) separately from the
+resource group's metadata location. It offers East US, East US 2, Korea Central, Japan East and
+Sweden Central; the supported native Basics location control is hidden, not overloaded as model
+selection. The existing VNet selector keeps the chosen subscription but lists all regions,
+using the documented `location: all` filter; matching the selected model region is a separate
+fail-closed check. No undocumented Basics `defaultValue` property is used.
+The Portal also exposes `coreModelName`, `simpleModelName`, `modelVersion`, `simpleModelVersion`,
 `modelCapacity` and `simpleModelCapacity` only for a new foundation. Logical aliases and the
 six-role policy remain unchanged: Core uses `medium` reasoning and Azure MCP omits reasoning.
 These are explicit inputs, not an automatic best-model selector. Check candidates without writes:
@@ -129,15 +135,13 @@ an older saved profile. Completion combines shared quota and checks each selecte
 it never silently substitutes models. Existing aliases are reused without PUT only when model,
 version and SKU agree.
 
-The network tab's **LLM model / Foundry / VNet deployment region** selector defaults to East US
-and offers East US 2, Korea Central, Japan East and Sweden Central. It selects the new Foundry
-account, child model deployments and new VNet together. The native Basics location control is
-hidden so an unrelated Portal/RG preference cannot silently replace the selected model region.
-An existing VNet must match the selection; mismatched or unknown location blocks the guard and
-the mismatch notice identifies the remedy. Completion ignores this new selector and uses the
-saved location. The CLI's `location` input remains explicit/overridable for other supported regions.
-This is not a remote-model connection or an existing-account move. Use a new installation for
-another region; private/PNA/Entra restrictions remain unchanged.
+The separate selector drives the new Foundry account, child model deployments and VNet together.
+Changing the RG's metadata location never overrides it. An existing VNet must have a verifiable
+matching region; mismatches and unknown regions block the existing true-only guard rather than
+silently substitute the VNet's region. Completion ignores the new selector and uses the saved
+`azbrief.v2.location`, preserving older Korea Central installs. This is not a remote-model connection
+or an existing-account move. Use a new installation for another region; private/PNA/Entra restrictions
+remain unchanged.
 
 A saved `foundation` blocked before any model/project was created may explicitly reselect the six
 physical model/version/capacity fields with `--stage complete --reselect-models` and the approved
