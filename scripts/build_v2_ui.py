@@ -375,6 +375,106 @@ def _application_deployment_tag_guard(parameters: dict[str, Any]) -> None:
     parameters["outputs"]["portalValidationPassed"] = f"[and({existing[1:-1]}, {budget}, {pair})]"
 
 
+def _model_selection_controls(parameters: dict[str, Any]) -> None:
+    step = next((step for step in parameters["steps"] if step["name"] == "options"), None)
+    if step is None:
+        return
+    location_config = parameters["config"]["basics"]["location"]
+    location_config["label"] = "Foundry·모델·VNet 배포 지역"
+    location_config["resourceTypes"] = [
+        "Microsoft.CognitiveServices/accounts",
+        "Microsoft.App/managedEnvironments",
+    ]
+    fields = {
+        "coreModelName": ("Core 모델 이름 (GPT-5 계열)", "gpt-5.2"),
+        "simpleModelName": ("Simple 모델 이름 (GPT-5 계열)", "gpt-5-mini"),
+        "modelVersion": ("Core 모델 버전", "2025-12-11"),
+        "simpleModelVersion": ("Simple 모델 버전", "2025-08-07"),
+    }
+    names = set(fields) | {"modelCapacity", "simpleModelCapacity", "modelRegionNotice"}
+    step["elements"] = [element for element in step["elements"] if element["name"] not in names]
+    foundation = "equals(basics('infrastructureStage'), 'foundation')"
+    chunks = [
+        f"coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.options{index}'], '')"
+        for index in range(8)
+    ]
+    combined = "concat(" + ", ".join(chunks) + ")"
+    saved = f"parse(if(empty({combined}), '{{}}', {combined}))"
+    step["elements"].append(
+        {
+            "name": "modelRegionNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+                "icon": "Warning",
+                "text": "신규 기본값은 Core gpt-5.2 / Simple gpt-5-mini, GlobalStandard 각 200단위이며 PTU는 사용하지 않습니다. CLI --list-model-options --model-regions로 quota·공급 용량을 배포 전에 확인하십시오. 다른 지역은 신규 Foundry·VNet도 함께 배포합니다. 기존 계정을 옮기거나 원격 모델로 자동 우회하지 않습니다. 완료 단계는 저장된 선택을 보존합니다.",
+            },
+        }
+    )
+    for name, (label, default) in fields.items():
+        step["elements"].append(
+            {
+                "name": name,
+                "type": "Microsoft.Common.TextBox",
+                "label": label,
+                "defaultValue": default,
+                "visible": f"[{foundation}]",
+                "constraints": {
+                    "required": True,
+                    "regex": (
+                        "^gpt-5[A-Za-z0-9._-]{0,80}$"
+                        if name.endswith("Name")
+                        else "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$"
+                    ),
+                    "validationMessage": "후보 조회에서 확인한 정확한 모델 이름과 버전을 입력하십시오.",
+                },
+            }
+        )
+        persisted = (
+            f"coalesce({saved}.simpleModelVersion, {saved}.modelVersion, '{default}')"
+            if name == "simpleModelVersion"
+            else f"{saved}.{name}"
+        )
+        parameters["outputs"][
+            name
+        ] = f"[if({foundation}, coalesce(steps('options').{name}, '{default}'), {persisted})]"
+    for name, label in (
+        ("modelCapacity", "Core 용량 단위"),
+        ("simpleModelCapacity", "Simple 용량 단위"),
+    ):
+        step["elements"].append(
+            {
+                "name": name,
+                "type": "Microsoft.Common.DropDown",
+                "label": label,
+                "defaultValue": "200",
+                "visible": f"[{foundation}]",
+                "constraints": {
+                    "required": True,
+                    "allowedValues": [
+                        {"label": str(value), "value": str(value)}
+                        for value in (1, 10, 50, 100, 200, 500, 1000)
+                    ],
+                },
+                "toolTip": "GlobalStandard의 처리량 설정이며 PTU 구매가 아닙니다. 선택 모델의 quota·공급 용량·부하를 검증하십시오. 배포 수락이나 런타임 처리량을 보장하지 않습니다.",
+            }
+        )
+        parameters["outputs"][
+            name
+        ] = f"[if({foundation}, int(coalesce(steps('options').{name}, '200')), {saved}.{name})]"
+    for element in step["elements"]:
+        if element["name"] == "automaticSettings":
+            element["options"][
+                "text"
+            ] = "모델 논리 배포 별칭·Hosted 이름·MCP 연결 이름은 자동 설정합니다. 실제 모델 이름·버전·용량과 신규 배포 지역은 명시 선택하며 카탈로그·quota·공급 용량 검증이 필요합니다."
+    complete_location = (
+        "coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.location'], '')"
+    )
+    new_network = "equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'new')"
+    parameters["outputs"][
+        "location"
+    ] = f"[if({foundation}, if({new_network}, location(), coalesce(steps('network').virtualNetwork.location, location())), {complete_location})]"
+
+
 def _safe_initial_outputs(parameters: dict[str, Any]) -> None:
     vnet_resource_group = (
         "first(skip(split(concat(coalesce(steps('network').virtualNetwork.id, ''), "
@@ -469,6 +569,7 @@ def normalize_ui(
     _managed_agent_data_outputs(parameters)
     _remove_validation_surfaces(parameters)
     _network_mode_controls(parameters, network_validations)
+    _model_selection_controls(parameters)
     _application_deployment_tag_guard(parameters)
     for step in parameters["steps"]:
         for element in step["elements"]:

@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "18444309036716091312"
+      "templateHash": "5758883974318307383"
     }
   },
   "parameters": {
@@ -28836,7 +28836,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "15341119568075744444"
+              "templateHash": "1796276466081959167"
             }
           },
           "parameters": {
@@ -28857,6 +28857,10 @@
             },
             "modelVersion": {
               "type": "string"
+            },
+            "simpleModelVersion": {
+              "type": "string",
+              "defaultValue": "[parameters('modelVersion')]"
             },
             "modelCapacity": {
               "type": "int"
@@ -28909,7 +28913,7 @@
                 "model": {
                   "format": "OpenAI",
                   "name": "[if(parameters('useCoreForSimple'), parameters('coreModelName'), parameters('simpleModelName'))]",
-                  "version": "[parameters('modelVersion')]"
+                  "version": "[if(parameters('useCoreForSimple'), parameters('modelVersion'), parameters('simpleModelVersion'))]"
                 },
                 "versionUpgradeOption": "NoAutoUpgrade"
               },

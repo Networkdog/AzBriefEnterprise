@@ -29,10 +29,25 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [v2 deployment guide](infra/v2/README.md): complete infrastructure in the same resource group before installing or updating the application.
 
+New v2 infrastructure lets you select Core/Simple GPT-5 models, independent versions,
+capacities and the deployment region. Check catalog, quota and provider capacity with
+`--list-model-options` first. A new region also hosts the new Foundry account and VNet;
+this does not move an existing installation or route only its models remotely. The guide
+covers explicit model reselection for a foundation with no models or projects.
+
+New v2 defaults are Korea Central, Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-mini` /
+`2025-08-07`, each with 200 `GlobalStandard` capacity units. No PTU deployment or reservation
+is used. Existing saved profiles stay unchanged; check current quota and capacity before deployment.
+
 `foundation` success is only the first infrastructure phase. Reopen the infrastructure button
 with **Complete existing foundation** for the same RG, finish authorized MCP preparation,
 and confirm `azbrief.v2.state=ready` before using the application button. An application
 Validation failure with `portalValidationPassed=false` is not permission to force that value.
+
+Public control-plane image reference (registry `Anonymous` pull, port 8000, `/health`):
+`ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3`.
+Registry pull mode does not disable application authentication. Approve the image revision
+before installation; a template update does not publish a new image.
 
 </div>
 

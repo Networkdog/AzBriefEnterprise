@@ -35,7 +35,8 @@ Keep the paired KT Deploy button in both top-level READMEs while this profile sh
 contract expects two standard Enterprise Portal links, one KT Portal link and separate v2
 infrastructure/application Deploy buttons in each README. v2 buttons pair their compiled ARM
 with the corresponding real CreateUiDefinition on GitHub main after publication. Keep customer
-RG resource-name inputs, auto model/MCP internal settings, and guarded live preflight.
+RG resource-name inputs, automatic aliases/MCP settings, explicit v2 models and guarded live
+preflight.
 
 ## Two-Stage Template v2
 
@@ -63,6 +64,17 @@ with explicit name-collision refusal and no peering/NSG/routes/public IP changes
 CIDRs in bounded options; completion verifies exact owned network and never recreates it.
 Legacy missing mode is existing; App updates are still network-free. Network-only acceptance
 is not full infrastructure/App success, especially when model quota blocks completion.
+V2 new foundations select GPT-5 physical models, independent versions/capacities and region;
+default to Korea Central, gpt-5.2/2025-12-11 and gpt-5-mini/2025-08-07, GlobalStandard 200 each.
+Never use PTU SKUs/reservations/fallback. Preserve logical aliases, role reasoning, saved older
+profiles and KT defaults. New omitted Simple version uses its independent default; explicit empty
+and old missing saved versions use Core. --list-model-options is read-only catalog/quota/provider
+capacity discovery, not runtime acceptance. Strict v2 selection never uses KT's fallback and
+reuses models only on exact model/version/SKU match. Combine shared quota separately from
+version-specific provider capacity. New region means a new same-region Foundry/VNet/models
+installation, not remote routing or account migration. --stage complete --reselect-models changes
+only six physical model fields on saved foundation with zero deployments/projects; all other
+choices stay immutable. Block partial/existing state, denied reads, tag forcing and Host resets.
 Two application tags record not_deployed/empty initially, then deployed and the successful
 ARM application's UTC start time after App/Job/requested auth/MCP dependencies. Preserve
 customer and previous-success tags; failed/preview paths never advance them. Legacy 39-tag

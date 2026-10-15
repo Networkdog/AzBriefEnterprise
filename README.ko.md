@@ -29,10 +29,25 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [v2 배포 가이드](infra/v2/README.md): 같은 리소스 그룹의 인프라 준비를 완료한 뒤 앱을 설치하거나 업데이트합니다.
 
+신규 v2 인프라에서 Core/Simple GPT-5 모델, 각 모델의 버전·용량과 배포 지역을 선택할 수
+있습니다. 먼저 `--list-model-options`로 리전별 모델 목록, 구독 할당량과 공급 용량을
+확인하십시오. 다른 지역을 선택하면 새 Foundry 계정과 VNet도 그 지역에 배포합니다.
+기존 설치를 옮기거나 모델만 원격 지역으로 연결하는 기능은 아닙니다. 모델·프로젝트가
+없는 기반의 명시적 모델 재선택 방법은 가이드에서 안내합니다.
+
+신규 v2 기본값은 Korea Central, Core `gpt-5.2` / `2025-12-11`, Simple `gpt-5-mini` /
+`2025-08-07`이며 `GlobalStandard` 용량을 각각 200단위로 설정합니다. PTU 배포·예약은
+사용하지 않습니다. 저장된 기존 프로필은 유지하며 배포 전에 현재 quota와 공급 용량을 확인해야 합니다.
+
 `foundation` 성공은 인프라 첫 단계만 완료됐다는 뜻입니다. 같은 RG에서 인프라 버튼의
 **기존 기반 완성**을 실행하고 승인된 MCP 인증 준비까지 마친 뒤 `azbrief.v2.state=ready`를
 확인해야 앱 버튼을 사용할 수 있습니다. 앱 Validation의 `portalValidationPassed=false`는
 이 값을 강제로 바꾸라는 뜻이 아닙니다.
+
+공개 제어면 이미지 참조(레지스트리 `Anonymous` pull, 포트 8000, `/health`):
+`ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3`.
+레지스트리 pull 방식은 앱 인증을 해제하지 않습니다. 설치 전에 이미지 리비전을 승인해야
+하며 템플릿 갱신만으로 새 이미지가 게시되지는 않습니다.
 
 </div>
 

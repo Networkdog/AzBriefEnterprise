@@ -11,7 +11,7 @@ param portalValidationPassed bool = true
 param namingPrefix string = ''
 @maxLength(10)
 param namingSuffix string = ''
-param location string
+param location string = 'koreacentral'
 @allowed(['existing', 'new'])
 param virtualNetworkMode string = 'existing'
 param virtualNetworkResourceGroupName string
@@ -48,9 +48,11 @@ param existingPrivateDnsZoneIds object = {}
 param deployContainerAppsPrivateEndpoint bool = false
 param modelDeploymentName string = 'gpt-5-terra'
 param simpleModelDeploymentName string = 'gpt-5-luna'
-param coreModelName string = 'gpt-5.6-terra'
-param simpleModelName string = 'gpt-5.6-luna'
-param modelVersion string = '2026-07-09'
+param coreModelName string = 'gpt-5.2'
+param simpleModelName string = 'gpt-5-mini'
+param modelVersion string = '2025-12-11'
+@description('Simple model version; empty uses modelVersion for legacy-compatible deployment.')
+param simpleModelVersion string = '2025-08-07'
 @minValue(1)
 @maxValue(1000)
 param modelCapacity int = 200
@@ -106,6 +108,7 @@ var deploymentOptions = {
   coreModelName: coreModelName
   simpleModelName: simpleModelName
   modelVersion: modelVersion
+  simpleModelVersion: empty(simpleModelVersion) ? modelVersion : simpleModelVersion
   modelCapacity: modelCapacity
   simpleModelCapacity: simpleModelCapacity
   existingPrivateDnsZoneIds: existingPrivateDnsZoneIds
@@ -208,6 +211,7 @@ module models '../kt/models.bicep' = if (complete) {
     coreModelName: coreModelName
     simpleModelName: simpleModelName
     modelVersion: modelVersion
+    simpleModelVersion: empty(simpleModelVersion) ? modelVersion : simpleModelVersion
     modelCapacity: modelCapacity
     simpleModelCapacity: simpleModelCapacity
     reuseCore: reuseCoreModel

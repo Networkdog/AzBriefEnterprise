@@ -327,6 +327,20 @@ On Windows MSI installations, AzureCli uses the bundled Python entry point to pr
 query URLs as single arguments. Docker fingerprint reads use Get-Item -Force only for explicitly
 selected inputs, so Linux hidden-file semantics cannot omit .dockerignore.
 
+V2 new-foundation inputs select GPT-5 Core/Simple models, independent versions and capacities;
+new defaults are Korea Central, gpt-5.2/2025-12-11 and gpt-5-mini/2025-08-07, GlobalStandard
+200 units each. Never use PTU SKUs, reservations or automatic PTU fallback. Logical aliases
+and role reasoning stay unchanged. Explicitly empty Simple version or a missing old saved
+version falls back to Core; new omitted parameters use the independent default. Preserve old
+profiles and KT defaults. Read-only --list-model-options combines regional Responses/Agents
+catalog, exact SKU quota and provider capacity, not a reservation or runtime/quality acceptance.
+Strict v2 completion never substitutes models and compares reused model/version/SKU exactly.
+Combine shared quota without conflating distinct versions' provider capacity. New region means
+a new same-region Foundry/VNet/model installation, not an account move or remote-only routing.
+Explicit --stage complete --reselect-models allows only six model fields to change on saved
+foundation with zero model deployments and zero projects. All other choices stay immutable;
+existing/partial model or project state requires diagnosis, never overwrite, tag forcing or reset.
+
 This repository ships **one** topology. There is no Automation Account, no Function App and
 no fat wheel. Analysis runs in a Foundry Hosted Agent; Container Apps hosts only control-plane
 surfaces and the scheduled digest driver.

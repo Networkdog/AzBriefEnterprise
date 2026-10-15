@@ -325,6 +325,7 @@ def _evaluate_ui_expression(
     network: dict[str, object] | None = None,
     basics: dict[str, object] | None = None,
     eager_conditionals: bool = False,
+    selected_location: str = "",
 ) -> object:
     """Evaluate the tested Portal expression subset with strict equality."""
 
@@ -388,6 +389,9 @@ def _evaluate_ui_expression(
         if function == "resourceGroup":
             assert not arguments and resource_group is not None
             return resource_group
+        if function == "location":
+            assert not arguments
+            return selected_location
         if function == "subscription":
             assert not arguments and subscription is not None
             return subscription
@@ -4635,6 +4639,82 @@ def test_models_prefer_luna_when_its_quota_is_available(values: dict, vnet: dict
     kt.run(cli, values, "deploy")
     assert cli.deployments[1]["useCoreForSimpleModel"] is False
     assert cli.model_deployments["gpt-5-luna"]["properties"]["model"]["name"] == "gpt-5.6-luna"
+
+
+def test_strict_model_selection_never_falls_back(
+    values: dict, vnet: dict, monkeypatch: pytest.MonkeyPatch
+):
+    values = {
+        **_automatic_services(values),
+        "deployCapabilityHost": True,
+        "provisionEmail": False,
+        "strictModelSelection": True,
+    }
+    cli = OperationalAzure(values, vnet)
+    monkeypatch.setattr(
+        cli,
+        "json",
+        lambda *arguments: {
+            "value": [
+                {
+                    "location": values["location"],
+                    "properties": {"skuName": "GlobalStandard", "availableCapacity": 500},
+                }
+            ]
+        },
+    )
+    with pytest.raises(ValueError, match="no model fallback"):
+        kt.automatic_service_plan(cli, values, {})
+    assert cli.model_writes == 0
+
+
+@pytest.mark.parametrize("field", ["coreModelName", "simpleModelName"])
+def test_strict_model_selection_keeps_supported_role_policy(values: dict, vnet: dict, field: str):
+    values = {
+        **_automatic_services(values),
+        "deployCapabilityHost": True,
+        "strictModelSelection": True,
+        field: "gpt-4.1",
+    }
+    cli = OperationalAzure(values, vnet)
+    with pytest.raises(ValueError, match="supported GPT-5 role policy"):
+        kt.automatic_service_plan(cli, values, {})
+    assert cli.model_writes == 0
+
+
+@pytest.mark.parametrize("drift", ["name", "version", "sku"])
+def test_strict_model_selection_rejects_existing_profile_drift(
+    values: dict, vnet: dict, drift: str
+):
+    values = {
+        **_automatic_services(values),
+        "deployCapabilityHost": True,
+        "provisionEmail": False,
+        "strictModelSelection": True,
+    }
+    cli = OperationalAzure(values, vnet)
+    deployment = {
+        "name": values["modelDeploymentName"],
+        "sku": {"name": "GlobalStandard"},
+        "properties": {
+            "provisioningState": "Succeeded",
+            "model": {
+                "format": "OpenAI",
+                "name": values["coreModelName"],
+                "version": values["modelVersion"],
+            },
+        },
+    }
+    if drift == "sku":
+        deployment["sku"]["name"] = "Standard"
+    else:
+        deployment["properties"]["model"][drift] = (
+            "gpt-5-other" if drift == "name" else "2025-08-07"
+        )
+    cli.model_deployments[values["modelDeploymentName"]] = deployment
+    with pytest.raises(ValueError, match="differs from the saved selection"):
+        kt.automatic_service_plan(cli, values, {})
+    assert cli.model_writes == 0
 
 
 def test_model_quota_failure_does_not_modify_other_allocations(values: dict, vnet: dict):

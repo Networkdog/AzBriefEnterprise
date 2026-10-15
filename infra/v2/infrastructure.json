@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "15400897947278697535"
+      "templateHash": "8110015503970855379"
     },
     "description": "One-time AzBrief v2 infrastructure. Foundation and completion are internal orchestration stages; application containers and Agent versions are excluded."
   },
@@ -39,7 +39,8 @@
       "maxLength": 10
     },
     "location": {
-      "type": "string"
+      "type": "string",
+      "defaultValue": "koreacentral"
     },
     "virtualNetworkMode": {
       "type": "string",
@@ -184,15 +185,22 @@
     },
     "coreModelName": {
       "type": "string",
-      "defaultValue": "gpt-5.6-terra"
+      "defaultValue": "gpt-5.2"
     },
     "simpleModelName": {
       "type": "string",
-      "defaultValue": "gpt-5.6-luna"
+      "defaultValue": "gpt-5-mini"
     },
     "modelVersion": {
       "type": "string",
-      "defaultValue": "2026-07-09"
+      "defaultValue": "2025-12-11"
+    },
+    "simpleModelVersion": {
+      "type": "string",
+      "defaultValue": "2025-08-07",
+      "metadata": {
+        "description": "Simple model version; empty uses modelVersion for legacy-compatible deployment."
+      }
     },
     "modelCapacity": {
       "type": "int",
@@ -280,6 +288,7 @@
       "coreModelName": "[parameters('coreModelName')]",
       "simpleModelName": "[parameters('simpleModelName')]",
       "modelVersion": "[parameters('modelVersion')]",
+      "simpleModelVersion": "[if(empty(parameters('simpleModelVersion')), parameters('modelVersion'), parameters('simpleModelVersion'))]",
       "modelCapacity": "[parameters('modelCapacity')]",
       "simpleModelCapacity": "[parameters('simpleModelCapacity')]",
       "existingPrivateDnsZoneIds": "[parameters('existingPrivateDnsZoneIds')]",
@@ -31355,6 +31364,7 @@
           "modelVersion": {
             "value": "[parameters('modelVersion')]"
           },
+          "simpleModelVersion": "[if(empty(parameters('simpleModelVersion')), createObject('value', parameters('modelVersion')), createObject('value', parameters('simpleModelVersion')))]",
           "modelCapacity": {
             "value": "[parameters('modelCapacity')]"
           },
@@ -31378,7 +31388,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "15341119568075744444"
+              "templateHash": "1796276466081959167"
             }
           },
           "parameters": {
@@ -31399,6 +31409,10 @@
             },
             "modelVersion": {
               "type": "string"
+            },
+            "simpleModelVersion": {
+              "type": "string",
+              "defaultValue": "[parameters('modelVersion')]"
             },
             "modelCapacity": {
               "type": "int"
@@ -31451,7 +31465,7 @@
                 "model": {
                   "format": "OpenAI",
                   "name": "[if(parameters('useCoreForSimple'), parameters('coreModelName'), parameters('simpleModelName'))]",
-                  "version": "[parameters('modelVersion')]"
+                  "version": "[if(parameters('useCoreForSimple'), parameters('modelVersion'), parameters('simpleModelVersion'))]"
                 },
                 "versionUpgradeOption": "NoAutoUpgrade"
               },

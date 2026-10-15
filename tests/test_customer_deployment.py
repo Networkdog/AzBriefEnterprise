@@ -297,11 +297,22 @@ def test_readme_buttons_publish_the_same_arm_and_ui_pair() -> None:
     for name in ("README.md", "README.ko.md"):
         text = (ROOT / name).read_text(encoding="utf-8")
         links = re.findall(r"\]\((https://portal\.azure\.com/#create/[^)]+)\)", text)
+        decoded_links = [unquote(link) for link in links]
+        links = [link for link in decoded_links if f"/uri/{expected_root}v2/" not in link]
         assert len(links) == 2
-        for link in links:
-            decoded = unquote(link)
+        for decoded in links:
             assert f"/uri/{expected_root}azbrief-enterprise-deploy.json" in decoded
             assert f"/createUIDefinitionUri/{expected_root}createUiDefinition.json" in decoded
+        for stage in ("infrastructure", "application"):
+            stage_links = [
+                link for link in decoded_links if f"/uri/{expected_root}v2/{stage}.json" in link
+            ]
+            assert len(stage_links) == 1
+            assert (
+                f"/createUIDefinitionUri/{expected_root}v2/{stage}.createUiDefinition.json"
+                in stage_links[0]
+            )
+        assert len(decoded_links) == 4
         assert "infra/CUSTOMER_DEPLOYMENT.md" in text
     assert (ROOT / "infra" / "CUSTOMER_DEPLOYMENT.md").is_file()
 

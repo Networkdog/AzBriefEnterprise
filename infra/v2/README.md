@@ -89,10 +89,58 @@ Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all four arti
 - A clean customer clone/private-network publication host for the existing Agent
   scripts. App/Job deployment does not bypass their import, pytest, roster or smoke gates.
 
-Model defaults retain the KT physical Terra/Luna version `2026-07-09`, GlobalStandard
-and 200 capacity units each. GlobalStandard processing can leave Korea Central.
+New v2 defaults use Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-mini` / `2025-08-07`,
+with 200 `GlobalStandard` capacity units each. ARM/CLI location defaults to `koreacentral`;
+the Portal still honors its explicit Basics region and existing-VNet location. No PTU SKU,
+reservation or automatic PTU fallback is used. Logical aliases remain `gpt-5-terra` / `gpt-5-luna`.
+The existing KT profile and saved v2 choices retain their previous defaults/configuration.
+GlobalStandard processing can leave the account region.
 ACS/email data location defaults to Asia Pacific. Validate policy, price and capacity
 before opting into `--mode deploy`.
+
+On 2026-10-15, read-only checks in the reference subscription reported quota/provider headroom
+of 2,000/2,000 units for the selected Core and 1,000/1,000 for Simple in Korea Central. This
+supports the 200/200 defaults at that time; it reserves no capacity and guarantees neither
+another subscription's availability nor runtime performance. Recheck both gates before deployment.
+
+## Model And Region Selection
+
+The Portal exposes `coreModelName`, `simpleModelName`, `modelVersion`, `simpleModelVersion`,
+`modelCapacity` and `simpleModelCapacity` only for a new foundation. Logical aliases and the
+six-role policy remain unchanged: Core uses `medium` reasoning and Azure MCP omits reasoning.
+These are explicit inputs, not an automatic best-model selector. Check candidates without writes:
+
+```powershell
+& .\.venv\Scripts\Activate.ps1
+python -m scripts.deploy_v2 infrastructure --subscription <subscription-guid> --tenant <tenant-guid> --resource-group <target-rg> --list-model-options --model-regions koreacentral japaneast eastus2 swedencentral --candidate-models gpt-5.2 gpt-5-mini --mode preflight
+```
+
+`available` is the smaller of unused subscription quota and reported regional provider capacity,
+in deployment capacity units, not tokens or a reservation. The command needs explicit regions
+or a parameter-file location, filters for OpenAI GPT-5 Responses/AgentsV2 GlobalStandard models,
+and makes no Azure writes. Unreadable, incomplete or ambiguous capacity fails closed. Verify actual
+reasoning, strict JSON, tools, private connectivity, price and paired report quality before promotion;
+catalog/capacity success alone proves none of those runtime properties.
+
+Omitting `simpleModelVersion` in a new deployment selects its independent `2025-08-07` default.
+Explicitly empty values and older saved tags without this field still retain `modelVersion`.
+Supply the exact versions when overriding the physical models; never reuse a new default for
+an older saved profile. Completion combines shared quota and checks each selected profile;
+it never silently substitutes models. Existing aliases are reused without PUT only when model,
+version and SKU agree.
+
+For a new VNet, the Basics region selects the new Foundry account, child model deployments and
+VNet together. An existing VNet fixes that region to its actual location; completion uses the saved
+location. This is not a remote-model connection or an existing-account move. Use a new installation
+for another region; private/PNA/Entra restrictions remain unchanged.
+
+A saved `foundation` blocked before any model/project was created may explicitly reselect the six
+physical model/version/capacity fields with `--stage complete --reselect-models` and the approved
+protected parameter file. Start with `--mode preflight`, then use the same file for `--mode what-if`
+and `--mode deploy`. Region, aliases, names, network, data mode and other options remain immutable.
+Existing models/projects, unreadable inventory or a later ready/pending state block this exception.
+It never replaces models, rewrites tags by itself or resets Hosts. A partial attempt that created
+models/projects needs separate diagnosis before retry.
 
 ## New Or Existing VNet
 
@@ -250,11 +298,11 @@ names. Both inputs remain in the ARM contract and saved options for exact comple
 Validation rows are hidden, not editable or removed safety checks. Each UI outputs the
 combined `portalValidationPassed` result, constrained to `true` by both ARM templates.
 Recompile after source changes and check that every UI output names an ARM parameter.
-Internal model aliases, model IDs,
-version, 200-unit capacities, Hosted name and MCP connection name are automatically set.
-No model/MCP URL/connection field is presented. Completion reads names/options from the
-same RG rather than asking again. Model quota/catalog and Graph permissions are still
-real preflight gates, not implied by automatic values.
+Internal model aliases, Hosted name and MCP connection name are automatic; physical model names,
+versions and capacities are explicit new-foundation inputs. No MCP URL/connection field is shown.
+Normal completion reads saved names/options. Model quota/catalog/provider capacity and Graph
+permissions remain preflight gates, not implied by automatic values. Unprovisioned model reselection
+requires the explicit CLI path above; the Portal cannot silently change saved choices.
 
 Portal `Microsoft_Azure_CreateUIDef / CustomDeploymentBlade` errors before the form opens
 are UI initialization failures, not proof of ARM/Graph provisioning failure. The normalizer

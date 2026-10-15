@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from ipaddress import IPv4Address, IPv4Network, ip_network
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 from uuid import UUID, uuid5
 
 import structlog
@@ -689,6 +689,11 @@ def automatic_service_plan(
     if not values["deployCapabilityHost"]:
         return plan
     if values["provisionModels"]:
+        if values.get("strictModelSelection", False) and any(
+            not isinstance(values[field], str) or not values[field].startswith("gpt-5")
+            for field in ("coreModelName", "simpleModelName")
+        ):
+            raise ValueError("Selected models must retain the supported GPT-5 role policy")
         account_id = (
             f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/"
             f"{values['foundryAccountName']}"
@@ -716,6 +721,23 @@ def automatic_service_plan(
                 raise ValueError(
                     f"Existing {role.lower()} model is not a compatible ready deployment"
                 )
+            if values.get("strictModelSelection", False):
+                expected_model = (
+                    values["coreModelName"] if role == "Core" else values["simpleModelName"]
+                )
+                expected_version = (
+                    values["modelVersion"]
+                    if role == "Core"
+                    else (values.get("simpleModelVersion") or values["modelVersion"])
+                )
+                if (
+                    model.get("name") != expected_model
+                    or model.get("version") != expected_version
+                    or deployment.get("sku", {}).get("name") != "GlobalStandard"
+                ):
+                    raise ValueError(
+                        f"Existing {role.lower()} model differs from the saved selection; no replacement is allowed"
+                    )
             plan[f"reuse{role}Model"] = True
         if missing:
             catalog = cli.collection(f"{account_id}/models", FOUNDRY_API)
@@ -725,12 +747,19 @@ def automatic_service_plan(
                 FOUNDRY_API,
             )
 
-            def capacity(model_name: str) -> int:
+            verified_capacities: dict[tuple[str, str], int] = {}
+            quota_names: dict[tuple[str, str], str] = {}
+            quota_available: dict[str, int] = {}
+
+            def capacity(model_name: str, model_version: str | None = None) -> int:
+                version = model_version or values["modelVersion"]
+                if (model_name, version) in verified_capacities:
+                    return verified_capacities[(model_name, version)]
                 models = [
                     model
                     for model in catalog
                     if model.get("name") == model_name
-                    and model.get("version") == values["modelVersion"]
+                    and model.get("version") == version
                     and model.get("capabilities", {}).get("responses") == "true"
                     and model.get("capabilities", {}).get("agentsV2") == "true"
                 ]
@@ -740,16 +769,57 @@ def automatic_service_plan(
                     for sku in model.get("skus", [])
                     if sku["name"] == "GlobalStandard"
                 ]
-                if len(skus) != 1:
+                usage_names = {sku.get("usageName") for sku in skus}
+                if len(usage_names) != 1 or not all(
+                    isinstance(name, str) and name for name in usage_names
+                ):
                     raise ValueError(
                         f"No verified Responses/Agents GlobalStandard model: {model_name}"
                     )
-                rows = [row for row in usage if row["name"]["value"] == skus[0]["usageName"]]
+                rows = [row for row in usage if row["name"]["value"] in usage_names]
                 if len(rows) != 1 or any(
                     type(rows[0][key]) not in (int, float) for key in ("limit", "currentValue")
                 ):
                     raise ValueError(f"Model quota is unreadable or ambiguous: {model_name}")
-                return int(rows[0]["limit"] - rows[0]["currentValue"])
+                available = max(0, int(rows[0]["limit"] - rows[0]["currentValue"]))
+                usage_name = next(iter(usage_names))
+                quota_names[(model_name, version)] = usage_name
+                quota_available[usage_name] = available
+                if values.get("strictModelSelection", False) and available:
+                    query = urlencode(
+                        {
+                            "api-version": "2024-10-01",
+                            "modelFormat": "OpenAI",
+                            "modelName": model_name,
+                            "modelVersion": version,
+                        }
+                    )
+                    payload = cli.json(
+                        "rest",
+                        "--method",
+                        "get",
+                        "--url",
+                        f"{MANAGEMENT}/subscriptions/{cli.subscription}/providers/Microsoft.CognitiveServices/modelCapacities?{query}",
+                    )
+                    if (
+                        not isinstance(payload, dict)
+                        or not isinstance(payload.get("value"), list)
+                        or payload.get("nextLink")
+                    ):
+                        raise ValueError("Model capacity inventory is incomplete")
+                    matching = [
+                        row["properties"].get("availableCapacity")
+                        for row in payload["value"]
+                        if row.get("location", "").casefold() == values["location"].casefold()
+                        and row.get("properties", {}).get("skuName") == "GlobalStandard"
+                    ]
+                    if len(matching) != 1 or type(matching[0]) not in (int, float):
+                        raise ValueError(
+                            "Selected regional model capacity is unreadable or ambiguous"
+                        )
+                    available = min(available, max(0, int(matching[0])))
+                verified_capacities[(model_name, version)] = available
+                return available
 
             core_required = values["modelCapacity"] if "Core" in missing else 0
             core_available = capacity(values["coreModelName"]) if "Core" in missing else None
@@ -757,19 +827,28 @@ def automatic_service_plan(
                 raise ValueError("Insufficient core-model quota; no allocation was changed")
             if (
                 "Simple" in missing
+                and not values.get("strictModelSelection", False)
                 and values["coreModelName"] == values["simpleModelName"]
                 and (
                     core_available
                     if core_available is not None
-                    else capacity(values["coreModelName"])
+                    else capacity(values["coreModelName"], values["modelVersion"])
                 )
                 < core_required + values["simpleModelCapacity"]
             ):
                 raise ValueError("Insufficient combined quota for the two model deployments")
             if (
                 "Simple" in missing
-                and capacity(values["simpleModelName"]) < values["simpleModelCapacity"]
+                and capacity(
+                    values["simpleModelName"],
+                    values.get("simpleModelVersion") or values["modelVersion"],
+                )
+                < values["simpleModelCapacity"]
             ):
+                if values.get("strictModelSelection", False):
+                    raise ValueError(
+                        "Insufficient selected Simple-model capacity; no model fallback was applied"
+                    )
                 if core_available is None:
                     core_available = capacity(values["coreModelName"])
                 if core_available < core_required + values["simpleModelCapacity"]:
@@ -782,6 +861,35 @@ def automatic_service_plan(
                     deployment=values["simpleModelDeploymentName"],
                     existing_models_unchanged=True,
                 )
+            if values.get("strictModelSelection", False):
+                required_profiles: dict[tuple[str, str], int] = {}
+                required_quotas: dict[str, int] = {}
+                for role in missing:
+                    model_name = (
+                        values["coreModelName"] if role == "Core" else values["simpleModelName"]
+                    )
+                    version = (
+                        values["modelVersion"]
+                        if role == "Core"
+                        else (values.get("simpleModelVersion") or values["modelVersion"])
+                    )
+                    required = (
+                        values["modelCapacity"] if role == "Core" else values["simpleModelCapacity"]
+                    )
+                    profile = (model_name, version)
+                    usage_name = quota_names[profile]
+                    required_profiles[profile] = required_profiles.get(profile, 0) + required
+                    required_quotas[usage_name] = required_quotas.get(usage_name, 0) + required
+                if any(
+                    required > verified_capacities[profile]
+                    for profile, required in required_profiles.items()
+                ) or any(
+                    required > quota_available[usage_name]
+                    for usage_name, required in required_quotas.items()
+                ):
+                    raise ValueError(
+                        "Insufficient combined selected model quota or capacity; no allocation was changed"
+                    )
     if values["provisionEmail"]:
         acs_id = (
             f"{cli.group_id}/providers/Microsoft.Communication/communicationServices/"

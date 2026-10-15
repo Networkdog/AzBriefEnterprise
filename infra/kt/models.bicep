@@ -6,6 +6,7 @@ param simpleDeploymentName string
 param coreModelName string
 param simpleModelName string
 param modelVersion string
+param simpleModelVersion string = modelVersion
 param modelCapacity int
 param simpleModelCapacity int
 param reuseCore bool = false
@@ -44,7 +45,7 @@ resource simple 'Microsoft.CognitiveServices/accounts/deployments@2025-06-01' = 
     model: {
       format: 'OpenAI'
       name: useCoreForSimple ? coreModelName : simpleModelName
-      version: modelVersion
+      version: useCoreForSimple ? modelVersion : simpleModelVersion
     }
     versionUpgradeOption: 'NoAutoUpgrade'
   }

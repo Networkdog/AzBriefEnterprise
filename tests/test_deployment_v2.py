@@ -200,6 +200,217 @@ def test_managed_foundation_never_evaluates_omitted_store_references_or_diagnost
     )
 
 
+def test_model_discovery_uses_region_catalog_quota_and_provider_capacity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cli = FakeV2Azure()
+    base = f"/subscriptions/{SUBSCRIPTION}/providers/Microsoft.CognitiveServices"
+    for region, used in (("koreacentral", 90), ("eastus2", 10)):
+        cli.collections[f"{base}/locations/{region}/models"] = [
+            {
+                "model": {
+                    "format": "OpenAI",
+                    "name": "gpt-5",
+                    "version": "2025-08-07",
+                    "capabilities": {"responses": "true", "agentsV2": "true"},
+                    "skus": [{"name": "GlobalStandard", "usageName": "quota-gpt5"}],
+                }
+            }
+        ]
+        cli.collections[f"{base}/locations/{region}/usages"] = [
+            {"name": {"value": "quota-gpt5"}, "limit": 100, "currentValue": used}
+        ]
+    original = cli.json
+    reads: list[str] = []
+
+    def json_read(*arguments: str) -> Any:
+        if arguments[0] == "rest" and "modelCapacities" in arguments[arguments.index("--url") + 1]:
+            reads.append(arguments[arguments.index("--url") + 1])
+            return {
+                "value": [
+                    {
+                        "location": region,
+                        "properties": {"skuName": "GlobalStandard", "availableCapacity": capacity},
+                    }
+                    for region, capacity in (("koreacentral", 80), ("eastus2", 40))
+                ]
+            }
+        return original(*arguments)
+
+    monkeypatch.setattr(cli, "json", json_read)
+    rows = deploy_v2.discover_model_options(cli, ["koreacentral", "eastus2"])
+    assert [(row["region"], row["available"]) for row in rows] == [
+        ("eastus2", 40),
+        ("koreacentral", 10),
+    ]
+    assert len(reads) == 1
+    assert not cli.operations
+
+
+def test_portal_can_select_alternative_model_versions_and_new_deployment_region() -> None:
+    outputs = ui_definition("infrastructure")["outputs"]
+    data = {
+        "contract": {"resourceGroupApi": None},
+        "options": {
+            "coreModelName": "gpt-5.1",
+            "simpleModelName": "gpt-5-nano",
+            "modelVersion": "2025-11-13",
+            "simpleModelVersion": "2025-08-07",
+            "modelCapacity": "100",
+            "simpleModelCapacity": "50",
+        },
+    }
+    expected = {
+        **data["options"],
+        "modelCapacity": 100,
+        "simpleModelCapacity": 50,
+        "location": "eastus2",
+    }
+    for name, value in expected.items():
+        assert (
+            _evaluate_ui_expression(
+                outputs[name],
+                data,
+                network={"virtualNetworkMode": "new"},
+                basics={"infrastructureStage": "foundation"},
+                selected_location="eastus2",
+                eager_conditionals=True,
+            )
+            == value
+        )
+    controls = ui_controls("infrastructure")
+    assert all(name in controls for name in data["options"])
+    assert controls["coreModelName"]["constraints"]["regex"].startswith("^gpt-5")
+
+
+def test_new_defaults_match_portal_cli_and_global_standard(tmp_path: Path) -> None:
+    expected = {
+        "location": "koreacentral",
+        "coreModelName": "gpt-5.2",
+        "simpleModelName": "gpt-5-mini",
+        "modelVersion": "2025-12-11",
+        "simpleModelVersion": "2025-08-07",
+        "modelCapacity": 200,
+        "simpleModelCapacity": 200,
+    }
+    schema = template("infrastructure")["parameters"]
+    values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    controls = ui_controls("infrastructure")
+    for field, value in expected.items():
+        assert schema[field]["defaultValue"] == value
+        assert values[field] == value
+        if field != "location":
+            assert str(controls[field]["defaultValue"]) == str(value)
+            assert (
+                _evaluate_ui_expression(
+                    ui_definition("infrastructure")["outputs"][field],
+                    {"contract": {"resourceGroupApi": None}, "options": {}},
+                    basics={"infrastructureStage": "foundation"},
+                    eager_conditionals=True,
+                )
+                == value
+            )
+    model_template = module(template("infrastructure"), "v2-required-models")["properties"][
+        "template"
+    ]
+    deployments = [
+        resource
+        for resource in resources(model_template)
+        if resource["type"] == "Microsoft.CognitiveServices/accounts/deployments"
+    ]
+    assert len(deployments) == 2
+    assert all(resource["sku"]["name"] == "GlobalStandard" for resource in deployments)
+
+
+def test_new_defaults_do_not_replace_saved_legacy_models(tmp_path: Path) -> None:
+    values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    values.update(
+        coreModelName="gpt-5.6-terra",
+        simpleModelName="gpt-5.6-luna",
+        modelVersion="2026-07-09",
+        simpleModelVersion="2026-07-09",
+    )
+    saved = deploy_v2.make_tag_contract(values, "legacy-foundation", state="foundation")
+    options = deploy_v2.decode_tag_options(saved)
+    options.pop("simpleModelVersion")
+    encoded = json.dumps(options, separators=(",", ":"))
+    saved.update(
+        {
+            key: encoded[index * 256 : (index + 1) * 256]
+            for index, key in enumerate(deploy_v2.OPTION_TAG_KEYS)
+        }
+    )
+    restored = deploy_v2.infrastructure_values(FakeV2Azure(), saved)
+    for field in ("coreModelName", "simpleModelName", "modelVersion", "simpleModelVersion"):
+        assert restored[field] == values[field]
+        assert (
+            _evaluate_ui_expression(
+                ui_definition("infrastructure")["outputs"][field],
+                {"contract": {"resourceGroupApi": {"tags": saved}}},
+                basics={"infrastructureStage": "complete"},
+            )
+            == values[field]
+        )
+
+
+@pytest.mark.parametrize(
+    "quota,provider_capacity,expected", [(400, 250, True), (300, 250, False), (400, 199, False)]
+)
+def test_independent_model_versions_share_quota_not_provider_capacity(
+    monkeypatch: pytest.MonkeyPatch, quota: int, provider_capacity: int, expected: bool
+) -> None:
+    cli = FakeV2Azure()
+    values = {
+        **cli.values,
+        "deployCapabilityHost": True,
+        "provisionModels": True,
+        "provisionEmail": False,
+        "strictModelSelection": True,
+        "coreModelName": "gpt-5",
+        "simpleModelName": "gpt-5",
+        "modelVersion": "2025-08-07",
+        "simpleModelVersion": "2025-10-01",
+        "modelCapacity": 200,
+        "simpleModelCapacity": 200,
+    }
+    cli.collections[f"{cli.account_id}/deployments"] = []
+    cli.collections[f"{cli.account_id}/models"] = [
+        {
+            "name": "gpt-5",
+            "version": version,
+            "capabilities": {"responses": "true", "agentsV2": "true"},
+            "skus": [{"name": "GlobalStandard", "usageName": "shared-quota"}],
+        }
+        for version in (values["modelVersion"], values["simpleModelVersion"])
+    ]
+    cli.collections[
+        f"/subscriptions/{SUBSCRIPTION}/providers/Microsoft.CognitiveServices/locations/{values['location']}/usages"
+    ] = [{"name": {"value": "shared-quota"}, "limit": quota, "currentValue": 0}]
+
+    def capacity_read(*arguments: str) -> Any:
+        assert arguments[:3] == ("rest", "--method", "get")
+        return {
+            "value": [
+                {
+                    "location": values["location"],
+                    "properties": {
+                        "skuName": "GlobalStandard",
+                        "availableCapacity": provider_capacity,
+                    },
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cli, "json", capacity_read)
+    if expected:
+        plan = deploy_v2.automatic_service_plan(cli, values, {})
+        assert plan["useCoreForSimpleModel"] is False
+    else:
+        with pytest.raises(ValueError, match="Insufficient"):
+            deploy_v2.automatic_service_plan(cli, values, {})
+    assert not cli.operations
+
+
 def test_infrastructure_excludes_application_installation() -> None:
     types = {resource["type"] for resource in resources(template("infrastructure"))}
     assert "Microsoft.App/containerApps" not in types
@@ -1595,11 +1806,6 @@ def test_infrastructure_ui_keeps_customer_names_but_not_internal_settings() -> N
     for field in (
         "modelDeploymentName",
         "simpleModelDeploymentName",
-        "coreModelName",
-        "simpleModelName",
-        "modelVersion",
-        "modelCapacity",
-        "simpleModelCapacity",
         "foundryHostedAgentName",
         "azureMcpServerUrl",
         "azureMcpProjectConnectionName",
@@ -1901,6 +2107,62 @@ def test_saved_foundation_names_and_choices_cannot_be_changed(tmp_path: Path) ->
     with pytest.raises(ValueError, match="saved foundation option"):
         deploy_v2.prepare_infrastructure(cli, altered, "complete", "v2")
     assert not cli.operations
+
+
+@pytest.mark.parametrize("existing", ["deployments", "projects"])
+def test_model_reselection_never_changes_provisioned_foundation(
+    tmp_path: Path, existing: str
+) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    cli.tags = deploy_v2.make_tag_contract(values, "foundation", state="foundation")
+    cli.collections[f"{cli.account_id}/deployments"] = []
+    cli.collections[f"{cli.account_id}/projects"] = []
+    cli.collections[f"{cli.account_id}/{existing}"] = [{"name": "must-retain"}]
+    values.update(coreModelName="gpt-5.2", modelVersion="2025-12-11")
+    with pytest.raises(ValueError, match="zero model deployments and zero projects"):
+        deploy_v2.prepare_infrastructure(
+            cli, values, "complete", "v2", allow_model_reselection=True
+        )
+    assert not cli.operations
+
+
+def test_model_reselection_cannot_change_saved_region(tmp_path: Path) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    cli.tags = deploy_v2.make_tag_contract(values, "foundation", state="foundation")
+    cli.collections[f"{cli.account_id}/deployments"] = []
+    cli.collections[f"{cli.account_id}/projects"] = []
+    values["location"] = "eastus2"
+    with pytest.raises(ValueError, match="saved foundation option"):
+        deploy_v2.prepare_infrastructure(
+            cli, values, "complete", "v2", allow_model_reselection=True
+        )
+    assert not cli.operations
+
+
+def test_independent_versions_roundtrip_and_legacy_version_falls_back(tmp_path: Path) -> None:
+    values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
+    values.update(
+        coreModelName="gpt-5.2",
+        simpleModelName="gpt-5-mini",
+        modelVersion="2025-12-11",
+        simpleModelVersion="2025-08-07",
+    )
+    saved = deploy_v2.make_tag_contract(values, "foundation", state="foundation")
+    restored = deploy_v2.infrastructure_values(FakeV2Azure(), saved)
+    assert restored["simpleModelVersion"] == "2025-08-07"
+    assert restored["modelVersion"] == "2025-12-11"
+    options = deploy_v2.decode_tag_options(saved)
+    options.pop("simpleModelVersion")
+    encoded = json.dumps(options, separators=(",", ":"))
+    saved.update(
+        {
+            key: encoded[index * 256 : (index + 1) * 256]
+            for index, key in enumerate(deploy_v2.OPTION_TAG_KEYS)
+        }
+    )
+    assert (
+        deploy_v2.infrastructure_values(FakeV2Azure(), saved)["simpleModelVersion"] == "2025-12-11"
+    )
 
 
 def test_core_and_mcp_customer_names_never_merge_identities(tmp_path: Path) -> None:
@@ -2464,7 +2726,15 @@ def test_infrastructure_stage_order_and_preview_gates(monkeypatch: pytest.Monkey
     cli = FakeV2Azure()
     values = {"foundryAccountName": "test-foundry", "projectName": "test-project"}
 
-    def prepare(cli: AzureCli, values: dict[str, Any], stage: str, name: str) -> dict[str, Any]:
+    def prepare(
+        cli: AzureCli,
+        values: dict[str, Any],
+        stage: str,
+        name: str,
+        *,
+        allow_model_reselection: bool = False,
+    ) -> dict[str, Any]:
+        assert allow_model_reselection is False
         calls.append(("preflight", stage))
         return {"infrastructureStage": stage}
 

@@ -106,6 +106,16 @@ NETWORK_OPTION_FIELDS = frozenset(
         "containerAppsSubnetAddressPrefix",
     }
 )
+MODEL_SELECTION_FIELDS = frozenset(
+    {
+        "coreModelName",
+        "simpleModelName",
+        "modelVersion",
+        "simpleModelVersion",
+        "modelCapacity",
+        "simpleModelCapacity",
+    }
+)
 IMAGE_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]*/[a-z0-9][a-z0-9._/-]*@sha256:[0-9a-f]{64}$")
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.()-]{0,254}$")
 CONFIG_FIELDS = frozenset(
@@ -384,6 +394,104 @@ def planned_virtual_network(values: dict[str, Any]) -> dict[str, Any]:
     return virtual_network
 
 
+def discover_model_options(
+    cli: AzureCli, regions: list[str], model_names: list[str] | None = None
+) -> list[dict[str, Any]]:
+    """List verified GPT-5 Agent profiles with both quota and provider deployment capacity."""
+    cli.assert_context()
+    if (
+        not regions
+        or len(regions) > 8
+        or any(not re.fullmatch(r"[a-z][a-z0-9]{1,39}", region) for region in regions)
+    ):
+        raise ValueError("Choose one to eight explicit canonical Azure regions")
+    capacities: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    result: list[dict[str, Any]] = []
+    for region in dict.fromkeys(regions):
+        base = f"/subscriptions/{cli.subscription}/providers/Microsoft.CognitiveServices"
+        catalog = cli.collection(f"{base}/locations/{region}/models", FOUNDRY_API)
+        usages = cli.collection(f"{base}/locations/{region}/usages", "2024-10-01")
+        profiles: dict[tuple[str, str], dict[str, Any]] = {}
+        for row in catalog:
+            model = row.get("model", {})
+            name, version = model.get("name", ""), model.get("version", "")
+            capabilities = model.get("capabilities", {})
+            if (
+                model.get("format") != "OpenAI"
+                or not name.startswith("gpt-5")
+                or capabilities.get("responses") != "true"
+                or capabilities.get("agentsV2") != "true"
+                or not version
+                or (model_names and name not in model_names)
+            ):
+                continue
+            profiles[(name, version)] = model
+        if len(profiles) > 60:
+            raise ValueError("Narrow the model candidates before querying deployment capacity")
+        for (name, version), model in profiles.items():
+            sku_rows = [sku for sku in model.get("skus", []) if sku.get("name") == "GlobalStandard"]
+            usage_names = {sku.get("usageName") for sku in sku_rows}
+            if len(usage_names) != 1 or not all(
+                isinstance(value, str) and value for value in usage_names
+            ):
+                continue
+            rows = [row for row in usages if row.get("name", {}).get("value") in usage_names]
+            if len(rows) != 1 or any(
+                type(rows[0].get(field)) not in (int, float) for field in ("limit", "currentValue")
+            ):
+                raise ValueError(f"Quota is unreadable or ambiguous: {region}/{name}/{version}")
+            key = (name, version)
+            if key not in capacities:
+                query = urlencode(
+                    {
+                        "api-version": "2024-10-01",
+                        "modelFormat": "OpenAI",
+                        "modelName": name,
+                        "modelVersion": version,
+                    }
+                )
+                payload = cli.json(
+                    "rest",
+                    "--method",
+                    "get",
+                    "--url",
+                    f"{MANAGEMENT}{base}/modelCapacities?{query}",
+                )
+                if (
+                    not isinstance(payload, dict)
+                    or not isinstance(payload.get("value"), list)
+                    or payload.get("nextLink")
+                ):
+                    raise ValueError("Model capacity inventory is incomplete or paged")
+                capacities[key] = payload["value"]
+            available = [
+                row["properties"].get("availableCapacity")
+                for row in capacities[key]
+                if row.get("location", "").casefold() == region.casefold()
+                and row.get("properties", {}).get("skuName") == "GlobalStandard"
+            ]
+            if len(available) != 1 or type(available[0]) not in (int, float):
+                continue
+            quota = max(0, int(rows[0]["limit"] - rows[0]["currentValue"]))
+            provider = max(0, int(available[0]))
+            result.append(
+                {
+                    "region": region,
+                    "model": name,
+                    "version": version,
+                    "sku": "GlobalStandard",
+                    "quota_limit": rows[0]["limit"],
+                    "quota_used": rows[0]["currentValue"],
+                    "quota_available": quota,
+                    "provider_available": provider,
+                    "available": min(quota, provider),
+                }
+            )
+    return sorted(
+        result, key=lambda row: (-row["available"], row["region"], row["model"], row["version"])
+    )
+
+
 def validate_tag_budget(tags: dict[str, Any]) -> None:
     """Reject oversized or non-string metadata before any deployment writes."""
     if len({key.casefold() for key in tags}) != len(tags) or len(tags) > 50:
@@ -471,6 +579,7 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
         raise ValueError("Incomplete infrastructure option tags")
     options = json.loads("".join(tags[key] for key in OPTION_TAG_KEYS))
     optional = {
+        "simpleModelVersion",
         "useMicrosoftManagedAgentData",
         "manageAzureMcp",
         "azureMcpClientId",
@@ -492,6 +601,11 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
         and type(options["useMicrosoftManagedAgentData"]) is not bool
     ):
         raise ValueError("Invalid agent data storage mode")
+    if "simpleModelVersion" in options and (
+        not isinstance(options["simpleModelVersion"], str)
+        or not options["simpleModelVersion"].strip()
+    ):
+        raise ValueError("Invalid saved Simple model version")
     if options.get("virtualNetworkMode", "existing") not in {"existing", "new"}:
         raise ValueError("Invalid saved VNet deployment mode")
     for field in NETWORK_OPTION_FIELDS - {"virtualNetworkMode"}:
@@ -509,6 +623,7 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
             "useMicrosoftManagedAgentData",
             "namingPrefix",
             "namingSuffix",
+            "simpleModelVersion",
         }
         - NETWORK_OPTION_FIELDS
     ):
@@ -533,6 +648,7 @@ def infrastructure_values(cli: AzureCli, tags: dict[str, str]) -> dict[str, Any]
     values.update(decode_tag_options(tags))
     values.setdefault("useMicrosoftManagedAgentData", False)
     values.setdefault("virtualNetworkMode", "existing")
+    values.setdefault("simpleModelVersion", values.get("modelVersion", ""))
     values.update(
         tenantId=cli.tenant,
         subscriptionId=cli.subscription,
@@ -1243,6 +1359,7 @@ def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
         values["searchServiceName"] = ""
     elif not values["cosmosAccountName"] or not values["searchServiceName"]:
         raise ValueError("Existing BYO mode requires Cosmos DB and Search names")
+    values["simpleModelVersion"] = values.get("simpleModelVersion") or values["modelVersion"]
     if len(values["tags"]) > 15:
         raise ValueError("Resource tags must also fit the Private DNS 15-tag limit")
     return values
@@ -1267,6 +1384,7 @@ def make_tag_contract(
         {
             "manageAzureMcp": not bool(values.get("azureMcpServerUrl")),
             "useMicrosoftManagedAgentData": values.get("useMicrosoftManagedAgentData", False),
+            "simpleModelVersion": values.get("simpleModelVersion") or values["modelVersion"],
             "azureMcpClientId": values.get("azureMcpClientId", ""),
             "azureMcpServicePrincipalId": values.get("azureMcpServicePrincipalId", ""),
             "azureMcpAppRoleId": values.get("azureMcpAppRoleId", ""),
@@ -1377,7 +1495,12 @@ def _private_dns_bindings(cli: AzureCli, values: dict[str, Any], vnet_id: str) -
 
 
 def prepare_infrastructure(
-    cli: AzureCli, values: dict[str, Any], stage: str, name: str
+    cli: AzureCli,
+    values: dict[str, Any],
+    stage: str,
+    name: str,
+    *,
+    allow_model_reselection: bool = False,
 ) -> dict[str, Any]:
     """Keep infrastructure one-time, reuse the approved network and derive completion decisions."""
     cli.assert_context()
@@ -1407,6 +1530,18 @@ def prepare_infrastructure(
         saved_options = decode_tag_options(saved)
         if not saved_options:
             raise ValueError("Completion requires saved foundation options")
+        if allow_model_reselection:
+            account_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}"
+            if cli.collection(f"{account_id}/deployments", FOUNDRY_API) or cli.collection(
+                f"{account_id}/projects", FOUNDRY_API
+            ):
+                raise ValueError(
+                    "Model reselection requires zero model deployments and zero projects"
+                )
+        if not allow_model_reselection and (
+            values.get("simpleModelVersion") or values["modelVersion"]
+        ) != saved_options.get("simpleModelVersion", saved_options["modelVersion"]):
+            raise ValueError("Saved Simple model version is immutable on completion")
         if values.get("useMicrosoftManagedAgentData", False) != saved_options.get(
             "useMicrosoftManagedAgentData", False
         ):
@@ -1426,9 +1561,13 @@ def prepare_infrastructure(
             if str(values.get(field, "")).casefold() != saved.get(PREFIX + suffix, "").casefold():
                 raise ValueError(f"Refusing to change saved foundation option: {field}")
         for field in OPTION_FIELDS:
+            if allow_model_reselection and field in MODEL_SELECTION_FIELDS:
+                continue
             if field != "existingPrivateDnsZoneIds" and values[field] != saved_options[field]:
                 raise ValueError(f"Refusing to change saved foundation option: {field}")
     contract = make_tag_contract(values, name + "-complete")
+    if allow_model_reselection and not saved_options:
+        raise ValueError("Model reselection is only for a saved unprovisioned foundation")
     if saved_options:
         for field in ("namingPrefix", "namingSuffix"):
             if values.get(field, "") != saved_options.get(field, ""):
@@ -1567,6 +1706,7 @@ def prepare_infrastructure(
                 "provisionModels": True,
                 "provisionEmail": False,
                 "communicationServicesEndpoint": "",
+                "strictModelSelection": True,
             },
             by_id,
         )
@@ -1605,13 +1745,23 @@ def _verify_saved_dns_bindings(
 
 
 def run_infrastructure(
-    cli: AzureCli, values: dict[str, Any], mode: str, name: str, stage: str = "both"
+    cli: AzureCli,
+    values: dict[str, Any],
+    mode: str,
+    name: str,
+    stage: str = "both",
+    *,
+    allow_model_reselection: bool = False,
 ) -> None:
     """Run foundation then completion once, preserving Foundry's account-host initialization boundary."""
     initial = "complete" if stage == "complete" else "foundation"
+    if allow_model_reselection and stage != "complete":
+        raise ValueError("Explicit model reselection requires --stage complete")
     account_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}"
     if mode != "deploy":
-        prepared = prepare_infrastructure(cli, values, initial, name)
+        prepared = prepare_infrastructure(
+            cli, values, initial, name, allow_model_reselection=allow_model_reselection
+        )
         if mode != "preflight":
             deploy_template(cli, V2 / "infrastructure.json", prepared, mode, name + "-" + initial)
         logger.info("v2_infrastructure_preflight_complete", stage=initial, azure_mutations=False)
@@ -1621,7 +1771,9 @@ def run_infrastructure(
         if current == "complete":
             wait_for_host(cli, account_id)
         for operation in ("validate", "what-if", "create"):
-            prepared = prepare_infrastructure(cli, values, current, name)
+            prepared = prepare_infrastructure(
+                cli, values, current, name, allow_model_reselection=allow_model_reselection
+            )
             deploy_template(
                 cli, V2 / "infrastructure.json", prepared, operation, name + "-" + current
             )
@@ -1681,6 +1833,24 @@ def main() -> int:
     parser.add_argument("--hosted-principal-id", type=UUID)
     parser.add_argument("--prepare-mcp-authentication", action="store_true")
     parser.add_argument("--no-automatic-setup", action="store_true")
+    parser.add_argument(
+        "--list-model-options",
+        action="store_true",
+        help="Read-only regional GPT-5 catalog, quota and provider capacity",
+    )
+    parser.add_argument(
+        "--model-regions",
+        nargs="+",
+        help="Explicit canonical regions for discovery; does not move an existing Foundry account",
+    )
+    parser.add_argument(
+        "--candidate-models", nargs="+", help="Optional exact GPT-5 model names to narrow discovery"
+    )
+    parser.add_argument(
+        "--reselect-models",
+        action="store_true",
+        help="Explicit model-only reselection on saved foundation with no models/projects; requires --stage complete",
+    )
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,45}", args.name):
         parser.error("Use a deployment-name prefix of at most 46 characters")
@@ -1688,17 +1858,50 @@ def main() -> int:
         parser.error("Use an explicit resource-group name")
     try:
         cli = AzureCli(str(args.subscription), str(args.tenant), args.resource_group)
+        if (args.model_regions or args.candidate_models) and not args.list_model_options:
+            raise ValueError("Model discovery filters require --list-model-options")
         if args.phase == "infrastructure":
             if args.image or args.configuration or args.no_automatic_setup:
                 raise ValueError("Application inputs do not belong in infrastructure deployment")
-            if args.prepare_mcp_authentication:
-                if args.parameters or args.hosted_principal_id or args.stage != "both":
+            if args.list_model_options:
+                if (
+                    args.mode != "preflight"
+                    or args.prepare_mcp_authentication
+                    or args.hosted_principal_id
+                    or args.stage != "both"
+                    or args.reselect_models
+                ):
+                    raise ValueError(
+                        "Model discovery is read-only and cannot prepare or deploy resources"
+                    )
+                regions = args.model_regions
+                if not regions and args.parameters:
+                    regions = [load_infrastructure_parameters(args.parameters)["location"]]
+                if not regions:
+                    raise ValueError(
+                        "Model discovery requires explicit --model-regions or parameter location"
+                    )
+                rows = discover_model_options(cli, regions, args.candidate_models)
+                logger.info(
+                    "v2_model_options",
+                    profiles=rows,
+                    azure_mutations=False,
+                    region_scope="new_foundry_and_vnet_location",
+                    existing_installation_changed=False,
+                )
+            elif args.prepare_mcp_authentication:
+                if (
+                    args.parameters
+                    or args.hosted_principal_id
+                    or args.stage != "both"
+                    or args.reselect_models
+                ):
                     raise ValueError(
                         "MCP preparation never replays general infrastructure or Hosted roles"
                     )
                 run_mcp_authentication(cli, args.mode, args.name)
             elif args.hosted_principal_id:
-                if args.parameters or args.stage != "both":
+                if args.parameters or args.stage != "both" or args.reselect_models:
                     raise ValueError("Hosted-role completion never replays general infrastructure")
                 run_hosted_roles(cli, str(args.hosted_principal_id), args.mode, args.name)
             else:
@@ -1710,10 +1913,13 @@ def main() -> int:
                     args.mode,
                     args.name,
                     args.stage,
+                    allow_model_reselection=args.reselect_models,
                 )
         else:
             if (
                 args.parameters
+                or args.list_model_options
+                or args.reselect_models
                 or args.hosted_principal_id
                 or args.prepare_mcp_authentication
                 or args.stage != "both"
