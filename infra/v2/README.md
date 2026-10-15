@@ -166,6 +166,18 @@ An App Review error for `portalValidationPassed=false` is a blocking prerequisit
 not permission to force the parameter to true. `foundation` means run the same-RG core
 completion first; `mcp_pending` means authorized MCP preparation is still required. A full
 model quota blocks completion. Inspect current inventory errors/ownership before retrying.
+The two README buttons do not collapse the Portal's internal infrastructure phases. A
+successful deployment with `infrastructureStage=foundation` is not completed infrastructure:
+it does not create the project/model deployments or make the application installable.
+Use the same infrastructure button with **Complete existing foundation**, then authorized
+MCP preparation, and only afterward install the App. Zero model quota blocks core completion
+and cannot be corrected by editing validation/state tags or retrying the App template.
+
+The application image field also validates `foundation`, `mcp_pending`, unknown and `ready`
+states before ARM submission, with the missing step named in the error. The independent
+`portalValidationPassed` true-only ARM guard remains unchanged. Publish the changed UI before
+claiming the public button shows these new messages. A locally deployed CLI/snapshot smoke
+is not proof that a public Portal form, another RG or the default model allocation is ready.
 The eight `options0` through `options7` values each hold at most 256 characters of one
 allow-listed JSON object (2048 characters total). It preserves model IDs/version/capacity,
 the agent-data mode, legacy Search SKU, email location, canonical DNS IDs, resource tags and

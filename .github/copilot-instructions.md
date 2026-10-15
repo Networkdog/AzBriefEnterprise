@@ -55,6 +55,12 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 
 ## Agentic AI Design Principles
 
+For v2 Portal failures, distinguish foundation success from core/MCP ready. Keep the
+portalValidationPassed true-only guard; image-field native validations must name foundation,
+MCP-pending or missing-ready prerequisites before ARM submission. Confirm the actual RG and
+public artifact version. A separate CLI/snapshot App smoke is not customer Portal acceptance;
+never force tags, broaden permissions or silently swap models to suppress this failure.
+
 AzBrief follows advanced Agentic AI design principles for reliability, resilience, and quality.
 
 ### Core Philosophy

@@ -480,6 +480,22 @@ def normalize_ui(
                     "자동 준비하고 ready로 전환합니다. 내부 ID를 수동 입력하거나 인증을 해제하지 않습니다."
                 )
         if step["name"] == "application":
+            for element in step["elements"]:
+                if element["name"] == "containerImage":
+                    element["constraints"]["validations"] = [
+                        {
+                            "isValid": "[not(equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.state'], ''), 'foundation'))]",
+                            "message": "현재 RG는 기반 준비(foundation)만 완료됐습니다. 인프라 배포에서 '기존 기반 완성'을 같은 RG로 실행한 뒤 MCP 인증 준비까지 완료하십시오. 앱 배포를 먼저 진행할 수 없습니다.",
+                        },
+                        {
+                            "isValid": "[not(equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.state'], ''), 'mcp_pending'))]",
+                            "message": "코어는 완료됐지만 MCP 인증 준비가 남았습니다. 같은 RG에서 승인된 CLI의 --prepare-mcp-authentication --mode deploy를 완료한 뒤 앱 배포를 다시 여십시오.",
+                        },
+                        {
+                            "isValid": "[equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.state'], ''), 'ready')]",
+                            "message": "완료된 v2 인프라의 같은 기존 RG를 선택하십시오. azbrief.v2.state=ready가 확인돼야 앱을 배포할 수 있습니다. 태그나 portalValidationPassed를 수동으로 바꾸지 마십시오.",
+                        },
+                    ]
             step["elements"] = [
                 element
                 for element in step["elements"]

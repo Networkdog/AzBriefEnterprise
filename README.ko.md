@@ -29,6 +29,11 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [v2 배포 가이드](infra/v2/README.md): 같은 리소스 그룹의 인프라 준비를 완료한 뒤 앱을 설치하거나 업데이트합니다.
 
+`foundation` 성공은 인프라 첫 단계만 완료됐다는 뜻입니다. 같은 RG에서 인프라 버튼의
+**기존 기반 완성**을 실행하고 승인된 MCP 인증 준비까지 마친 뒤 `azbrief.v2.state=ready`를
+확인해야 앱 버튼을 사용할 수 있습니다. 앱 Validation의 `portalValidationPassed=false`는
+이 값을 강제로 바꾸라는 뜻이 아닙니다.
+
 </div>
 
 ---

@@ -1657,6 +1657,26 @@ def test_portal_does_not_use_application_metadata_as_inventory_evidence() -> Non
     assert _evaluate_ui_expression(expression, data, resource_group={"mode": "Existing"}) is False
 
 
+@pytest.mark.parametrize(
+    "state,valid", [("foundation", False), ("mcp_pending", False), ("ready", True), ("", False)]
+)
+def test_application_form_blocks_incomplete_infrastructure_before_arm_validation(
+    state: str, valid: bool
+) -> None:
+    control = ui_controls("application")["containerImage"]
+    validations = control["constraints"]["validations"]
+    data = {"application": {"resourceGroupApi": {"tags": {deploy_v2.PREFIX + "state": state}}}}
+    outcomes = [_evaluate_ui_expression(rule["isValid"], data) for rule in validations]
+    assert all(outcomes) is valid
+    if state == "foundation":
+        assert "기존 기반 완성" in validations[0]["message"]
+    if state == "mcp_pending":
+        assert "--prepare-mcp-authentication" in validations[1]["message"]
+    assert template("application")["parameters"]["portalValidationPassed"]["allowedValues"] == [
+        True
+    ]
+
+
 def test_portal_pending_mcp_notice_does_not_request_internal_identifiers() -> None:
     controls = ui_controls("application")
     notice = controls["mcpPendingNotice"]

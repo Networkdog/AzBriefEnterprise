@@ -116,6 +116,10 @@ foundation/PNA/auth replay. A cluster-success exec without a real HTTP success m
 For v2 updates, only parsed AuthConfigNotFound/observed Not Found(JSON) is optional-auth absence;
 403, malformed/forged wrappers and other NotFound remain blocking. UI enablement still needs Entra.
 V2 App foundation/pending failures identify unmet readiness, not a broken true-only guard.
+The existing application image field has native state validations naming the missing core/
+MCP step before ARM submission; do not reintroduce editable guard rows. Foundation Succeeded
+is not full infrastructure readiness. Compare the exact live RG and published ARM/UI, and
+distinguish local CLI/snapshot acceptance from the customer's public Portal path.
 DNS completion distinguishes empty saved overrides from explicitly bound central zones: seven
 owned same-RG defaults with verified links are valid, redirected/denied/incomplete zones are not.
 Preserve saved options and quota allocations. Explain manual subscriber/principal/UI/schedule

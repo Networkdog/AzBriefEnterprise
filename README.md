@@ -29,6 +29,11 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [v2 deployment guide](infra/v2/README.md): complete infrastructure in the same resource group before installing or updating the application.
 
+`foundation` success is only the first infrastructure phase. Reopen the infrastructure button
+with **Complete existing foundation** for the same RG, finish authorized MCP preparation,
+and confirm `azbrief.v2.state=ready` before using the application button. An application
+Validation failure with `portalValidationPassed=false` is not permission to force that value.
+
 </div>
 
 ---
