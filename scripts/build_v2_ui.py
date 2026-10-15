@@ -381,6 +381,7 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
         return
     location_config = parameters["config"]["basics"]["location"]
     location_config["label"] = "Foundry·모델·VNet 배포 지역"
+    location_config["visible"] = False
     location_config["resourceTypes"] = [
         "Microsoft.CognitiveServices/accounts",
         "Microsoft.App/managedEnvironments",
@@ -394,6 +395,54 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
     names = set(fields) | {"modelCapacity", "simpleModelCapacity", "modelRegionNotice"}
     step["elements"] = [element for element in step["elements"] if element["name"] not in names]
     foundation = "equals(basics('infrastructureStage'), 'foundation')"
+    network_step = next(step for step in parameters["steps"] if step["name"] == "network")
+    selected_region = "coalesce(steps('network').modelDeploymentRegion, 'eastus')"
+    existing_network = (
+        "equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'existing')"
+    )
+    actual_region = "toLower(coalesce(steps('network').virtualNetworkApi.location, steps('network').virtualNetwork.location, ''))"
+    network_step["elements"] = [
+        {
+            "name": "modelDeploymentRegion",
+            "type": "Microsoft.Common.DropDown",
+            "label": "LLM 모델·Foundry·VNet 배포 리전",
+            "defaultValue": "East US",
+            "visible": f"[{foundation}]",
+            "toolTip": "모델 배포는 부모 Foundry 계정과 같은 리전을 사용합니다. 신규 VNet도 이 리전에 생성하며 기존 VNet은 같은 리전이어야 합니다. GlobalStandard의 추론 처리 위치를 이 리전으로 제한하지는 않습니다.",
+            "constraints": {
+                "required": True,
+                "allowedValues": [
+                    {"label": label, "value": value}
+                    for label, value in (
+                        ("East US", "eastus"),
+                        ("East US 2", "eastus2"),
+                        ("Korea Central", "koreacentral"),
+                        ("Japan East", "japaneast"),
+                        ("Sweden Central", "swedencentral"),
+                    )
+                ],
+            },
+        },
+        {
+            "name": "modelRegionMismatchNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": f"[and({foundation}, {existing_network}, not(empty({actual_region})), not(equals({actual_region}, {selected_region})))]",
+            "options": {
+                "icon": "Warning",
+                "text": "선택한 모델 배포 리전과 기존 VNet의 리전이 다릅니다. 같은 리전의 VNet을 선택하거나 모델 배포 리전을 변경하십시오. 기존 VNet이나 Foundry 계정을 다른 리전으로 이동하지 않습니다.",
+            },
+        },
+        *[
+            element
+            for element in network_step["elements"]
+            if element["name"] not in {"modelDeploymentRegion", "modelRegionMismatchNotice"}
+        ],
+    ]
+    guard = parameters["outputs"]["portalValidationPassed"]
+    if "modelDeploymentRegion" not in guard:
+        parameters["outputs"][
+            "portalValidationPassed"
+        ] = f"[and({guard[1:-1]}, if(and({foundation}, {existing_network}), equals({actual_region}, {selected_region}), true))]"
     chunks = [
         f"coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.options{index}'], '')"
         for index in range(8)
@@ -469,10 +518,9 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
     complete_location = (
         "coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.location'], '')"
     )
-    new_network = "equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'new')"
     parameters["outputs"][
         "location"
-    ] = f"[if({foundation}, if({new_network}, location(), coalesce(steps('network').virtualNetwork.location, location())), {complete_location})]"
+    ] = f"[if({foundation}, {selected_region}, {complete_location})]"
 
 
 def _safe_initial_outputs(parameters: dict[str, Any]) -> None:

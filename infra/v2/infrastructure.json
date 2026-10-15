@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "8110015503970855379"
+      "templateHash": "9094470895957670650"
     },
     "description": "One-time AzBrief v2 infrastructure. Foundation and completion are internal orchestration stages; application containers and Agent versions are excluded."
   },
@@ -40,7 +40,7 @@
     },
     "location": {
       "type": "string",
-      "defaultValue": "koreacentral"
+      "defaultValue": "eastus"
     },
     "virtualNetworkMode": {
       "type": "string",

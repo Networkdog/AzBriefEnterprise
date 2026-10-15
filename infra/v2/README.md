@@ -90,8 +90,8 @@ Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all four arti
   scripts. App/Job deployment does not bypass their import, pytest, roster or smoke gates.
 
 New v2 defaults use Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-mini` / `2025-08-07`,
-with 200 `GlobalStandard` capacity units each. ARM/CLI location defaults to `koreacentral`;
-the Portal still honors its explicit Basics region and existing-VNet location. No PTU SKU,
+with 200 `GlobalStandard` capacity units each. ARM/CLI location defaults to `eastus`;
+the Portal's explicit LLM deployment-region selector also defaults to East US. No PTU SKU,
 reservation or automatic PTU fallback is used. Logical aliases remain `gpt-5-terra` / `gpt-5-luna`.
 The existing KT profile and saved v2 choices retain their previous defaults/configuration.
 GlobalStandard processing can leave the account region.
@@ -99,7 +99,7 @@ ACS/email data location defaults to Asia Pacific. Validate policy, price and cap
 before opting into `--mode deploy`.
 
 On 2026-10-15, read-only checks in the reference subscription reported quota/provider headroom
-of 2,000/2,000 units for the selected Core and 1,000/1,000 for Simple in Korea Central. This
+of 2,000/2,000 units for the selected Core and 1,000/1,000 for Simple in East US. This
 supports the 200/200 defaults at that time; it reserves no capacity and guarantees neither
 another subscription's availability nor runtime performance. Recheck both gates before deployment.
 
@@ -112,7 +112,7 @@ These are explicit inputs, not an automatic best-model selector. Check candidate
 
 ```powershell
 & .\.venv\Scripts\Activate.ps1
-python -m scripts.deploy_v2 infrastructure --subscription <subscription-guid> --tenant <tenant-guid> --resource-group <target-rg> --list-model-options --model-regions koreacentral japaneast eastus2 swedencentral --candidate-models gpt-5.2 gpt-5-mini --mode preflight
+python -m scripts.deploy_v2 infrastructure --subscription <subscription-guid> --tenant <tenant-guid> --resource-group <target-rg> --list-model-options --model-regions eastus eastus2 koreacentral japaneast swedencentral --candidate-models gpt-5.2 gpt-5-mini --mode preflight
 ```
 
 `available` is the smaller of unused subscription quota and reported regional provider capacity,
@@ -129,10 +129,15 @@ an older saved profile. Completion combines shared quota and checks each selecte
 it never silently substitutes models. Existing aliases are reused without PUT only when model,
 version and SKU agree.
 
-For a new VNet, the Basics region selects the new Foundry account, child model deployments and
-VNet together. An existing VNet fixes that region to its actual location; completion uses the saved
-location. This is not a remote-model connection or an existing-account move. Use a new installation
-for another region; private/PNA/Entra restrictions remain unchanged.
+The network tab's **LLM model / Foundry / VNet deployment region** selector defaults to East US
+and offers East US 2, Korea Central, Japan East and Sweden Central. It selects the new Foundry
+account, child model deployments and new VNet together. The native Basics location control is
+hidden so an unrelated Portal/RG preference cannot silently replace the selected model region.
+An existing VNet must match the selection; mismatched or unknown location blocks the guard and
+the mismatch notice identifies the remedy. Completion ignores this new selector and uses the
+saved location. The CLI's `location` input remains explicit/overridable for other supported regions.
+This is not a remote-model connection or an existing-account move. Use a new installation for
+another region; private/PNA/Entra restrictions remain unchanged.
 
 A saved `foundation` blocked before any model/project was created may explicitly reselect the six
 physical model/version/capacity fields with `--stage complete --reselect-models` and the approved

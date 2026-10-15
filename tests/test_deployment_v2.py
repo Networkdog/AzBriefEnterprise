@@ -271,7 +271,7 @@ def test_portal_can_select_alternative_model_versions_and_new_deployment_region(
             _evaluate_ui_expression(
                 outputs[name],
                 data,
-                network={"virtualNetworkMode": "new"},
+                network={"virtualNetworkMode": "new", "modelDeploymentRegion": "eastus2"},
                 basics={"infrastructureStage": "foundation"},
                 selected_location="eastus2",
                 eager_conditionals=True,
@@ -285,7 +285,7 @@ def test_portal_can_select_alternative_model_versions_and_new_deployment_region(
 
 def test_new_defaults_match_portal_cli_and_global_standard(tmp_path: Path) -> None:
     expected = {
-        "location": "koreacentral",
+        "location": "eastus",
         "coreModelName": "gpt-5.2",
         "simpleModelName": "gpt-5-mini",
         "modelVersion": "2025-12-11",
@@ -296,6 +296,19 @@ def test_new_defaults_match_portal_cli_and_global_standard(tmp_path: Path) -> No
     schema = template("infrastructure")["parameters"]
     values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
     controls = ui_controls("infrastructure")
+    assert controls["modelDeploymentRegion"]["defaultValue"] == "East US"
+    assert ui_definition("infrastructure")["config"]["basics"]["location"]["visible"] is False
+    assert (
+        _evaluate_ui_expression(
+            ui_definition("infrastructure")["outputs"]["location"],
+            {"contract": {"resourceGroupApi": None}},
+            network={},
+            basics={"infrastructureStage": "foundation"},
+            selected_location="koreacentral",
+            eager_conditionals=True,
+        )
+        == "eastus"
+    )
     for field, value in expected.items():
         assert schema[field]["defaultValue"] == value
         assert values[field] == value
@@ -325,6 +338,7 @@ def test_new_defaults_match_portal_cli_and_global_standard(tmp_path: Path) -> No
 def test_new_defaults_do_not_replace_saved_legacy_models(tmp_path: Path) -> None:
     values = deploy_v2.load_infrastructure_parameters(infrastructure_parameter_file(tmp_path))
     values.update(
+        location="koreacentral",
         coreModelName="gpt-5.6-terra",
         simpleModelName="gpt-5.6-luna",
         modelVersion="2026-07-09",
@@ -341,7 +355,13 @@ def test_new_defaults_do_not_replace_saved_legacy_models(tmp_path: Path) -> None
         }
     )
     restored = deploy_v2.infrastructure_values(FakeV2Azure(), saved)
-    for field in ("coreModelName", "simpleModelName", "modelVersion", "simpleModelVersion"):
+    for field in (
+        "location",
+        "coreModelName",
+        "simpleModelName",
+        "modelVersion",
+        "simpleModelVersion",
+    ):
         assert restored[field] == values[field]
         assert (
             _evaluate_ui_expression(
@@ -351,6 +371,47 @@ def test_new_defaults_do_not_replace_saved_legacy_models(tmp_path: Path) -> None
             )
             == values[field]
         )
+
+
+@pytest.mark.parametrize(
+    "selected,actual,expected",
+    [
+        ("eastus", "eastus", True),
+        ("koreacentral", "koreacentral", True),
+        ("eastus", "koreacentral", False),
+        ("eastus", None, False),
+    ],
+)
+def test_model_region_must_match_existing_vnet(
+    tmp_path: Path, selected: str, actual: str | None, expected: bool
+) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    vnet_id = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
+    network = {
+        **values,
+        "modelDeploymentRegion": selected,
+        "virtualNetwork": {"id": vnet_id, "location": actual},
+        "virtualNetworkApi": {**cli.documents[vnet_id], "location": actual},
+    }
+    arguments = {
+        "names": {
+            "contract": {"contractAccepted": True, "resourceGroupApi": None},
+            "names": {"namingPrefix": "kt", "namingSuffix": "dev"},
+        },
+        "network": network,
+        "resource_group": {"mode": "New"},
+        "basics": {"infrastructureStage": "foundation"},
+        "eager_conditionals": True,
+    }
+    assert (
+        _evaluate_ui_expression(
+            ui_definition("infrastructure")["outputs"]["portalValidationPassed"], **arguments
+        )
+        is expected
+    )
+    assert _evaluate_ui_expression(
+        ui_controls("infrastructure")["modelRegionMismatchNotice"]["visible"], **arguments
+    ) is bool(actual and selected != actual)
 
 
 @pytest.mark.parametrize(

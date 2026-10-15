@@ -328,7 +328,7 @@ query URLs as single arguments. Docker fingerprint reads use Get-Item -Force onl
 selected inputs, so Linux hidden-file semantics cannot omit .dockerignore.
 
 V2 new-foundation inputs select GPT-5 Core/Simple models, independent versions and capacities;
-new defaults are Korea Central, gpt-5.2/2025-12-11 and gpt-5-mini/2025-08-07, GlobalStandard
+new defaults are East US, gpt-5.2/2025-12-11 and gpt-5-mini/2025-08-07, GlobalStandard
 200 units each. Never use PTU SKUs, reservations or automatic PTU fallback. Logical aliases
 and role reasoning stay unchanged. Explicitly empty Simple version or a missing old saved
 version falls back to Core; new omitted parameters use the independent default. Preserve old
@@ -337,6 +337,9 @@ catalog, exact SKU quota and provider capacity, not a reservation or runtime/qua
 Strict v2 completion never substitutes models and compares reused model/version/SKU exactly.
 Combine shared quota without conflating distinct versions' provider capacity. New region means
 a new same-region Foundry/VNet/model installation, not an account move or remote-only routing.
+Portal uses the network-tab modelDeploymentRegion selector, default East US; hide the native
+Basics location rather than adding its undocumented defaultValue. Existing VNet location must
+match the selection; missing/mismatched location blocks and completion retains saved location.
 Explicit --stage complete --reselect-models allows only six model fields to change on saved
 foundation with zero model deployments and zero projects. All other choices stay immutable;
 existing/partial model or project state requires diagnosis, never overwrite, tag forcing or reset.

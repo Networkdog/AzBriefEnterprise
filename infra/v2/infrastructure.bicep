@@ -11,7 +11,7 @@ param portalValidationPassed bool = true
 param namingPrefix string = ''
 @maxLength(10)
 param namingSuffix string = ''
-param location string = 'koreacentral'
+param location string = 'eastus'
 @allowed(['existing', 'new'])
 param virtualNetworkMode string = 'existing'
 param virtualNetworkResourceGroupName string
