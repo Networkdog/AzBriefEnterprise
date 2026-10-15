@@ -80,6 +80,9 @@ V2 Portal modelDeploymentRegion is separate from RG metadata location, with East
 Hide native Basics location; use documented VNet location=all while retaining subscription scope
 and explicit matching-region checks. Unknown/mismatching VNet regions block, not substitute the
 selection. Completed KRC profiles keep their saved region; no model-only remote routing is implied.
+Completion InfoBox renders actual saved models/versions/region, not new-default marketing text.
+Preserve legacy missing Simple-version fallback and safe unloaded parsing; identify the explicit
+zero-model/project CLI reselection path without adding silent swaps or readiness bypasses.
 Two application tags record not_deployed/empty initially, then deployed and the successful
 ARM application's UTC start time after App/Job/requested auth/MCP dependencies. Preserve
 customer and previous-success tags; failed/preview paths never advance them. Legacy 39-tag
@@ -93,8 +96,8 @@ never move Reader grants into the application template. Compile the parent and t
 parameter declaration as well as the compiled identity/credential expressions.
 Core output must carry all saved network/identity names. For older absent names, recover only
 from exact saved ARM IDs; reject present mismatches, missing IDs and redirected targets without
-replaying successful infrastructure. Windows MSI AzureCli uses bundled Python, not the batch
-shim, so encoded Graph query separators cannot become shell commands. Docker fingerprinting
+replaying successful infrastructure. Windows MSI AzureCli uses bundled Python with explicit
+-X utf8, not the batch shim, preserving Graph query URLs and Korean ARM/policy JSON. Docker fingerprinting
 includes the explicitly selected hidden .dockerignore with Get-Item -Force on Linux.
 [`scripts/deploy_v2.py`](../../../scripts/deploy_v2.py) preserves current keys, secrets,
 environments, registry/auth settings and accepted schedules on repeated updates. Missing,

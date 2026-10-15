@@ -38,6 +38,10 @@ New v2 defaults are East US, Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-min
 `2025-08-07`, each with 200 `GlobalStandard` capacity units. No PTU deployment or reservation
 is used. Existing saved profiles stay unchanged; check current quota and capacity before deployment.
 
+Completion displays the actual saved model/version/region, not the new defaults. An older
+5.6 profile still requests 5.6 until an approved `--stage complete --reselect-models` operation
+passes the zero-model/zero-project checks; it never moves the existing region.
+
 `foundation` success is only the first infrastructure phase. Reopen the infrastructure button
 with **Complete existing foundation** for the same RG, finish authorized MCP preparation,
 and confirm `azbrief.v2.state=ready` before using the application button. An application
@@ -687,7 +691,7 @@ remain disabled; stdout/stderr use the shared Log Analytics workspace. Insights 
 Its core output includes every saved network and identity name. MCP preparation accepts an
 older output's missing names only when the corresponding ARM IDs match the exact saved targets;
 present mismatches or redirected IDs still block. Windows MSI CLI calls use the bundled Python
-entry point so Graph query URLs remain one argument. Docker fingerprints include the explicitly
+entry point with explicit UTF-8 mode, preserving Graph URLs and Korean ARM/policy JSON. Docker fingerprints include the explicitly
 selected `.dockerignore` even when PowerShell treats it as hidden on Linux.
 
 **Security design (safe defaults):**

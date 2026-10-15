@@ -373,6 +373,17 @@ def test_new_defaults_do_not_replace_saved_legacy_models(tmp_path: Path) -> None
             )
             == values[field]
         )
+    notice = _evaluate_ui_expression(
+        ui_controls("infrastructure")["modelRegionNotice"]["options"]["text"],
+        {"contract": {"resourceGroupApi": {"tags": saved}}},
+        basics={"infrastructureStage": "complete"},
+        eager_conditionals=True,
+    )
+    assert "koreacentral" in notice
+    assert "gpt-5.6-terra / 2026-07-09" in notice
+    assert "gpt-5.6-luna / 2026-07-09" in notice
+    assert "gpt-5.2" not in notice
+    assert "--reselect-models" in notice
 
 
 @pytest.mark.parametrize(

@@ -451,13 +451,28 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
     ]
     combined = "concat(" + ", ".join(chunks) + ")"
     saved = f"parse(if(empty({combined}), '{{}}', {combined}))"
+    new_profile_notice = (
+        "기반 준비에서 모델 배포 리전을 선택합니다. 신규 기본값은 East US, Core gpt-5.2 / "
+        "Simple gpt-5-mini, GlobalStandard 각 200단위이며 PTU는 사용하지 않습니다. "
+        "CLI --list-model-options --model-regions로 quota·공급 용량을 먼저 확인하십시오. "
+        "신규 Foundry·VNet도 선택한 리전에 배포하며 기존 배포를 옮기지는 않습니다."
+    )
+    completed_profile_notice = (
+        f"concat('저장된 배포: 리전 ', coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.location'], '미확인'), "
+        f"', Core ', coalesce({saved}.coreModelName, '미확인'), ' / ', coalesce({saved}.modelVersion, '미확인'), "
+        f"', Simple ', coalesce({saved}.simpleModelName, '미확인'), ' / ', coalesce({saved}.simpleModelVersion, {saved}.modelVersion, '미확인'), "
+        "'. 기존 기반 완성은 이 값을 재사용하며 신규 기본값으로 변경하지 않습니다. "
+        "모델·리전 메뉴는 기반 준비에서만 표시됩니다. 저장된 모델의 quota가 부족하면 "
+        "모델·프로젝트가 모두 없는지 확인한 후 승인된 CLI --stage complete --reselect-models로 "
+        "모델만 명시적으로 재선택하십시오. 리전과 기존 자원은 바꾸지 않습니다. PTU는 사용하지 않습니다.')"
+    )
     step["elements"].append(
         {
             "name": "modelRegionNotice",
             "type": "Microsoft.Common.InfoBox",
             "options": {
                 "icon": "Warning",
-                "text": "신규 기본 리전은 RG 리전과 독립적인 East US입니다. Core gpt-5.2 / Simple gpt-5-mini, GlobalStandard 각 200단위이며 PTU는 사용하지 않습니다. CLI --list-model-options --model-regions로 quota·공급 용량을 먼저 확인하십시오. 신규 Foundry·VNet도 선택한 리전에 배포하며 기존 배포의 리전을 옮기지는 않습니다. 완료 단계는 저장된 선택을 보존합니다.",
+                "text": f"[if({foundation}, '{new_profile_notice}', {completed_profile_notice})]",
             },
         }
     )

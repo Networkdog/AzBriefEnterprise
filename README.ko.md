@@ -37,6 +37,10 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 `2025-08-07`이며 `GlobalStandard` 용량을 각각 200단위로 설정합니다. PTU 배포·예약은
 사용하지 않습니다. 저장된 기존 프로필은 유지하며 배포 전에 현재 quota와 공급 용량을 확인해야 합니다.
 
+완료 단계 안내에는 신규 기본값 대신 저장된 모델·버전·리전이 표시됩니다. 이전 5.6 프로필은
+모델·프로젝트가 0개임을 검증한 승인된 `--stage complete --reselect-models`를 실행하기 전까지
+5.6을 계속 요청합니다. 이 복구는 기존 리전을 이동하지 않습니다.
+
 `foundation` 성공은 인프라 첫 단계만 완료됐다는 뜻입니다. 같은 RG에서 인프라 버튼의
 **기존 기반 완성**을 실행하고 승인된 MCP 인증 준비까지 마친 뒤 `azbrief.v2.state=ready`를
 확인해야 앱 버튼을 사용할 수 있습니다. 앱 Validation의 `portalValidationPassed=false`는
@@ -657,8 +661,8 @@ Reader 권한을 다시 만들지 않습니다. MCP의 직접 Insights 추적·�
 비활성화하며 stdout/stderr는 공용 Log Analytics에 수집합니다. Insights는 Entra 전용으로 유지합니다.
 Core 출력에는 저장한 네트워크·identity 이름을 모두 포함합니다. 이전 출력에 이름이 빠져 있으면
 대응 ARM ID가 저장한 정확한 대상과 일치할 때만 MCP 준비 단계에서 보완하며, 이미 있는 이름의
-불일치나 다른 대상의 ID는 계속 차단합니다. Windows MSI CLI는 동봉 Python 진입점으로 호출해
-Graph 쿼리 URL을 인자 하나로 보존합니다. Docker 지문에는 Linux PowerShell이 숨김 파일로
+불일치나 다른 대상의 ID는 계속 차단합니다. Windows MSI CLI는 동봉 Python의 UTF-8 모드로 호출해
+Graph 쿼리 URL과 한국어 ARM·정책 JSON을 보존합니다. Docker 지문에는 Linux PowerShell이 숨김 파일로
 취급하는 경우에도 명시적으로 선택한 `.dockerignore`를 포함합니다.
 
 **보안 설계(안전한 기본값):**

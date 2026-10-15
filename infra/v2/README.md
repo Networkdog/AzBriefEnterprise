@@ -151,6 +151,11 @@ Existing models/projects, unreadable inventory or a later ready/pending state bl
 It never replaces models, rewrites tags by itself or resets Hosts. A partial attempt that created
 models/projects needs separate diagnosis before retry.
 
+The completion InfoBox renders the saved Core/Simple names, versions and region, including a
+legacy missing Simple-version fallback. It deliberately does not advertise new defaults as the
+current selection. For an older 5.6 foundation, normal completion still requests 5.6 and can hit
+its exhausted quota; only the explicitly approved zero-model/zero-project CLI path changes it.
+
 ## New Or Existing VNet
 
 Choose the mode in the Portal network tab or `virtualNetworkMode` in the protected CLI

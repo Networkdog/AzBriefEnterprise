@@ -326,8 +326,9 @@ outgoing AZURE_CLIENT_ID. Empty input retains the legacy SystemAssigned identity
 deployment never recreates the UAMI or its Reader assignment.
 V2 core outputs must include every saved network/identity name. Older missing names can be
 resolved only from exact saved ARM IDs; present mismatches and redirected IDs still fail closed.
-On Windows MSI installations, AzureCli uses the bundled Python entry point to preserve Graph
-query URLs as single arguments. Docker fingerprint reads use Get-Item -Force only for explicitly
+On Windows MSI installations, AzureCli uses the bundled Python entry point with explicit -X utf8
+to preserve Graph query URLs as single arguments and decode Korean ARM/policy JSON reliably.
+Docker fingerprint reads use Get-Item -Force only for explicitly
 selected inputs, so Linux hidden-file semantics cannot omit .dockerignore.
 
 V2 new-foundation inputs select GPT-5 Core/Simple models, independent versions and capacities;
@@ -345,6 +346,9 @@ hide native Basics location, never add unsupported defaultValue configuration. T
 keeps subscription scope but uses documented location=all so RG location cannot hide candidates.
 Require known matching VNet region before submission, never silently override the selected region.
 Completion retains saved location, including older Korea Central installs.
+Completion UI must display the actual saved Core/Simple model versions and region instead of
+advertising new defaults as current values; explain the bounded explicit zero-model/project
+reselection path without changing choices or weakening readiness guards.
 Explicit --stage complete --reselect-models allows only six model fields to change on saved
 foundation with zero model deployments and zero projects. All other choices stay immutable;
 existing/partial model or project state requires diagnosis, never overwrite, tag forcing or reset.

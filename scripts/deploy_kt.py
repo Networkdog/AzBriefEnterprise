@@ -539,7 +539,7 @@ class AzureCli:
         if Path(executable).suffix.casefold() == ".cmd":
             bundled_python = Path(executable).resolve().parent.parent / "python.exe"
             if bundled_python.is_file():
-                command = [str(bundled_python), "-IBm", "azure.cli"]
+                command = [str(bundled_python), "-X", "utf8", "-IBm", "azure.cli"]
         result = subprocess.run(
             [*command, *args, "--only-show-errors", "--output", "json"],
             check=False,
