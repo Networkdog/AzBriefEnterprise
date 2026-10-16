@@ -2158,6 +2158,7 @@ def test_ui_uses_supported_control_schema_and_legacy_network_guards(tmp_path: Pa
     data = {
         "contract": {"contractAccepted": True, "resourceGroupApi": None},
         "names": {"namingPrefix": "kt", "namingSuffix": "dev"},
+        "options": {},
     }
     assert (
         _evaluate_ui_expression(
@@ -2281,6 +2282,7 @@ def test_existing_vnet_region_is_never_overridden_by_model_or_rg_inputs(
     data = {
         "contract": {"contractAccepted": True, "resourceGroupApi": None},
         "names": {"namingPrefix": "kt", "namingSuffix": "dev"},
+        "options": {},
     }
     assert _evaluate_ui_expression(
         ui_definition("infrastructure")["outputs"]["location"],
@@ -2341,7 +2343,7 @@ def test_infrastructure_initialization_fallback_never_authorizes_completion() ->
     expression = ui_definition("infrastructure")["outputs"]["portalValidationPassed"]
     result = _evaluate_ui_expression(
         expression,
-        {"contract": {"resourceGroupApi": None}, "names": {}},
+        {"contract": {"resourceGroupApi": None}, "names": {}, "options": {}},
         network={},
         resource_group={"mode": "Existing"},
         basics={"infrastructureStage": "complete"},
@@ -2602,6 +2604,7 @@ def test_subnet_discovery_failure_never_authorizes_a_stale_role_selection(
     data = {
         "contract": {"contractAccepted": True, "resourceGroupApi": None},
         "names": {"namingPrefix": "kt", "namingSuffix": "dev"},
+        "options": {},
     }
     guard = ui_definition("infrastructure")["outputs"]["portalValidationPassed"]
     assert (

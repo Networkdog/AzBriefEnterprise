@@ -38,6 +38,9 @@ Existing-VNet subnet lists use the working KT form's direct ResourceSelector-to-
 without conditional subscription-response substitution. The form distinguishes an absent or
 different response ID, access failure and an empty subnet list; it never preselects a subnet.
 Non-wizard navigation is explicit, rather than relying on an omitted initialization setting.
+Both Portal forms avoid capturing outer parameters in nested `map`/`filter` lambdas.
+The real CreateUI evaluator does not preserve Python-style lexical scope; that defect can
+leave the initial tab blank and prevent live subnet responses from reaching the controls.
 See the [v2 network guidance](infra/v2/README.md#new-or-existing-vnet) if no choices appear.
 
 The model options display the actual parent Foundry **model/quota region**, separately from

@@ -261,9 +261,29 @@ invent subnets or broaden permissions. Publish the generated UI before retesting
 Portal tab. An exact-request/live-ARM replay verifies returned choices, not the authenticated
 Portal rendering or a completed infrastructure/application deployment.
 Both v2 forms explicitly set `isWizard=false`, preserving the working KT non-wizard behavior.
-The infrastructure Basics stage selector remains populated. If the first screen still has
-no active tab until clicked, capture the actual Portal initialization diagnostics; neither a
-static configuration check nor the manual-tab workaround proves that first rendering is fixed.
+The infrastructure Basics stage selector remains populated. This setting alone does not fix
+evaluation failures or prove that the initial tab renders.
+
+The real Portal investigation reproduced both failures after loading the exact published
+ARM/UI pair: no initially selected tab, and no subnet control output even though an ARM batch
+returned the selected Korea Central VNet with ten subnets. A minimal live Portal trial showed
+that a nested lambda cannot resolve an enclosing `saved` parameter; a single-scope lambda and
+its null-safe equivalent work. Python's lexical closures had hidden this defect in offline
+tests. The generator now binds one shared context and expands shared references within nested
+lambda bodies. Binding validation no longer captures an enclosing `opts` lambda; shared-owner
+checks stay outside per-subnet predicates, and foundation tag budgeting uses only current
+foundation inputs. No ownership, scope, model, tag-budget or readiness checks are removed.
+
+Playwright acceptance of the repaired local definitions used the authenticated Portal and
+unchanged live Azure data: both forms auto-selected Basics without clicking a tab; the
+infrastructure form populated all ten subnet names, accepted all three role selections and
+refreshed after switching VNet. With Korea Central, the existing production VNet and its
+verified unused test subnets, all infrastructure tabs reached actual Portal Review final
+validation with Create enabled (not clicked). The application form rejected an actual unprepared RG.
+Static UI substitution is explicitly local testing, not publication. The test did not click
+Create, create resources, force `ready`, or establish application/runtime delivery readiness.
+No ready-tagged workload RG was available for a real successful application installation.
+Publish the paired source artifacts and repeat customer acceptance before rollout.
 
 `new` creates only a dedicated target-RG VNet, with no peering, NSG, route, public IP, NAT
 or changes to customer networks. Defaults are VNet `10.240.0.0/16`, Foundry `10.240.0.0/24`,

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ast
 import copy
 import json
+import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
@@ -1441,7 +1443,6 @@ def test_empty_controls_and_initial_responses_evaluate_safely(eager: bool) -> No
 
 def test_initial_all_new_guard_needs_no_optional_subscription_fixture() -> None:
     state = foundation()
-    state.values.pop("options")
     assert (
         _evaluate_ui_expression(
             definition()["outputs"]["portalValidationPassed"],
@@ -1569,3 +1570,51 @@ def test_generator_is_idempotent_and_preserves_supported_functions(
         assert not any(name.endswith("Guard") for name in controls(name))
     monkeypatch.setattr("sys.argv", ["build_v2_ui", "--check"])
     assert build_v2_ui.main() == 0
+
+
+def _outer_lambda_captures(expression: str) -> set[str]:
+    source = re.sub(r"\((\w+)\)\s*=>", r"lambda \1:", expression[1:-1])
+    source = re.sub(r"\b(and|or|not|if)\(", r"ui_\1(", source)
+    tree = ast.parse(source, mode="eval")
+    captures: set[str] = set()
+
+    def inspect(node: ast.AST, scopes: list[set[str]]) -> None:
+        if isinstance(node, ast.Lambda):
+            inspect(node.body, [*scopes, {arg.arg for arg in node.args.args}])
+        elif isinstance(node, ast.Name) and len(scopes) > 1:
+            if node.id in set().union(*scopes[:-1]) and node.id not in scopes[-1]:
+                captures.add(node.id)
+        else:
+            for child in ast.iter_child_nodes(node):
+                inspect(child, scopes)
+
+    inspect(tree, [])
+    return captures
+
+
+def test_portal_reproduced_nested_capture_is_not_treated_as_python_lexical_scope() -> None:
+    expression = (
+        '[first(map(parse(\'[{"resources":{"foundryAccountResourceId":"aa/bb"}}]\'), '
+        "(saved) => first(map(parse('[{}]'), "
+        "(inner) => last(split(saved.resources.foundryAccountResourceId, '/'))))))]"
+    )
+    assert _outer_lambda_captures(expression) == {"saved"}
+    assert not _outer_lambda_captures(
+        "[first(map(parse('[{\"id\":\"aa/bb\"}]'), (item) => last(split(item.id, '/'))))]"
+    )
+
+
+@pytest.mark.parametrize("name", ["infrastructure", "application"])
+def test_generated_portal_expressions_never_capture_an_outer_lambda_parameter(name: str) -> None:
+    def expressions(value: Any, path: str):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                yield from expressions(item, path + "/" + key)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                yield from expressions(item, path + "/" + str(index))
+        elif isinstance(value, str) and value.startswith("["):
+            yield path, value
+
+    for path, expression in expressions(definition(name), name):
+        assert not _outer_lambda_captures(expression), path

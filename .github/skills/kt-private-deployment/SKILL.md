@@ -227,6 +227,12 @@ private/VNet paths.
    Explicit isWizard=false preserves non-wizard navigation in both v2 forms. A screenshot
    with no initial active tab needs Portal initialization diagnostics; do not claim the
    first-render issue solved merely because clicking Basics works or local tests pass.
+   Real Portal probes also established that nested map/filter lambdas cannot capture an
+   enclosing saved/opts/context parameter. This caused blank initial tabs and absent VNet
+   output despite successful ARM data. Keep one context binding and inline shared references
+   inside nested lambdas; move static owner checks outside per-subnet predicates. Retain
+   binding/mode/tag-budget/readiness checks and reject cross-lambda captures in both generated
+   forms. Python lexical closure tests alone cannot establish Portal compatibility.
 3. Use simple independent dropdowns for the three role subnet selections in both stages:
    - populate choices only from the selected VNet's subnet names using a short nullable-safe map;
      retain a literal empty-choice default, never an automatic first subnet;

@@ -338,23 +338,86 @@ def _binding_validation(
         + _all(*(f"equals(coalesce(opts.{name}Mode, 'new'), 'new')" for name in SHARED_RESOURCES))
         + ")",
     )
-    return (
-        f"equals(length(filter(parse(concat('[', string({options}), ']')), "
-        f"(opts) => {valid_options})), 1)"
+    return re.sub(r"\bopts\.", lambda _: options + ".", valid_options)
+
+
+def _inline_shared_references(expression: str, step: str, include_saved: bool) -> str:
+    tags = f"steps('{step}').resourceGroupApi.tags"
+    expression = re.sub(
+        r"(?<![\w.])tags\['azbrief\.v2\.([A-Za-z0-9]+)'\]",
+        lambda match: f"{tags}['azbrief.v2.{match.group(1)}']",
+        expression,
     )
+    expression = re.sub(
+        r"(?<![\w.])tags\.azbrief_v2_([A-Za-z0-9]+)",
+        lambda match: f"{tags}['azbrief.v2.{match.group(1)}']",
+        expression,
+    )
+    expression = re.sub(
+        r"contains\(tags,\s*'azbrief_v2_([A-Za-z0-9]+)'\)",
+        lambda match: f"contains(tags, 'azbrief.v2.{match.group(1)}')",
+        expression,
+    )
+    expression = re.sub(
+        r"(?<![\w.])tags\b",
+        lambda _: f"coalesce({tags}, parse('{{}}'))",
+        expression,
+    )
+    if include_saved:
+        options, _, _ = _saved_chunks(step, "options")
+        resources, _, _ = _saved_chunks(step, "resources")
+        expression = expression.replace("saved.options", options).replace(
+            "saved.resources", resources
+        )
+    return expression
+
+
+def _expand_nested_lambda_references(expression: str, step: str, include_saved: bool) -> str:
+    pattern = re.compile(r"\([A-Za-z_][A-Za-z0-9_]*\)\s*=>\s*")
+    result = []
+    cursor = 0
+    while match := pattern.search(expression, cursor):
+        start = match.end()
+        end = start
+        depth = 0
+        quoted = False
+        while end < len(expression):
+            character = expression[end]
+            if character == "'":
+                quoted = not quoted
+            elif not quoted:
+                if character == "(":
+                    depth += 1
+                elif character == ")":
+                    if depth == 0:
+                        break
+                    depth -= 1
+                elif character == "," and depth == 0:
+                    break
+            end += 1
+        result.append(expression[cursor:start])
+        result.append(_inline_shared_references(expression[start:end], step, include_saved))
+        cursor = end
+    result.append(expression[cursor:])
+    return "".join(result)
 
 
 def _shared_context(expression: str, step: str = "contract", include_saved: bool = True) -> str:
-    """Bind tag projections once using documented map/first expressions."""
+    """Bind one context, expanding references captured by nested Portal lambdas."""
+    expression = _expand_nested_lambda_references(expression, step, include_saved)
     expression = re.sub(
         r"(?<![\w.])tags\['azbrief\.v2\.([A-Za-z0-9]+)'\]",
-        r"tags.azbrief_v2_\1",
+        r"context.tags.azbrief_v2_\1",
         expression,
     )
     expression = re.sub(
         r"contains\(tags,\s*'azbrief\.v2\.([A-Za-z0-9]+)'\)",
-        r"contains(tags, 'azbrief_v2_\1')",
+        r"contains(context.tags, 'azbrief_v2_\1')",
         expression,
+    )
+    expression = re.sub(r"(?<![\w.])tags\b", "context.tags", expression)
+    expression = expression.replace("saved.options", "context.options").replace(
+        "saved.resources", "context.resources"
     )
     projection = f"string(coalesce(steps('{step}').resourceGroupApi.tags, parse('{{}}')))"
     for suffix in (*V2_METADATA_TAG_SUFFIXES, *(f"resources{i}" for i in range(8))):
@@ -364,15 +427,13 @@ def _shared_context(expression: str, step: str = "contract", include_saved: bool
         projection = (
             f"""replace({projection}, '"azbrief.v2.{suffix}":', '"azbrief_v2_{suffix}":')"""
         )
+    options, _, _ = _saved_chunks(step, "options")
+    resources, _, _ = _saved_chunks(step, "resources")
+    fields = f"'[{{\"tags\":', {projection}"
     if include_saved:
-        options, _, _ = _saved_chunks(step, "options", "tags")
-        resources, _, _ = _saved_chunks(step, "resources", "tags")
-        expression = (
-            "first(map(parse(concat('[{\"options\":', "
-            f"string({options}), ',\"resources\":', string({resources}), '}}]')), "
-            f"(saved) => {expression}))"
-        )
-    return f"first(map(parse(concat('[', {projection}, ']')), (tags) => {expression}))"
+        fields += f", ',\"options\":', string({options}), ',\"resources\":', string({resources})"
+    fields += ", '}]'"
+    return f"first(map(parse(concat({fields})), (context) => {expression}))"
 
 
 def derive_resource_names(prefix: str, suffix: str) -> dict[str, str]:
@@ -628,9 +689,12 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
         f"first(if(empty({workspace_matches}), parse('[{{}}]'), {workspace_matches}))"
     )
     explicit_workspace = "coalesce(steps('names').existingLogAnalyticsWorkspace.id, '')"
+    workspace_selection = (
+        f"if(not(empty({explicit_workspace})), {explicit_workspace}, "
+        f"if({unique_workspace}, coalesce({matched_workspace}.id, ''), ''))"
+    )
     workspace_id = (
-        f"if({foundation}, if(not(empty({explicit_workspace})), {explicit_workspace}, "
-        f"if({unique_workspace}, coalesce({matched_workspace}.id, ''), '')), "
+        f"if({foundation}, {workspace_selection}, "
         f"coalesce({saved}.logAnalyticsWorkspaceResourceId, ''))"
     )
     domain_id = (
@@ -1009,8 +1073,14 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
             )
         )
         parameters["outputs"][f"reuse{role}Model"] = (
-            f"[equals(length(filter({active_accounts}, (account) => "
-            f"and({inventory_rules[1]}, equals(length({matches}), 1), {exact_match}))), 1)]"
+            "["
+            + _all(
+                f"equals(length({active_accounts}), 1)",
+                inventory_rules[1],
+                f"equals(length({matches}), 1)",
+                exact_match,
+            )
+            + "]"
         )
     valid_inventory = _all(
         *inventory_rules,
@@ -1021,7 +1091,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
     )
     shared_foundry_inventory = _all(
         f"equals(length({active_accounts}), 1)",
-        f"empty(filter({active_accounts}, (account) => not({valid_inventory})))",
+        valid_inventory,
     )
     foundry_api = "steps('names').existingFoundryAccountApi"
     foundry = _all(
@@ -1176,7 +1246,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
             belongs = _all(
                 *(
                     f"or(empty(coalesce(link.properties.{owner_field}, '')), "
-                    f"equals(toLower(coalesce(link.properties.{owner_field}, '')), toLower({ids[name]})))"
+                    f"equals(toLower(coalesce(link.properties.{owner_field}, '')), toLower(coalesce({owner_api}.id, ''))))"
                     for owner_field in ("link", "linkedResourceId", "resourceId")
                 ),
             )
@@ -1185,13 +1255,16 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
                 f"empty(filter(coalesce(subnet.properties.{field}, parse('[]')), "
                 f"(link) => not({belongs})))"
             )
-        allowed_subnet = f"or({_all(*empty_occupancy)}, {_all(verified_owner, *occupancy)})"
-        occupied = (
-            "empty(filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), "
-            f"(subnet) => and(equals(toLower(coalesce(subnet.name, '')), "
-            f"toLower(coalesce(steps('network').{subnet_control}, ''))), "
-            f"not({allowed_subnet}))))"
+        selected_subnets = (
+            "filter(coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), "
+            f"(subnet) => equals(toLower(coalesce(subnet.name, '')), "
+            f"toLower(coalesce(steps('network').{subnet_control}, ''))))"
         )
+        empty_subnet = (
+            f"empty(filter({selected_subnets}, (subnet) => not({_all(*empty_occupancy)})))"
+        )
+        owned_subnet = f"empty(filter({selected_subnets}, (subnet) => not({_all(*occupancy)})))"
+        occupied = f"or({empty_subnet}, and({verified_owner}, {owned_subnet}))"
         rules.append(
             {
                 "isValid": f"[if(and({foundation}, equals({network_mode}, 'existing')), {occupied}, true)]",
@@ -1207,9 +1280,23 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
             "message": "네 서비스의 배포 방식은 신규 생성 또는 기존 리소스 사용이어야 합니다.",
         }
     )
+    foundation_existing = {
+        name: f"equals(coalesce(steps('names').{name}Mode, 'new'), 'existing')"
+        for name in SHARED_RESOURCES
+    }
+    foundation_ids = {
+        name: f"coalesce(steps('names').existing{name[0].upper() + name[1:]}.id, '')"
+        for name in SHARED_RESOURCES
+    }
+    budget = _foundation_tag_budget(
+        foundation_existing,
+        foundation_ids,
+        workspace_selection,
+        "coalesce(steps('names').existingEmailDomain, '')",
+    )
     rules.append(
         {
-            "isValid": f"[if({foundation}, {_foundation_tag_budget(existing, ids, workspace_id, domain_id)}, true)]",
+            "isValid": f"[if({foundation}, {budget}, true)]",
             "message": "기존 고객 태그와 v2 기본 태그·실제 리소스 바인딩 청크를 합해 RG의 50개 한도를 지켜야 합니다. 바인딩은 최대 2,048자·청크당 256자이며 임의의 고정 청크 수로 계산하지 않습니다.",
         }
     )

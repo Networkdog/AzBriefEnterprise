@@ -315,6 +315,13 @@ response IDs, denied/missing-data and truly empty subnets need distinct safe sta
 safe IDs/error codes, not bodies. Test the serialized dependency and VNet changes, not just a
 prefilled response. Explicit isWizard=false retains KT navigation; first-render/no-active-tab
 requires actual Portal diagnostics. Live ARM replay is not authenticated Portal acceptance.
+Real CreateUI does not resolve enclosing lambda parameters from nested map/filter lambdas.
+The browser reproduced invalid split(saved.resources...) and blank tabs/missing subnet outputs
+despite a successful live VNet GET. Bind one shared context and expand references in nested
+lambda bodies; never rely on Python lexical closure behavior in the offline evaluator.
+Keep all shared-ID/ownership/model/readiness/tag-budget checks, and test both forms in the
+authenticated Portal with actual read-only data. Local static UI substitution is not publication
+or successful ARM/runtime installation; never synthesize a ready contract to claim acceptance.
 Keep CI `contents: read` permissions at the workflow root, never inside an event. Include the CI
 file itself in both push/PR path filters and retain its deployment-contract regression assertions.
 
