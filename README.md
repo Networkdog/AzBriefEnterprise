@@ -34,6 +34,11 @@ verified actual region; only a new VNet uses the native **New infrastructure dep
 control in Basics. RG metadata and model-candidate discovery do not override either choice.
 Completion and application updates preserve the saved infrastructure location.
 
+Existing-VNet subnet lists come from a fresh ARM read of the selected VNet. Before a VNet
+is selected, discovery uses a valid read-only request rather than a query-only URL. The form
+distinguishes loading, access failure and an empty subnet list; it never preselects a subnet.
+See the [v2 network guidance](infra/v2/README.md#new-or-existing-vnet) if no choices appear.
+
 The model options display the actual parent Foundry **model/quota region**, separately from
 infrastructure choices. A model deployed directly under that account has no independent
 `location` field. **GlobalStandard inference is globally routed, not pinned to a selected region.**

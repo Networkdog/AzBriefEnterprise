@@ -215,7 +215,14 @@ private/VNet paths.
    silently switch it from a resource name. Existing RG and stage are independent; stage two
    requires an existing foundation, while a first installation may also use an Existing RG.
    Select an existing VNet filtered to the deployment subscription and region.
-2. Read the VNet through `Microsoft.Solutions.ArmApiControl`.
+2. Read the VNet through `Microsoft.Solutions.ArmApiControl`. This is a nonvisual API
+   dependency, not a visible input; do not attach the subnet fields' `visible` gate.
+   Until a selected VNet ID exists, use the existing valid read-only subscription path,
+   never `?api-version=...` without a resource path. Test the request itself across empty
+   initialization, selection, clearing, VNet changes and new/complete modes, not only
+   dropdowns with a prefilled ARM response. Distinguish loading/stale, read failure,
+   missing subnet data and an actually empty list with safe status text/error code.
+   Never surface error bodies, assume a read failure means no subnets, or auto-grant access.
 3. Use simple independent dropdowns for the three role subnet selections in both stages:
    - populate choices only from the selected VNet's subnet names using a short nullable-safe map;
      retain a literal empty-choice default, never an automatic first subnet;

@@ -241,6 +241,22 @@ parameter file. `existing` retains the approved VNet selector, three exact subne
 and original CIDR/delegation/occupancy/DNS checks. CIDR inputs for new mode never resize or
 reinterpret existing subnets. Cross-RG existing VNet selection remains supported.
 
+Subnet discovery uses a nonvisual `ArmApiControl` without a `visible` property. Its GET
+switches to the selected VNet's full ID only after an ID is available; before selection,
+new-network mode and completion use the existing read-only subscription lookup. This
+prevents an invalid `?api-version=...` request during control initialization or selection
+clearing. The three dropdowns retain the working KT name-only choices and literal blank
+default; choosing another VNet reloads its names without automatically assigning roles.
+
+If no subnet choices appear, the network tab distinguishes a pending/stale VNet response,
+an ARM read error, a response without subnet data and a successfully read VNet with no
+subnets. Only a safe error code is displayed, never the error body. Check the selected
+subscription and `Microsoft.Network/virtualNetworks/read` access on the actual network RG.
+Denied, missing or stale reads cannot authorize deployment; do not force validation tags,
+invent subnets or broaden permissions. Publish the generated UI before retesting in a new
+Portal tab. An exact-request/live-ARM replay verifies returned choices, not the authenticated
+Portal rendering or a completed infrastructure/application deployment.
+
 `new` creates only a dedicated target-RG VNet, with no peering, NSG, route, public IP, NAT
 or changes to customer networks. Defaults are VNet `10.240.0.0/16`, Foundry `10.240.0.0/24`,
 Container Apps `10.240.1.0/27` and private endpoints `10.240.1.32/28`. Portal offers validated

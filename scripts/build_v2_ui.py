@@ -1341,6 +1341,7 @@ def _network_mode_controls(
         "newPeSubnetName",
         "newFoundrySubnetName",
         "newContainerAppsSubnetName",
+        "subnetDiscoveryStatus",
     }
     step["elements"] = [element for element in step["elements"] if element["name"] not in new_names]
     step["elements"].insert(
@@ -1414,16 +1415,42 @@ def _network_mode_controls(
     for element in step["elements"]:
         if element["name"] in {
             "virtualNetwork",
-            "virtualNetworkApi",
             "peSubnetName",
             "foundrySubnetName",
             "containerAppsSubnetName",
         }:
             element["visible"] = f"[{existing}]"
         if element["name"] == "virtualNetworkApi":
+            element.pop("visible", None)
             element["request"][
                 "path"
-            ] = f"[if({existing}, concat(coalesce(steps('network').virtualNetwork.id, ''), '?api-version=2024-05-01'), concat('/subscriptions/', subscription().subscriptionId, '?api-version=2022-12-01'))]"
+            ] = f"[if(and({existing}, not(empty(coalesce(steps('network').virtualNetwork.id, '')))), concat(coalesce(steps('network').virtualNetwork.id, ''), '?api-version=2024-05-01'), concat('/subscriptions/', subscription().subscriptionId, '?api-version=2022-12-01'))]"
+    response = "steps('network').virtualNetworkApi"
+    selected_id = "coalesce(steps('network').virtualNetwork.id, '')"
+    same_vnet = f"equals(toLower(coalesce({response}.id, '')), toLower({selected_id}))"
+    has_subnets = f"not(equals(coalesce({response}.properties.subnets, false), false))"
+    error = f"not(empty({response}.error))"
+    status = {
+        "name": "subnetDiscoveryStatus",
+        "type": "Microsoft.Common.InfoBox",
+        "visible": f"[and({existing}, not(empty({selected_id})), or({error}, not({same_vnet}), not({has_subnets}), empty({response}.properties.subnets)))]",
+        "options": {
+            "icon": "Warning",
+            "text": (
+                f"[if({error}, concat('서브넷 조회 실패: ', coalesce({response}.error.code, 'ARMReadFailed'), "
+                "'. 선택한 VNet의 읽기 권한(Microsoft.Network/virtualNetworks/read)과 구독을 확인하십시오. 권한을 자동 변경하지 않습니다.'), "
+                f"if(not({same_vnet}), '선택한 VNet의 서브넷 목록을 조회 중입니다. 응답이 바뀌지 않으면 VNet을 다시 선택하십시오. 이전 VNet의 목록으로 배포할 수 없습니다.', "
+                f"if(not({has_subnets}), 'VNet 응답에 서브넷 목록이 없어 선택을 진행할 수 없습니다. VNet 조회 응답을 확인하십시오.', "
+                "'선택한 VNet에는 서브넷이 없습니다. 기존 서브넷이 있는 VNet을 선택하거나 별도로 승인된 네트워크 준비를 완료하십시오.')))]"
+            ),
+        },
+    }
+    api_index = next(
+        index
+        for index, element in enumerate(step["elements"])
+        if element["name"] == "virtualNetworkApi"
+    )
+    step["elements"].insert(api_index + 1, status)
     outputs = parameters["outputs"]
     chunks = [
         f"coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.options{index}'], '')"

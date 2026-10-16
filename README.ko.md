@@ -32,6 +32,11 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 RG 메타데이터나 모델 후보 조회 지역이 이 값을 덮어쓰지 않습니다. 완료·앱 업데이트는 저장된
 인프라 리전을 보존합니다.
 
+기존 VNet의 서브넷 목록은 선택한 VNet을 ARM으로 새로 조회해 표시합니다. VNet 선택 전에는
+쿼리 문자열만 있는 잘못된 URL을 요청하지 않으며, 조회 중·권한 오류·실제 빈 목록을 구분해
+안내합니다. 서브넷을 자동 선택하지 않습니다. 목록이 없으면
+[v2 네트워크 안내](infra/v2/README.md#new-or-existing-vnet)를 확인하십시오.
+
 모델 옵션에는 부모 Foundry의 실제 **모델·quota 리전**을 별도로 표시합니다. 해당 계정 아래에
 직접 만드는 모델 배포에는 독립적인 `location` 필드가 없습니다. **GlobalStandard 추론은
 전역 라우팅되며 선택한 지역에 고정되지 않습니다.** 다른 리전 모델을 쓰려면 별도 모델 리소스와

@@ -2446,6 +2446,205 @@ def test_v2_matches_working_kt_navigation_and_subnet_choice_contract() -> None:
     assert ui_controls("infrastructure")["virtualNetwork"]["options"] == expected_options
 
 
+@pytest.mark.parametrize("selection", [None, {}, {"id": ""}])
+@pytest.mark.parametrize("mode", [None, "existing", "new"])
+def test_vnet_discovery_never_initializes_with_a_query_only_request(
+    selection: dict[str, str] | None, mode: str | None
+) -> None:
+    control = ui_controls("infrastructure")["virtualNetworkApi"]
+    assert "visible" not in control
+    assert (
+        _evaluate_ui_expression(
+            control["request"]["path"],
+            {},
+            network={"virtualNetwork": selection, "virtualNetworkMode": mode},
+            basics={"infrastructureStage": "foundation"},
+            subscription={"subscriptionId": SUBSCRIPTION},
+            eager_conditionals=True,
+        )
+        == f"/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01"
+    )
+
+
+def test_vnet_discovery_request_and_subnet_choices_follow_selection_changes() -> None:
+    controls = ui_controls("infrastructure")
+    network: dict[str, Any] = {"virtualNetworkMode": "existing", "virtualNetwork": None}
+    documents = {
+        f"/subscriptions/{SUBSCRIPTION}/resourceGroups/RG-Network-A/providers/Microsoft.Network/virtualNetworks/vnet-a": {
+            "location": "koreacentral",
+            "properties": {
+                "subnets": [
+                    {"name": "pe-Customer-A", "properties": {"addressPrefix": "10.20.0.0/28"}},
+                    {"name": "Foundry-A", "properties": {}},
+                    {"name": "Containers-A", "properties": {"addressPrefixes": None}},
+                ]
+            },
+        },
+        f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-network-b/providers/Microsoft.Network/virtualNetworks/vnet-b": {
+            "location": "eastus",
+            "properties": {
+                "subnets": [
+                    {"name": "subnet-b", "properties": {"addressPrefix": "fd00::/64"}},
+                    {"properties": {}},
+                ]
+            },
+        },
+    }
+    for vnet_id, document in documents.items():
+        network["virtualNetwork"] = {
+            "id": vnet_id,
+            "name": vnet_id.split("/")[-1],
+            "location": document["location"],
+        }
+        request = _evaluate_ui_expression(
+            controls["virtualNetworkApi"]["request"]["path"],
+            {},
+            network=network,
+            basics={"infrastructureStage": "foundation"},
+            subscription={"subscriptionId": SUBSCRIPTION},
+            eager_conditionals=True,
+        )
+        assert request == f"{vnet_id}?api-version=2024-05-01"
+        network["virtualNetworkApi"] = {"id": vnet_id, **document}
+        expected = [{"label": controls["peSubnetName"]["defaultValue"], "value": ""}] + [
+            {"label": subnet["name"], "value": subnet["name"]}
+            for subnet in document["properties"]["subnets"]
+            if subnet.get("name")
+        ]
+        for name in ("peSubnetName", "foundrySubnetName", "containerAppsSubnetName"):
+            assert (
+                _evaluate_ui_expression(
+                    controls[name]["constraints"]["allowedValues"],
+                    {},
+                    network=network,
+                    eager_conditionals=True,
+                )
+                == expected
+            )
+        network["virtualNetwork"] = None
+        assert (
+            _evaluate_ui_expression(
+                controls["virtualNetworkApi"]["request"]["path"],
+                {},
+                network=network,
+                basics={"infrastructureStage": "foundation"},
+                subscription={"subscriptionId": SUBSCRIPTION},
+                eager_conditionals=True,
+            )
+            == f"/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01"
+        )
+
+
+@pytest.mark.parametrize(
+    "response,visible,message",
+    [
+        (None, True, "조회 중"),
+        ({"error": {"code": "Forbidden", "message": "private-error-body"}}, True, "Forbidden"),
+        ({"id": "another-vnet", "properties": {"subnets": []}}, True, "조회 중"),
+        ({"properties": {}}, True, "서브넷 목록이 없어"),
+        ({"properties": {"subnets": None}}, True, "서브넷 목록이 없어"),
+        ({"properties": {"subnets": []}}, True, "서브넷이 없습니다"),
+        ({"properties": {"subnets": [{"name": "selected-subnet"}]}}, False, None),
+    ],
+)
+def test_subnet_discovery_distinguishes_loading_failed_empty_and_ready_reads(
+    response: dict[str, Any] | None, visible: bool, message: str | None
+) -> None:
+    controls = ui_controls("infrastructure")
+    vnet_id = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-network/providers/Microsoft.Network/virtualNetworks/selected-vnet"
+    document = copy.deepcopy(response)
+    if document is not None and "id" not in document:
+        document["id"] = vnet_id
+    network: dict[str, Any] = {
+        "virtualNetworkMode": "existing",
+        "virtualNetwork": {"id": vnet_id},
+        "virtualNetworkApi": document,
+    }
+    status = controls["subnetDiscoveryStatus"]
+    assert (
+        _evaluate_ui_expression(
+            status["visible"],
+            {},
+            network=network,
+            basics={"infrastructureStage": "foundation"},
+            eager_conditionals=True,
+        )
+        is visible
+    )
+    text = _evaluate_ui_expression(
+        status["options"]["text"], {}, network=network, eager_conditionals=True
+    )
+    assert isinstance(text, str) and "private-error-body" not in text
+    if message is not None:
+        assert message in text
+    for stage, mode, selection in (
+        ("foundation", "new", {"id": vnet_id}),
+        ("complete", "existing", {"id": vnet_id}),
+        ("foundation", "existing", None),
+    ):
+        assert (
+            _evaluate_ui_expression(
+                status["visible"],
+                {},
+                network={
+                    **network,
+                    "virtualNetworkMode": mode,
+                    "virtualNetwork": selection,
+                },
+                basics={"infrastructureStage": stage},
+                eager_conditionals=True,
+            )
+            is False
+        )
+
+
+@pytest.mark.parametrize("failure", ["denied", "stale", "unloaded"])
+def test_subnet_discovery_failure_never_authorizes_a_stale_role_selection(
+    tmp_path: Path, failure: str
+) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    vnet_id = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
+    document = copy.deepcopy(cli.documents[vnet_id])
+    network = {
+        **values,
+        "virtualNetwork": {"id": vnet_id, "location": values["location"]},
+        "virtualNetworkApi": document,
+    }
+    data = {
+        "contract": {"contractAccepted": True, "resourceGroupApi": None},
+        "names": {"namingPrefix": "kt", "namingSuffix": "dev"},
+    }
+    guard = ui_definition("infrastructure")["outputs"]["portalValidationPassed"]
+    assert (
+        _evaluate_ui_expression(
+            guard,
+            data,
+            network=network,
+            basics={"infrastructureStage": "foundation"},
+            resource_group={"mode": "New"},
+            eager_conditionals=True,
+        )
+        is True
+    )
+    if failure == "denied":
+        document["error"] = {"code": "Forbidden"}
+    elif failure == "stale":
+        document["id"] += "-previous"
+    else:
+        network["virtualNetworkApi"] = None
+    assert (
+        _evaluate_ui_expression(
+            guard,
+            data,
+            network=network,
+            basics={"infrastructureStage": "foundation"},
+            resource_group={"mode": "New"},
+            eager_conditionals=True,
+        )
+        is False
+    )
+
+
 @pytest.mark.parametrize("network_group", ["rg-customer-network", "RG-Customer-Network"])
 def test_infrastructure_exports_vnet_rg_from_selected_arm_id(network_group: str) -> None:
     selected = {
