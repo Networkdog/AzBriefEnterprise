@@ -115,6 +115,25 @@ class AdminReadinessCollector:
         resource_group = quote(self.settings.admin_readiness_resource_group or "", safe="")
         return f"/subscriptions/{subscription}/resourceGroups/{resource_group}"
 
+    def _resource_id(self, name_or_id: str, resource_type: str) -> str:
+        if not name_or_id.startswith("/"):
+            return f"{self._resource_base()}/providers/{resource_type}/{quote(name_or_id, safe='')}"
+        parts = name_or_id.split("/")
+        if (
+            len(parts) != 9
+            or parts[1].casefold() != "subscriptions"
+            or parts[2].casefold() != (self.settings.azure_subscription_id or "").casefold()
+            or parts[3].casefold() != "resourcegroups"
+            or not re.fullmatch(r"[A-Za-z0-9_.()-]+", parts[4])
+            or parts[5].casefold() != "providers"
+            or f"{parts[6]}/{parts[7]}".casefold() != resource_type.casefold()
+            or not re.fullmatch(r"[A-Za-z0-9_.()-]+", parts[8])
+        ):
+            raise ValueError(
+                "Readiness requires an exact typed resource ID in its configured subscription"
+            )
+        return name_or_id
+
     def _arm_requests(self) -> dict[str, tuple[str, str]]:
         if (
             not self.settings.azure_subscription_id
@@ -126,10 +145,7 @@ class AdminReadinessCollector:
         account = self.settings.admin_readiness_foundry_account
         project = self.settings.admin_readiness_foundry_project
         if account:
-            account_id = (
-                f"{base}/providers/Microsoft.CognitiveServices/accounts/"
-                f"{quote(account, safe='')}"
-            )
+            account_id = self._resource_id(account, "Microsoft.CognitiveServices/accounts")
             requests["foundry_account"] = (account_id, _COGNITIVE_API_VERSION)
             if project:
                 requests["foundry_project"] = (
@@ -153,7 +169,7 @@ class AdminReadinessCollector:
                     )
         for name in self.settings.get_admin_readiness_container_environments():
             requests[f"environment:{name}"] = (
-                f"{base}/providers/Microsoft.App/managedEnvironments/{quote(name, safe='')}",
+                self._resource_id(name, "Microsoft.App/managedEnvironments"),
                 _CONTAINER_APPS_API_VERSION,
             )
         for name in self.settings.get_admin_readiness_container_apps():
@@ -178,7 +194,7 @@ class AdminReadinessCollector:
                 and api_version
             ):
                 requests[f"support:{resource_key}"] = (
-                    f"{base}/providers/{resource_type}/{quote(resource_name, safe='')}",
+                    self._resource_id(resource.get("resource_id") or resource_name, resource_type),
                     api_version,
                 )
         return requests

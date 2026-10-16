@@ -3,7 +3,8 @@
 An opt-in private profile with new/existing VNet selection, derived from the existing
 [KT template](../kt/README.md) and [Enterprise template](../enterprise/main.bicep).
 It does not replace their Portal buttons or adopt an existing KT installation.
-Use a new set of resource names in one explicitly selected resource group.
+Use an explicitly selected workload resource group. New workload resources need distinct
+customer names; supported shared parents can remain in other RGs in the same subscription.
 
 ## Ownership
 
@@ -35,6 +36,9 @@ and separately approved evidence scopes remain operator-managed.
 | [infrastructure.bicep](infrastructure.bicep) | [infrastructure.json](infrastructure.json), one-time infrastructure |
 | [foundation.bicep](foundation.bicep) | Internal foundation; reuses the pinned KT AVM modules and email module |
 | [managed-capability-host.bicep](managed-capability-host.bicep) | Basic VNet project Host with `capabilityHostKind=Agents` and no BYO connection properties or data roles |
+| [foundry-workload.bicep](foundry-workload.bicep), [project-access.bicep](project-access.bicep) | Account-RG project/Host/telemetry and project-scoped access, without redeploying a shared account |
+| [storage-workload.bicep](storage-workload.bicep), [communication-access.bicep](communication-access.bicep), [shared-observer.bicep](shared-observer.bicep) | Workload containers and narrowly scoped access in referenced RGs |
+| [mcp-connection.bicep](mcp-connection.bicep) | Exact project-RG RemoteTool connection after authorized Graph preparation |
 | [resource-group-tags.bicep](resource-group-tags.bicep) | Foundation, mcp_pending and ready handoff, including bounded saved options |
 | [mcp-authentication.bicep](mcp-authentication.bicep) | [mcp-authentication.json](mcp-authentication.json), CLI-only Graph app/project role/RemoteTool connection and ready promotion |
 | [application.bicep](application.bicep) | [application.json](application.json), repeatable App/Job installation and updates |
@@ -49,6 +53,69 @@ and separately approved evidence scopes remain operator-managed.
 Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all four artifacts.
 
 ## Prerequisites
+
+### New Or Existing Shared Resources
+
+The infrastructure form independently selects **new / existing** for four services.
+New remains the backward-compatible default. Select an existing resource by full ARM ID;
+the Portal resource picker includes other RGs in the explicit subscription. Cross-subscription
+and cross-tenant reuse is not supported. A failed/forbidden read never becomes a request to
+create a replacement.
+
+| Service | New | Existing |
+| --- | --- | --- |
+| Foundry | Private AIServices account, then selected GlobalStandard models and workload project/Host | Retain the account, account Host and network; add an AzBrief-owned project/Host in that account's RG. Reuse model aliases only on the selected model/version/GlobalStandard contract; never replace another deployment |
+| Container Apps Environment | Internal, PNA-disabled Environment and Log Analytics workspace | Retain Environment configuration, Consumption profile, VIP, domain, DNS and its actual workspace. Add App/Job/MCP in the workload RG using the saved Environment ID |
+| Communication Services | ACS, Email Service and Azure-managed linked domain | Retain ACS, keys and linkedDomains. Select an already linked domain (automatic when unique); default `DoNotReply` must be supported and custom domains already verified |
+| Storage | Private Entra-only account with the original state/archive container names | Retain the account and Blob service; create only `azbrief-state-<app-name>` and `azbrief-archive-<app-name>`. Refuse existing same-name containers at foundation, and scope data Contributor to those containers, not the account |
+
+Use the same-region **existing VNet** when reusing Foundry or an Environment. Their actual
+agent/infrastructure subnet IDs must match the selected VNet/subnets; occupied subnets are
+accepted only for those verified existing owners. Both keep PNA Disabled and Entra/private
+access, and the existing Foundry must already enable projects and have a ready account Host.
+Private Endpoints and canonical DNS links for shared Foundry/Storage, and the Environment's
+wildcard/root A records to its private VIP, must already work in that VNet. These shared
+network/diagnostic settings are not rewritten. New-VNet mode cannot move a shared parent.
+
+The existing Environment workspace is resolved from its log customer ID, not guessed from
+its name and never replaced by a new empty-input workspace. Application Insights is new in
+the workload RG and binds that workspace. Shared ACS's selected domain can be in another RG.
+CLI resolves a unique domain automatically; multiple domains require an explicit linked
+`existingEmailDomainResourceId`. A custom domain must already permit the `DoNotReply` sender.
+No service keys or endpoint secrets are stored in RG tags.
+
+For the protected parameter file, use these independent pairs:
+
+| Mode parameter | Existing resource parameter |
+| --- | --- |
+| `foundryAccountMode` | `existingFoundryAccountResourceId` |
+| `containerAppsEnvironmentMode` | `existingContainerAppsEnvironmentResourceId` |
+| `communicationServicesMode` | `existingCommunicationServicesResourceId` |
+| `storageAccountMode` | `existingStorageAccountResourceId` |
+
+Each mode accepts `new` or `existing`. Existing leaf names are derived from IDs, so they are
+not a second manual input. The CLI resolves `existingLogAnalyticsWorkspaceResourceId` and
+the linked email domain where unambiguous. Shared choices, dependency IDs and workload
+container names are frozen at foundation and verified on completion, MCP preparation, Agent
+handoff and application updates. No old installation is automatically converted to shared use.
+Use a unique naming prefix/suffix for each workload project and its apps; a shared account's
+unrelated projects are allowed, but another workload's same-name project is never adopted.
+Model reselection on a shared account requires the selected aliases and workload project to be
+absent; unrelated projects/models do not authorize replacing either.
+The shared ACS sender role definition is keyed to the workload's identity, so installing
+another workload does not rewrite an existing common custom role definition.
+
+The deployer needs child-resource and scoped role-definition/assignment permissions in the
+referenced RGs as well as the workload RG. Runtime data permissions remain container/project
+scoped; observer Reader grants are limited to the exact shared resources. Existing resource
+reuse does not grant the control-plane identity query access to the shared log workspace.
+Existing resource
+tags, retention, SKUs, replicas, identities, domains, keys and other workloads are not changed.
+The application stage remains App/Job/auth/MCP plus final deployment tags only.
+Nested deployments into shared RGs include a deterministic workload/project suffix so two
+workloads cannot overwrite each other's deployment outputs or role handoff. Initial creation
+of common model aliases/custom sender role still needs normal provider concurrency handling;
+existing compatible models are reused rather than resized or replaced.
 
 - An existing target RG and matching default Azure CLI tenant/subscription. The tool
   does not sign in, switch accounts, create a RG, or read developer `.env` state.
@@ -257,8 +324,14 @@ this compatibility path never replays successful foundation/model/project resour
 On Windows MSI installations, the shared CLI adapter calls bundled Python directly so a Graph
 query URL containing encoded fields and `&` stays one argument, without shell parsing.
 
-Application defaults to `resourceGroup().tags` and resolves IDs/endpoints from names
-and actual existing resources in **that same RG**. Operators do not re-enter all
+Application defaults to the workload `resourceGroup().tags` and resolves IDs/endpoints from
+the saved full IDs and actual existing resources, including other RGs. A contiguous sequence
+of `azbrief.v2.resources0` through at most `resources7` stores one bounded JSON object:
+the Foundry, Environment, Storage, ACS, workspace and email-domain IDs plus the two workload
+container names. Each chunk is at most 256 characters; the complete object is at most 2048.
+Partial chunks, invalid types/subscriptions and ID/name disagreement block writes.
+Older contracts without this block retain the original same-RG name resolution; they are
+not treated as shared installations. Operators do not re-enter all
 infrastructure names or pass a copied infrastructure-output object on every update.
 Tags are editable, plaintext routing metadata, not identity, permission or cryptographic
 proof. The CLI also checks explicit context, ownership, typed internal/PNA/subnet state
@@ -292,8 +365,10 @@ These editable deployment records do not prove Hosted/Prompt publication, login,
 mail delivery or runtime readiness. Outputs retain `applicationReady=false`. No current Azure
 RG is backfilled by this source change; apply/publish the updated paired artifacts first.
 
-Azure permits 50 tags per RG and 256 characters per value. New v2 installs reserve 41 slots;
-the CLI checks the merged budget before provisioning. Resource tags have a separate
+Azure permits 50 tags per RG and 256 characters per value. V2 reserves the original 41 slots
+plus only the ID chunks actually needed (at most eight); the CLI checks the merged budget
+before provisioning and preserves customer tags. Long IDs/too many customer tags produce an
+explicit error rather than truncation or deletion. Resource tags have a separate
 15-tag limit because the same input also reaches Private DNS. Use canonical tag-key
 casing. Never store API keys, registry tokens, client secrets or subscriber data here.
 See [Azure tag limits](https://learn.microsoft.com/azure/azure-resource-manager/management/tag-resources)
@@ -385,7 +460,8 @@ it preserves the empty saved choice. Explicit central-zone IDs remain immutable.
 incomplete, paged, denied or redirected DNS reads still block completion.
 
 The ACA Environment remains internal with PNA Disabled. ACA PE automation retains the
-KT default `false`: the other four PEs and DNS preparation remain. No endpoint is
+KT default `false`: create only the PEs needed by new parents, and retain shared PE/DNS.
+No endpoint is
 deleted by Incremental omission. Manual ACA DNS/HTTPS and all real PE states still
 require acceptance. This is not a migration path for an old KT installation.
 Foundation creates the Environment's exact `defaultDomain` private zone with `*` and `@`
@@ -401,6 +477,10 @@ Agent publication is part of the application stage, not ARM infrastructure:
 use [setup_kt_agents.ps1](../../scripts/setup_kt_agents.ps1) with the completed
 deployment name from `azbrief.v2.deployment`, the exact target and an isolated named
 azd environment. Its compatible `ktFoundation.runtimeSetup` output is retained.
+For shared Foundry, that output also carries the exact account ID/custom subdomain. The
+guarded handoff validates the same subscription and project path and binds azd to the
+Foundry RG, while the deployment output, Insights and App/Job stay in the workload RG.
+Admin readiness also consumes typed full IDs instead of guessing shared parents' RGs.
 Install the application/MCP containers before the guarded Agent publication smoke, then
 complete Configure/Publish/Check using the existing private-network guide. These
 steps publish the six distinct Prompt Agents and the Hosted code, not merely names.

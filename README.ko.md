@@ -20,6 +20,13 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [v2 배포 가이드](infra/v2/README.md): 같은 리소스 그룹의 인프라 준비를 완료한 뒤 앱을 설치하거나 업데이트합니다.
 
+인프라에서 Foundry, Communication Services, Container Apps Environment, Storage를 각각
+**신규 생성 또는 기존 사용**으로 선택합니다. 같은 구독의 다른 RG에 있는 리소스도 선택할 수
+있으며, **전체 ARM ID**를 워크로드 RG의 인계 태그에 저장합니다. 공유 부모 리소스는 다시
+배포하지 않고 AzBrief 전용 프로젝트·App/Job/MCP·Blob 컨테이너와 필요한 범위의 권한만
+추가합니다. 기존 Environment의 Log Analytics와 ACS에 연결된 이메일 도메인을 재사용합니다.
+기존 사설 네트워크·리전 호환성은 사전검사하며, 앱 업데이트는 저장된 ID를 그대로 참조합니다.
+
 신규 v2 인프라에서 Core/Simple GPT-5 모델, 각 모델의 버전·용량과 배포 지역을 선택할 수
 있습니다. 먼저 `--list-model-options`로 리전별 모델 목록, 구독 할당량과 공급 용량을
 확인하십시오. 다른 지역을 선택하면 새 Foundry 계정과 VNet도 그 지역에 배포합니다.

@@ -41,11 +41,25 @@ preflight.
 
 ## Two-Stage Template v2
 
+V2 can independently reference existing Foundry, ACS, Container Apps Environment and
+application Storage by exact typed ARM ID in the same subscription, including other RGs.
+Never redeploy the shared parents, network, diagnostics, keys or unrelated workloads.
+Create only workload projects/Hosts, apps, private named Blob containers and scoped access.
+Shared Foundry/Environment must already use the selected same-region VNet/subnets and
+private DNS/approved PEs; occupied subnets need those exact owner bindings. Retain the
+Environment's actual workspace and ACS's already linked verified sender domain.
+Full IDs and container names use contiguous resources0..resources7 tags (2048 chars total);
+count actual chunks plus the original 41 slots against the 50-tag limit, never drop tags.
+Save each mode in options; old no-ID contracts stay same-RG and cannot become shared by
+completion. Verify project workload ownership, selected model aliases/GlobalStandard and
+exact IDs through App/MCP/Graph/Hosted grants/Agent setup/readiness. Keep scoped Blob data
+Contributor on the workload containers, not all shared account data. Never add PTU fallback.
+
 The opt-in [`infra/v2`](../../../infra/v2/README.md) profile reuses this private-network
 security/lifecycle knowledge but does not replace the KT Portal button or adopt old resources.
 Its one-time infrastructure command internally sequences foundation, account-host readiness
-and model/project/Host/RBAC completion without an App image. New foundation saves 41 bounded,
-non-secret `azbrief.v2.*` RG tags including customer options. Managed MCP core completion records
+and model/project/Host/RBAC completion without an App image. New foundation saves 41 base
+`azbrief.v2.*` RG tags plus bounded ID chunks, all non-secret. Managed MCP core completion records
 mcp_pending. Portal infrastructure contains zero Microsoft.Graph resources; authorized CLI-only
 mcp-authentication prepares app/project app-role/RemoteTool then promotes ready. Full CLI deploy
 runs it automatically; Portal operators use --prepare-mcp-authentication once without internal ID
@@ -56,8 +70,8 @@ Cosmos/Search/BYO data roles or their PE/DNS; retain app-owned private Blob stat
 Mode lives in option tags; missing old flag means BYO and explicit false/original names is
 required for legacy completion. Never switch/reset old Host data, delete old stores, weaken
 network/auth or confuse Basic VNet with Standard-private BYO requirements. Only v2 changes;
-standard/KT profiles keep BYO. Five canonical DNS namespaces and five/six conservative PE IPs
-replace the old seven/eight budget for the new managed mode; keep stable skipped PE indices.
+standard/KT profiles keep BYO. Five canonical DNS namespaces replace the old seven for the new managed mode. Count only
+newly requested PEs for the subnet IP budget; shared parent PEs/DNS are retained. Keep stable skipped PE indices.
 Verify actual Host/API/region and private MCP behavior separately from offline validation.
 Only v2 adds existing/new network choice. Existing mode keeps all customer VNet guards and
 never PUTs it; new mode creates one target-RG VNet and validated role subnets before foundation,
@@ -76,6 +90,8 @@ version-specific provider capacity. New region means a new same-region Foundry/V
 installation, not remote routing or account migration. --stage complete --reselect-models changes
 only six physical model fields on saved foundation with zero deployments/projects; all other
 choices stay immutable. Block partial/existing state, denied reads, tag forcing and Host resets.
+For explicitly shared Foundry, zero-state applies to the selected aliases/workload project,
+not unrelated projects/models in the account. Never adopt or replace those other workloads.
 V2 Portal modelDeploymentRegion is separate from RG metadata location, with East US default.
 Hide native Basics location; use documented VNet location=all while retaining subscription scope
 and explicit matching-region checks. Unknown/mismatching VNet regions block, not substitute the

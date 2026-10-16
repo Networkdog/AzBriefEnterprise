@@ -657,7 +657,7 @@ class Settings(BaseSettings):
     )
     admin_readiness_foundry_account: Optional[str] = Field(
         default=None,
-        description="Foundry account expected by the Admin readiness dashboard.",
+        description="Foundry account name or same-subscription full ARM ID expected by readiness.",
     )
     admin_readiness_foundry_project: Optional[str] = Field(
         default=None,
@@ -673,7 +673,7 @@ class Settings(BaseSettings):
     )
     admin_readiness_container_environments: str = Field(
         default="",
-        description="Container Apps environments expected by the readiness dashboard.",
+        description="Container Apps environment names or same-subscription ARM IDs for readiness.",
     )
     admin_readiness_container_apps: str = Field(
         default="",
@@ -689,7 +689,7 @@ class Settings(BaseSettings):
     )
     admin_readiness_support_resources: str = Field(
         default="",
-        description="Supporting Azure resources expected by the readiness dashboard.",
+        description="Supporting resources, optionally including a same-subscription resource_id.",
     )
 
     @staticmethod
@@ -711,7 +711,7 @@ class Settings(BaseSettings):
         return None
 
     def get_admin_readiness_container_environments(self) -> list[str]:
-        """Return expected Container Apps environment names."""
+        """Return expected Container Apps environment names or typed ARM IDs."""
         value = self._decode_readiness_json(self.admin_readiness_container_environments)
         return (
             [str(item).strip() for item in value if str(item).strip()]

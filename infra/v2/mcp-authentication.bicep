@@ -16,23 +16,22 @@ module authentication '../azure-mcp-server/infra/modules/entra-app.bicep' = {
 module projectPermission '../azure-mcp-server/infra/modules/foundry-role-assignment-entraapp.bicep' = {
   name: 'v2-mcp-project-permission'
   params: {
-    foundryProjectResourceId: resourceId('Microsoft.CognitiveServices/accounts/projects', infrastructure.foundryAccountName, infrastructure.projectName)
+    foundryProjectResourceId: infrastructure.?foundryProjectResourceId ?? resourceId('Microsoft.CognitiveServices/accounts/projects', infrastructure.foundryAccountName, infrastructure.projectName)
     entraAppServicePrincipalObjectId: authentication.outputs.entraAppServicePrincipalObjectId
     entraAppRoleId: authentication.outputs.entraAppRoleId
   }
 }
 
-resource connection 'Microsoft.CognitiveServices/accounts/projects/connections@2025-10-01-preview' = {
-  name: '${infrastructure.foundryAccountName}/${infrastructure.projectName}/${infrastructure.azureMcpProjectConnectionName}'
-  properties: {
-    #disable-next-line BCP036
-    category: 'RemoteTool'
-    #disable-next-line BCP036
-    authType: 'ProjectManagedIdentity'
-    target: infrastructure.azureMcpServerUrl
-    #disable-next-line BCP037
-    audience: 'api://${authentication.outputs.entraAppClientId}'
-    isSharedToAll: true
+var accountId = infrastructure.?foundryAccountResourceId ?? resourceId('Microsoft.CognitiveServices/accounts', infrastructure.foundryAccountName)
+module connection 'mcp-connection.bicep' = {
+  name: 'v2-mcp-project-connection-${uniqueString(accountId, infrastructure.projectName)}'
+  scope: resourceGroup(split(accountId, '/')[2], split(accountId, '/')[4])
+  params: {
+    foundryAccountName: infrastructure.foundryAccountName
+    projectName: infrastructure.projectName
+    connectionName: infrastructure.azureMcpProjectConnectionName
+    serverUrl: infrastructure.azureMcpServerUrl
+    clientId: authentication.outputs.entraAppClientId
   }
   dependsOn: [projectPermission]
 }

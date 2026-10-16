@@ -21,6 +21,18 @@ param emailDataLocation string
 param searchSku string
 param existingPrivateDnsZoneIds object
 param deployContainerAppsPrivateEndpoint bool
+@allowed(['new', 'existing'])
+param foundryAccountMode string = 'new'
+@allowed(['new', 'existing'])
+param storageAccountMode string = 'new'
+@allowed(['new', 'existing'])
+param containerAppsEnvironmentMode string = 'new'
+@allowed(['new', 'existing'])
+param communicationServicesMode string = 'new'
+param existingContainerAppsEnvironmentResourceId string = ''
+param existingLogAnalyticsWorkspaceResourceId string = ''
+param existingCommunicationServicesResourceId string = ''
+param existingEmailDomainResourceId string = ''
 param tags object
 
 var vnetId = resourceId(virtualNetworkResourceGroupName, 'Microsoft.Network/virtualNetworks', virtualNetworkName)
@@ -34,7 +46,7 @@ var dnsZoneNames = [
   'privatelink.${location}.azurecontainerapps.io'
 ]
 
-resource workspace 'Microsoft.OperationalInsights/workspaces@2025-02-01' = {
+resource workspace 'Microsoft.OperationalInsights/workspaces@2025-02-01' = if (containerAppsEnvironmentMode == 'new') {
   name: logAnalyticsWorkspaceName
   location: location
   tags: tags
@@ -52,13 +64,13 @@ resource insights 'Microsoft.Insights/components@2020-02-02' = {
   tags: tags
   properties: {
     Application_Type: 'web'
-    WorkspaceResourceId: workspace.id
+    WorkspaceResourceId: containerAppsEnvironmentMode == 'new' ? workspace!.id : existingLogAnalyticsWorkspaceResourceId
     DisableLocalAuth: true
   }
 }
 
 module dnsZones 'br/public:avm/res/network/private-dns-zone:0.8.1' = [
-  for (zoneName, index) in dnsZoneNames: if (!contains(existingPrivateDnsZoneIds, zoneName) && (!useMicrosoftManagedAgentData || (index != 4 && index != 5))) {
+  for (zoneName, index) in dnsZoneNames: if (!contains(existingPrivateDnsZoneIds, zoneName) && (!useMicrosoftManagedAgentData || (index != 4 && index != 5)) && (index > 2 || foundryAccountMode == 'new') && (index != 3 || storageAccountMode == 'new') && (index != 6 || containerAppsEnvironmentMode == 'new')) {
     name: 'v2-dns-${index}'
     params: {
       name: zoneName
@@ -71,7 +83,7 @@ module dnsZones 'br/public:avm/res/network/private-dns-zone:0.8.1' = [
   }
 ]
 
-module foundry 'br/public:avm/res/cognitive-services/account:0.19.1' = {
+module foundry 'br/public:avm/res/cognitive-services/account:0.19.1' = if (foundryAccountMode == 'new') {
   name: 'v2-foundry'
   params: {
     name: foundryAccountName
@@ -94,7 +106,7 @@ module foundry 'br/public:avm/res/cognitive-services/account:0.19.1' = {
   }
 }
 
-module storage 'br/public:avm/res/storage/storage-account:0.33.1' = {
+module storage 'br/public:avm/res/storage/storage-account:0.33.1' = if (storageAccountMode == 'new') {
   name: 'v2-storage'
   params: {
     name: storageAccountName
@@ -171,7 +183,7 @@ module identity 'br/public:avm/res/managed-identity/user-assigned-identity:0.6.0
   }
 }
 
-module containerEnvironment 'br/public:avm/res/app/managed-environment:0.16.0' = {
+module containerEnvironment 'br/public:avm/res/app/managed-environment:0.16.0' = if (containerAppsEnvironmentMode == 'new') {
   name: 'v2-container-environment'
   params: {
     name: containerAppsEnvironmentName
@@ -183,20 +195,20 @@ module containerEnvironment 'br/public:avm/res/app/managed-environment:0.16.0' =
     workloadProfiles: [{ name: 'Consumption', workloadProfileType: 'Consumption' }]
     appLogsConfiguration: {
       destination: 'log-analytics'
-      logAnalyticsWorkspaceResourceId: workspace.id
+      logAnalyticsWorkspaceResourceId: workspace!.id
     }
     tags: tags
     enableTelemetry: false
   }
 }
 
-module internalIngressDns 'br/public:avm/res/network/private-dns-zone:0.8.1' = {
+module internalIngressDns 'br/public:avm/res/network/private-dns-zone:0.8.1' = if (containerAppsEnvironmentMode == 'new') {
   name: 'v2-internal-ingress-dns'
   params: {
-    name: containerEnvironment.outputs.defaultDomain
+    name: containerEnvironment!.outputs.defaultDomain
     a: [
-      { name: '*', ttl: 300, aRecords: [{ ipv4Address: containerEnvironment.outputs.staticIp }] }
-      { name: '@', ttl: 300, aRecords: [{ ipv4Address: containerEnvironment.outputs.staticIp }] }
+      { name: '*', ttl: 300, aRecords: [{ ipv4Address: containerEnvironment!.outputs.staticIp }] }
+      { name: '@', ttl: 300, aRecords: [{ ipv4Address: containerEnvironment!.outputs.staticIp }] }
     ]
     virtualNetworkLinks: [
       { name: 'v2-${uniqueString(vnetId)}', virtualNetworkResourceId: vnetId, registrationEnabled: false }
@@ -206,7 +218,7 @@ module internalIngressDns 'br/public:avm/res/network/private-dns-zone:0.8.1' = {
   }
 }
 
-module email '../kt/email.bicep' = {
+module email '../kt/email.bicep' = if (communicationServicesMode == 'new') {
   name: 'v2-email-services'
   params: {
     communicationServicesName: communicationServicesName
@@ -226,7 +238,7 @@ var endpointSpecs = [
 
 @batchSize(1)
 module privateEndpoints 'br/public:avm/res/network/private-endpoint:0.12.1' = [
-  for (endpoint, index) in endpointSpecs: if ((endpoint.groupId != 'managedEnvironments' || deployContainerAppsPrivateEndpoint) && (!useMicrosoftManagedAgentData || (index != 2 && index != 3))) {
+  for (endpoint, index) in endpointSpecs: if ((endpoint.groupId != 'managedEnvironments' || deployContainerAppsPrivateEndpoint) && (!useMicrosoftManagedAgentData || (index != 2 && index != 3)) && (index != 0 || foundryAccountMode == 'new') && (index != 1 || storageAccountMode == 'new') && (index != 4 || containerAppsEnvironmentMode == 'new')) {
     name: 'v2-private-endpoint-${index}'
     params: {
       name: endpoint.name
@@ -250,13 +262,13 @@ module privateEndpoints 'br/public:avm/res/network/private-endpoint:0.12.1' = [
   }
 ]
 
-resource existingAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+resource existingAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (foundryAccountMode == 'new') {
   name: foundryAccountName
 }
-resource existingStorage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+resource existingStorage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = if (storageAccountMode == 'new') {
   name: storageAccountName
 }
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' existing = {
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' existing = if (storageAccountMode == 'new') {
   parent: existingStorage
   name: 'default'
 }
@@ -267,21 +279,21 @@ resource existingSearch 'Microsoft.Search/searchServices@2023-11-01' existing = 
   name: searchServiceName
 }
 
-resource foundryDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+resource foundryDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (foundryAccountMode == 'new') {
   scope: existingAccount
   name: 'azbrief-v2'
   properties: {
-    workspaceId: workspace.id
+    workspaceId: containerAppsEnvironmentMode == 'new' ? workspace!.id : existingLogAnalyticsWorkspaceResourceId
     logs: [{ categoryGroup: 'allLogs', enabled: true }]
     metrics: [{ category: 'AllMetrics', enabled: true }]
   }
   dependsOn: [foundry]
 }
-resource blobDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
+resource blobDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = if (storageAccountMode == 'new') {
   scope: blobService
   name: 'azbrief-v2'
   properties: {
-    workspaceId: workspace.id
+    workspaceId: containerAppsEnvironmentMode == 'new' ? workspace!.id : existingLogAnalyticsWorkspaceResourceId
     logs: [{ categoryGroup: 'allLogs', enabled: true }]
     metrics: [{ category: 'AllMetrics', enabled: true }]
   }
@@ -291,7 +303,7 @@ resource cosmosDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
   scope: existingCosmos
   name: 'azbrief-v2'
   properties: {
-    workspaceId: workspace.id
+    workspaceId: containerAppsEnvironmentMode == 'new' ? workspace!.id : existingLogAnalyticsWorkspaceResourceId
     logs: [{ categoryGroup: 'allLogs', enabled: true }]
     metrics: [{ category: 'AllMetrics', enabled: true }]
   }
@@ -301,16 +313,28 @@ resource searchDiagnostics 'Microsoft.Insights/diagnosticSettings@2021-05-01-pre
   scope: existingSearch
   name: 'azbrief-v2'
   properties: {
-    workspaceId: workspace.id
+    workspaceId: containerAppsEnvironmentMode == 'new' ? workspace!.id : existingLogAnalyticsWorkspaceResourceId
     logs: [{ categoryGroup: 'allLogs', enabled: true }]
     metrics: [{ category: 'AllMetrics', enabled: true }]
   }
   dependsOn: [search]
 }
 
-output environmentDefaultDomain string = containerEnvironment.outputs.defaultDomain
+resource sharedEnvironment 'Microsoft.App/managedEnvironments@2026-01-01' existing = if (!empty(existingContainerAppsEnvironmentResourceId)) {
+  scope: resourceGroup(split(existingContainerAppsEnvironmentResourceId, '/')[2], split(existingContainerAppsEnvironmentResourceId, '/')[4])
+  name: last(split(existingContainerAppsEnvironmentResourceId, '/'))
+}
+resource sharedCommunication 'Microsoft.Communication/communicationServices@2023-04-01' existing = if (!empty(existingCommunicationServicesResourceId)) {
+  scope: resourceGroup(split(existingCommunicationServicesResourceId, '/')[2], split(existingCommunicationServicesResourceId, '/')[4])
+  name: last(split(existingCommunicationServicesResourceId, '/'))
+}
+resource sharedDomain 'Microsoft.Communication/emailServices/domains@2023-04-01' existing = if (!empty(existingEmailDomainResourceId)) {
+  scope: resourceGroup(split(existingEmailDomainResourceId, '/')[2], split(existingEmailDomainResourceId, '/')[4])
+  name: '${split(existingEmailDomainResourceId, '/')[8]}/${split(existingEmailDomainResourceId, '/')[10]}'
+}
+
+output environmentDefaultDomain string = containerAppsEnvironmentMode == 'new' ? containerEnvironment!.outputs.defaultDomain : sharedEnvironment!.properties.defaultDomain
 output identityPrincipalId string = identity.outputs.principalId
 output identityClientId string = identity.outputs.clientId
-output emailEndpoint string = email.outputs.endpoint
-output emailSenderAddress string = email.outputs.senderAddress
-output emailSenderRoleDefinitionId string = email.outputs.senderRoleDefinitionId
+output emailEndpoint string = communicationServicesMode == 'new' ? email!.outputs.endpoint : 'https://${sharedCommunication!.properties.hostName}'
+output emailSenderAddress string = communicationServicesMode == 'new' ? email!.outputs.senderAddress : 'DoNotReply@${sharedDomain!.properties.fromSenderDomain}'

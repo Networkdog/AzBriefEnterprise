@@ -44,9 +44,13 @@ def resources(document: dict[str, Any]) -> Iterator[dict[str, Any]]:
 
 
 def module(document: dict[str, Any], name: str) -> dict[str, Any]:
-    declared = document["resources"]
-    entries = declared.values() if isinstance(declared, dict) else declared
-    return next(resource for resource in entries if resource["name"] == name)
+    for resource in resources(document):
+        label = resource.get("name", "")
+        if isinstance(label, str) and (
+            label == name or f"'{name}'" in label or f"'{name}-{{0}}'" in label
+        ):
+            return resource
+    raise StopIteration(name)
 
 
 def test_default_basic_vnet_host_omits_byo_and_keeps_private_injection() -> None:
@@ -635,13 +639,15 @@ def test_foundation_never_creates_the_project_before_account_host_readiness() ->
         resource["type"] == "Microsoft.CognitiveServices/accounts/projects"
         for resource in resources(nested)
     )
+    workload = module(document, "v2-foundry-workload")
+    assert workload["condition"] == "[variables('complete')]"
     project = next(
         resource
-        for resource in document["resources"]
+        for resource in resources(workload["properties"]["template"])
         if resource["type"] == "Microsoft.CognitiveServices/accounts/projects"
     )
-    assert project["condition"] == "[and(variables('complete'), not(variables('reuseFoundry')))]"
-    assert any("v2-required-models" in dependency for dependency in project["dependsOn"])
+    assert project["condition"] == "[not(parameters('reuseExistingFoundrySetup'))]"
+    assert any("v2-required-models" in dependency for dependency in workload["dependsOn"])
     host = module(document, "v2-project-host")
     assert any("v2-agent-bindings" in dependency for dependency in host["dependsOn"])
 
@@ -688,6 +694,29 @@ def test_compiled_foundry_and_monitoring_roles_keep_exact_resource_scopes() -> N
                 assert "Microsoft.Insights/components" in resource.get(
                     "_scope_resource_type", resource["scope"]
                 )
+
+
+def test_control_plane_blob_grants_and_foundation_diagnostics_keep_explicit_scopes() -> None:
+    document = template("infrastructure")
+    control_plane = module(document, "v2-control-plane-roles")["properties"]["template"]
+    for resource in resources(control_plane):
+        if resource["type"] != "Microsoft.Authorization/roleAssignments":
+            continue
+        if "ba92f5b4-2d11-453d-a403-e96b0029c9fe" in resource["properties"]["roleDefinitionId"]:
+            assert "scope" in resource
+            assert "Microsoft.Storage/storageAccounts/blobServices/containers" in resource.get(
+                "_scope_resource_type", resource["scope"]
+            )
+    foundation = module(document, "v2-foundation")["properties"]["template"]
+    declared = foundation["resources"]
+    entries = declared.values() if isinstance(declared, dict) else declared
+    diagnostics = [
+        resource
+        for resource in entries
+        if resource["type"] == "Microsoft.Insights/diagnosticSettings"
+    ]
+    assert len(diagnostics) == 4
+    assert all("scope" in resource for resource in diagnostics)
 
 
 def test_app_and_job_share_image_and_secret_but_keep_distinct_commands() -> None:
@@ -745,8 +774,16 @@ def test_managed_mcp_is_split_between_identity_and_application_without_auth_bypa
     assert connection["properties"]["authType"] == "ProjectManagedIdentity"
     audience = connection["properties"]["audience"]
     assert audience.startswith("[format('api://{0}', ")
-    assert "v2-mcp-authentication" in audience
-    assert "azureMcpServerUrl" in connection["properties"]["target"]
+    assert "parameters('clientId')" in audience
+    connection_module = module(authentication, "v2-mcp-project-connection")
+    assert (
+        "v2-mcp-authentication"
+        in connection_module["properties"]["parameters"]["clientId"]["value"]
+    )
+    assert connection["properties"]["target"] == "[parameters('serverUrl')]"
+    assert (
+        "azureMcpServerUrl" in connection_module["properties"]["parameters"]["serverUrl"]["value"]
+    )
     assert any(
         "connection" in dependency
         for dependency in module(authentication, "v2-mcp-ready-tags")["dependsOn"]
@@ -1848,12 +1885,24 @@ def test_infrastructure_ui_keeps_customer_names_but_not_internal_settings() -> N
         assert set(ui_definition(name)["outputs"]) <= set(template(name)["parameters"])
 
 
+def default_option_tags() -> dict[str, str]:
+    definitions = template("infrastructure")["parameters"]
+    options = {
+        name: copy.deepcopy(definitions[name]["defaultValue"]) for name in deploy_v2.OPTION_FIELDS
+    }
+    encoded = json.dumps(options, separators=(",", ":"))
+    return {
+        key: encoded[index * 256 : (index + 1) * 256]
+        for index, key in enumerate(deploy_v2.OPTION_TAG_KEYS)
+    }
+
+
 @pytest.mark.parametrize("extra_tags,expected", [(0, True), (1, False)])
 def test_portal_reserves_two_application_tags_within_group_budget(
     extra_tags: int, expected: bool
 ) -> None:
     tags = tag_contract()
-    tags[deploy_v2.PREFIX + "options0"] = "saved"
+    tags.update(default_option_tags())
     tags.update({f"customer{index}": "keep" for index in range(48 + extra_tags - len(tags))})
     data = {
         "application": {
@@ -1871,7 +1920,7 @@ def test_portal_reserves_two_application_tags_within_group_budget(
 
 def test_portal_does_not_use_application_metadata_as_inventory_evidence() -> None:
     tags = tag_contract()
-    tags[deploy_v2.PREFIX + "options0"] = "saved"
+    tags.update(default_option_tags())
     tags.update(
         {
             deploy_v2.PREFIX + "applicationState": "deployed",
@@ -1977,17 +2026,17 @@ def test_application_shares_verified_web_origins_with_job_delivery() -> None:
         if entry["type"] in {"Microsoft.App/containerApps", "Microsoft.App/jobs"}
     ]
     assert len(surfaces) == 2
-    origin = (
-        "format('https://{0}.{1}', parameters('infrastructureTags')['azbrief.v2.app'], "
-        "reference(resourceId('Microsoft.App/managedEnvironments', "
-        "parameters('infrastructureTags')['azbrief.v2.environment']), '2026-01-01').defaultDomain)"
-    )
+    origins = []
     for surface in surfaces:
         for name in ("ARCHIVE_BASE_URL", "FEEDBACK_BASE_URL"):
-            assert (
-                f"createObject('name', '{name}', 'value', {origin})"
-                in surface["properties"]["template"]
-            )
+            body = surface["properties"]["template"]
+            marker = f"createObject('name', '{name}', 'value', "
+            start = body.index(marker) + len(marker)
+            end = body.index(".defaultDomain)", start) + len(".defaultDomain)")
+            origins.append(body[start:end])
+    assert len(set(origins)) == 1
+    assert origins[0].startswith("format('https://{0}.{1}', ")
+    assert "variables('environmentId')" in origins[0]
 
 
 def test_saved_customer_options_round_trip_and_application_rejects_foundation(

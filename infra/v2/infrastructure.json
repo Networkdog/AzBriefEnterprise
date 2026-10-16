@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "5770095477345338705"
+      "templateHash": "8705412408501298682"
     },
     "description": "One-time AzBrief v2 infrastructure. Foundation and completion are internal orchestration stages; application containers and Agent versions are excluded."
   },
@@ -140,6 +140,70 @@
       "type": "string",
       "defaultValue": "[format('email-{0}', parameters('containerAppName'))]"
     },
+    "foundryAccountMode": {
+      "type": "string",
+      "defaultValue": "new",
+      "allowedValues": [
+        "new",
+        "existing"
+      ]
+    },
+    "existingFoundryAccountResourceId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "storageAccountMode": {
+      "type": "string",
+      "defaultValue": "new",
+      "allowedValues": [
+        "new",
+        "existing"
+      ]
+    },
+    "existingStorageAccountResourceId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "containerAppsEnvironmentMode": {
+      "type": "string",
+      "defaultValue": "new",
+      "allowedValues": [
+        "new",
+        "existing"
+      ]
+    },
+    "existingContainerAppsEnvironmentResourceId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingLogAnalyticsWorkspaceResourceId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "communicationServicesMode": {
+      "type": "string",
+      "defaultValue": "new",
+      "allowedValues": [
+        "new",
+        "existing"
+      ]
+    },
+    "existingCommunicationServicesResourceId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "existingEmailDomainResourceId": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "stateContainerName": {
+      "type": "string",
+      "defaultValue": ""
+    },
+    "archiveContainerName": {
+      "type": "string",
+      "defaultValue": ""
+    },
     "emailDataLocation": {
       "type": "string",
       "defaultValue": "Asia Pacific",
@@ -268,18 +332,29 @@
   },
   "variables": {
     "complete": "[equals(parameters('infrastructureStage'), 'complete')]",
+    "workloadKey": "[uniqueString(resourceGroup().id)]",
     "resourceTags": "[union(parameters('tags'), createObject('application', 'AzBrief', 'customer', 'KT', 'deploymentProfile', 'kt-private-v2'))]",
-    "projectId": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
-    "projectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', parameters('foundryAccountName'), parameters('projectName'))]",
+    "accountId": "[if(equals(parameters('foundryAccountMode'), 'existing'), parameters('existingFoundryAccountResourceId'), resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')))]",
+    "environmentId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), parameters('existingContainerAppsEnvironmentResourceId'), resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')))]",
+    "storageId": "[if(equals(parameters('storageAccountMode'), 'existing'), parameters('existingStorageAccountResourceId'), resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')))]",
+    "communicationId": "[if(equals(parameters('communicationServicesMode'), 'existing'), parameters('existingCommunicationServicesResourceId'), resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')))]",
+    "workspaceId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), parameters('existingLogAnalyticsWorkspaceResourceId'), resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')))]",
+    "domainId": "[if(equals(parameters('communicationServicesMode'), 'existing'), parameters('existingEmailDomainResourceId'), resourceId('Microsoft.Communication/emailServices/domains', parameters('emailServiceName'), 'AzureManagedDomain'))]",
+    "stateName": "[if(not(empty(parameters('stateContainerName'))), parameters('stateContainerName'), if(equals(parameters('storageAccountMode'), 'existing'), format('azbrief-state-{0}', toLower(parameters('containerAppName'))), 'azbrief-state'))]",
+    "archiveName": "[if(not(empty(parameters('archiveContainerName'))), parameters('archiveContainerName'), if(equals(parameters('storageAccountMode'), 'existing'), format('azbrief-archive-{0}', toLower(parameters('containerAppName'))), 'azbrief-archive'))]",
+    "projectId": "[format('{0}/projects/{1}', variables('accountId'), parameters('projectName'))]",
     "networkResourceGroup": "[if(equals(parameters('virtualNetworkMode'), 'new'), resourceGroup().name, parameters('virtualNetworkResourceGroupName'))]",
     "vnetId": "[resourceId(variables('networkResourceGroup'), 'Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
-    "reuseFoundry": "[and(variables('complete'), parameters('reuseExistingFoundrySetup'))]",
     "manageAzureMcp": "[empty(parameters('azureMcpServerUrl'))]",
     "savedOptions": "[if(variables('complete'), json(concat(coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options0'), '{}'), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options1'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options2'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options3'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options4'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options5'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options6'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options7'), ''))), createObject())]",
     "mcpClientId": "[if(and(variables('manageAzureMcp'), variables('complete')), coalesce(tryGet(variables('savedOptions'), 'azureMcpClientId'), ''), '')]",
     "mcpServicePrincipalId": "[if(and(variables('manageAzureMcp'), variables('complete')), coalesce(tryGet(variables('savedOptions'), 'azureMcpServicePrincipalId'), ''), '')]",
     "mcpAppRoleId": "[if(and(variables('manageAzureMcp'), variables('complete')), coalesce(tryGet(variables('savedOptions'), 'azureMcpAppRoleId'), ''), '')]",
     "deploymentOptions": {
+      "foundryAccountMode": "[parameters('foundryAccountMode')]",
+      "storageAccountMode": "[parameters('storageAccountMode')]",
+      "containerAppsEnvironmentMode": "[parameters('containerAppsEnvironmentMode')]",
+      "communicationServicesMode": "[parameters('communicationServicesMode')]",
       "virtualNetworkMode": "[parameters('virtualNetworkMode')]",
       "virtualNetworkAddressPrefix": "[parameters('virtualNetworkAddressPrefix')]",
       "peSubnetAddressPrefix": "[parameters('peSubnetAddressPrefix')]",
@@ -313,44 +388,6 @@
     }
   },
   "resources": [
-    {
-      "condition": "[and(variables('complete'), not(variables('reuseFoundry')))]",
-      "type": "Microsoft.CognitiveServices/accounts/projects",
-      "apiVersion": "2025-06-01",
-      "name": "[format('{0}/{1}', parameters('foundryAccountName'), parameters('projectName'))]",
-      "location": "[parameters('location')]",
-      "identity": {
-        "type": "SystemAssigned"
-      },
-      "properties": {
-        "displayName": "[parameters('projectName')]",
-        "description": "[if(parameters('useMicrosoftManagedAgentData'), 'AzBrief v2 Basic VNet project with Microsoft-managed agent data.', 'AzBrief v2 project with customer-owned agent storage.')]"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Resources/deployments', 'v2-required-models')]"
-      ]
-    },
-    {
-      "condition": "[and(variables('complete'), not(parameters('reuseExistingTelemetryConnection')))]",
-      "type": "Microsoft.CognitiveServices/accounts/projects/connections",
-      "apiVersion": "2025-06-01",
-      "name": "[format('{0}/{1}/azbrief-app-insights', parameters('foundryAccountName'), parameters('projectName'))]",
-      "properties": {
-        "category": "AppInsights",
-        "authType": "ProjectManagedIdentity",
-        "target": "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
-        "isSharedToAll": true,
-        "metadata": {
-          "ApiType": "Azure",
-          "ResourceId": "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]",
-          "ApplicationInsightsConnectionString": "[reference(resourceId('Microsoft.Insights/components', parameters('applicationInsightsName')), '2020-02-02').ConnectionString]",
-          "location": "[reference(resourceId('Microsoft.Insights/components', parameters('applicationInsightsName')), '2020-02-02', 'full').location]"
-        }
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]"
-      ]
-    },
     {
       "condition": "[and(not(variables('complete')), equals(parameters('virtualNetworkMode'), 'new'))]",
       "type": "Microsoft.Resources/deployments",
@@ -572,6 +609,22 @@
           "deployContainerAppsPrivateEndpoint": {
             "value": "[parameters('deployContainerAppsPrivateEndpoint')]"
           },
+          "foundryAccountMode": {
+            "value": "[parameters('foundryAccountMode')]"
+          },
+          "storageAccountMode": {
+            "value": "[parameters('storageAccountMode')]"
+          },
+          "containerAppsEnvironmentMode": {
+            "value": "[parameters('containerAppsEnvironmentMode')]"
+          },
+          "communicationServicesMode": {
+            "value": "[parameters('communicationServicesMode')]"
+          },
+          "existingContainerAppsEnvironmentResourceId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), createObject('value', variables('environmentId')), createObject('value', ''))]",
+          "existingLogAnalyticsWorkspaceResourceId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), createObject('value', variables('workspaceId')), createObject('value', ''))]",
+          "existingCommunicationServicesResourceId": "[if(equals(parameters('communicationServicesMode'), 'existing'), createObject('value', variables('communicationId')), createObject('value', ''))]",
+          "existingEmailDomainResourceId": "[if(equals(parameters('communicationServicesMode'), 'existing'), createObject('value', variables('domainId')), createObject('value', ''))]",
           "tags": {
             "value": "[variables('resourceTags')]"
           }
@@ -584,7 +637,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "7219823528938939696"
+              "templateHash": "8768212436166813368"
             }
           },
           "parameters": {
@@ -651,6 +704,54 @@
             "deployContainerAppsPrivateEndpoint": {
               "type": "bool"
             },
+            "foundryAccountMode": {
+              "type": "string",
+              "defaultValue": "new",
+              "allowedValues": [
+                "new",
+                "existing"
+              ]
+            },
+            "storageAccountMode": {
+              "type": "string",
+              "defaultValue": "new",
+              "allowedValues": [
+                "new",
+                "existing"
+              ]
+            },
+            "containerAppsEnvironmentMode": {
+              "type": "string",
+              "defaultValue": "new",
+              "allowedValues": [
+                "new",
+                "existing"
+              ]
+            },
+            "communicationServicesMode": {
+              "type": "string",
+              "defaultValue": "new",
+              "allowedValues": [
+                "new",
+                "existing"
+              ]
+            },
+            "existingContainerAppsEnvironmentResourceId": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "existingLogAnalyticsWorkspaceResourceId": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "existingCommunicationServicesResourceId": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "existingEmailDomainResourceId": {
+              "type": "string",
+              "defaultValue": ""
+            },
             "tags": {
               "type": "object"
             }
@@ -709,6 +810,7 @@
           },
           "resources": {
             "workspace": {
+              "condition": "[equals(parameters('containerAppsEnvironmentMode'), 'new')]",
               "type": "Microsoft.OperationalInsights/workspaces",
               "apiVersion": "2025-02-01",
               "name": "[parameters('logAnalyticsWorkspaceName')]",
@@ -733,7 +835,7 @@
               "tags": "[parameters('tags')]",
               "properties": {
                 "Application_Type": "web",
-                "WorkspaceResourceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName'))]",
+                "WorkspaceResourceId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'new'), resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), parameters('existingLogAnalyticsWorkspaceResourceId'))]",
                 "DisableLocalAuth": true
               },
               "dependsOn": [
@@ -741,18 +843,21 @@
               ]
             },
             "existingAccount": {
+              "condition": "[equals(parameters('foundryAccountMode'), 'new')]",
               "existing": true,
               "type": "Microsoft.CognitiveServices/accounts",
               "apiVersion": "2025-06-01",
               "name": "[parameters('foundryAccountName')]"
             },
             "existingStorage": {
+              "condition": "[equals(parameters('storageAccountMode'), 'new')]",
               "existing": true,
               "type": "Microsoft.Storage/storageAccounts",
               "apiVersion": "2023-05-01",
               "name": "[parameters('storageAccountName')]"
             },
             "blobService": {
+              "condition": "[equals(parameters('storageAccountMode'), 'new')]",
               "existing": true,
               "type": "Microsoft.Storage/storageAccounts/blobServices",
               "apiVersion": "2023-05-01",
@@ -773,12 +878,13 @@
               "name": "[parameters('searchServiceName')]"
             },
             "foundryDiagnostics": {
+              "condition": "[equals(parameters('foundryAccountMode'), 'new')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
               "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName'))]",
               "name": "azbrief-v2",
               "properties": {
-                "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName'))]",
+                "workspaceId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'new'), resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), parameters('existingLogAnalyticsWorkspaceResourceId'))]",
                 "logs": [
                   {
                     "categoryGroup": "allLogs",
@@ -798,12 +904,13 @@
               ]
             },
             "blobDiagnostics": {
+              "condition": "[equals(parameters('storageAccountMode'), 'new')]",
               "type": "Microsoft.Insights/diagnosticSettings",
               "apiVersion": "2021-05-01-preview",
               "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices', parameters('storageAccountName'), 'default')]",
               "name": "azbrief-v2",
               "properties": {
-                "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName'))]",
+                "workspaceId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'new'), resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), parameters('existingLogAnalyticsWorkspaceResourceId'))]",
                 "logs": [
                   {
                     "categoryGroup": "allLogs",
@@ -829,7 +936,7 @@
               "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
               "name": "azbrief-v2",
               "properties": {
-                "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName'))]",
+                "workspaceId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'new'), resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), parameters('existingLogAnalyticsWorkspaceResourceId'))]",
                 "logs": [
                   {
                     "categoryGroup": "allLogs",
@@ -855,7 +962,7 @@
               "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
               "name": "azbrief-v2",
               "properties": {
-                "workspaceId": "[resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName'))]",
+                "workspaceId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'new'), resourceId('Microsoft.OperationalInsights/workspaces', parameters('logAnalyticsWorkspaceName')), parameters('existingLogAnalyticsWorkspaceResourceId'))]",
                 "logs": [
                   {
                     "categoryGroup": "allLogs",
@@ -874,12 +981,39 @@
                 "workspace"
               ]
             },
+            "sharedEnvironment": {
+              "condition": "[not(empty(parameters('existingContainerAppsEnvironmentResourceId')))]",
+              "existing": true,
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2026-01-01",
+              "subscriptionId": "[split(parameters('existingContainerAppsEnvironmentResourceId'), '/')[2]]",
+              "resourceGroup": "[split(parameters('existingContainerAppsEnvironmentResourceId'), '/')[4]]",
+              "name": "[last(split(parameters('existingContainerAppsEnvironmentResourceId'), '/'))]"
+            },
+            "sharedCommunication": {
+              "condition": "[not(empty(parameters('existingCommunicationServicesResourceId')))]",
+              "existing": true,
+              "type": "Microsoft.Communication/communicationServices",
+              "apiVersion": "2023-04-01",
+              "subscriptionId": "[split(parameters('existingCommunicationServicesResourceId'), '/')[2]]",
+              "resourceGroup": "[split(parameters('existingCommunicationServicesResourceId'), '/')[4]]",
+              "name": "[last(split(parameters('existingCommunicationServicesResourceId'), '/'))]"
+            },
+            "sharedDomain": {
+              "condition": "[not(empty(parameters('existingEmailDomainResourceId')))]",
+              "existing": true,
+              "type": "Microsoft.Communication/emailServices/domains",
+              "apiVersion": "2023-04-01",
+              "subscriptionId": "[split(parameters('existingEmailDomainResourceId'), '/')[2]]",
+              "resourceGroup": "[split(parameters('existingEmailDomainResourceId'), '/')[4]]",
+              "name": "[format('{0}/{1}', split(parameters('existingEmailDomainResourceId'), '/')[8], split(parameters('existingEmailDomainResourceId'), '/')[10])]"
+            },
             "dnsZones": {
               "copy": {
                 "name": "dnsZones",
                 "count": "[length(variables('dnsZoneNames'))]"
               },
-              "condition": "[and(not(contains(parameters('existingPrivateDnsZoneIds'), variables('dnsZoneNames')[copyIndex()])), or(not(parameters('useMicrosoftManagedAgentData')), and(not(equals(copyIndex(), 4)), not(equals(copyIndex(), 5)))))]",
+              "condition": "[and(and(and(and(not(contains(parameters('existingPrivateDnsZoneIds'), variables('dnsZoneNames')[copyIndex()])), or(not(parameters('useMicrosoftManagedAgentData')), and(not(equals(copyIndex(), 4)), not(equals(copyIndex(), 5))))), or(greater(copyIndex(), 2), equals(parameters('foundryAccountMode'), 'new'))), or(not(equals(copyIndex(), 3)), equals(parameters('storageAccountMode'), 'new'))), or(not(equals(copyIndex(), 6)), equals(parameters('containerAppsEnvironmentMode'), 'new')))]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "[format('v2-dns-{0}', copyIndex())]",
@@ -4280,6 +4414,7 @@
               }
             },
             "foundry": {
+              "condition": "[equals(parameters('foundryAccountMode'), 'new')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "v2-foundry",
@@ -7059,6 +7194,7 @@
               }
             },
             "storage": {
+              "condition": "[equals(parameters('storageAccountMode'), 'new')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "v2-storage",
@@ -24584,6 +24720,7 @@
               }
             },
             "containerEnvironment": {
+              "condition": "[equals(parameters('containerAppsEnvironmentMode'), 'new')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "v2-container-environment",
@@ -26884,6 +27021,7 @@
               ]
             },
             "internalIngressDns": {
+              "condition": "[equals(parameters('containerAppsEnvironmentMode'), 'new')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "v2-internal-ingress-dns",
@@ -30309,6 +30447,7 @@
               ]
             },
             "email": {
+              "condition": "[equals(parameters('communicationServicesMode'), 'new')]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "v2-email-services",
@@ -30487,7 +30626,7 @@
                 "mode": "serial",
                 "batchSize": 1
               },
-              "condition": "[and(or(not(equals(variables('endpointSpecs')[copyIndex()].groupId, 'managedEnvironments')), parameters('deployContainerAppsPrivateEndpoint')), or(not(parameters('useMicrosoftManagedAgentData')), and(not(equals(copyIndex(), 2)), not(equals(copyIndex(), 3)))))]",
+              "condition": "[and(and(and(and(or(not(equals(variables('endpointSpecs')[copyIndex()].groupId, 'managedEnvironments')), parameters('deployContainerAppsPrivateEndpoint')), or(not(parameters('useMicrosoftManagedAgentData')), and(not(equals(copyIndex(), 2)), not(equals(copyIndex(), 3))))), or(not(equals(copyIndex(), 0)), equals(parameters('foundryAccountMode'), 'new'))), or(not(equals(copyIndex(), 1)), equals(parameters('storageAccountMode'), 'new'))), or(not(equals(copyIndex(), 4)), equals(parameters('containerAppsEnvironmentMode'), 'new')))]",
               "type": "Microsoft.Resources/deployments",
               "apiVersion": "2025-04-01",
               "name": "[format('v2-private-endpoint-{0}', copyIndex())]",
@@ -31196,7 +31335,7 @@
           "outputs": {
             "environmentDefaultDomain": {
               "type": "string",
-              "value": "[reference('containerEnvironment').outputs.defaultDomain.value]"
+              "value": "[if(equals(parameters('containerAppsEnvironmentMode'), 'new'), reference('containerEnvironment').outputs.defaultDomain.value, reference('sharedEnvironment').defaultDomain)]"
             },
             "identityPrincipalId": {
               "type": "string",
@@ -31208,15 +31347,11 @@
             },
             "emailEndpoint": {
               "type": "string",
-              "value": "[reference('email').outputs.endpoint.value]"
+              "value": "[if(equals(parameters('communicationServicesMode'), 'new'), reference('email').outputs.endpoint.value, format('https://{0}', reference('sharedCommunication').hostName))]"
             },
             "emailSenderAddress": {
               "type": "string",
-              "value": "[reference('email').outputs.senderAddress.value]"
-            },
-            "emailSenderRoleDefinitionId": {
-              "type": "string",
-              "value": "[reference('email').outputs.senderRoleDefinitionId.value]"
+              "value": "[if(equals(parameters('communicationServicesMode'), 'new'), reference('email').outputs.senderAddress.value, format('DoNotReply@{0}', reference('sharedDomain').fromSenderDomain))]"
             }
           }
         }
@@ -31342,7 +31477,9 @@
       "condition": "[variables('complete')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "v2-required-models",
+      "name": "[if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-required-models-{0}', variables('workloadKey')), 'v2-required-models')]",
+      "subscriptionId": "[split(variables('accountId'), '/')[2]]",
+      "resourceGroup": "[split(variables('accountId'), '/')[4]]",
       "properties": {
         "expressionEvaluationOptions": {
           "scope": "inner"
@@ -31491,10 +31628,12 @@
       }
     },
     {
-      "condition": "[and(variables('complete'), not(parameters('useMicrosoftManagedAgentData')))]",
+      "condition": "[variables('complete')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "v2-agent-bindings",
+      "name": "[if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload')]",
+      "subscriptionId": "[split(variables('accountId'), '/')[2]]",
+      "resourceGroup": "[split(variables('accountId'), '/')[4]]",
       "properties": {
         "expressionEvaluationOptions": {
           "scope": "inner"
@@ -31507,8 +31646,10 @@
           "projectName": {
             "value": "[parameters('projectName')]"
           },
-          "projectPrincipalId": "[if(variables('complete'), if(variables('reuseFoundry'), createObject('value', reference(variables('projectId'), '2025-06-01', 'full').identity.principalId), createObject('value', reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId)), createObject('value', ''))]",
-          "agentStorageAccountName": {
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "storageAccountName": {
             "value": "[parameters('storageAccountName')]"
           },
           "cosmosAccountName": {
@@ -31517,8 +31658,26 @@
           "searchServiceName": {
             "value": "[parameters('searchServiceName')]"
           },
-          "createConnections": {
-            "value": "[not(variables('reuseFoundry'))]"
+          "useMicrosoftManagedAgentData": {
+            "value": "[parameters('useMicrosoftManagedAgentData')]"
+          },
+          "reuseExistingFoundrySetup": {
+            "value": "[parameters('reuseExistingFoundrySetup')]"
+          },
+          "reuseExistingTelemetryConnection": {
+            "value": "[parameters('reuseExistingTelemetryConnection')]"
+          },
+          "applicationInsightsResourceId": {
+            "value": "[resourceId('Microsoft.Insights/components', parameters('applicationInsightsName'))]"
+          },
+          "controlPlanePrincipalId": {
+            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId]"
+          },
+          "sharedAccount": {
+            "value": "[equals(parameters('foundryAccountMode'), 'existing')]"
+          },
+          "tags": {
+            "value": "[union(variables('resourceTags'), createObject('azbriefWorkloadResourceGroup', resourceGroup().id))]"
           }
         },
         "template": {
@@ -31528,8 +31687,9 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "2523672730469761133"
-            }
+              "templateHash": "1383164515889392508"
+            },
+            "description": "Workload-owned project and Capability Host in a new or shared Foundry account. Never updates the parent account."
           },
           "parameters": {
             "foundryAccountName": {
@@ -31538,10 +31698,10 @@
             "projectName": {
               "type": "string"
             },
-            "projectPrincipalId": {
+            "location": {
               "type": "string"
             },
-            "agentStorageAccountName": {
+            "storageAccountName": {
               "type": "string"
             },
             "cosmosAccountName": {
@@ -31550,140 +31710,544 @@
             "searchServiceName": {
               "type": "string"
             },
-            "createConnections": {
-              "type": "bool",
-              "defaultValue": true
+            "useMicrosoftManagedAgentData": {
+              "type": "bool"
+            },
+            "reuseExistingFoundrySetup": {
+              "type": "bool"
+            },
+            "reuseExistingTelemetryConnection": {
+              "type": "bool"
+            },
+            "applicationInsightsResourceId": {
+              "type": "string"
+            },
+            "controlPlanePrincipalId": {
+              "type": "string"
+            },
+            "sharedAccount": {
+              "type": "bool"
+            },
+            "tags": {
+              "type": "object"
             }
+          },
+          "variables": {
+            "projectId": "[format('{0}/projects/{1}', resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), parameters('projectName'))]",
+            "projectKey": "[uniqueString(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), parameters('projectName'))]"
           },
           "resources": [
             {
-              "copy": {
-                "name": "storageRoles",
-                "count": "[length(createArray('ba92f5b4-2d11-453d-a403-e96b0029c9fe', '17d1049b-9a84-46fb-8f53-869881c3d3ab'))]"
+              "condition": "[not(parameters('reuseExistingFoundrySetup'))]",
+              "type": "Microsoft.CognitiveServices/accounts/projects",
+              "apiVersion": "2025-06-01",
+              "name": "[format('{0}/{1}', parameters('foundryAccountName'), parameters('projectName'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "SystemAssigned"
               },
-              "type": "Microsoft.Authorization/roleAssignments",
-              "apiVersion": "2022-04-01",
-              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('agentStorageAccountName'))]",
-              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('agentStorageAccountName')), parameters('projectPrincipalId'), createArray('ba92f5b4-2d11-453d-a403-e96b0029c9fe', '17d1049b-9a84-46fb-8f53-869881c3d3ab')[copyIndex()])]",
               "properties": {
-                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', createArray('ba92f5b4-2d11-453d-a403-e96b0029c9fe', '17d1049b-9a84-46fb-8f53-869881c3d3ab')[copyIndex()])]",
-                "principalId": "[parameters('projectPrincipalId')]",
-                "principalType": "ServicePrincipal"
+                "displayName": "[parameters('projectName')]",
+                "description": "[if(parameters('useMicrosoftManagedAgentData'), 'AzBrief v2 Basic VNet project with Microsoft-managed agent data.', 'AzBrief v2 project with customer-owned agent storage.')]"
               }
             },
             {
-              "type": "Microsoft.Authorization/roleAssignments",
-              "apiVersion": "2022-04-01",
-              "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
-              "name": "[guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), parameters('projectPrincipalId'), 'cosmos-operator')]",
-              "properties": {
-                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '230815da-be43-4aae-9cb4-875f7bd000aa')]",
-                "principalId": "[parameters('projectPrincipalId')]",
-                "principalType": "ServicePrincipal"
-              }
-            },
-            {
-              "copy": {
-                "name": "searchRoles",
-                "count": "[length(createArray('7ca78c08-252a-4471-8644-bb5ff32d4ba0', '8ebe5a00-799e-43f5-93ac-243d3dce84a7'))]"
-              },
-              "type": "Microsoft.Authorization/roleAssignments",
-              "apiVersion": "2022-04-01",
-              "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
-              "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), parameters('projectPrincipalId'), createArray('7ca78c08-252a-4471-8644-bb5ff32d4ba0', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')[copyIndex()])]",
-              "properties": {
-                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', createArray('7ca78c08-252a-4471-8644-bb5ff32d4ba0', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')[copyIndex()])]",
-                "principalId": "[parameters('projectPrincipalId')]",
-                "principalType": "ServicePrincipal"
-              }
-            },
-            {
-              "condition": "[parameters('createConnections')]",
+              "condition": "[not(parameters('reuseExistingTelemetryConnection'))]",
               "type": "Microsoft.CognitiveServices/accounts/projects/connections",
               "apiVersion": "2025-06-01",
-              "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agent-storage')]",
+              "name": "[format('{0}/{1}/azbrief-app-insights', parameters('foundryAccountName'), parameters('projectName'))]",
               "properties": {
-                "category": "AzureStorageAccount",
-                "target": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('agentStorageAccountName')), '2023-05-01').primaryEndpoints.blob]",
-                "authType": "AAD",
+                "category": "AppInsights",
+                "authType": "ProjectManagedIdentity",
+                "target": "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('applicationInsightsResourceId'), '/')[2], split(parameters('applicationInsightsResourceId'), '/')[4]), 'Microsoft.Insights/components', last(split(parameters('applicationInsightsResourceId'), '/')))]",
+                "isSharedToAll": true,
                 "metadata": {
-                  "ResourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('agentStorageAccountName'))]"
+                  "ApiType": "Azure",
+                  "ResourceId": "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('applicationInsightsResourceId'), '/')[2], split(parameters('applicationInsightsResourceId'), '/')[4]), 'Microsoft.Insights/components', last(split(parameters('applicationInsightsResourceId'), '/')))]",
+                  "ApplicationInsightsConnectionString": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('applicationInsightsResourceId'), '/')[2], split(parameters('applicationInsightsResourceId'), '/')[4]), 'Microsoft.Insights/components', last(split(parameters('applicationInsightsResourceId'), '/'))), '2020-02-02').ConnectionString]",
+                  "location": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('applicationInsightsResourceId'), '/')[2], split(parameters('applicationInsightsResourceId'), '/')[4]), 'Microsoft.Insights/components', last(split(parameters('applicationInsightsResourceId'), '/'))), '2020-02-02', 'full').location]"
                 }
               },
               "dependsOn": [
-                "[extensionResourceId(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), parameters('projectPrincipalId'), 'cosmos-operator'))]",
-                "searchRoles",
-                "storageRoles"
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]"
               ]
             },
             {
-              "condition": "[parameters('createConnections')]",
-              "type": "Microsoft.CognitiveServices/accounts/projects/connections",
-              "apiVersion": "2025-06-01",
-              "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agent-cosmos')]",
+              "condition": "[not(parameters('useMicrosoftManagedAgentData'))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[if(parameters('sharedAccount'), format('v2-agent-bindings-{0}', variables('projectKey')), 'v2-agent-bindings')]",
               "properties": {
-                "category": "CosmosDb",
-                "target": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), '2024-11-15').documentEndpoint]",
-                "authType": "AAD",
-                "metadata": {
-                  "ResourceId": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]"
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "foundryAccountName": {
+                    "value": "[parameters('foundryAccountName')]"
+                  },
+                  "projectName": {
+                    "value": "[parameters('projectName')]"
+                  },
+                  "projectPrincipalId": "[if(parameters('reuseExistingFoundrySetup'), createObject('value', reference(variables('projectId'), '2025-06-01', 'full').identity.principalId), createObject('value', reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId))]",
+                  "agentStorageAccountName": {
+                    "value": "[parameters('storageAccountName')]"
+                  },
+                  "cosmosAccountName": {
+                    "value": "[parameters('cosmosAccountName')]"
+                  },
+                  "searchServiceName": {
+                    "value": "[parameters('searchServiceName')]"
+                  },
+                  "createConnections": {
+                    "value": "[not(parameters('reuseExistingFoundrySetup'))]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.46.1.21595",
+                      "templateHash": "2523672730469761133"
+                    }
+                  },
+                  "parameters": {
+                    "foundryAccountName": {
+                      "type": "string"
+                    },
+                    "projectName": {
+                      "type": "string"
+                    },
+                    "projectPrincipalId": {
+                      "type": "string"
+                    },
+                    "agentStorageAccountName": {
+                      "type": "string"
+                    },
+                    "cosmosAccountName": {
+                      "type": "string"
+                    },
+                    "searchServiceName": {
+                      "type": "string"
+                    },
+                    "createConnections": {
+                      "type": "bool",
+                      "defaultValue": true
+                    }
+                  },
+                  "resources": [
+                    {
+                      "copy": {
+                        "name": "storageRoles",
+                        "count": "[length(createArray('ba92f5b4-2d11-453d-a403-e96b0029c9fe', '17d1049b-9a84-46fb-8f53-869881c3d3ab'))]"
+                      },
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('agentStorageAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('agentStorageAccountName')), parameters('projectPrincipalId'), createArray('ba92f5b4-2d11-453d-a403-e96b0029c9fe', '17d1049b-9a84-46fb-8f53-869881c3d3ab')[copyIndex()])]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', createArray('ba92f5b4-2d11-453d-a403-e96b0029c9fe', '17d1049b-9a84-46fb-8f53-869881c3d3ab')[copyIndex()])]",
+                        "principalId": "[parameters('projectPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), parameters('projectPrincipalId'), 'cosmos-operator')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '230815da-be43-4aae-9cb4-875f7bd000aa')]",
+                        "principalId": "[parameters('projectPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "copy": {
+                        "name": "searchRoles",
+                        "count": "[length(createArray('7ca78c08-252a-4471-8644-bb5ff32d4ba0', '8ebe5a00-799e-43f5-93ac-243d3dce84a7'))]"
+                      },
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]",
+                      "name": "[guid(resourceId('Microsoft.Search/searchServices', parameters('searchServiceName')), parameters('projectPrincipalId'), createArray('7ca78c08-252a-4471-8644-bb5ff32d4ba0', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')[copyIndex()])]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', createArray('7ca78c08-252a-4471-8644-bb5ff32d4ba0', '8ebe5a00-799e-43f5-93ac-243d3dce84a7')[copyIndex()])]",
+                        "principalId": "[parameters('projectPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[parameters('createConnections')]",
+                      "type": "Microsoft.CognitiveServices/accounts/projects/connections",
+                      "apiVersion": "2025-06-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agent-storage')]",
+                      "properties": {
+                        "category": "AzureStorageAccount",
+                        "target": "[reference(resourceId('Microsoft.Storage/storageAccounts', parameters('agentStorageAccountName')), '2023-05-01').primaryEndpoints.blob]",
+                        "authType": "AAD",
+                        "metadata": {
+                          "ResourceId": "[resourceId('Microsoft.Storage/storageAccounts', parameters('agentStorageAccountName'))]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[extensionResourceId(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), parameters('projectPrincipalId'), 'cosmos-operator'))]",
+                        "searchRoles",
+                        "storageRoles"
+                      ]
+                    },
+                    {
+                      "condition": "[parameters('createConnections')]",
+                      "type": "Microsoft.CognitiveServices/accounts/projects/connections",
+                      "apiVersion": "2025-06-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agent-cosmos')]",
+                      "properties": {
+                        "category": "CosmosDb",
+                        "target": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), '2024-11-15').documentEndpoint]",
+                        "authType": "AAD",
+                        "metadata": {
+                          "ResourceId": "[resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName'))]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.CognitiveServices/accounts/projects/connections', parameters('foundryAccountName'), parameters('projectName'), 'agent-storage')]"
+                      ]
+                    },
+                    {
+                      "condition": "[parameters('createConnections')]",
+                      "type": "Microsoft.CognitiveServices/accounts/projects/connections",
+                      "apiVersion": "2025-06-01",
+                      "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agent-search')]",
+                      "properties": {
+                        "category": "CognitiveSearch",
+                        "target": "[format('https://{0}.search.windows.net', parameters('searchServiceName'))]",
+                        "authType": "AAD",
+                        "metadata": {
+                          "ResourceId": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]"
+                        }
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.CognitiveServices/accounts/projects/connections', parameters('foundryAccountName'), parameters('projectName'), 'agent-cosmos')]"
+                      ]
+                    }
+                  ]
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.CognitiveServices/accounts/projects/connections', parameters('foundryAccountName'), parameters('projectName'), 'agent-storage')]"
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]"
               ]
             },
             {
-              "condition": "[parameters('createConnections')]",
-              "type": "Microsoft.CognitiveServices/accounts/projects/connections",
-              "apiVersion": "2025-06-01",
-              "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agent-search')]",
+              "condition": "[not(parameters('useMicrosoftManagedAgentData'))]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[if(parameters('sharedAccount'), format('v2-project-host-{0}', variables('projectKey')), 'v2-project-host')]",
               "properties": {
-                "category": "CognitiveSearch",
-                "target": "[format('https://{0}.search.windows.net', parameters('searchServiceName'))]",
-                "authType": "AAD",
-                "metadata": {
-                  "ResourceId": "[resourceId('Microsoft.Search/searchServices', parameters('searchServiceName'))]"
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "foundryAccountName": {
+                    "value": "[parameters('foundryAccountName')]"
+                  },
+                  "projectName": {
+                    "value": "[parameters('projectName')]"
+                  },
+                  "projectPrincipalId": "[if(parameters('reuseExistingFoundrySetup'), createObject('value', reference(variables('projectId'), '2025-06-01', 'full').identity.principalId), createObject('value', reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId))]",
+                  "projectInternalId": "[if(parameters('useMicrosoftManagedAgentData'), createObject('value', ''), if(parameters('reuseExistingFoundrySetup'), createObject('value', reference(variables('projectId'), '2025-06-01', 'full').properties.internalId), createObject('value', reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01').internalId)))]",
+                  "agentStorageAccountName": {
+                    "value": "[parameters('storageAccountName')]"
+                  },
+                  "cosmosAccountName": {
+                    "value": "[parameters('cosmosAccountName')]"
+                  },
+                  "createHost": {
+                    "value": "[not(parameters('reuseExistingFoundrySetup'))]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.46.1.21595",
+                      "templateHash": "16774964363877140772"
+                    }
+                  },
+                  "parameters": {
+                    "foundryAccountName": {
+                      "type": "string"
+                    },
+                    "projectName": {
+                      "type": "string"
+                    },
+                    "projectPrincipalId": {
+                      "type": "string"
+                    },
+                    "projectInternalId": {
+                      "type": "string"
+                    },
+                    "agentStorageAccountName": {
+                      "type": "string"
+                    },
+                    "cosmosAccountName": {
+                      "type": "string"
+                    },
+                    "createHost": {
+                      "type": "bool",
+                      "defaultValue": true
+                    }
+                  },
+                  "variables": {
+                    "workspaceHex": "[replace(parameters('projectInternalId'), '-', '')]",
+                    "workspaceId": "[format('{0}-{1}-{2}-{3}-{4}', substring(variables('workspaceHex'), 0, 8), substring(variables('workspaceHex'), 8, 4), substring(variables('workspaceHex'), 12, 4), substring(variables('workspaceHex'), 16, 4), substring(variables('workspaceHex'), 20, 12))]"
+                  },
+                  "resources": [
+                    {
+                      "condition": "[parameters('createHost')]",
+                      "type": "Microsoft.CognitiveServices/accounts/projects/capabilityHosts",
+                      "apiVersion": "2025-04-01-preview",
+                      "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agents')]",
+                      "properties": {
+                        "capabilityHostKind": "Agents",
+                        "storageConnections": [
+                          "agent-storage"
+                        ],
+                        "threadStorageConnections": [
+                          "agent-cosmos"
+                        ],
+                        "vectorStoreConnections": [
+                          "agent-search"
+                        ]
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('agentStorageAccountName'), 'default', format('{0}-azureml-agent', variables('workspaceId')))]",
+                      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('agentStorageAccountName'), 'default', format('{0}-azureml-agent', variables('workspaceId'))), parameters('projectPrincipalId'), 'blob-owner')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
+                        "principalId": "[parameters('projectPrincipalId')]",
+                        "principalType": "ServicePrincipal"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.CognitiveServices/accounts/projects/capabilityHosts', parameters('foundryAccountName'), parameters('projectName'), 'agents')]"
+                      ]
+                    },
+                    {
+                      "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
+                      "apiVersion": "2024-11-15",
+                      "name": "[format('{0}/{1}', parameters('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), parameters('projectPrincipalId'), 'enterprise-memory-contributor'))]",
+                      "properties": {
+                        "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]",
+                        "principalId": "[parameters('projectPrincipalId')]",
+                        "scope": "[format('{0}/dbs/enterprise_memory', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]"
+                      },
+                      "dependsOn": [
+                        "[resourceId('Microsoft.CognitiveServices/accounts/projects/capabilityHosts', parameters('foundryAccountName'), parameters('projectName'), 'agents')]"
+                      ]
+                    }
+                  ]
                 }
               },
               "dependsOn": [
-                "[resourceId('Microsoft.CognitiveServices/accounts/projects/connections', parameters('foundryAccountName'), parameters('projectName'), 'agent-cosmos')]"
+                "[resourceId('Microsoft.Resources/deployments', if(parameters('sharedAccount'), format('v2-agent-bindings-{0}', variables('projectKey')), 'v2-agent-bindings'))]",
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]"
+              ]
+            },
+            {
+              "condition": "[parameters('useMicrosoftManagedAgentData')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[if(parameters('sharedAccount'), format('v2-managed-project-host-{0}', variables('projectKey')), 'v2-managed-project-host')]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "foundryAccountName": {
+                    "value": "[parameters('foundryAccountName')]"
+                  },
+                  "projectName": {
+                    "value": "[parameters('projectName')]"
+                  },
+                  "createHost": {
+                    "value": "[not(parameters('reuseExistingFoundrySetup'))]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.46.1.21595",
+                      "templateHash": "12572746688353416032"
+                    },
+                    "description": "Basic VNet project Capability Host with Microsoft-managed agent data; no customer backing resource connections or data roles."
+                  },
+                  "parameters": {
+                    "foundryAccountName": {
+                      "type": "string"
+                    },
+                    "projectName": {
+                      "type": "string"
+                    },
+                    "createHost": {
+                      "type": "bool",
+                      "defaultValue": true
+                    }
+                  },
+                  "resources": [
+                    {
+                      "condition": "[parameters('createHost')]",
+                      "type": "Microsoft.CognitiveServices/accounts/projects/capabilityHosts",
+                      "apiVersion": "2025-04-01-preview",
+                      "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agents')]",
+                      "properties": {
+                        "capabilityHostKind": "Agents"
+                      }
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]"
+              ]
+            },
+            {
+              "condition": "[parameters('sharedAccount')]",
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "[format('v2-shared-foundry-access-{0}', variables('projectKey'))]",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "foundryAccountName": {
+                    "value": "[parameters('foundryAccountName')]"
+                  },
+                  "projectName": {
+                    "value": "[parameters('projectName')]"
+                  },
+                  "principalId": {
+                    "value": "[parameters('controlPlanePrincipalId')]"
+                  },
+                  "readAccount": {
+                    "value": true
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.46.1.21595",
+                      "templateHash": "4963391323573008932"
+                    }
+                  },
+                  "parameters": {
+                    "foundryAccountName": {
+                      "type": "string"
+                    },
+                    "projectName": {
+                      "type": "string"
+                    },
+                    "principalId": {
+                      "type": "string"
+                    },
+                    "readAccount": {
+                      "type": "bool",
+                      "defaultValue": false
+                    }
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), parameters('principalId'), '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
+                        "principalId": "[parameters('principalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    },
+                    {
+                      "condition": "[parameters('readAccount')]",
+                      "type": "Microsoft.Authorization/roleAssignments",
+                      "apiVersion": "2022-04-01",
+                      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName'))]",
+                      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), parameters('principalId'), 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                      "properties": {
+                        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                        "principalId": "[parameters('principalId')]",
+                        "principalType": "ServicePrincipal"
+                      }
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', if(parameters('sharedAccount'), format('v2-project-host-{0}', variables('projectKey')), 'v2-project-host'))]",
+                "[resourceId('Microsoft.Resources/deployments', if(parameters('sharedAccount'), format('v2-managed-project-host-{0}', variables('projectKey')), 'v2-managed-project-host'))]"
               ]
             }
-          ]
+          ],
+          "outputs": {
+            "principalId": {
+              "type": "string",
+              "value": "[if(parameters('reuseExistingFoundrySetup'), reference(variables('projectId'), '2025-06-01', 'full').identity.principalId, reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId)]"
+            },
+            "resourceId": {
+              "type": "string",
+              "value": "[variables('projectId')]"
+            }
+          }
         }
       },
       "dependsOn": [
-        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]"
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-required-models-{0}', variables('workloadKey')), 'v2-required-models'))]"
       ]
     },
     {
-      "condition": "[and(variables('complete'), not(parameters('useMicrosoftManagedAgentData')))]",
+      "condition": "[equals(parameters('storageAccountMode'), 'existing')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
-      "name": "v2-project-host",
+      "name": "[format('v2-shared-storage-workload-{0}', variables('workloadKey'))]",
+      "subscriptionId": "[split(variables('storageId'), '/')[2]]",
+      "resourceGroup": "[split(variables('storageId'), '/')[4]]",
       "properties": {
         "expressionEvaluationOptions": {
           "scope": "inner"
         },
         "mode": "Incremental",
         "parameters": {
-          "foundryAccountName": {
-            "value": "[parameters('foundryAccountName')]"
-          },
-          "projectName": {
-            "value": "[parameters('projectName')]"
-          },
-          "projectPrincipalId": "[if(variables('complete'), if(variables('reuseFoundry'), createObject('value', reference(variables('projectId'), '2025-06-01', 'full').identity.principalId), createObject('value', reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId)), createObject('value', ''))]",
-          "projectInternalId": "[if(and(variables('complete'), not(parameters('useMicrosoftManagedAgentData'))), if(variables('reuseFoundry'), createObject('value', reference(variables('projectId'), '2025-06-01', 'full').properties.internalId), createObject('value', reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01').internalId)), createObject('value', ''))]",
-          "agentStorageAccountName": {
+          "storageAccountName": {
             "value": "[parameters('storageAccountName')]"
           },
-          "cosmosAccountName": {
-            "value": "[parameters('cosmosAccountName')]"
+          "stateContainerName": {
+            "value": "[variables('stateName')]"
           },
-          "createHost": {
-            "value": "[not(variables('reuseFoundry'))]"
+          "archiveContainerName": {
+            "value": "[variables('archiveName')]"
+          },
+          "principalId": "[if(variables('complete'), createObject('value', reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId), createObject('value', reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityPrincipalId.value))]",
+          "createContainers": {
+            "value": "[not(variables('complete'))]"
+          },
+          "assignRoles": {
+            "value": "[variables('complete')]"
           }
         },
         "template": {
@@ -31693,151 +32257,295 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "16774964363877140772"
-            }
+              "templateHash": "18151805011630853368"
+            },
+            "description": "Only workload containers and container-scoped data permissions in shared Storage. No account, service, network or diagnostic updates."
           },
           "parameters": {
-            "foundryAccountName": {
+            "storageAccountName": {
               "type": "string"
             },
-            "projectName": {
+            "stateContainerName": {
               "type": "string"
             },
-            "projectPrincipalId": {
+            "archiveContainerName": {
               "type": "string"
             },
-            "projectInternalId": {
+            "principalId": {
               "type": "string"
             },
-            "agentStorageAccountName": {
-              "type": "string"
+            "createContainers": {
+              "type": "bool"
             },
-            "cosmosAccountName": {
-              "type": "string"
-            },
-            "createHost": {
-              "type": "bool",
-              "defaultValue": true
+            "assignRoles": {
+              "type": "bool"
             }
-          },
-          "variables": {
-            "workspaceHex": "[replace(parameters('projectInternalId'), '-', '')]",
-            "workspaceId": "[format('{0}-{1}-{2}-{3}-{4}', substring(variables('workspaceHex'), 0, 8), substring(variables('workspaceHex'), 8, 4), substring(variables('workspaceHex'), 12, 4), substring(variables('workspaceHex'), 16, 4), substring(variables('workspaceHex'), 20, 12))]"
           },
           "resources": [
             {
-              "condition": "[parameters('createHost')]",
-              "type": "Microsoft.CognitiveServices/accounts/projects/capabilityHosts",
-              "apiVersion": "2025-04-01-preview",
-              "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agents')]",
+              "copy": {
+                "name": "containers",
+                "count": "[length(createArray(parameters('stateContainerName'), parameters('archiveContainerName')))]"
+              },
+              "condition": "[parameters('createContainers')]",
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', parameters('storageAccountName'), 'default', createArray(parameters('stateContainerName'), parameters('archiveContainerName'))[copyIndex()])]",
               "properties": {
-                "capabilityHostKind": "Agents",
-                "storageConnections": [
-                  "agent-storage"
+                "publicAccess": "None"
+              }
+            },
+            {
+              "copy": {
+                "name": "contributor",
+                "count": "[length(createArray(parameters('stateContainerName'), parameters('archiveContainerName')))]"
+              },
+              "condition": "[parameters('assignRoles')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', createArray(parameters('stateContainerName'), parameters('archiveContainerName'))[copyIndex()])]",
+              "name": "[guid(format('{0}/blobServices/default/containers/{1}', resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), createArray(parameters('stateContainerName'), parameters('archiveContainerName'))[copyIndex()]), parameters('principalId'), 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'v2-foundation')]"
+      ]
+    },
+    {
+      "condition": "[and(variables('complete'), equals(parameters('storageAccountMode'), 'existing'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('v2-shared-storage-reader-{0}', variables('workloadKey'))]",
+      "subscriptionId": "[split(variables('storageId'), '/')[2]]",
+      "resourceGroup": "[split(variables('storageId'), '/')[4]]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "storageAccountName": {
+            "value": "[parameters('storageAccountName')]"
+          },
+          "principalId": {
+            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "17853787182219327682"
+            }
+          },
+          "parameters": {
+            "environmentName": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "storageAccountName": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "principalId": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "condition": "[not(empty(parameters('environmentName')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
+              "name": "[guid(resourceId('Microsoft.App/managedEnvironments', parameters('environmentName')), parameters('principalId'), 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+              "properties": {
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]"
+              }
+            },
+            {
+              "condition": "[not(empty(parameters('storageAccountName')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('principalId'), 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+              "properties": {
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "condition": "[and(variables('complete'), equals(parameters('containerAppsEnvironmentMode'), 'existing'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('v2-shared-environment-reader-{0}', variables('workloadKey'))]",
+      "subscriptionId": "[split(variables('environmentId'), '/')[2]]",
+      "resourceGroup": "[split(variables('environmentId'), '/')[4]]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "environmentName": {
+            "value": "[parameters('containerAppsEnvironmentName')]"
+          },
+          "principalId": {
+            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "17853787182219327682"
+            }
+          },
+          "parameters": {
+            "environmentName": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "storageAccountName": {
+              "type": "string",
+              "defaultValue": ""
+            },
+            "principalId": {
+              "type": "string"
+            }
+          },
+          "resources": [
+            {
+              "condition": "[not(empty(parameters('environmentName')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.App/managedEnvironments', parameters('environmentName'))]",
+              "name": "[guid(resourceId('Microsoft.App/managedEnvironments', parameters('environmentName')), parameters('principalId'), 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+              "properties": {
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]"
+              }
+            },
+            {
+              "condition": "[not(empty(parameters('storageAccountName')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', parameters('storageAccountName')), parameters('principalId'), 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+              "properties": {
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "condition": "[and(variables('complete'), equals(parameters('communicationServicesMode'), 'existing'))]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[format('v2-shared-communication-access-{0}', variables('workloadKey'))]",
+      "subscriptionId": "[split(variables('communicationId'), '/')[2]]",
+      "resourceGroup": "[split(variables('communicationId'), '/')[4]]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "communicationServicesName": {
+            "value": "[parameters('communicationServicesName')]"
+          },
+          "principalId": {
+            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "1107693827197750483"
+            }
+          },
+          "parameters": {
+            "communicationServicesName": {
+              "type": "string"
+            },
+            "principalId": {
+              "type": "string"
+            }
+          },
+          "variables": {
+            "senderRoleId": "[guid(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), parameters('principalId'), 'azbrief-email-sender')]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleDefinitions",
+              "apiVersion": "2022-04-01",
+              "name": "[variables('senderRoleId')]",
+              "properties": {
+                "roleName": "[format('AzBrief Email Sender {0}', parameters('principalId'))]",
+                "description": "Allows managed-identity email sending on the assigned Communication Services resource without keys or delete permissions.",
+                "type": "CustomRole",
+                "assignableScopes": [
+                  "[resourceGroup().id]"
                 ],
-                "threadStorageConnections": [
-                  "agent-cosmos"
-                ],
-                "vectorStoreConnections": [
-                  "agent-search"
+                "permissions": [
+                  {
+                    "actions": [
+                      "Microsoft.Communication/CommunicationServices/read",
+                      "Microsoft.Communication/CommunicationServices/write",
+                      "Microsoft.Communication/EmailServices/write"
+                    ],
+                    "notActions": [],
+                    "dataActions": [],
+                    "notDataActions": []
+                  }
                 ]
               }
             },
             {
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
-              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('agentStorageAccountName'), 'default', format('{0}-azureml-agent', variables('workspaceId')))]",
-              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('agentStorageAccountName'), 'default', format('{0}-azureml-agent', variables('workspaceId'))), parameters('projectPrincipalId'), 'blob-owner')]",
+              "scope": "[resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName'))]",
+              "name": "[guid(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), parameters('principalId'), variables('senderRoleId'))]",
               "properties": {
-                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')]",
-                "principalId": "[parameters('projectPrincipalId')]",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('senderRoleId'))]",
+                "principalId": "[parameters('principalId')]",
                 "principalType": "ServicePrincipal"
               },
               "dependsOn": [
-                "[resourceId('Microsoft.CognitiveServices/accounts/projects/capabilityHosts', parameters('foundryAccountName'), parameters('projectName'), 'agents')]"
-              ]
-            },
-            {
-              "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
-              "apiVersion": "2024-11-15",
-              "name": "[format('{0}/{1}', parameters('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')), parameters('projectPrincipalId'), 'enterprise-memory-contributor'))]",
-              "properties": {
-                "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]",
-                "principalId": "[parameters('projectPrincipalId')]",
-                "scope": "[format('{0}/dbs/enterprise_memory', resourceId('Microsoft.DocumentDB/databaseAccounts', parameters('cosmosAccountName')))]"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.CognitiveServices/accounts/projects/capabilityHosts', parameters('foundryAccountName'), parameters('projectName'), 'agents')]"
+                "[resourceId('Microsoft.Authorization/roleDefinitions', variables('senderRoleId'))]"
               ]
             }
           ]
         }
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.Resources/deployments', 'v2-agent-bindings')]",
-        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]"
-      ]
-    },
-    {
-      "condition": "[and(variables('complete'), parameters('useMicrosoftManagedAgentData'))]",
-      "type": "Microsoft.Resources/deployments",
-      "apiVersion": "2025-04-01",
-      "name": "v2-managed-project-host",
-      "properties": {
-        "expressionEvaluationOptions": {
-          "scope": "inner"
-        },
-        "mode": "Incremental",
-        "parameters": {
-          "foundryAccountName": {
-            "value": "[parameters('foundryAccountName')]"
-          },
-          "projectName": {
-            "value": "[parameters('projectName')]"
-          },
-          "createHost": {
-            "value": "[not(variables('reuseFoundry'))]"
-          }
-        },
-        "template": {
-          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
-          "contentVersion": "1.0.0.0",
-          "metadata": {
-            "_generator": {
-              "name": "bicep",
-              "version": "0.46.1.21595",
-              "templateHash": "12572746688353416032"
-            },
-            "description": "Basic VNet project Capability Host with Microsoft-managed agent data; no customer backing resource connections or data roles."
-          },
-          "parameters": {
-            "foundryAccountName": {
-              "type": "string"
-            },
-            "projectName": {
-              "type": "string"
-            },
-            "createHost": {
-              "type": "bool",
-              "defaultValue": true
-            }
-          },
-          "resources": [
-            {
-              "condition": "[parameters('createHost')]",
-              "type": "Microsoft.CognitiveServices/accounts/projects/capabilityHosts",
-              "apiVersion": "2025-04-01-preview",
-              "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), 'agents')]",
-              "properties": {
-                "capabilityHostKind": "Agents"
-              }
-            }
-          ]
-        }
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]"
-      ]
+      }
     },
     {
       "condition": "[variables('complete')]",
@@ -31853,7 +32561,7 @@
           "applicationInsightsName": {
             "value": "[parameters('applicationInsightsName')]"
           },
-          "principalId": "[if(variables('complete'), if(variables('reuseFoundry'), createObject('value', reference(variables('projectId'), '2025-06-01', 'full').identity.principalId), createObject('value', reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId)), createObject('value', ''))]"
+          "principalId": "[if(variables('complete'), createObject('value', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload')), '2025-04-01').outputs.principalId.value), createObject('value', ''))]"
         },
         "template": {
           "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
@@ -31889,7 +32597,7 @@
         }
       },
       "dependsOn": [
-        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]"
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload'))]"
       ]
     },
     {
@@ -31923,6 +32631,15 @@
           },
           "emailSenderRoleDefinitionId": {
             "value": "[guid(toLower(resourceGroup().id), toLower(parameters('communicationServicesName')), 'azbrief-email-sender')]"
+          },
+          "assignFoundryRole": {
+            "value": "[equals(parameters('foundryAccountMode'), 'new')]"
+          },
+          "assignStorageRoles": {
+            "value": "[equals(parameters('storageAccountMode'), 'new')]"
+          },
+          "assignEmailRole": {
+            "value": "[equals(parameters('communicationServicesMode'), 'new')]"
           }
         },
         "template": {
@@ -31932,7 +32649,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "538679055625139116"
+              "templateHash": "1644238024851307273"
             }
           },
           "parameters": {
@@ -31963,6 +32680,18 @@
             "existingAssignmentNames": {
               "type": "object",
               "defaultValue": {}
+            },
+            "assignFoundryRole": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "assignStorageRoles": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "assignEmailRole": {
+              "type": "bool",
+              "defaultValue": true
             }
           },
           "resources": [
@@ -31977,6 +32706,7 @@
               }
             },
             {
+              "condition": "[parameters('assignFoundryRole')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
@@ -31988,6 +32718,7 @@
               }
             },
             {
+              "condition": "[parameters('assignStorageRoles')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-state')]",
@@ -31999,6 +32730,7 @@
               }
             },
             {
+              "condition": "[parameters('assignStorageRoles')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-archive')]",
@@ -32022,7 +32754,7 @@
               }
             },
             {
-              "condition": "[and(not(empty(parameters('communicationServicesName'))), not(empty(parameters('emailSenderRoleDefinitionId'))))]",
+              "condition": "[and(and(parameters('assignEmailRole'), not(empty(parameters('communicationServicesName')))), not(empty(parameters('emailSenderRoleDefinitionId'))))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName'))]",
@@ -32037,8 +32769,7 @@
         }
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Resources/deployments', 'v2-project-host')]",
-        "[resourceId('Microsoft.Resources/deployments', 'v2-managed-project-host')]"
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload'))]"
       ]
     },
     {
@@ -32078,8 +32809,16 @@
               "privateEndpointSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName'))]",
               "deployContainerAppsPrivateEndpoint": "[parameters('deployContainerAppsPrivateEndpoint')]",
               "containerAppsEnvironmentName": "[parameters('containerAppsEnvironmentName')]",
-              "containerAppsEnvironmentResourceId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
-              "environmentDefaultDomain": "[if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)]",
+              "containerAppsEnvironmentResourceId": "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
+              "foundryAccountResourceId": "[variables('accountId')]",
+              "foundryAccountSubdomain": "[if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName'))]",
+              "storageAccountResourceId": "[variables('storageId')]",
+              "communicationServicesResourceId": "[variables('communicationId')]",
+              "logAnalyticsWorkspaceResourceId": "[variables('workspaceId')]",
+              "emailDomainResourceId": "[variables('domainId')]",
+              "stateContainerName": "[variables('stateName')]",
+              "archiveContainerName": "[variables('archiveName')]",
+              "environmentDefaultDomain": "[if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)]",
               "containerAppName": "[parameters('containerAppName')]",
               "schedulerJobName": "[parameters('schedulerJobName')]",
               "controlPlaneIdentityName": "[parameters('controlPlaneIdentityName')]",
@@ -32094,20 +32833,20 @@
               "applicationInsightsName": "[parameters('applicationInsightsName')]",
               "communicationServicesName": "[parameters('communicationServicesName')]",
               "emailServiceName": "[parameters('emailServiceName')]",
-              "communicationServicesEndpoint": "[if(variables('complete'), format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value)]",
-              "emailSenderAddress": "[if(variables('complete'), format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[0], split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value)]",
-              "stateContainerUrl": "[format('https://{0}.blob.{1}/azbrief-state', parameters('storageAccountName'), environment().suffixes.storage)]",
-              "archiveContainerUrl": "[format('https://{0}.blob.{1}/azbrief-archive', parameters('storageAccountName'), environment().suffixes.storage)]",
+              "communicationServicesEndpoint": "[if(variables('complete'), format('https://{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('communicationId'), '/')[2], split(variables('communicationId'), '/')[4]), 'Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value)]",
+              "emailSenderAddress": "[if(variables('complete'), format('DoNotReply@{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('domainId'), '/')[2], split(variables('domainId'), '/')[4]), 'Microsoft.Communication/emailServices/domains', split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[0], split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value)]",
+              "stateContainerUrl": "[format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('stateName'))]",
+              "archiveContainerUrl": "[format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('archiveName'))]",
               "foundryAccountName": "[parameters('foundryAccountName')]",
               "projectName": "[parameters('projectName')]",
               "foundryProjectResourceId": "[variables('projectId')]",
-              "foundryProjectEndpoint": "[variables('projectEndpoint')]",
-              "foundryProjectPrincipalId": "[if(variables('complete'), if(variables('reuseFoundry'), reference(variables('projectId'), '2025-06-01', 'full').identity.principalId, reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId), '')]",
+              "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName')), parameters('projectName'))]",
+              "foundryProjectPrincipalId": "[if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload')), '2025-04-01').outputs.principalId.value, '')]",
               "foundryHostedAgentName": "[parameters('foundryHostedAgentName')]",
               "modelDeploymentName": "[parameters('modelDeploymentName')]",
               "simpleModelDeploymentName": "[parameters('simpleModelDeploymentName')]",
               "promptAgentNames": "[variables('promptAgentNames')]",
-              "azureMcpServerUrl": "[if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl'))]",
+              "azureMcpServerUrl": "[if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl'))]",
               "azureMcpProjectConnectionName": "[parameters('azureMcpProjectConnectionName')]",
               "azureMcpEntraAppUniqueName": "[format('azbrief-v2-mcp-{0}', uniqueString(resourceGroup().id))]",
               "azureMcpContainerAppName": "[parameters('azureMcpContainerAppName')]",
@@ -32128,7 +32867,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "13041741682975970410"
+              "templateHash": "8143397122899810251"
             },
             "description": "Non-secret AzBrief v2 infrastructure handoff. Preserve unrelated resource-group tags."
           },
@@ -32136,7 +32875,7 @@
             "infrastructure": {
               "type": "object",
               "metadata": {
-                "description": "Same-resource-group infrastructure contract. Never include application secrets."
+                "description": "Workload resource-group contract, including exact IDs of shared parents in other RGs. Never include application secrets."
               }
             },
             "infrastructureState": {
@@ -32159,11 +32898,17 @@
               "type": "string",
               "defaultValue": "[string(parameters('infrastructureOptions'))]",
               "maxLength": 2048
+            },
+            "resourcesJson": {
+              "type": "string",
+              "defaultValue": "[string(createObject('foundryAccountResourceId', parameters('infrastructure').foundryAccountResourceId, 'storageAccountResourceId', parameters('infrastructure').storageAccountResourceId, 'containerAppsEnvironmentResourceId', parameters('infrastructure').containerAppsEnvironmentResourceId, 'communicationServicesResourceId', parameters('infrastructure').communicationServicesResourceId, 'logAnalyticsWorkspaceResourceId', parameters('infrastructure').logAnalyticsWorkspaceResourceId, 'emailDomainResourceId', parameters('infrastructure').emailDomainResourceId, 'stateContainerName', parameters('infrastructure').stateContainerName, 'archiveContainerName', parameters('infrastructure').archiveContainerName))]",
+              "maxLength": 2048
             }
           },
           "variables": {
             "optionsTags": "[toObject(range(0, 8), lambda('index', format('azbrief.v2.options{0}', lambdaVariables('index'))), lambda('index', take(skip(parameters('optionsJson'), mul(lambdaVariables('index'), 256)), 256)))]",
-            "contractTags": "[union(createObject('azbrief.v2.schema', '2', 'azbrief.v2.profile', 'kt-private-v2', 'azbrief.v2.state', parameters('infrastructureState'), 'azbrief.v2.applicationState', coalesce(tryGet(coalesce(resourceGroup().tags, createObject()), 'azbrief.v2.applicationState'), 'not_deployed'), 'azbrief.v2.lastApplicationDeploymentAt', coalesce(tryGet(coalesce(resourceGroup().tags, createObject()), 'azbrief.v2.lastApplicationDeploymentAt'), ''), 'azbrief.v2.deployment', parameters('infrastructure').deploymentName, 'azbrief.v2.location', parameters('infrastructure').location, 'azbrief.v2.environment', parameters('infrastructure').containerAppsEnvironmentName, 'azbrief.v2.app', parameters('infrastructure').containerAppName, 'azbrief.v2.job', parameters('infrastructure').schedulerJobName, 'azbrief.v2.identity', last(split(parameters('infrastructure').controlPlaneIdentityResourceId, '/')), 'azbrief.v2.storage', parameters('infrastructure').storageAccountName, 'azbrief.v2.cosmos', parameters('infrastructure').cosmosAccountName, 'azbrief.v2.search', parameters('infrastructure').searchServiceName, 'azbrief.v2.workspace', parameters('infrastructure').logAnalyticsWorkspaceName, 'azbrief.v2.insights', parameters('infrastructure').applicationInsightsName, 'azbrief.v2.acs', parameters('infrastructure').communicationServicesName, 'azbrief.v2.email', parameters('infrastructure').emailServiceName, 'azbrief.v2.foundry', parameters('infrastructure').foundryAccountName, 'azbrief.v2.project', parameters('infrastructure').projectName, 'azbrief.v2.hosted', parameters('infrastructure').foundryHostedAgentName, 'azbrief.v2.coreModel', parameters('infrastructure').modelDeploymentName, 'azbrief.v2.simpleModel', parameters('infrastructure').simpleModelDeploymentName, 'azbrief.v2.vnetRg', split(parameters('infrastructure').virtualNetworkResourceId, '/')[4], 'azbrief.v2.vnet', last(split(parameters('infrastructure').virtualNetworkResourceId, '/')), 'azbrief.v2.peSubnet', last(split(parameters('infrastructure').privateEndpointSubnetId, '/')), 'azbrief.v2.foundrySubnet', last(split(parameters('infrastructure').foundrySubnetResourceId, '/')), 'azbrief.v2.appSubnet', last(split(parameters('infrastructure').infrastructureSubnetId, '/')), 'azbrief.v2.acaPeEnabled', toLower(string(parameters('infrastructure').deployContainerAppsPrivateEndpoint)), 'azbrief.v2.mcpUrl', parameters('infrastructure').azureMcpServerUrl, 'azbrief.v2.mcpConnection', parameters('infrastructure').azureMcpProjectConnectionName, 'azbrief.v2.mcpApp', parameters('infrastructure').azureMcpContainerAppName, 'azbrief.v2.mcpIdentity', parameters('infrastructure').azureMcpIdentityName), variables('optionsTags'))]"
+            "resourceTags": "[toObject(range(0, div(add(length(parameters('resourcesJson')), 255), 256)), lambda('index', format('azbrief.v2.resources{0}', lambdaVariables('index'))), lambda('index', take(skip(parameters('resourcesJson'), mul(lambdaVariables('index'), 256)), 256)))]",
+            "contractTags": "[union(createObject('azbrief.v2.schema', '2', 'azbrief.v2.profile', 'kt-private-v2', 'azbrief.v2.state', parameters('infrastructureState'), 'azbrief.v2.applicationState', coalesce(tryGet(coalesce(resourceGroup().tags, createObject()), 'azbrief.v2.applicationState'), 'not_deployed'), 'azbrief.v2.lastApplicationDeploymentAt', coalesce(tryGet(coalesce(resourceGroup().tags, createObject()), 'azbrief.v2.lastApplicationDeploymentAt'), ''), 'azbrief.v2.deployment', parameters('infrastructure').deploymentName, 'azbrief.v2.location', parameters('infrastructure').location, 'azbrief.v2.environment', parameters('infrastructure').containerAppsEnvironmentName, 'azbrief.v2.app', parameters('infrastructure').containerAppName, 'azbrief.v2.job', parameters('infrastructure').schedulerJobName, 'azbrief.v2.identity', last(split(parameters('infrastructure').controlPlaneIdentityResourceId, '/')), 'azbrief.v2.storage', parameters('infrastructure').storageAccountName, 'azbrief.v2.cosmos', parameters('infrastructure').cosmosAccountName, 'azbrief.v2.search', parameters('infrastructure').searchServiceName, 'azbrief.v2.workspace', parameters('infrastructure').logAnalyticsWorkspaceName, 'azbrief.v2.insights', parameters('infrastructure').applicationInsightsName, 'azbrief.v2.acs', parameters('infrastructure').communicationServicesName, 'azbrief.v2.email', parameters('infrastructure').emailServiceName, 'azbrief.v2.foundry', parameters('infrastructure').foundryAccountName, 'azbrief.v2.project', parameters('infrastructure').projectName, 'azbrief.v2.hosted', parameters('infrastructure').foundryHostedAgentName, 'azbrief.v2.coreModel', parameters('infrastructure').modelDeploymentName, 'azbrief.v2.simpleModel', parameters('infrastructure').simpleModelDeploymentName, 'azbrief.v2.vnetRg', split(parameters('infrastructure').virtualNetworkResourceId, '/')[4], 'azbrief.v2.vnet', last(split(parameters('infrastructure').virtualNetworkResourceId, '/')), 'azbrief.v2.peSubnet', last(split(parameters('infrastructure').privateEndpointSubnetId, '/')), 'azbrief.v2.foundrySubnet', last(split(parameters('infrastructure').foundrySubnetResourceId, '/')), 'azbrief.v2.appSubnet', last(split(parameters('infrastructure').infrastructureSubnetId, '/')), 'azbrief.v2.acaPeEnabled', toLower(string(parameters('infrastructure').deployContainerAppsPrivateEndpoint)), 'azbrief.v2.mcpUrl', parameters('infrastructure').azureMcpServerUrl, 'azbrief.v2.mcpConnection', parameters('infrastructure').azureMcpProjectConnectionName, 'azbrief.v2.mcpApp', parameters('infrastructure').azureMcpContainerAppName, 'azbrief.v2.mcpIdentity', parameters('infrastructure').azureMcpIdentityName), variables('optionsTags'), variables('resourceTags'))]"
           },
           "resources": [
             {
@@ -32186,7 +32931,8 @@
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'v2-foundation')]",
         "[resourceId('Microsoft.Resources/deployments', 'v2-mcp-identity')]",
-        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]"
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload'))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('storageId'), '/')[2], split(variables('storageId'), '/')[4]), 'Microsoft.Resources/deployments', format('v2-shared-storage-workload-{0}', variables('workloadKey')))]"
       ]
     },
     {
@@ -32226,8 +32972,16 @@
               "privateEndpointSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName'))]",
               "deployContainerAppsPrivateEndpoint": "[parameters('deployContainerAppsPrivateEndpoint')]",
               "containerAppsEnvironmentName": "[parameters('containerAppsEnvironmentName')]",
-              "containerAppsEnvironmentResourceId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
-              "environmentDefaultDomain": "[if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)]",
+              "containerAppsEnvironmentResourceId": "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
+              "foundryAccountResourceId": "[variables('accountId')]",
+              "foundryAccountSubdomain": "[if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName'))]",
+              "storageAccountResourceId": "[variables('storageId')]",
+              "communicationServicesResourceId": "[variables('communicationId')]",
+              "logAnalyticsWorkspaceResourceId": "[variables('workspaceId')]",
+              "emailDomainResourceId": "[variables('domainId')]",
+              "stateContainerName": "[variables('stateName')]",
+              "archiveContainerName": "[variables('archiveName')]",
+              "environmentDefaultDomain": "[if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)]",
               "containerAppName": "[parameters('containerAppName')]",
               "schedulerJobName": "[parameters('schedulerJobName')]",
               "controlPlaneIdentityName": "[parameters('controlPlaneIdentityName')]",
@@ -32242,20 +32996,20 @@
               "applicationInsightsName": "[parameters('applicationInsightsName')]",
               "communicationServicesName": "[parameters('communicationServicesName')]",
               "emailServiceName": "[parameters('emailServiceName')]",
-              "communicationServicesEndpoint": "[if(variables('complete'), format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value)]",
-              "emailSenderAddress": "[if(variables('complete'), format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[0], split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value)]",
-              "stateContainerUrl": "[format('https://{0}.blob.{1}/azbrief-state', parameters('storageAccountName'), environment().suffixes.storage)]",
-              "archiveContainerUrl": "[format('https://{0}.blob.{1}/azbrief-archive', parameters('storageAccountName'), environment().suffixes.storage)]",
+              "communicationServicesEndpoint": "[if(variables('complete'), format('https://{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('communicationId'), '/')[2], split(variables('communicationId'), '/')[4]), 'Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value)]",
+              "emailSenderAddress": "[if(variables('complete'), format('DoNotReply@{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('domainId'), '/')[2], split(variables('domainId'), '/')[4]), 'Microsoft.Communication/emailServices/domains', split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[0], split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value)]",
+              "stateContainerUrl": "[format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('stateName'))]",
+              "archiveContainerUrl": "[format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('archiveName'))]",
               "foundryAccountName": "[parameters('foundryAccountName')]",
               "projectName": "[parameters('projectName')]",
               "foundryProjectResourceId": "[variables('projectId')]",
-              "foundryProjectEndpoint": "[variables('projectEndpoint')]",
-              "foundryProjectPrincipalId": "[if(variables('complete'), if(variables('reuseFoundry'), reference(variables('projectId'), '2025-06-01', 'full').identity.principalId, reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId), '')]",
+              "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName')), parameters('projectName'))]",
+              "foundryProjectPrincipalId": "[if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload')), '2025-04-01').outputs.principalId.value, '')]",
               "foundryHostedAgentName": "[parameters('foundryHostedAgentName')]",
               "modelDeploymentName": "[parameters('modelDeploymentName')]",
               "simpleModelDeploymentName": "[parameters('simpleModelDeploymentName')]",
               "promptAgentNames": "[variables('promptAgentNames')]",
-              "azureMcpServerUrl": "[if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl'))]",
+              "azureMcpServerUrl": "[if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl'))]",
               "azureMcpProjectConnectionName": "[parameters('azureMcpProjectConnectionName')]",
               "azureMcpEntraAppUniqueName": "[format('azbrief-v2-mcp-{0}', uniqueString(resourceGroup().id))]",
               "azureMcpContainerAppName": "[parameters('azureMcpContainerAppName')]",
@@ -32274,7 +33028,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "13041741682975970410"
+              "templateHash": "8143397122899810251"
             },
             "description": "Non-secret AzBrief v2 infrastructure handoff. Preserve unrelated resource-group tags."
           },
@@ -32282,7 +33036,7 @@
             "infrastructure": {
               "type": "object",
               "metadata": {
-                "description": "Same-resource-group infrastructure contract. Never include application secrets."
+                "description": "Workload resource-group contract, including exact IDs of shared parents in other RGs. Never include application secrets."
               }
             },
             "infrastructureState": {
@@ -32305,11 +33059,17 @@
               "type": "string",
               "defaultValue": "[string(parameters('infrastructureOptions'))]",
               "maxLength": 2048
+            },
+            "resourcesJson": {
+              "type": "string",
+              "defaultValue": "[string(createObject('foundryAccountResourceId', parameters('infrastructure').foundryAccountResourceId, 'storageAccountResourceId', parameters('infrastructure').storageAccountResourceId, 'containerAppsEnvironmentResourceId', parameters('infrastructure').containerAppsEnvironmentResourceId, 'communicationServicesResourceId', parameters('infrastructure').communicationServicesResourceId, 'logAnalyticsWorkspaceResourceId', parameters('infrastructure').logAnalyticsWorkspaceResourceId, 'emailDomainResourceId', parameters('infrastructure').emailDomainResourceId, 'stateContainerName', parameters('infrastructure').stateContainerName, 'archiveContainerName', parameters('infrastructure').archiveContainerName))]",
+              "maxLength": 2048
             }
           },
           "variables": {
             "optionsTags": "[toObject(range(0, 8), lambda('index', format('azbrief.v2.options{0}', lambdaVariables('index'))), lambda('index', take(skip(parameters('optionsJson'), mul(lambdaVariables('index'), 256)), 256)))]",
-            "contractTags": "[union(createObject('azbrief.v2.schema', '2', 'azbrief.v2.profile', 'kt-private-v2', 'azbrief.v2.state', parameters('infrastructureState'), 'azbrief.v2.applicationState', coalesce(tryGet(coalesce(resourceGroup().tags, createObject()), 'azbrief.v2.applicationState'), 'not_deployed'), 'azbrief.v2.lastApplicationDeploymentAt', coalesce(tryGet(coalesce(resourceGroup().tags, createObject()), 'azbrief.v2.lastApplicationDeploymentAt'), ''), 'azbrief.v2.deployment', parameters('infrastructure').deploymentName, 'azbrief.v2.location', parameters('infrastructure').location, 'azbrief.v2.environment', parameters('infrastructure').containerAppsEnvironmentName, 'azbrief.v2.app', parameters('infrastructure').containerAppName, 'azbrief.v2.job', parameters('infrastructure').schedulerJobName, 'azbrief.v2.identity', last(split(parameters('infrastructure').controlPlaneIdentityResourceId, '/')), 'azbrief.v2.storage', parameters('infrastructure').storageAccountName, 'azbrief.v2.cosmos', parameters('infrastructure').cosmosAccountName, 'azbrief.v2.search', parameters('infrastructure').searchServiceName, 'azbrief.v2.workspace', parameters('infrastructure').logAnalyticsWorkspaceName, 'azbrief.v2.insights', parameters('infrastructure').applicationInsightsName, 'azbrief.v2.acs', parameters('infrastructure').communicationServicesName, 'azbrief.v2.email', parameters('infrastructure').emailServiceName, 'azbrief.v2.foundry', parameters('infrastructure').foundryAccountName, 'azbrief.v2.project', parameters('infrastructure').projectName, 'azbrief.v2.hosted', parameters('infrastructure').foundryHostedAgentName, 'azbrief.v2.coreModel', parameters('infrastructure').modelDeploymentName, 'azbrief.v2.simpleModel', parameters('infrastructure').simpleModelDeploymentName, 'azbrief.v2.vnetRg', split(parameters('infrastructure').virtualNetworkResourceId, '/')[4], 'azbrief.v2.vnet', last(split(parameters('infrastructure').virtualNetworkResourceId, '/')), 'azbrief.v2.peSubnet', last(split(parameters('infrastructure').privateEndpointSubnetId, '/')), 'azbrief.v2.foundrySubnet', last(split(parameters('infrastructure').foundrySubnetResourceId, '/')), 'azbrief.v2.appSubnet', last(split(parameters('infrastructure').infrastructureSubnetId, '/')), 'azbrief.v2.acaPeEnabled', toLower(string(parameters('infrastructure').deployContainerAppsPrivateEndpoint)), 'azbrief.v2.mcpUrl', parameters('infrastructure').azureMcpServerUrl, 'azbrief.v2.mcpConnection', parameters('infrastructure').azureMcpProjectConnectionName, 'azbrief.v2.mcpApp', parameters('infrastructure').azureMcpContainerAppName, 'azbrief.v2.mcpIdentity', parameters('infrastructure').azureMcpIdentityName), variables('optionsTags'))]"
+            "resourceTags": "[toObject(range(0, div(add(length(parameters('resourcesJson')), 255), 256)), lambda('index', format('azbrief.v2.resources{0}', lambdaVariables('index'))), lambda('index', take(skip(parameters('resourcesJson'), mul(lambdaVariables('index'), 256)), 256)))]",
+            "contractTags": "[union(createObject('azbrief.v2.schema', '2', 'azbrief.v2.profile', 'kt-private-v2', 'azbrief.v2.state', parameters('infrastructureState'), 'azbrief.v2.applicationState', coalesce(tryGet(coalesce(resourceGroup().tags, createObject()), 'azbrief.v2.applicationState'), 'not_deployed'), 'azbrief.v2.lastApplicationDeploymentAt', coalesce(tryGet(coalesce(resourceGroup().tags, createObject()), 'azbrief.v2.lastApplicationDeploymentAt'), ''), 'azbrief.v2.deployment', parameters('infrastructure').deploymentName, 'azbrief.v2.location', parameters('infrastructure').location, 'azbrief.v2.environment', parameters('infrastructure').containerAppsEnvironmentName, 'azbrief.v2.app', parameters('infrastructure').containerAppName, 'azbrief.v2.job', parameters('infrastructure').schedulerJobName, 'azbrief.v2.identity', last(split(parameters('infrastructure').controlPlaneIdentityResourceId, '/')), 'azbrief.v2.storage', parameters('infrastructure').storageAccountName, 'azbrief.v2.cosmos', parameters('infrastructure').cosmosAccountName, 'azbrief.v2.search', parameters('infrastructure').searchServiceName, 'azbrief.v2.workspace', parameters('infrastructure').logAnalyticsWorkspaceName, 'azbrief.v2.insights', parameters('infrastructure').applicationInsightsName, 'azbrief.v2.acs', parameters('infrastructure').communicationServicesName, 'azbrief.v2.email', parameters('infrastructure').emailServiceName, 'azbrief.v2.foundry', parameters('infrastructure').foundryAccountName, 'azbrief.v2.project', parameters('infrastructure').projectName, 'azbrief.v2.hosted', parameters('infrastructure').foundryHostedAgentName, 'azbrief.v2.coreModel', parameters('infrastructure').modelDeploymentName, 'azbrief.v2.simpleModel', parameters('infrastructure').simpleModelDeploymentName, 'azbrief.v2.vnetRg', split(parameters('infrastructure').virtualNetworkResourceId, '/')[4], 'azbrief.v2.vnet', last(split(parameters('infrastructure').virtualNetworkResourceId, '/')), 'azbrief.v2.peSubnet', last(split(parameters('infrastructure').privateEndpointSubnetId, '/')), 'azbrief.v2.foundrySubnet', last(split(parameters('infrastructure').foundrySubnetResourceId, '/')), 'azbrief.v2.appSubnet', last(split(parameters('infrastructure').infrastructureSubnetId, '/')), 'azbrief.v2.acaPeEnabled', toLower(string(parameters('infrastructure').deployContainerAppsPrivateEndpoint)), 'azbrief.v2.mcpUrl', parameters('infrastructure').azureMcpServerUrl, 'azbrief.v2.mcpConnection', parameters('infrastructure').azureMcpProjectConnectionName, 'azbrief.v2.mcpApp', parameters('infrastructure').azureMcpContainerAppName, 'azbrief.v2.mcpIdentity', parameters('infrastructure').azureMcpIdentityName), variables('optionsTags'), variables('resourceTags'))]"
           },
           "resources": [
             {
@@ -32332,9 +33092,12 @@
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'v2-control-plane-roles')]",
         "[resourceId('Microsoft.Resources/deployments', 'v2-foundation')]",
-        "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload'))]",
         "[resourceId('Microsoft.Resources/deployments', 'v2-project-telemetry-role')]",
-        "[resourceId('Microsoft.CognitiveServices/accounts/projects/connections', split(format('{0}/{1}/azbrief-app-insights', parameters('foundryAccountName'), parameters('projectName')), '/')[0], split(format('{0}/{1}/azbrief-app-insights', parameters('foundryAccountName'), parameters('projectName')), '/')[1], split(format('{0}/{1}/azbrief-app-insights', parameters('foundryAccountName'), parameters('projectName')), '/')[2])]"
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('communicationId'), '/')[2], split(variables('communicationId'), '/')[4]), 'Microsoft.Resources/deployments', format('v2-shared-communication-access-{0}', variables('workloadKey')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.Resources/deployments', format('v2-shared-environment-reader-{0}', variables('workloadKey')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('storageId'), '/')[2], split(variables('storageId'), '/')[4]), 'Microsoft.Resources/deployments', format('v2-shared-storage-workload-{0}', variables('workloadKey')))]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('storageId'), '/')[2], split(variables('storageId'), '/')[4]), 'Microsoft.Resources/deployments', format('v2-shared-storage-reader-{0}', variables('workloadKey')))]"
       ]
     }
   ],
@@ -32366,8 +33129,16 @@
         "privateEndpointSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName'))]",
         "deployContainerAppsPrivateEndpoint": "[parameters('deployContainerAppsPrivateEndpoint')]",
         "containerAppsEnvironmentName": "[parameters('containerAppsEnvironmentName')]",
-        "containerAppsEnvironmentResourceId": "[resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
-        "environmentDefaultDomain": "[if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)]",
+        "containerAppsEnvironmentResourceId": "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
+        "foundryAccountResourceId": "[variables('accountId')]",
+        "foundryAccountSubdomain": "[if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName'))]",
+        "storageAccountResourceId": "[variables('storageId')]",
+        "communicationServicesResourceId": "[variables('communicationId')]",
+        "logAnalyticsWorkspaceResourceId": "[variables('workspaceId')]",
+        "emailDomainResourceId": "[variables('domainId')]",
+        "stateContainerName": "[variables('stateName')]",
+        "archiveContainerName": "[variables('archiveName')]",
+        "environmentDefaultDomain": "[if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)]",
         "containerAppName": "[parameters('containerAppName')]",
         "schedulerJobName": "[parameters('schedulerJobName')]",
         "controlPlaneIdentityName": "[parameters('controlPlaneIdentityName')]",
@@ -32382,20 +33153,20 @@
         "applicationInsightsName": "[parameters('applicationInsightsName')]",
         "communicationServicesName": "[parameters('communicationServicesName')]",
         "emailServiceName": "[parameters('emailServiceName')]",
-        "communicationServicesEndpoint": "[if(variables('complete'), format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value)]",
-        "emailSenderAddress": "[if(variables('complete'), format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[0], split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value)]",
-        "stateContainerUrl": "[format('https://{0}.blob.{1}/azbrief-state', parameters('storageAccountName'), environment().suffixes.storage)]",
-        "archiveContainerUrl": "[format('https://{0}.blob.{1}/azbrief-archive', parameters('storageAccountName'), environment().suffixes.storage)]",
+        "communicationServicesEndpoint": "[if(variables('complete'), format('https://{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('communicationId'), '/')[2], split(variables('communicationId'), '/')[4]), 'Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value)]",
+        "emailSenderAddress": "[if(variables('complete'), format('DoNotReply@{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('domainId'), '/')[2], split(variables('domainId'), '/')[4]), 'Microsoft.Communication/emailServices/domains', split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[0], split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value)]",
+        "stateContainerUrl": "[format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('stateName'))]",
+        "archiveContainerUrl": "[format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('archiveName'))]",
         "foundryAccountName": "[parameters('foundryAccountName')]",
         "projectName": "[parameters('projectName')]",
         "foundryProjectResourceId": "[variables('projectId')]",
-        "foundryProjectEndpoint": "[variables('projectEndpoint')]",
-        "foundryProjectPrincipalId": "[if(variables('complete'), if(variables('reuseFoundry'), reference(variables('projectId'), '2025-06-01', 'full').identity.principalId, reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId), '')]",
+        "foundryProjectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName')), parameters('projectName'))]",
+        "foundryProjectPrincipalId": "[if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload')), '2025-04-01').outputs.principalId.value, '')]",
         "foundryHostedAgentName": "[parameters('foundryHostedAgentName')]",
         "modelDeploymentName": "[parameters('modelDeploymentName')]",
         "simpleModelDeploymentName": "[parameters('simpleModelDeploymentName')]",
         "promptAgentNames": "[variables('promptAgentNames')]",
-        "azureMcpServerUrl": "[if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl'))]",
+        "azureMcpServerUrl": "[if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl'))]",
         "azureMcpProjectConnectionName": "[parameters('azureMcpProjectConnectionName')]",
         "azureMcpEntraAppUniqueName": "[format('azbrief-v2-mcp-{0}', uniqueString(resourceGroup().id))]",
         "azureMcpContainerAppName": "[parameters('azureMcpContainerAppName')]",
@@ -32416,14 +33187,15 @@
         "runtimeSetup": {
           "schemaVersion": 1,
           "foundryAccountName": "[parameters('foundryAccountName')]",
+          "foundryAccountResourceId": "[variables('accountId')]",
           "projectName": "[parameters('projectName')]",
           "projectResourceId": "[variables('projectId')]",
-          "projectEndpoint": "[variables('projectEndpoint')]",
+          "projectEndpoint": "[format('https://{0}.services.ai.azure.com/api/projects/{1}', if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName')), parameters('projectName'))]",
           "hostedAgentName": "[parameters('foundryHostedAgentName')]",
           "modelDeploymentName": "[parameters('modelDeploymentName')]",
           "simpleModelDeploymentName": "[parameters('simpleModelDeploymentName')]",
           "promptAgentNames": "[variables('promptAgentNames')]",
-          "azureMcpServerUrl": "[createObject('schemaVersion', 2, 'profile', 'kt-private-v2', 'infrastructureComplete', variables('complete'), 'mcpAuthenticationPending', and(variables('complete'), variables('manageAzureMcp')), 'portalValidationPassed', parameters('portalValidationPassed'), 'applicationReady', false(), 'hostedRuntimeRolesPending', true(), 'deploymentName', deployment().name, 'tenantId', tenant().tenantId, 'subscriptionId', subscription().subscriptionId, 'resourceGroup', resourceGroup().name, 'location', parameters('location'), 'tags', variables('resourceTags'), 'virtualNetworkResourceGroupName', variables('networkResourceGroup'), 'virtualNetworkName', parameters('virtualNetworkName'), 'virtualNetworkResourceId', variables('vnetId'), 'foundrySubnetName', parameters('foundrySubnetName'), 'foundrySubnetResourceId', format('{0}/subnets/{1}', variables('vnetId'), parameters('foundrySubnetName')), 'containerAppsSubnetName', parameters('containerAppsSubnetName'), 'infrastructureSubnetId', format('{0}/subnets/{1}', variables('vnetId'), parameters('containerAppsSubnetName')), 'peSubnetName', parameters('peSubnetName'), 'privateEndpointSubnetId', format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName')), 'deployContainerAppsPrivateEndpoint', parameters('deployContainerAppsPrivateEndpoint'), 'containerAppsEnvironmentName', parameters('containerAppsEnvironmentName'), 'containerAppsEnvironmentResourceId', resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), 'environmentDefaultDomain', if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value), 'containerAppName', parameters('containerAppName'), 'schedulerJobName', parameters('schedulerJobName'), 'controlPlaneIdentityName', parameters('controlPlaneIdentityName'), 'controlPlaneIdentityResourceId', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), 'controlPlanePrincipalId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityPrincipalId.value), 'controlPlaneClientId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').clientId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityClientId.value), 'storageAccountName', parameters('storageAccountName'), 'cosmosAccountName', if(parameters('useMicrosoftManagedAgentData'), '', parameters('cosmosAccountName')), 'searchServiceName', if(parameters('useMicrosoftManagedAgentData'), '', parameters('searchServiceName')), 'useMicrosoftManagedAgentData', parameters('useMicrosoftManagedAgentData'), 'logAnalyticsWorkspaceName', parameters('logAnalyticsWorkspaceName'), 'applicationInsightsName', parameters('applicationInsightsName'), 'communicationServicesName', parameters('communicationServicesName'), 'emailServiceName', parameters('emailServiceName'), 'communicationServicesEndpoint', if(variables('complete'), format('https://{0}', reference(resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value), 'emailSenderAddress', if(variables('complete'), format('DoNotReply@{0}', reference(resourceId('Microsoft.Communication/emailServices/domains', split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[0], split(format('{0}/AzureManagedDomain', parameters('emailServiceName')), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value), 'stateContainerUrl', format('https://{0}.blob.{1}/azbrief-state', parameters('storageAccountName'), environment().suffixes.storage), 'archiveContainerUrl', format('https://{0}.blob.{1}/azbrief-archive', parameters('storageAccountName'), environment().suffixes.storage), 'foundryAccountName', parameters('foundryAccountName'), 'projectName', parameters('projectName'), 'foundryProjectResourceId', variables('projectId'), 'foundryProjectEndpoint', variables('projectEndpoint'), 'foundryProjectPrincipalId', if(variables('complete'), if(variables('reuseFoundry'), reference(variables('projectId'), '2025-06-01', 'full').identity.principalId, reference(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), '2025-06-01', 'full').identity.principalId), ''), 'foundryHostedAgentName', parameters('foundryHostedAgentName'), 'modelDeploymentName', parameters('modelDeploymentName'), 'simpleModelDeploymentName', parameters('simpleModelDeploymentName'), 'promptAgentNames', variables('promptAgentNames'), 'azureMcpServerUrl', if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(resourceId('Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl')), 'azureMcpProjectConnectionName', parameters('azureMcpProjectConnectionName'), 'azureMcpEntraAppUniqueName', format('azbrief-v2-mcp-{0}', uniqueString(resourceGroup().id)), 'azureMcpContainerAppName', parameters('azureMcpContainerAppName'), 'azureMcpIdentityName', parameters('azureMcpIdentityName')).azureMcpServerUrl]",
+          "azureMcpServerUrl": "[createObject('schemaVersion', 2, 'profile', 'kt-private-v2', 'infrastructureComplete', variables('complete'), 'mcpAuthenticationPending', and(variables('complete'), variables('manageAzureMcp')), 'portalValidationPassed', parameters('portalValidationPassed'), 'applicationReady', false(), 'hostedRuntimeRolesPending', true(), 'deploymentName', deployment().name, 'tenantId', tenant().tenantId, 'subscriptionId', subscription().subscriptionId, 'resourceGroup', resourceGroup().name, 'location', parameters('location'), 'tags', variables('resourceTags'), 'virtualNetworkResourceGroupName', variables('networkResourceGroup'), 'virtualNetworkName', parameters('virtualNetworkName'), 'virtualNetworkResourceId', variables('vnetId'), 'foundrySubnetName', parameters('foundrySubnetName'), 'foundrySubnetResourceId', format('{0}/subnets/{1}', variables('vnetId'), parameters('foundrySubnetName')), 'containerAppsSubnetName', parameters('containerAppsSubnetName'), 'infrastructureSubnetId', format('{0}/subnets/{1}', variables('vnetId'), parameters('containerAppsSubnetName')), 'peSubnetName', parameters('peSubnetName'), 'privateEndpointSubnetId', format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName')), 'deployContainerAppsPrivateEndpoint', parameters('deployContainerAppsPrivateEndpoint'), 'containerAppsEnvironmentName', parameters('containerAppsEnvironmentName'), 'containerAppsEnvironmentResourceId', extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), 'foundryAccountResourceId', variables('accountId'), 'foundryAccountSubdomain', if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName')), 'storageAccountResourceId', variables('storageId'), 'communicationServicesResourceId', variables('communicationId'), 'logAnalyticsWorkspaceResourceId', variables('workspaceId'), 'emailDomainResourceId', variables('domainId'), 'stateContainerName', variables('stateName'), 'archiveContainerName', variables('archiveName'), 'environmentDefaultDomain', if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value), 'containerAppName', parameters('containerAppName'), 'schedulerJobName', parameters('schedulerJobName'), 'controlPlaneIdentityName', parameters('controlPlaneIdentityName'), 'controlPlaneIdentityResourceId', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), 'controlPlanePrincipalId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityPrincipalId.value), 'controlPlaneClientId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').clientId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityClientId.value), 'storageAccountName', parameters('storageAccountName'), 'cosmosAccountName', if(parameters('useMicrosoftManagedAgentData'), '', parameters('cosmosAccountName')), 'searchServiceName', if(parameters('useMicrosoftManagedAgentData'), '', parameters('searchServiceName')), 'useMicrosoftManagedAgentData', parameters('useMicrosoftManagedAgentData'), 'logAnalyticsWorkspaceName', parameters('logAnalyticsWorkspaceName'), 'applicationInsightsName', parameters('applicationInsightsName'), 'communicationServicesName', parameters('communicationServicesName'), 'emailServiceName', parameters('emailServiceName'), 'communicationServicesEndpoint', if(variables('complete'), format('https://{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('communicationId'), '/')[2], split(variables('communicationId'), '/')[4]), 'Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value), 'emailSenderAddress', if(variables('complete'), format('DoNotReply@{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('domainId'), '/')[2], split(variables('domainId'), '/')[4]), 'Microsoft.Communication/emailServices/domains', split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[0], split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value), 'stateContainerUrl', format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('stateName')), 'archiveContainerUrl', format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('archiveName')), 'foundryAccountName', parameters('foundryAccountName'), 'projectName', parameters('projectName'), 'foundryProjectResourceId', variables('projectId'), 'foundryProjectEndpoint', format('https://{0}.services.ai.azure.com/api/projects/{1}', if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName')), parameters('projectName')), 'foundryProjectPrincipalId', if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload')), '2025-04-01').outputs.principalId.value, ''), 'foundryHostedAgentName', parameters('foundryHostedAgentName'), 'modelDeploymentName', parameters('modelDeploymentName'), 'simpleModelDeploymentName', parameters('simpleModelDeploymentName'), 'promptAgentNames', variables('promptAgentNames'), 'azureMcpServerUrl', if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl')), 'azureMcpProjectConnectionName', parameters('azureMcpProjectConnectionName'), 'azureMcpEntraAppUniqueName', format('azbrief-v2-mcp-{0}', uniqueString(resourceGroup().id)), 'azureMcpContainerAppName', parameters('azureMcpContainerAppName'), 'azureMcpIdentityName', parameters('azureMcpIdentityName')).azureMcpServerUrl]",
           "azureMcpProjectConnectionName": "[parameters('azureMcpProjectConnectionName')]",
           "schedulerJobName": "[parameters('schedulerJobName')]",
           "applicationInsightsName": "[parameters('applicationInsightsName')]",

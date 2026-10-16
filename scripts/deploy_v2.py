@@ -70,6 +70,43 @@ TAG_FIELDS = {
     "azureMcpIdentityName": "mcpIdentity",
 }
 OPTION_TAG_KEYS = tuple(PREFIX + f"options{index}" for index in range(8))
+RESOURCE_TAG_KEYS = tuple(PREFIX + f"resources{index}" for index in range(8))
+SHARED_RESOURCES = {
+    "foundryAccountMode": (
+        "foundryAccountName",
+        "existingFoundryAccountResourceId",
+        "foundryAccountResourceId",
+        "Microsoft.CognitiveServices/accounts",
+        FOUNDRY_API,
+    ),
+    "storageAccountMode": (
+        "storageAccountName",
+        "existingStorageAccountResourceId",
+        "storageAccountResourceId",
+        "Microsoft.Storage/storageAccounts",
+        "2023-05-01",
+    ),
+    "containerAppsEnvironmentMode": (
+        "containerAppsEnvironmentName",
+        "existingContainerAppsEnvironmentResourceId",
+        "containerAppsEnvironmentResourceId",
+        "Microsoft.App/managedEnvironments",
+        CONTAINER_ENV_API,
+    ),
+    "communicationServicesMode": (
+        "communicationServicesName",
+        "existingCommunicationServicesResourceId",
+        "communicationServicesResourceId",
+        "Microsoft.Communication/communicationServices",
+        "2023-04-01",
+    ),
+}
+RESOURCE_BINDING_TYPES = {
+    **{entry[2]: entry[3] for entry in SHARED_RESOURCES.values()},
+    "logAnalyticsWorkspaceResourceId": "Microsoft.OperationalInsights/workspaces",
+    "emailDomainResourceId": "Microsoft.Communication/emailServices/domains",
+}
+CONTAINER_NAME_FIELDS = {"stateContainerName", "archiveContainerName"}
 OPTION_FIELDS = {
     "emailDataLocation": str,
     "searchSku": str,
@@ -140,6 +177,91 @@ INTERNAL_PARAMETERS = frozenset(
         "reuseExistingTelemetryConnection",
     }
 )
+
+
+def resource_scope(
+    resource_id: str, resource_type: str, subscription: str | None = None
+) -> tuple[str, str, str]:
+    """Validate an exact typed ARM ID without accepting redirects or cross-subscription targets."""
+    if not isinstance(resource_id, str) or any(char in resource_id for char in "?#%\\"):
+        raise ValueError("Use an exact typed ARM resource ID")
+    parts = resource_id.split("/")
+    types = resource_type.split("/")
+    if (
+        len(parts) != 7 + 2 * (len(types) - 1)
+        or parts[0] != ""
+        or parts[1].casefold() != "subscriptions"
+        or parts[3].casefold() != "resourcegroups"
+        or parts[5].casefold() != "providers"
+        or parts[6].casefold() != types[0].casefold()
+        or any(
+            parts[7 + index * 2].casefold() != name.casefold()
+            for index, name in enumerate(types[1:])
+        )
+        or not re.fullmatch(r"[A-Za-z0-9_.()-]{1,90}", parts[4])
+        or any(not NAME_PATTERN.fullmatch(parts[index]) for index in range(8, len(parts), 2))
+    ):
+        raise ValueError(f"Expected a {resource_type} ARM resource ID")
+    UUID(parts[2])
+    if subscription is not None and parts[2].casefold() != subscription.casefold():
+        raise ValueError("Shared resources must be in the explicit target subscription")
+    return parts[2], parts[4], parts[-1]
+
+
+def decode_resource_bindings(tags: dict[str, str]) -> dict[str, str]:
+    """Read complete bounded ID metadata while preserving older same-RG contracts."""
+    present = [key for key in RESOURCE_TAG_KEYS if key in tags]
+    if not present:
+        return {}
+    if present != list(RESOURCE_TAG_KEYS[: len(present)]) or any(not tags[key] for key in present):
+        raise ValueError("Incomplete resource-ID tag chunks")
+    bindings = json.loads("".join(tags[key] for key in present))
+    if (
+        not isinstance(bindings, dict)
+        or set(bindings) != set(RESOURCE_BINDING_TYPES) | CONTAINER_NAME_FIELDS
+    ):
+        raise ValueError("Incomplete or unknown shared resource bindings")
+    for field, resource_type in RESOURCE_BINDING_TYPES.items():
+        resource_scope(bindings[field], resource_type)
+    for field in CONTAINER_NAME_FIELDS:
+        if not isinstance(bindings[field], str) or not re.fullmatch(
+            r"[a-z0-9](?:[a-z0-9]|-(?!-)){1,61}[a-z0-9]", bindings[field]
+        ):
+            raise ValueError("Invalid workload Blob container name")
+    return bindings
+
+
+def resource_bindings(cli: AzureCli, values: dict[str, Any]) -> dict[str, str]:
+    """Resolve new resources locally and shared resources only from their explicit full IDs."""
+    bindings: dict[str, str] = {}
+    for mode, (name, existing, field, resource_type, _) in SHARED_RESOURCES.items():
+        bindings[field] = (
+            values[existing]
+            if values.get(mode, "new") == "existing"
+            else f"{cli.group_id}/providers/{resource_type}/{values[name]}"
+        )
+    bindings["logAnalyticsWorkspaceResourceId"] = (
+        values["existingLogAnalyticsWorkspaceResourceId"]
+        if values.get("containerAppsEnvironmentMode", "new") == "existing"
+        else f"{cli.group_id}/providers/Microsoft.OperationalInsights/workspaces/{values['logAnalyticsWorkspaceName']}"
+    )
+    bindings["emailDomainResourceId"] = (
+        values["existingEmailDomainResourceId"]
+        if values.get("communicationServicesMode", "new") == "existing"
+        else f"{cli.group_id}/providers/Microsoft.Communication/emailServices/{values['emailServiceName']}/domains/AzureManagedDomain"
+    )
+    for field, prefix in (
+        ("stateContainerName", "azbrief-state"),
+        ("archiveContainerName", "azbrief-archive"),
+    ):
+        bindings[field] = values.get(field) or (
+            f"{prefix}-{values['containerAppName'].lower()}"
+            if values.get("storageAccountMode", "new") == "existing"
+            else prefix
+        )
+    for field, resource_type in RESOURCE_BINDING_TYPES.items():
+        resource_scope(bindings[field], resource_type, cli.subscription)
+    return bindings
 
 
 def deployer_environment_defaults(user: dict[str, Any]) -> dict[str, str]:
@@ -514,7 +636,7 @@ def parse_tag_contract(tags: dict[str, Any], require_ready: bool = True) -> dict
     contract = {key: value for key, value in tags.items() if key.casefold().startswith(PREFIX)}
     required = TAG_KEYS - {PREFIX + "mcpApp", PREFIX + "mcpIdentity"}
     if not required <= set(contract) or set(contract) - (
-        TAG_KEYS | set(OPTION_TAG_KEYS) | APPLICATION_TAG_KEYS
+        TAG_KEYS | set(OPTION_TAG_KEYS) | set(RESOURCE_TAG_KEYS) | APPLICATION_TAG_KEYS
     ):
         raise ValueError("Missing, unknown or non-canonical AzBrief v2 resource-group tag keys")
     if (
@@ -525,7 +647,11 @@ def parse_tag_contract(tags: dict[str, Any], require_ready: bool = True) -> dict
         or contract[PREFIX + "acaPeEnabled"] not in {"true", "false"}
     ):
         raise ValueError("Use the completed AzBrief v2 infrastructure contract")
-    managed_agent_data = decode_tag_options(contract).get("useMicrosoftManagedAgentData", False)
+    options = decode_tag_options(contract)
+    bindings = decode_resource_bindings(contract)
+    if any(options.get(mode, "new") == "existing" for mode in SHARED_RESOURCES) and not bindings:
+        raise ValueError("Shared infrastructure requires its full resource-ID tags")
+    managed_agent_data = options.get("useMicrosoftManagedAgentData", False)
     for suffix in TAG_FIELDS.values():
         value = contract.get(PREFIX + suffix, "")
         if suffix in {"cosmos", "search"} and managed_agent_data:
@@ -578,16 +704,20 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
     if present != set(OPTION_TAG_KEYS):
         raise ValueError("Incomplete infrastructure option tags")
     options = json.loads("".join(tags[key] for key in OPTION_TAG_KEYS))
-    optional = {
-        "simpleModelVersion",
-        "useMicrosoftManagedAgentData",
-        "manageAzureMcp",
-        "azureMcpClientId",
-        "azureMcpServicePrincipalId",
-        "azureMcpAppRoleId",
-        "namingPrefix",
-        "namingSuffix",
-    } | NETWORK_OPTION_FIELDS
+    optional = (
+        {
+            "simpleModelVersion",
+            "useMicrosoftManagedAgentData",
+            "manageAzureMcp",
+            "azureMcpClientId",
+            "azureMcpServicePrincipalId",
+            "azureMcpAppRoleId",
+            "namingPrefix",
+            "namingSuffix",
+        }
+        | NETWORK_OPTION_FIELDS
+        | set(SHARED_RESOURCES)
+    )
     if not isinstance(options, dict) or set(options) - (set(OPTION_FIELDS) | optional):
         raise ValueError("Unknown or secret-valued infrastructure options")
     if set(OPTION_FIELDS) - set(options):
@@ -608,6 +738,8 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
         raise ValueError("Invalid saved Simple model version")
     if options.get("virtualNetworkMode", "existing") not in {"existing", "new"}:
         raise ValueError("Invalid saved VNet deployment mode")
+    if any(options.get(field, "new") not in {"new", "existing"} for field in SHARED_RESOURCES):
+        raise ValueError("Invalid saved shared resource mode")
     for field in NETWORK_OPTION_FIELDS - {"virtualNetworkMode"}:
         if field in options:
             if not isinstance(options[field], str):
@@ -626,6 +758,7 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
             "simpleModelVersion",
         }
         - NETWORK_OPTION_FIELDS
+        - set(SHARED_RESOURCES)
     ):
         if options.get(field):
             UUID(options[field])
@@ -641,7 +774,7 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
 
 
 def infrastructure_values(cli: AzureCli, tags: dict[str, str]) -> dict[str, Any]:
-    """Resolve leaf names within the explicit CLI scope, not a scope supplied in tags."""
+    """Resolve validated full IDs, retaining legacy same-RG name-only handoffs."""
     values: dict[str, Any] = {
         field: tags.get(PREFIX + suffix, "") for field, suffix in TAG_FIELDS.items()
     }
@@ -655,6 +788,49 @@ def infrastructure_values(cli: AzureCli, tags: dict[str, str]) -> dict[str, Any]
         resourceGroup=cli.group,
         deployContainerAppsPrivateEndpoint=tags[PREFIX + "acaPeEnabled"] == "true",
     )
+    saved_bindings = decode_resource_bindings(tags)
+    for mode, (name, existing, field, resource_type, _) in SHARED_RESOURCES.items():
+        values.setdefault(mode, "new")
+        resource_id = saved_bindings.get(
+            field, f"{cli.group_id}/providers/{resource_type}/{values[name]}"
+        )
+        _, group, leaf = resource_scope(resource_id, resource_type, cli.subscription)
+        if leaf.casefold() != values[name].casefold() or (
+            values[mode] == "new" and group.casefold() != cli.group.casefold()
+        ):
+            raise ValueError("Resource-ID tags differ from the saved name or creation scope")
+        values[existing] = resource_id if values[mode] == "existing" else ""
+    values["existingLogAnalyticsWorkspaceResourceId"] = (
+        saved_bindings.get("logAnalyticsWorkspaceResourceId", "")
+        if values["containerAppsEnvironmentMode"] == "existing"
+        else ""
+    )
+    values["existingEmailDomainResourceId"] = (
+        saved_bindings.get("emailDomainResourceId", "")
+        if values["communicationServicesMode"] == "existing"
+        else ""
+    )
+    bindings = resource_bindings(cli, {**values, **saved_bindings})
+    for field in ("logAnalyticsWorkspaceResourceId", "emailDomainResourceId"):
+        _, group, leaf = resource_scope(
+            bindings[field], RESOURCE_BINDING_TYPES[field], cli.subscription
+        )
+        expected_name = (
+            values["logAnalyticsWorkspaceName"]
+            if field.startswith("log")
+            else values["emailServiceName"]
+        )
+        actual_name = leaf if field.startswith("log") else bindings[field].split("/")[8]
+        if actual_name.casefold() != expected_name.casefold():
+            raise ValueError("Shared dependency ID does not match its saved resource name")
+        mode = (
+            "containerAppsEnvironmentMode"
+            if field.startswith("log")
+            else "communicationServicesMode"
+        )
+        if values[mode] == "new" and group.casefold() != cli.group.casefold():
+            raise ValueError("New dependency cannot redirect to another resource group")
+    values.update(bindings)
     return values
 
 
@@ -664,6 +840,28 @@ def _owned(resource: dict[str, Any], resource_id: str) -> None:
         or (resource.get("tags") or {}).get("deploymentProfile") != PROFILE
     ):
         raise ValueError("Refusing to adopt a foreign or redirected resource")
+
+
+def _owned_project(
+    cli: AzureCli, values: dict[str, Any], account_id: str, *, allow_missing: bool = False
+) -> None:
+    project_id = f"{account_id}/projects/{values['projectName']}"
+    projects = cli.collection(f"{account_id}/projects", FOUNDRY_API)
+    matches = [
+        row
+        for row in projects
+        if row["name"].split("/")[-1].casefold() == values["projectName"].casefold()
+    ]
+    if not matches and allow_missing:
+        return
+    if len(matches) != 1:
+        raise ValueError("The exact workload project is missing or ambiguous")
+    project = cli.get(project_id, FOUNDRY_API)
+    _owned(project, project_id)
+    if (project.get("tags") or {}).get(
+        "azbriefWorkloadResourceGroup", ""
+    ).casefold() != cli.group_id.casefold():
+        raise ValueError("Refusing to adopt another workload's project in shared Foundry")
 
 
 def read_infrastructure(cli: AzureCli) -> tuple[dict[str, str], dict[str, Any]]:
@@ -682,9 +880,11 @@ def _read_infrastructure(
     if tags[PREFIX + "state"] != expected_state:
         raise ValueError(f"Use the {expected_state} v2 infrastructure contract for this operation")
     values = infrastructure_values(cli, tags)
-    environment_id = f"{cli.group_id}/providers/Microsoft.App/managedEnvironments/{values['containerAppsEnvironmentName']}"
+    values = _resolve_shared_resources(cli, values, expected_state)
+    environment_id = values["containerAppsEnvironmentResourceId"]
     environment = cli.get(environment_id, CONTAINER_ENV_API)
-    _owned(environment, environment_id)
+    if values["containerAppsEnvironmentMode"] == "new":
+        _owned(environment, environment_id)
     props = environment["properties"]
     expected_subnet = (
         f"/subscriptions/{cli.subscription}/resourceGroups/{values['virtualNetworkResourceGroupName']}"
@@ -705,9 +905,12 @@ def _read_infrastructure(
     identity_id = f"{cli.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{values['controlPlaneIdentityName']}"
     identity = cli.get(identity_id, "2023-01-31")
     _owned(identity, identity_id)
-    account_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}"
+    account_id = values["foundryAccountResourceId"]
     account = cli.get(account_id, FOUNDRY_API)
-    _owned(account, account_id)
+    if values["foundryAccountMode"] == "new":
+        _owned(account, account_id)
+    else:
+        _owned_project(cli, values, account_id)
     if str(account["properties"].get("publicNetworkAccess", "")).casefold() != "disabled":
         raise ValueError("The tagged Foundry account must retain disabled public access")
     reused, telemetry = validate_existing_host(cli, account_id, values)
@@ -719,6 +922,7 @@ def _read_infrastructure(
         controlPlaneIdentityResourceId=identity_id,
         controlPlaneClientId=identity["properties"]["clientId"],
         controlPlanePrincipalId=identity["properties"]["principalId"],
+        foundryProjectEndpoint=f"https://{account['properties'].get('customSubDomainName') or values['foundryAccountName']}.services.ai.azure.com/api/projects/{values['projectName']}",
     )
     return tags, values
 
@@ -822,15 +1026,16 @@ def _surface(
 
 def _validate_runtime(environment: dict[str, dict[str, str]], values: dict[str, Any]) -> None:
     storage = values["storageAccountName"]
-    state = f"https://{storage}.blob.core.windows.net/azbrief-state"
+    state = f"https://{storage}.blob.core.windows.net/{values.get('stateContainerName', 'azbrief-state')}"
     protected = {
         "AZURE_TENANT_ID": values["tenantId"],
         "AZURE_SUBSCRIPTION_ID": values["subscriptionId"],
         "AZURE_CLIENT_ID": values["controlPlaneClientId"],
-        "FOUNDRY_PROJECT_ENDPOINT": f"https://{values['foundryAccountName']}.services.ai.azure.com/api/projects/{values['projectName']}",
+        "FOUNDRY_PROJECT_ENDPOINT": values.get("foundryProjectEndpoint")
+        or f"https://{values['foundryAccountName']}.services.ai.azure.com/api/projects/{values['projectName']}",
         "FOUNDRY_HOSTED_AGENT_NAME": values["foundryHostedAgentName"],
         "CHECKPOINT_BLOB_URL": f"{state}/checkpoint.json",
-        "ARCHIVE_BLOB_CONTAINER_URL": f"https://{storage}.blob.core.windows.net/azbrief-archive",
+        "ARCHIVE_BLOB_CONTAINER_URL": f"https://{storage}.blob.core.windows.net/{values.get('archiveContainerName', 'azbrief-archive')}",
         "ADMIN_CONFIG_BLOB_URL": f"{state}/admin-config.json",
     }
     for name, expected in protected.items():
@@ -1216,6 +1421,19 @@ def prepare_mcp_authentication(cli: AzureCli) -> dict[str, Any]:
             infrastructure[field] = values[field]
         if str(infrastructure.get(field, "")).casefold() != str(values[field]).casefold():
             raise ValueError(f"MCP core output binding changed: {field}")
+    for field in (*RESOURCE_BINDING_TYPES, *sorted(CONTAINER_NAME_FIELDS)):
+        if field in infrastructure or decode_resource_bindings(tags):
+            if str(infrastructure.get(field, "")).casefold() != str(values[field]).casefold():
+                raise ValueError(f"MCP core output resource binding changed: {field}")
+        infrastructure.setdefault(field, values[field])
+    if (
+        infrastructure.get(
+            "foundryProjectResourceId",
+            f"{values['foundryAccountResourceId']}/projects/{values['projectName']}",
+        ).casefold()
+        != f"{values['foundryAccountResourceId']}/projects/{values['projectName']}".casefold()
+    ):
+        raise ValueError("MCP core output project ID differs from the saved Foundry account")
     expected_url = (
         f"https://{values['azureMcpContainerAppName']}.{values['environmentDefaultDomain']}"
     )
@@ -1275,7 +1493,7 @@ def run_mcp_authentication(cli: AzureCli, mode: str, name: str) -> None:
     if mode == "deploy":
         tags, values = read_infrastructure(cli)
         options = decode_tag_options(tags)
-        project_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}/projects/{values['projectName']}"
+        project_id = f"{values['foundryAccountResourceId']}/projects/{values['projectName']}"
         connection = cli.get(
             f"{project_id}/connections/{values['azureMcpProjectConnectionName']}",
             "2025-10-01-preview",
@@ -1292,6 +1510,14 @@ def run_mcp_authentication(cli: AzureCli, mode: str, name: str) -> None:
 def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
     """Resolve literal parameters and safe name defaults without reading developer .env files."""
     supplied = json.loads(path.read_text(encoding="utf-8-sig"))["parameters"]
+    for mode, (name, existing, _, resource_type, _) in SHARED_RESOURCES.items():
+        entry = supplied.get(mode, {})
+        if isinstance(entry, dict) and entry.get("value") == "existing":
+            reference = supplied.get(existing, {})
+            if not isinstance(reference, dict) or set(reference) != {"value"}:
+                raise ValueError("Existing-resource mode requires its literal full ARM ID")
+            _, _, leaf = resource_scope(reference["value"], resource_type)
+            supplied[name] = {"value": leaf}
     if "namingPrefix" in supplied or "namingSuffix" in supplied:
         if "namingPrefix" not in supplied or "namingSuffix" not in supplied:
             raise ValueError("Supply both namingPrefix and namingSuffix")
@@ -1359,6 +1585,29 @@ def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
         values["searchServiceName"] = ""
     elif not values["cosmosAccountName"] or not values["searchServiceName"]:
         raise ValueError("Existing BYO mode requires Cosmos DB and Search names")
+    for mode, (name, existing, _, resource_type, _) in SHARED_RESOURCES.items():
+        if values[mode] == "existing":
+            _, _, leaf = resource_scope(values[existing], resource_type)
+            values[name] = leaf
+        elif values[existing]:
+            raise ValueError("New-resource mode cannot also supply an existing resource ID")
+    if not values["useMicrosoftManagedAgentData"] and any(
+        values[mode] == "existing" for mode in ("foundryAccountMode", "storageAccountMode")
+    ):
+        raise ValueError(
+            "Shared Foundry/Storage requires Microsoft-managed agent data, not legacy BYO"
+        )
+    for field, prefix in (
+        ("stateContainerName", "azbrief-state"),
+        ("archiveContainerName", "azbrief-archive"),
+    ):
+        values[field] = values[field] or (
+            f"{prefix}-{values['containerAppName'].lower()}"
+            if values["storageAccountMode"] == "existing"
+            else prefix
+        )
+        if values["storageAccountMode"] == "new" and values[field] != prefix:
+            raise ValueError("New Storage retains the existing v2 workload container names")
     values["simpleModelVersion"] = values.get("simpleModelVersion") or values["modelVersion"]
     if len(values["tags"]) > 15:
         raise ValueError("Resource tags must also fit the Private DNS 15-tag limit")
@@ -1393,13 +1642,342 @@ def make_tag_contract(
         }
     )
     options.update({field: values[field] for field in NETWORK_OPTION_FIELDS if field in values})
+    options.update({field: values.get(field, "new") for field in SHARED_RESOURCES})
     encoded = json.dumps(options, ensure_ascii=False, separators=(",", ":"))
     if len(encoded) > 8 * 256:
         raise ValueError("Saved infrastructure options exceed the 2048-character tag budget")
     contract.update(
         {key: encoded[index * 256 : (index + 1) * 256] for index, key in enumerate(OPTION_TAG_KEYS)}
     )
+    binding_fields = set(RESOURCE_BINDING_TYPES) | CONTAINER_NAME_FIELDS
+    if binding_fields <= set(values):
+        encoded_bindings = json.dumps(
+            {field: values[field] for field in sorted(binding_fields)},
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        if len(encoded_bindings) > 2048:
+            raise ValueError("Resource IDs exceed the 2048-character tag budget")
+        contract.update(
+            {
+                RESOURCE_TAG_KEYS[index // 256]: encoded_bindings[index : index + 256]
+                for index in range(0, len(encoded_bindings), 256)
+            }
+        )
     return parse_tag_contract(contract, require_ready=state == "ready")
+
+
+def _shared_document(
+    cli: AzureCli, resource_id: str, resource_type: str, api_version: str
+) -> dict[str, Any]:
+    resource_scope(resource_id, resource_type, cli.subscription)
+    document: dict[str, Any] = cli.get(resource_id, api_version)
+    if (
+        str(document.get("id", "")).casefold() != resource_id.casefold()
+        or document.get("properties", {}).get("provisioningState") != "Succeeded"
+    ):
+        raise ValueError("Shared resource is not ready or its typed ARM lookup was redirected")
+    return document
+
+
+def _shared_private_endpoint(
+    cli: AzureCli, document: dict[str, Any], vnet_id: str, group: str
+) -> None:
+    for connection in document["properties"].get("privateEndpointConnections", []):
+        properties = connection["properties"]
+        if properties.get("privateLinkServiceConnectionState", {}).get("status") != "Approved":
+            continue
+        endpoint_id = properties.get("privateEndpoint", {}).get("id", "")
+        endpoint = _shared_document(
+            cli, endpoint_id, "Microsoft.Network/privateEndpoints", NETWORK_API
+        )
+        props = endpoint["properties"]
+        links = props.get("privateLinkServiceConnections", [])
+        if props.get("subnet", {}).get("id", "").casefold().startswith(
+            vnet_id.casefold() + "/subnets/"
+        ) and any(
+            link.get("properties", {}).get("privateLinkServiceId", "").casefold()
+            == document["id"].casefold()
+            and group in link.get("properties", {}).get("groupIds", [])
+            for link in links
+        ):
+            return
+    raise ValueError(
+        "Shared Foundry/Storage requires an approved Private Endpoint on the selected VNet"
+    )
+
+
+def _shared_environment_dns(cli: AzureCli, environment: dict[str, Any], vnet_id: str) -> None:
+    props = environment["properties"]
+    domain, address = props.get("defaultDomain", ""), props.get("staticIp", "")
+    if not domain or not address:
+        raise ValueError("Shared Environment requires its actual internal domain and VIP")
+    zones = cli.json(
+        "resource",
+        "list",
+        "--subscription",
+        cli.subscription,
+        "--resource-type",
+        "Microsoft.Network/privateDnsZones",
+    )
+    if not isinstance(zones, list):
+        raise ValueError("Shared Environment DNS inventory must be complete")
+    matching = []
+    for zone in zones:
+        if zone.get("name", "").casefold() != domain.casefold():
+            continue
+        links = cli.collection(f"{zone['id']}/virtualNetworkLinks", "2024-06-01")
+        if any(
+            row["properties"].get("virtualNetwork", {}).get("id", "").casefold()
+            == vnet_id.casefold()
+            and row["properties"].get("registrationEnabled") is False
+            and row["properties"].get("provisioningState") == "Succeeded"
+            for row in links
+        ):
+            matching.append(zone)
+    if len(matching) != 1:
+        raise ValueError(
+            "Shared Environment requires one existing private DNS zone linked to the selected VNet"
+        )
+    for name in ("*", "@"):
+        record = cli.get(f"{matching[0]['id']}/A/{name}", "2024-06-01")
+        if record.get("properties", {}).get("aRecords") != [{"ipv4Address": address}]:
+            raise ValueError("Shared Environment private DNS must resolve its exact internal VIP")
+
+
+def _resolve_shared_resources(cli: AzureCli, values: dict[str, Any], stage: str) -> dict[str, Any]:
+    """Validate explicit shared targets without adopting or changing their configuration."""
+    values = copy.deepcopy(values)
+    for mode, (name, existing, _, resource_type, _) in SHARED_RESOURCES.items():
+        values.setdefault(mode, "new")
+        values.setdefault(existing, "")
+        if values[mode] not in {"new", "existing"}:
+            raise ValueError("Choose new or existing for each shared resource")
+        if values[mode] == "existing":
+            _, _, leaf = resource_scope(values[existing], resource_type, cli.subscription)
+            if values[name].casefold() != leaf.casefold():
+                raise ValueError("Shared resource name must match its selected full ARM ID")
+        elif values[existing]:
+            raise ValueError("New-resource mode cannot supply an existing resource ID")
+    values.setdefault("existingLogAnalyticsWorkspaceResourceId", "")
+    values.setdefault("existingEmailDomainResourceId", "")
+    if not values.get("useMicrosoftManagedAgentData", False) and any(
+        values[mode] == "existing" for mode in ("foundryAccountMode", "storageAccountMode")
+    ):
+        raise ValueError("Shared Foundry/Storage requires Microsoft-managed agent data")
+    if values.get("virtualNetworkMode", "existing") == "new" and any(
+        values[mode] == "existing"
+        for mode in ("foundryAccountMode", "containerAppsEnvironmentMode")
+    ):
+        raise ValueError("Existing Foundry/Environment must retain their existing VNet")
+    vnet_id = (
+        f"/subscriptions/{cli.subscription}/resourceGroups/{values['virtualNetworkResourceGroupName']}"
+        f"/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
+    )
+    if values["foundryAccountMode"] == "existing":
+        account = _shared_document(
+            cli,
+            values["existingFoundryAccountResourceId"],
+            "Microsoft.CognitiveServices/accounts",
+            FOUNDRY_API,
+        )
+        props = account["properties"]
+        expected_subnet = f"{vnet_id}/subnets/{values['foundrySubnetName']}"
+        injections = props.get("networkInjections", [])
+        if (
+            account.get("kind") != "AIServices"
+            or account.get("location", "").casefold() != values["location"].casefold()
+            or props.get("allowProjectManagement") is not True
+            or props.get("disableLocalAuth") is not True
+            or not isinstance(props.get("customSubDomainName"), str)
+            or not re.fullmatch(
+                r"[A-Za-z0-9][A-Za-z0-9-]{0,63}", props.get("customSubDomainName", "")
+            )
+            or str(props.get("publicNetworkAccess", "")).casefold() != "disabled"
+            or not isinstance(injections, list)
+            or len(injections) != 1
+            or not any(
+                isinstance(item, dict)
+                and item.get("scenario") == "agent"
+                and item.get("useMicrosoftManagedNetwork") is False
+                and item.get("subnetArmId", "").casefold() == expected_subnet.casefold()
+                for item in injections
+            )
+        ):
+            raise ValueError(
+                "Shared Foundry must retain project support, Entra-only private access and the exact same-region agent subnet"
+            )
+        hosts = cli.collection(f"{account['id']}/capabilityHosts", "2025-04-01-preview")
+        if not hosts or any(
+            row.get("properties", {}).get("provisioningState") != "Succeeded" for row in hosts
+        ):
+            raise ValueError("Prepare the shared account Capability Host before referencing it")
+        _shared_private_endpoint(cli, account, vnet_id, "account")
+    if values["containerAppsEnvironmentMode"] == "existing":
+        if values["deployContainerAppsPrivateEndpoint"]:
+            raise ValueError(
+                "Existing Environment networking is retained; do not request a new Environment Private Endpoint"
+            )
+        environment = _shared_document(
+            cli,
+            values["existingContainerAppsEnvironmentResourceId"],
+            "Microsoft.App/managedEnvironments",
+            CONTAINER_ENV_API,
+        )
+        props = environment["properties"]
+        if (
+            environment.get("location", "").casefold() != values["location"].casefold()
+            or str(props.get("publicNetworkAccess", "")).casefold() != "disabled"
+            or props.get("vnetConfiguration", {}).get("internal") is not True
+            or props.get("vnetConfiguration", {}).get("infrastructureSubnetId", "").casefold()
+            != f"{vnet_id}/subnets/{values['containerAppsSubnetName']}".casefold()
+            or not any(
+                row.get("name") == "Consumption" and row.get("workloadProfileType") == "Consumption"
+                for row in props.get("workloadProfiles", [])
+            )
+        ):
+            raise ValueError(
+                "Shared Environment must retain internal/PNA-disabled Consumption and the exact same-region subnet"
+            )
+        logs = props.get("appLogsConfiguration", {})
+        customer_id = logs.get("logAnalyticsConfiguration", {}).get("customerId", "")
+        if logs.get("destination") != "log-analytics" or not customer_id:
+            raise ValueError(
+                "Shared Environment must already collect logs in a Log Analytics workspace"
+            )
+        workspace_id = values["existingLogAnalyticsWorkspaceResourceId"]
+        if not workspace_id:
+            workspaces = cli.collection(
+                f"/subscriptions/{cli.subscription}/providers/Microsoft.OperationalInsights/workspaces",
+                "2025-02-01",
+            )
+            matches = [
+                row
+                for row in workspaces
+                if str(row.get("properties", {}).get("customerId", "")).casefold()
+                == customer_id.casefold()
+            ]
+            if len(matches) != 1:
+                raise ValueError("The shared Environment workspace lookup is missing or ambiguous")
+            workspace_id = matches[0]["id"]
+        workspace = _shared_document(
+            cli, workspace_id, "Microsoft.OperationalInsights/workspaces", "2025-02-01"
+        )
+        if str(workspace["properties"].get("customerId", "")).casefold() != customer_id.casefold():
+            raise ValueError("Shared workspace does not match the Environment log destination")
+        values["existingLogAnalyticsWorkspaceResourceId"] = workspace_id
+        values["logAnalyticsWorkspaceName"] = workspace_id.split("/")[-1]
+        _shared_environment_dns(cli, environment, vnet_id)
+    elif values["existingLogAnalyticsWorkspaceResourceId"]:
+        raise ValueError("A new Environment owns its new workspace")
+    if values["storageAccountMode"] == "existing":
+        storage = _shared_document(
+            cli,
+            values["existingStorageAccountResourceId"],
+            "Microsoft.Storage/storageAccounts",
+            "2023-05-01",
+        )
+        props = storage["properties"]
+        if (
+            storage.get("kind") not in {"StorageV2", "BlobStorage", "BlockBlobStorage"}
+            or str(props.get("publicNetworkAccess", "")).casefold() != "disabled"
+            or props.get("allowSharedKeyAccess") is not False
+            or props.get("allowBlobPublicAccess") is not False
+            or props.get("supportsHttpsTrafficOnly") is not True
+            or props.get("minimumTlsVersion") != "TLS1_2"
+        ):
+            raise ValueError(
+                "Shared Storage must already use private Entra-only HTTPS/TLS1_2 Blob access"
+            )
+        _shared_private_endpoint(cli, storage, vnet_id, "blob")
+        names = {
+            row["name"].split("/")[-1]: row
+            for row in cli.collection(
+                f"{storage['id']}/blobServices/default/containers", "2023-05-01"
+            )
+        }
+        for field, prefix in (
+            ("stateContainerName", "azbrief-state"),
+            ("archiveContainerName", "azbrief-archive"),
+        ):
+            name = values.get(field) or f"{prefix}-{values['containerAppName'].lower()}"
+            values[field] = name
+            if name in {"azbrief-state", "azbrief-archive"}:
+                raise ValueError("Shared Storage requires workload-specific containers")
+            if stage == "foundation" and name in names:
+                raise ValueError("Refusing to adopt existing shared-Storage workload containers")
+            if stage != "foundation" and (
+                name not in names or names[name].get("properties", {}).get("publicAccess") != "None"
+            ):
+                raise ValueError(
+                    "Shared workload Blob containers must already exist and remain private"
+                )
+    if values["communicationServicesMode"] == "existing":
+        communication = _shared_document(
+            cli,
+            values["existingCommunicationServicesResourceId"],
+            "Microsoft.Communication/communicationServices",
+            "2023-04-01",
+        )
+        linked = communication["properties"].get("linkedDomains", [])
+        domain_id = values["existingEmailDomainResourceId"]
+        if (
+            not isinstance(linked, list)
+            or not linked
+            or len({item.casefold() for item in linked}) != len(linked)
+        ):
+            raise ValueError("Shared ACS must already have an unambiguous linked email domain")
+        if not domain_id:
+            if len(linked) != 1:
+                raise ValueError("Select one of the shared ACS linked domain resource IDs")
+            domain_id = linked[0]
+        if domain_id.casefold() not in {item.casefold() for item in linked}:
+            raise ValueError("Selected email domain is not already linked to the shared ACS")
+        domain = _shared_document(
+            cli, domain_id, "Microsoft.Communication/emailServices/domains", "2023-04-01"
+        )
+        domain_props = domain["properties"]
+        if not communication["properties"].get("hostName") or not domain_props.get(
+            "fromSenderDomain"
+        ):
+            raise ValueError(
+                "Shared ACS/domain must provide their actual endpoint and sender domain"
+            )
+        if domain_props.get("domainManagement") != "AzureManaged":
+            if (
+                domain_props.get("verificationStates", {}).get("Domain", {}).get("status")
+                != "Verified"
+            ):
+                raise ValueError("Shared custom email domain must already be verified")
+            senders = cli.collection(f"{domain_id}/senderUsernames", "2023-04-01")
+            if not any(
+                row.get("properties", {})
+                .get("username", row.get("name", "").split("/")[-1])
+                .casefold()
+                == "donotreply"
+                for row in senders
+            ):
+                raise ValueError("Shared email domain must permit the default DoNotReply sender")
+        values["existingEmailDomainResourceId"] = domain_id
+        values["emailServiceName"] = domain_id.split("/")[8]
+    elif values["existingEmailDomainResourceId"]:
+        raise ValueError("A new ACS owns its new managed email domain")
+    shared_namespaces = set()
+    if values["foundryAccountMode"] == "existing":
+        shared_namespaces.update(
+            {
+                "privatelink.cognitiveservices.azure.com",
+                "privatelink.openai.azure.com",
+                "privatelink.services.ai.azure.com",
+            }
+        )
+    if values["storageAccountMode"] == "existing":
+        shared_namespaces.add("privatelink.blob.core.windows.net")
+    if shared_namespaces:
+        resolved = _private_dns_bindings(cli, values, vnet_id)
+        if not shared_namespaces <= set(resolved):
+            raise ValueError("Shared Foundry/Storage requires existing canonical private DNS links")
+    return values
 
 
 def _private_dns_bindings(cli: AzureCli, values: dict[str, Any], vnet_id: str) -> dict[str, str]:
@@ -1414,6 +1992,8 @@ def _private_dns_bindings(cli: AzureCli, values: dict[str, Any], vnet_id: str) -
     }
     if values.get("useMicrosoftManagedAgentData", False):
         required -= {"privatelink.documents.azure.com", "privatelink.search.windows.net"}
+    if values.get("containerAppsEnvironmentMode", "new") == "existing":
+        required.discard(f"privatelink.{values['location']}.azurecontainerapps.io")
     explicit = values["existingPrivateDnsZoneIds"]
     if set(explicit) - required:
         raise ValueError("Unexpected private DNS namespace")
@@ -1504,7 +2084,8 @@ def prepare_infrastructure(
 ) -> dict[str, Any]:
     """Keep infrastructure one-time, reuse the approved network and derive completion decisions."""
     cli.assert_context()
-    values = copy.deepcopy(values)
+    values = _resolve_shared_resources(cli, values, stage)
+    bindings = resource_bindings(cli, values)
     network_mode = values.get("virtualNetworkMode", "existing")
     if network_mode not in {"existing", "new"}:
         raise ValueError("Choose new or existing VNet deployment")
@@ -1531,10 +2112,25 @@ def prepare_infrastructure(
         if not saved_options:
             raise ValueError("Completion requires saved foundation options")
         if allow_model_reselection:
-            account_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}"
-            if cli.collection(f"{account_id}/deployments", FOUNDRY_API) or cli.collection(
-                f"{account_id}/projects", FOUNDRY_API
-            ):
+            account_id = bindings["foundryAccountResourceId"]
+            deployments = cli.collection(f"{account_id}/deployments", FOUNDRY_API)
+            projects = cli.collection(f"{account_id}/projects", FOUNDRY_API)
+            if values["foundryAccountMode"] == "existing":
+                deployments = [
+                    row
+                    for row in deployments
+                    if row["name"].split("/")[-1].casefold()
+                    in {
+                        values["modelDeploymentName"].casefold(),
+                        values["simpleModelDeploymentName"].casefold(),
+                    }
+                ]
+                projects = [
+                    row
+                    for row in projects
+                    if row["name"].split("/")[-1].casefold() == values["projectName"].casefold()
+                ]
+            if deployments or projects:
                 raise ValueError(
                     "Model reselection requires zero model deployments and zero projects"
                 )
@@ -1555,6 +2151,12 @@ def prepare_infrastructure(
             for field in NETWORK_OPTION_FIELDS - {"virtualNetworkMode"}
         ):
             raise ValueError("Saved new VNet address choices are immutable")
+        saved_values = infrastructure_values(cli, saved)
+        for mode in SHARED_RESOURCES:
+            if values[mode] != saved_values[mode]:
+                raise ValueError("Saved shared resource modes are immutable")
+        if bindings != {field: saved_values[field] for field in bindings}:
+            raise ValueError("Refusing to redirect a saved infrastructure resource ID or container")
         for field, suffix in TAG_FIELDS.items():
             if field in {"deploymentName", "azureMcpServerUrl"}:
                 continue
@@ -1565,7 +2167,7 @@ def prepare_infrastructure(
                 continue
             if field != "existingPrivateDnsZoneIds" and values[field] != saved_options[field]:
                 raise ValueError(f"Refusing to change saved foundation option: {field}")
-    contract = make_tag_contract(values, name + "-complete")
+    contract = make_tag_contract({**values, **bindings}, name + "-complete")
     if allow_model_reselection and not saved_options:
         raise ValueError("Model reselection is only for a saved unprovisioned foundation")
     if saved_options:
@@ -1612,9 +2214,19 @@ def prepare_infrastructure(
     if stage == "foundation":
         for plan in plans:
             properties = existing_subnets[plan.name.casefold()]["properties"]
-            if plan.role != "private_endpoint" and any(
-                properties.get(field)
-                for field in ("ipConfigurations", "privateEndpoints", "serviceAssociationLinks")
+            shared_owner = (
+                plan.role == "foundry" and values["foundryAccountMode"] == "existing"
+            ) or (
+                plan.role == "container_apps"
+                and values["containerAppsEnvironmentMode"] == "existing"
+            )
+            if (
+                plan.role != "private_endpoint"
+                and not shared_owner
+                and any(
+                    properties.get(field)
+                    for field in ("ipConfigurations", "privateEndpoints", "serviceAssociationLinks")
+                )
             ):
                 raise ValueError(
                     "Foundry and Container Apps subnets must be unused by another workload"
@@ -1627,9 +2239,13 @@ def prepare_infrastructure(
                 "Private Endpoint IP occupancy is unknown; verify free addresses before deployment"
             )
         needed = (
-            (6 if values["deployContainerAppsPrivateEndpoint"] else 5)
-            if values.get("useMicrosoftManagedAgentData", False)
-            else (8 if values["deployContainerAppsPrivateEndpoint"] else 7)
+            int(values["foundryAccountMode"] == "new")
+            + int(values["storageAccountMode"] == "new")
+            + (0 if values.get("useMicrosoftManagedAgentData", False) else 2)
+            + int(
+                values["deployContainerAppsPrivateEndpoint"]
+                and values["containerAppsEnvironmentMode"] == "new"
+            )
         )
         if pe_plan.network.num_addresses - 5 - len(used) < needed:
             raise ValueError(
@@ -1658,6 +2274,13 @@ def prepare_infrastructure(
     if values.get("useMicrosoftManagedAgentData", False):
         expected.pop("cosmosAccountName")
         expected.pop("searchServiceName")
+    for mode, (field, _, _, _, _) in SHARED_RESOURCES.items():
+        if values[mode] == "existing":
+            expected.pop(field)
+    if values["containerAppsEnvironmentMode"] == "existing":
+        expected.pop("logAnalyticsWorkspaceName")
+    if values["communicationServicesMode"] == "existing":
+        expected.pop("emailServiceName")
     for field, resource_type in expected.items():
         resource_id = f"{cli.group_id}/providers/{resource_type}/{values[field]}"
         existing = by_id.get(resource_id.casefold())
@@ -1693,10 +2316,13 @@ def prepare_infrastructure(
             saved_dns,
             resolved_dns,
             use_microsoft_managed_agent_data=values.get("useMicrosoftManagedAgentData", False),
+            shared_environment=values["containerAppsEnvironmentMode"] == "existing",
         )
         prepared["existingPrivateDnsZoneIds"] = saved_dns
     if stage == "complete":
-        account_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}"
+        account_id = bindings["foundryAccountResourceId"]
+        if values["foundryAccountMode"] == "existing":
+            _owned_project(cli, values, account_id, allow_missing=True)
         reused, telemetry = validate_existing_host(cli, account_id, values)
         service_plan = automatic_service_plan(
             cli,
@@ -1707,6 +2333,7 @@ def prepare_infrastructure(
                 "provisionEmail": False,
                 "communicationServicesEndpoint": "",
                 "strictModelSelection": True,
+                "foundryAccountResourceId": account_id,
             },
             by_id,
         )
@@ -1728,11 +2355,12 @@ def _verify_saved_dns_bindings(
     resolved: dict[str, str],
     *,
     use_microsoft_managed_agent_data: bool = False,
+    shared_environment: bool = False,
 ) -> None:
     """Keep explicit DNS overrides and recognize the owned default zones foundation created."""
-    if len(resolved) != (5 if use_microsoft_managed_agent_data else 7) or set(saved) - set(
-        resolved
-    ):
+    if len(resolved) != (5 if use_microsoft_managed_agent_data else 7) - int(
+        shared_environment
+    ) or set(saved) - set(resolved):
         raise ValueError("Completed foundation private DNS inventory is incomplete")
     for namespace, resource_id in resolved.items():
         expected = saved.get(
@@ -1757,7 +2385,11 @@ def run_infrastructure(
     initial = "complete" if stage == "complete" else "foundation"
     if allow_model_reselection and stage != "complete":
         raise ValueError("Explicit model reselection requires --stage complete")
-    account_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}"
+    account_id = (
+        values["existingFoundryAccountResourceId"]
+        if values.get("foundryAccountMode", "new") == "existing"
+        else f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}"
+    )
     if mode != "deploy":
         prepared = prepare_infrastructure(
             cli, values, initial, name, allow_model_reselection=allow_model_reselection
@@ -1794,7 +2426,7 @@ def run_hosted_roles(cli: AzureCli, principal_id: str, mode: str, name: str) -> 
     operations = ("validate", "what-if", "create") if mode == "deploy" else (mode,)
     for operation in operations:
         tags, values = read_infrastructure(cli)
-        project_id = f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/{values['foundryAccountName']}/projects/{values['projectName']}"
+        project_id = f"{values['foundryAccountResourceId']}/projects/{values['projectName']}"
         project_principal = cli.get(project_id, FOUNDRY_API)["identity"]["principalId"]
         if principal_id.casefold() in {
             values["controlPlanePrincipalId"].casefold(),

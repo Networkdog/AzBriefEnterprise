@@ -20,6 +20,15 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [v2 deployment guide](infra/v2/README.md): complete infrastructure in the same resource group before installing or updating the application.
 
+Infrastructure independently offers **new or existing** Foundry, Communication Services,
+Container Apps Environment and Storage. Existing resources may be in other resource groups
+in the same subscription; their **full ARM IDs** are saved in the workload RG's tag handoff.
+Shared parents are not redeployed. AzBrief adds its own project, App/Job/MCP containers and
+workload-specific Blob containers/permissions. A reused Environment retains its existing
+Log Analytics workspace, and reused Communication Services retains its linked email domain.
+Existing private networking and region compatibility must pass preflight; application updates
+reuse these saved IDs without recreating shared services.
+
 New v2 infrastructure lets you select Core/Simple GPT-5 models, independent versions,
 capacities and the deployment region. Check catalog, quota and provider capacity with
 `--list-model-options` first. A new region also hosts the new Foundry account and VNet;

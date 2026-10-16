@@ -50,6 +50,28 @@ param tags object = {
 }
 param jobTags object = tags
 
+var resourceBindings = json(concat(
+  infrastructureTags[?'azbrief.v2.resources0'] ?? '{}',
+  infrastructureTags[?'azbrief.v2.resources1'] ?? '',
+  infrastructureTags[?'azbrief.v2.resources2'] ?? '',
+  infrastructureTags[?'azbrief.v2.resources3'] ?? '',
+  infrastructureTags[?'azbrief.v2.resources4'] ?? '',
+  infrastructureTags[?'azbrief.v2.resources5'] ?? '',
+  infrastructureTags[?'azbrief.v2.resources6'] ?? '',
+  infrastructureTags[?'azbrief.v2.resources7'] ?? ''
+))
+var environmentId = resourceBindings.?containerAppsEnvironmentResourceId ?? resourceId('Microsoft.App/managedEnvironments', infrastructureTags['azbrief.v2.environment'])
+var communicationId = resourceBindings.?communicationServicesResourceId ?? resourceId('Microsoft.Communication/communicationServices', infrastructureTags['azbrief.v2.acs'])
+var emailDomainId = resourceBindings.?emailDomainResourceId ?? resourceId('Microsoft.Communication/emailServices/domains', infrastructureTags['azbrief.v2.email'], 'AzureManagedDomain')
+var foundryAccountId = resourceBindings.?foundryAccountResourceId ?? resourceId('Microsoft.CognitiveServices/accounts', infrastructureTags['azbrief.v2.foundry'])
+var storageId = resourceBindings.?storageAccountResourceId ?? resourceId('Microsoft.Storage/storageAccounts', infrastructureTags['azbrief.v2.storage'])
+var stateName = resourceBindings.?stateContainerName ?? 'azbrief-state'
+var archiveName = resourceBindings.?archiveContainerName ?? 'azbrief-archive'
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+  scope: resourceGroup(split(foundryAccountId, '/')[2], split(foundryAccountId, '/')[4])
+  name: infrastructureTags['azbrief.v2.foundry']
+}
+
 resource existingApp 'Microsoft.App/containerApps@2026-01-01' existing = {
   name: infrastructureTags['azbrief.v2.app']
 }
@@ -73,23 +95,26 @@ var resolvedAppEnvironment = concat(filter(liveUpdate ? (existingApp.properties.
 var resolvedJobEnvironment = concat(filter(liveUpdate ? (existingJob.properties.template.containers[0].?env ?? []) : [], item => !contains(suppliedJobEnvironmentNames, item.name)), jobEnvironment)
 
 resource containerEnvironment 'Microsoft.App/managedEnvironments@2026-01-01' existing = {
+  scope: resourceGroup(split(environmentId, '/')[2], split(environmentId, '/')[4])
   name: infrastructureTags['azbrief.v2.environment']
 }
 resource controlPlaneIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
   name: infrastructureTags['azbrief.v2.identity']
 }
 resource communication 'Microsoft.Communication/communicationServices@2023-04-01' existing = {
+  scope: resourceGroup(split(communicationId, '/')[2], split(communicationId, '/')[4])
   name: infrastructureTags['azbrief.v2.acs']
 }
 resource emailDomain 'Microsoft.Communication/emailServices/domains@2023-04-01' existing = {
-  name: '${infrastructureTags['azbrief.v2.email']}/AzureManagedDomain'
+  scope: resourceGroup(split(emailDomainId, '/')[2], split(emailDomainId, '/')[4])
+  name: '${split(emailDomainId, '/')[8]}/${split(emailDomainId, '/')[10]}'
 }
 resource insights 'Microsoft.Insights/components@2020-02-02' existing = {
   name: infrastructureTags['azbrief.v2.insights']
 }
 
 var applicationUrl = 'https://${infrastructureTags['azbrief.v2.app']}.${containerEnvironment.properties.defaultDomain}'
-var stateContainerUrl = 'https://${infrastructureTags['azbrief.v2.storage']}.blob.${environment().suffixes.storage}/azbrief-state'
+var stateContainerUrl = 'https://${infrastructureTags['azbrief.v2.storage']}.blob.${environment().suffixes.storage}/${stateName}'
 var promptAgentNames = {
   coordinator: '${take(infrastructureTags['azbrief.v2.project'], 47)}-coordinator'
   resource_graph: '${take(infrastructureTags['azbrief.v2.project'], 47)}-resource-graph'
@@ -113,11 +138,11 @@ var runtimeEnvironment = [
   { name: 'AZURE_TENANT_ID', value: tenant().tenantId }
   { name: 'AZURE_SUBSCRIPTION_ID', value: subscription().subscriptionId }
   { name: 'AZURE_CLIENT_ID', value: controlPlaneIdentity.properties.clientId }
-  { name: 'FOUNDRY_PROJECT_ENDPOINT', value: 'https://${infrastructureTags['azbrief.v2.foundry']}.services.ai.azure.com/api/projects/${infrastructureTags['azbrief.v2.project']}' }
+  { name: 'FOUNDRY_PROJECT_ENDPOINT', value: 'https://${foundryAccount.properties.customSubDomainName}.services.ai.azure.com/api/projects/${infrastructureTags['azbrief.v2.project']}' }
   { name: 'FOUNDRY_HOSTED_AGENT_NAME', value: infrastructureTags['azbrief.v2.hosted'] }
   { name: 'API_KEY', secretRef: 'orchestrator-api-key' }
   { name: 'CHECKPOINT_BLOB_URL', value: '${stateContainerUrl}/checkpoint.json' }
-  { name: 'ARCHIVE_BLOB_CONTAINER_URL', value: 'https://${infrastructureTags['azbrief.v2.storage']}.blob.${environment().suffixes.storage}/azbrief-archive' }
+  { name: 'ARCHIVE_BLOB_CONTAINER_URL', value: 'https://${infrastructureTags['azbrief.v2.storage']}.blob.${environment().suffixes.storage}/${archiveName}' }
   { name: 'ADMIN_CONFIG_BLOB_URL', value: '${stateContainerUrl}/admin-config.json' }
   { name: 'ARCHIVE_BASE_URL', value: applicationUrl }
   { name: 'FEEDBACK_BASE_URL', value: applicationUrl }
@@ -128,7 +153,7 @@ var runtimeEnvironment = [
 ]
 var supportResources = filter([
   { id: 'managed_identity', label: 'User-assigned managed identity', name: infrastructureTags['azbrief.v2.identity'], resource_type: 'Microsoft.ManagedIdentity/userAssignedIdentities', api_version: '2023-01-31' }
-  { id: 'state_storage', label: empty(infrastructureTags['azbrief.v2.cosmos']) ? 'Application Storage (State, Archive, Feedback)' : 'Shared Storage (State, Archive, Foundry)', name: infrastructureTags['azbrief.v2.storage'], resource_type: 'Microsoft.Storage/storageAccounts', api_version: '2023-05-01' }
+  { id: 'state_storage', label: empty(infrastructureTags['azbrief.v2.cosmos']) ? 'Application Storage (State, Archive, Feedback)' : 'Shared Storage (State, Archive, Foundry)', name: infrastructureTags['azbrief.v2.storage'], resource_id: storageId, resource_type: 'Microsoft.Storage/storageAccounts', api_version: '2023-05-01' }
   { id: 'cosmos', label: 'Cosmos DB', name: infrastructureTags['azbrief.v2.cosmos'], resource_type: 'Microsoft.DocumentDB/databaseAccounts', api_version: '2024-11-15' }
   { id: 'search', label: 'Azure AI Search', name: infrastructureTags['azbrief.v2.search'], resource_type: 'Microsoft.Search/searchServices', api_version: '2023-11-01' }
 ], resource => !empty(resource.name))
@@ -140,12 +165,12 @@ var appDefaults = concat(runtimeEnvironment, [
   { name: 'ARCHIVE_REQUIRE_AUTH', value: 'true' }
   { name: 'FEEDBACK_UI_ENABLED', value: 'false' }
   { name: 'ADMIN_READINESS_RESOURCE_GROUP', value: resourceGroup().name }
-  { name: 'ADMIN_READINESS_FOUNDRY_ACCOUNT', value: infrastructureTags['azbrief.v2.foundry'] }
+  { name: 'ADMIN_READINESS_FOUNDRY_ACCOUNT', value: foundryAccountId }
   { name: 'ADMIN_READINESS_FOUNDRY_PROJECT', value: infrastructureTags['azbrief.v2.project'] }
   { name: 'ADMIN_READINESS_FOUNDRY_MODEL_DEPLOYMENT', value: infrastructureTags['azbrief.v2.coreModel'] }
   { name: 'ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT', value: infrastructureTags['azbrief.v2.simpleModel'] }
   { name: 'ADMIN_READINESS_PROMPT_AGENTS', value: base64(string(promptAgentNames)) }
-  { name: 'ADMIN_READINESS_CONTAINER_ENVIRONMENTS', value: base64(string([infrastructureTags['azbrief.v2.environment']])) }
+  { name: 'ADMIN_READINESS_CONTAINER_ENVIRONMENTS', value: base64(string([environmentId])) }
   { name: 'ADMIN_READINESS_CONTAINER_APPS', value: base64(string([infrastructureTags['azbrief.v2.app']])) }
   { name: 'ADMIN_READINESS_CONTAINER_JOBS', value: base64(string([infrastructureTags['azbrief.v2.job']])) }
   { name: 'ADMIN_READINESS_SUPPORT_RESOURCES', value: base64(string(supportResources)) }

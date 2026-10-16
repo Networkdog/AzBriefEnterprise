@@ -113,8 +113,29 @@ if (-not [uri]::TryCreate($setup.azureMcpServerUrl, [UriKind]::Absolute, [ref]$m
     $mcpUri.Query -or $mcpUri.Fragment) {
     throw 'Azure MCP must use an approved HTTPS URL without credentials or query.'
 }
-$expectedProjectId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.CognitiveServices/accounts/$($setup.foundryAccountName)/projects/$($setup.projectName)"
-$expectedEndpoint = "https://$($setup.foundryAccountName).services.ai.azure.com/api/projects/$($setup.projectName)"
+$foundryResourceGroup = $ResourceGroup
+$expectedAccountId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.CognitiveServices/accounts/$($setup.foundryAccountName)"
+if ($setup.ContainsKey('foundryAccountResourceId')) {
+    $accountPattern = '^/subscriptions/' + [regex]::Escape($SubscriptionId.ToString()) +
+        '/resourceGroups/(?<group>[a-zA-Z0-9_.()-]{1,90})/providers/Microsoft\.CognitiveServices/accounts/' +
+        [regex]::Escape($setup.foundryAccountName) + '$'
+    if ($setup.foundryAccountResourceId -isnot [string] -or
+        $setup.foundryAccountResourceId -notmatch $accountPattern) {
+        throw 'The Foundry account must be an exact typed ID in the explicitly selected subscription.'
+    }
+    $foundryResourceGroup = $Matches.group
+    $expectedAccountId = $setup.foundryAccountResourceId
+}
+$expectedProjectId = "$expectedAccountId/projects/$($setup.projectName)"
+$foundrySubdomain = $setup.foundryAccountName
+if ($setup.ContainsKey('foundryAccountSubdomain')) {
+    if ($setup.foundryAccountSubdomain -isnot [string] -or
+        $setup.foundryAccountSubdomain -cnotmatch '^[a-zA-Z0-9][a-zA-Z0-9-]{0,63}$') {
+        throw 'Invalid Foundry custom subdomain in the deployment output.'
+    }
+    $foundrySubdomain = $setup.foundryAccountSubdomain
+}
+$expectedEndpoint = "https://$foundrySubdomain.services.ai.azure.com/api/projects/$($setup.projectName)"
 if ($setup.projectResourceId -ne $expectedProjectId -or $setup.projectEndpoint -ne $expectedEndpoint) {
     throw 'The KT output project identity or endpoint does not match its declared resource names.'
 }
@@ -140,7 +161,7 @@ $bindings = @{
     AZURE_CLIENT_SECRET = ''
     AZURE_CLIENT_CERTIFICATE_PATH = ''
     AZURE_SUBSCRIPTION_ID = $SubscriptionId.ToString()
-    AZURE_RESOURCE_GROUP = $ResourceGroup
+    AZURE_RESOURCE_GROUP = $foundryResourceGroup
     AZURE_LOCATION = $foundation.location
     AZURE_AI_PROJECT_ENDPOINT = $setup.projectEndpoint
     AZURE_AI_PROJECT_ID = $setup.projectResourceId

@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "17587743030457024232"
+      "templateHash": "13103639879016001809"
     },
     "description": "Infrastructure-owned, post-publication Hosted identity RBAC. Agent identity exists only after first publication; no App or infrastructure resource is recreated."
   },
@@ -34,16 +34,84 @@
       "maxLength": 36
     }
   },
+  "variables": {
+    "resourceBindings": "[json(concat(coalesce(tryGet(parameters('infrastructureTags'), 'azbrief.v2.resources0'), '{}'), coalesce(tryGet(parameters('infrastructureTags'), 'azbrief.v2.resources1'), ''), coalesce(tryGet(parameters('infrastructureTags'), 'azbrief.v2.resources2'), ''), coalesce(tryGet(parameters('infrastructureTags'), 'azbrief.v2.resources3'), ''), coalesce(tryGet(parameters('infrastructureTags'), 'azbrief.v2.resources4'), ''), coalesce(tryGet(parameters('infrastructureTags'), 'azbrief.v2.resources5'), ''), coalesce(tryGet(parameters('infrastructureTags'), 'azbrief.v2.resources6'), ''), coalesce(tryGet(parameters('infrastructureTags'), 'azbrief.v2.resources7'), '')))]",
+    "accountId": "[coalesce(tryGet(variables('resourceBindings'), 'foundryAccountResourceId'), resourceId('Microsoft.CognitiveServices/accounts', parameters('infrastructureTags')['azbrief.v2.foundry']))]"
+  },
   "resources": [
     {
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', split(format('{0}/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project']), '/')[0], split(format('{0}/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project']), '/')[1])]",
-      "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', split(format('{0}/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project']), '/')[0], split(format('{0}/{1}', parameters('infrastructureTags')['azbrief.v2.foundry'], parameters('infrastructureTags')['azbrief.v2.project']), '/')[1]), parameters('hostedPrincipalId'), '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "[if(equals(split(variables('accountId'), '/')[4], resourceGroup().name), 'v2-hosted-project-user', format('v2-hosted-project-user-{0}', uniqueString(resourceGroup().id)))]",
+      "subscriptionId": "[split(variables('accountId'), '/')[2]]",
+      "resourceGroup": "[split(variables('accountId'), '/')[4]]",
       "properties": {
-        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
-        "principalId": "[parameters('hostedPrincipalId')]",
-        "principalType": "ServicePrincipal"
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "foundryAccountName": {
+            "value": "[parameters('infrastructureTags')['azbrief.v2.foundry']]"
+          },
+          "projectName": {
+            "value": "[parameters('infrastructureTags')['azbrief.v2.project']]"
+          },
+          "principalId": {
+            "value": "[parameters('hostedPrincipalId')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "4963391323573008932"
+            }
+          },
+          "parameters": {
+            "foundryAccountName": {
+              "type": "string"
+            },
+            "projectName": {
+              "type": "string"
+            },
+            "principalId": {
+              "type": "string"
+            },
+            "readAccount": {
+              "type": "bool",
+              "defaultValue": false
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName')), parameters('principalId'), '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            },
+            {
+              "condition": "[parameters('readAccount')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), parameters('principalId'), 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                "principalId": "[parameters('principalId')]",
+                "principalType": "ServicePrincipal"
+              }
+            }
+          ]
+        }
       }
     },
     {

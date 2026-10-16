@@ -2,7 +2,7 @@ targetScope = 'resourceGroup'
 
 metadata description = 'Non-secret AzBrief v2 infrastructure handoff. Preserve unrelated resource-group tags.'
 
-@description('Same-resource-group infrastructure contract. Never include application secrets.')
+@description('Workload resource-group contract, including exact IDs of shared parents in other RGs. Never include application secrets.')
 param infrastructure object
 
 @allowed(['foundation', 'mcp_pending', 'ready'])
@@ -14,6 +14,18 @@ param infrastructureOptions object = {}
 @maxLength(2048)
 param optionsJson string = string(infrastructureOptions)
 var optionsTags = toObject(range(0, 8), index => 'azbrief.v2.options${index}', index => take(skip(optionsJson, index * 256), 256))
+@maxLength(2048)
+param resourcesJson string = string({
+  foundryAccountResourceId: infrastructure.foundryAccountResourceId
+  storageAccountResourceId: infrastructure.storageAccountResourceId
+  containerAppsEnvironmentResourceId: infrastructure.containerAppsEnvironmentResourceId
+  communicationServicesResourceId: infrastructure.communicationServicesResourceId
+  logAnalyticsWorkspaceResourceId: infrastructure.logAnalyticsWorkspaceResourceId
+  emailDomainResourceId: infrastructure.emailDomainResourceId
+  stateContainerName: infrastructure.stateContainerName
+  archiveContainerName: infrastructure.archiveContainerName
+})
+var resourceTags = toObject(range(0, (length(resourcesJson) + 255) / 256), index => 'azbrief.v2.resources${index}', index => take(skip(resourcesJson, index * 256), 256))
 var contractTags = union({
   'azbrief.v2.schema': '2'
   'azbrief.v2.profile': 'kt-private-v2'
@@ -48,7 +60,7 @@ var contractTags = union({
   'azbrief.v2.mcpConnection': infrastructure.azureMcpProjectConnectionName
   'azbrief.v2.mcpApp': infrastructure.azureMcpContainerAppName
   'azbrief.v2.mcpIdentity': infrastructure.azureMcpIdentityName
-}, optionsTags)
+}, optionsTags, resourceTags)
 
 resource handoff 'Microsoft.Resources/tags@2025-04-01' = {
   name: 'default'

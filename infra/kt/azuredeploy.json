@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "5758883974318307383"
+      "templateHash": "5091501578858122923"
     }
   },
   "parameters": {
@@ -29457,7 +29457,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.46.1.21595",
-              "templateHash": "538679055625139116"
+              "templateHash": "1644238024851307273"
             }
           },
           "parameters": {
@@ -29488,6 +29488,18 @@
             "existingAssignmentNames": {
               "type": "object",
               "defaultValue": {}
+            },
+            "assignFoundryRole": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "assignStorageRoles": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "assignEmailRole": {
+              "type": "bool",
+              "defaultValue": true
             }
           },
           "resources": [
@@ -29502,6 +29514,7 @@
               }
             },
             {
+              "condition": "[parameters('assignFoundryRole')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.CognitiveServices/accounts/projects', parameters('foundryAccountName'), parameters('projectName'))]",
@@ -29513,6 +29526,7 @@
               }
             },
             {
+              "condition": "[parameters('assignStorageRoles')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-state')]",
@@ -29524,6 +29538,7 @@
               }
             },
             {
+              "condition": "[parameters('assignStorageRoles')]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('storageAccountName'), 'default', 'azbrief-archive')]",
@@ -29547,7 +29562,7 @@
               }
             },
             {
-              "condition": "[and(not(empty(parameters('communicationServicesName'))), not(empty(parameters('emailSenderRoleDefinitionId'))))]",
+              "condition": "[and(and(parameters('assignEmailRole'), not(empty(parameters('communicationServicesName')))), not(empty(parameters('emailSenderRoleDefinitionId'))))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "scope": "[resourceId('Microsoft.Communication/communicationServices', parameters('communicationServicesName'))]",

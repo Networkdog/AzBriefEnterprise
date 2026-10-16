@@ -352,6 +352,23 @@ reselection path without changing choices or weakening readiness guards.
 Explicit --stage complete --reselect-models allows only six model fields to change on saved
 foundation with zero model deployments and zero projects. All other choices stay immutable;
 existing/partial model or project state requires diagnosis, never overwrite, tag forcing or reset.
+For an explicitly shared Foundry account, the zero-state check applies to the selected model
+aliases and workload project; unrelated projects/models are retained, never adopted or replaced.
+
+V2 independently selects new/existing Foundry, ACS, Environment and application Storage.
+Existing references are exact typed same-subscription ARM IDs, including other RGs. Never PUT
+shared parents, their networking/diagnostics or unrelated workloads. Add only the workload
+project/Host, apps, private workload Blob containers and scoped permissions. Shared Foundry
+projects carry azbriefWorkloadResourceGroup ownership; allow unrelated projects but refuse a
+same-name foreign project. Shared model aliases still require exact model/version/GlobalStandard;
+no PTU, replacements or silent fallback. Shared Foundry/Environment retain the exact same-region
+existing VNet/subnets, approved PEs/DNS and PNA Disabled. Reuse the Environment's actual log
+workspace and the ACS's already linked/verified sender domain; no empty-input replacement.
+Persist full IDs and container names in contiguous resources0..resources7 RG tag chunks
+(2048 characters max), modes in existing options, and count actual chunks against 50 tags.
+Legacy no-ID contracts stay same-RG; completion cannot change modes/IDs. App/Job/MCP,
+CLI-only Graph connection, late Hosted roles, Agent handoff and readiness must all follow those
+IDs. Shared Storage data roles stay on new workload containers. Keep Runtime Guidance unchanged.
 
 This repository ships **one** topology. There is no Automation Account, no Function App and
 no fat wheel. Analysis runs in a Foundry Hosted Agent; Container Apps hosts only control-plane

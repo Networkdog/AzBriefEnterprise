@@ -3,6 +3,10 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "location": { "value": "eastus" },
+    "foundryAccountMode": { "value": "new" },
+    "storageAccountMode": { "value": "new" },
+    "containerAppsEnvironmentMode": { "value": "new" },
+    "communicationServicesMode": { "value": "new" },
     "virtualNetworkMode": { "value": "existing" },
     "virtualNetworkResourceGroupName": { "value": "<existing-network-resource-group>" },
     "virtualNetworkName": { "value": "<approved-existing-vnet>" },

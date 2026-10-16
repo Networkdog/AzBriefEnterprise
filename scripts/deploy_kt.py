@@ -694,7 +694,7 @@ def automatic_service_plan(
             for field in ("coreModelName", "simpleModelName")
         ):
             raise ValueError("Selected models must retain the supported GPT-5 role policy")
-        account_id = (
+        account_id = values.get("foundryAccountResourceId") or (
             f"{cli.group_id}/providers/Microsoft.CognitiveServices/accounts/"
             f"{values['foundryAccountName']}"
         )
@@ -738,6 +738,15 @@ def automatic_service_plan(
                     raise ValueError(
                         f"Existing {role.lower()} model differs from the saved selection; no replacement is allowed"
                     )
+                if values.get("foundryAccountMode") == "existing":
+                    expected_capacity = (
+                        values["modelCapacity"] if role == "Core" else values["simpleModelCapacity"]
+                    )
+                    actual_capacity = deployment.get("sku", {}).get("capacity")
+                    if type(actual_capacity) is not int or actual_capacity < expected_capacity:
+                        raise ValueError(
+                            "Shared model capacity is below the selected requirement; no allocation was changed"
+                        )
             plan[f"reuse{role}Model"] = True
         if missing:
             catalog = cli.collection(f"{account_id}/models", FOUNDRY_API)
@@ -1216,7 +1225,7 @@ def validate_existing_host(
         project["name"].split("/")[-1].casefold() == values["projectName"].casefold()
         for project in projects
     ):
-        if projects:
+        if projects and values.get("foundryAccountMode", "new") != "existing":
             raise ValueError(
                 "Another Foundry project already exists in this account. Use the exact "
                 "original project name; never create a near-name project to reuse its connections."

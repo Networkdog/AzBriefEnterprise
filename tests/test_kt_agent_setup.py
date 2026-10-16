@@ -58,6 +58,12 @@ def _setup() -> dict:
         ("hosted-collision", "six distinct"),
         ("model-url", "Invalid model deployment name"),
         ("mcp-url", "approved HTTPS URL"),
+        ("shared-foundry", ""),
+        ("shared-foundry-subdomain", ""),
+        ("shared-foundry-project", "project identity or endpoint"),
+        ("shared-foundry-subscription", "exact typed ID"),
+        ("shared-foundry-type", "exact typed ID"),
+        ("shared-foundry-invalid-subdomain", "Invalid Foundry custom subdomain"),
     ],
 )
 def test_kt_agent_setup_what_if_does_not_mutate_or_publish(
@@ -92,6 +98,31 @@ def test_kt_agent_setup_what_if_does_not_mutate_or_publish(
         setup["runtimeSetup"][
             "azureMcpServerUrl"
         ] = "https://user:private-marker@unapproved.invalid"
+    if change.startswith("shared-foundry"):
+        shared_id = (
+            setup["runtimeSetup"]["projectResourceId"]
+            .split("/projects/")[0]
+            .replace("/resourceGroups/rg-kt/", "/resourceGroups/rg-shared-ai/")
+        )
+        setup["runtimeSetup"]["foundryAccountResourceId"] = shared_id
+        setup["runtimeSetup"]["projectResourceId"] = shared_id + "/projects/project-kt"
+        if change == "shared-foundry-subdomain":
+            setup["runtimeSetup"]["foundryAccountSubdomain"] = "shared-endpoint"
+            setup["runtimeSetup"][
+                "projectEndpoint"
+            ] = "https://shared-endpoint.services.ai.azure.com/api/projects/project-kt"
+        elif change == "shared-foundry-project":
+            setup["runtimeSetup"]["projectResourceId"] += "-foreign"
+        elif change == "shared-foundry-subscription":
+            setup["runtimeSetup"]["foundryAccountResourceId"] = shared_id.replace(
+                setup["subscriptionId"], "99999999-9999-9999-9999-999999999999"
+            )
+        elif change == "shared-foundry-type":
+            setup["runtimeSetup"]["foundryAccountResourceId"] = shared_id.replace(
+                "Microsoft.CognitiveServices/accounts", "Microsoft.Storage/storageAccounts"
+            )
+        elif change == "shared-foundry-invalid-subdomain":
+            setup["runtimeSetup"]["foundryAccountSubdomain"] = "https://not-a-subdomain.invalid"
     source = tmp_path / "setup.json"
     calls = tmp_path / "calls.txt"
     source.write_text(

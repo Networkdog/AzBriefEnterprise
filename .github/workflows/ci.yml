@@ -133,4 +133,4 @@ jobs:
           AZBRIEF_VERBOSE: "false"
         run: |
           & .\.venv\Scripts\Activate.ps1
-          python -m pytest tests/test_customer_deployment.py tests/test_deploy_dev_script.py tests/test_enterprise_config.py tests/test_kt_deployment.py tests/test_deployment_v2.py -o addopts= -x -q
+          python -m pytest tests/test_customer_deployment.py tests/test_deploy_dev_script.py tests/test_enterprise_config.py tests/test_kt_deployment.py tests/test_deployment_v2.py tests/test_v2_shared_resources.py tests/test_v2_shared_ui.py tests/test_kt_agent_setup.py -o addopts= -x -q

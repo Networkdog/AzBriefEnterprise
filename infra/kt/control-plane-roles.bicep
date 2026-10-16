@@ -8,33 +8,36 @@ param applicationInsightsName string = ''
 param communicationServicesName string = ''
 param emailSenderRoleDefinitionId string = ''
 param existingAssignmentNames object = {}
+param assignFoundryRole bool = true
+param assignStorageRoles bool = true
+param assignEmailRole bool = true
 
-resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
+resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = if (assignFoundryRole) {
   name: foundryAccountName
 }
-resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' existing = {
+resource project 'Microsoft.CognitiveServices/accounts/projects@2025-06-01' existing = if (assignFoundryRole) {
   parent: account
   name: projectName
 }
-resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = if (assignStorageRoles) {
   name: storageAccountName
 }
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' existing = {
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' existing = if (assignStorageRoles) {
   parent: storage
   name: 'default'
 }
-resource state 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
+resource state 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = if (assignStorageRoles) {
   parent: blobService
   name: 'azbrief-state'
 }
-resource archive 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = {
+resource archive 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' existing = if (assignStorageRoles) {
   parent: blobService
   name: 'azbrief-archive'
 }
 resource insights 'Microsoft.Insights/components@2020-02-02' existing = if (!empty(applicationInsightsName)) {
   name: applicationInsightsName
 }
-resource communication 'Microsoft.Communication/communicationServices@2023-03-31' existing = if (!empty(communicationServicesName)) {
+resource communication 'Microsoft.Communication/communicationServices@2023-03-31' existing = if (assignEmailRole && !empty(communicationServicesName)) {
   name: communicationServicesName
 }
 
@@ -46,27 +49,27 @@ resource reader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalType: 'ServicePrincipal'
   }
 }
-resource foundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource foundryUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignFoundryRole) {
   scope: project
-  name: existingAssignmentNames.?foundryUser ?? guid(project.id, controlPlanePrincipalId, '53ca6127-db72-4b80-b1b0-d745d6d5456d')
+  name: existingAssignmentNames.?foundryUser ?? guid(project!.id, controlPlanePrincipalId, '53ca6127-db72-4b80-b1b0-d745d6d5456d')
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')
     principalId: controlPlanePrincipalId
     principalType: 'ServicePrincipal'
   }
 }
-resource stateContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource stateContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignStorageRoles) {
   scope: state
-  name: existingAssignmentNames.?stateContributor ?? guid(state.id, controlPlanePrincipalId, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+  name: existingAssignmentNames.?stateContributor ?? guid(state!.id, controlPlanePrincipalId, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
     principalId: controlPlanePrincipalId
     principalType: 'ServicePrincipal'
   }
 }
-resource archiveContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource archiveContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignStorageRoles) {
   scope: archive
-  name: existingAssignmentNames.?archiveContributor ?? guid(archive.id, controlPlanePrincipalId, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
+  name: existingAssignmentNames.?archiveContributor ?? guid(archive!.id, controlPlanePrincipalId, 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
     principalId: controlPlanePrincipalId
@@ -84,7 +87,7 @@ resource telemetryPublisher 'Microsoft.Authorization/roleAssignments@2022-04-01'
 
 }
 
-resource emailSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(communicationServicesName) && !empty(emailSenderRoleDefinitionId)) {
+resource emailSender 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (assignEmailRole && !empty(communicationServicesName) && !empty(emailSenderRoleDefinitionId)) {
   scope: communication
   name: existingAssignmentNames.?emailSender ?? guid(communication!.id, controlPlanePrincipalId, emailSenderRoleDefinitionId)
   properties: {

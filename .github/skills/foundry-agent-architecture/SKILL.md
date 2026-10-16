@@ -118,6 +118,16 @@ Local preparation also checks the CI workflow schema, its self-change triggers, 
 Black/isort/Flake8, imports, and full pytest with the 40% coverage gate. Passing these checks does
 not prove the production-runtime build, hosted CI, or customer-specific operational acceptance.
 
+V2 may reference a shared Foundry account and internal Container Apps Environment in other
+RGs of the explicit subscription. Project/Host and model work runs in the account RG while
+App/Job/MCP and their identities stay in the workload RG. Never replay parent resources or
+adopt another workload's project; verify the project workload tag and full ARM IDs. The
+Agent setup output carries the exact account ID/custom subdomain, with project-scoped
+Hosted permissions and no control-plane evidence grants. Shared Storage uses workload-only
+containers and scoped data roles; shared Environment retains its actual log workspace.
+Keep ID-tag routing, Graph connection, runtime roles and readiness consistent without
+changing the bounded Runtime Guidance or weakening private networking/GlobalStandard.
+
 1. Read the [current assessment](./references/assessment.md) and the current official Microsoft Foundry Agent documentation.
 2. Identify the controlling path, not only configuration wiring:
    - `src/hosted_agent.py`
