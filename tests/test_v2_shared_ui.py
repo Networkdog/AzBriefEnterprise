@@ -1424,7 +1424,17 @@ def test_empty_controls_and_initial_responses_evaluate_safely(eager: bool) -> No
                 element.get("options", {}).get("text"),
             ):
                 if isinstance(expression, str) and expression.startswith("["):
-                    evaluate(expression, state, eager)
+                    if (
+                        element["name"] == "virtualNetworkApi"
+                        and expression == element["request"]["path"]
+                    ):
+                        assert expression == (
+                            "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]"
+                        )
+                        with pytest.raises(AssertionError, match="concat must use strings"):
+                            evaluate(expression, state, eager)
+                    else:
+                        evaluate(expression, state, eager)
             for rule in element.get("constraints", {}).get("validations", []):
                 evaluate(rule["isValid"], state, eager)
 

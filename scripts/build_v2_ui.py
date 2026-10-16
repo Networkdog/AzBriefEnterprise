@@ -1422,9 +1422,10 @@ def _network_mode_controls(
             element["visible"] = f"[{existing}]"
         if element["name"] == "virtualNetworkApi":
             element.pop("visible", None)
+            # 정상 KT 폼의 직접 선택 의존성을 유지하고 구독 응답으로 대체하지 않습니다.
             element["request"][
                 "path"
-            ] = f"[if(and({existing}, not(empty(coalesce(steps('network').virtualNetwork.id, '')))), concat(coalesce(steps('network').virtualNetwork.id, ''), '?api-version=2024-05-01'), concat('/subscriptions/', subscription().subscriptionId, '?api-version=2022-12-01'))]"
+            ] = "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]"
     response = "steps('network').virtualNetworkApi"
     selected_id = "coalesce(steps('network').virtualNetwork.id, '')"
     same_vnet = f"equals(toLower(coalesce({response}.id, '')), toLower({selected_id}))"
@@ -1439,7 +1440,9 @@ def _network_mode_controls(
             "text": (
                 f"[if({error}, concat('서브넷 조회 실패: ', coalesce({response}.error.code, 'ARMReadFailed'), "
                 "'. 선택한 VNet의 읽기 권한(Microsoft.Network/virtualNetworks/read)과 구독을 확인하십시오. 권한을 자동 변경하지 않습니다.'), "
-                f"if(not({same_vnet}), '선택한 VNet의 서브넷 목록을 조회 중입니다. 응답이 바뀌지 않으면 VNet을 다시 선택하십시오. 이전 VNet의 목록으로 배포할 수 없습니다.', "
+                f"if(not({same_vnet}), concat('선택한 VNet의 조회 응답이 확인되지 않았습니다. 선택 ID: ', {selected_id}, "
+                f"' · 응답 ID: ', if(empty(coalesce({response}.id, '')), '응답 없음', coalesce({response}.id, '')), "
+                "'. 이 상태는 리전 불일치나 서브넷 없음으로 판단하지 않습니다. 현재 탭을 다시 열어도 지속되면 이 ID와 Portal 진단을 확인하십시오. 이전 응답으로 배포할 수 없습니다.'), "
                 f"if(not({has_subnets}), 'VNet 응답에 서브넷 목록이 없어 선택을 진행할 수 없습니다. VNet 조회 응답을 확인하십시오.', "
                 "'선택한 VNet에는 서브넷이 없습니다. 기존 서브넷이 있는 VNet을 선택하거나 별도로 승인된 네트워크 준비를 완료하십시오.')))]"
             ),
@@ -1790,7 +1793,7 @@ def normalize_ui(
                 raise ValueError("The infrastructure Portal base validation cannot be removed")
             parameters["outputs"]["portalValidationPassed"] = "[" + retained + "]"
     config = parameters.setdefault("config", {})
-    config.pop("isWizard", None)
+    config["isWizard"] = False
     config.setdefault("basics", {}).setdefault("resourceGroup", {})["allowExisting"] = True
     _safe_initial_outputs(parameters)
     for step in parameters["steps"]:

@@ -9,7 +9,8 @@
         "resourceGroup": {
           "allowExisting": true
         }
-      }
+      },
+      "isWizard": false
     },
     "basics": [],
     "steps": [

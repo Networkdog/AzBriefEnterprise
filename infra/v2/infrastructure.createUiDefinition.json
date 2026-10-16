@@ -17,7 +17,8 @@
         "resourceGroup": {
           "allowExisting": true
         }
-      }
+      },
+      "isWizard": false
     },
     "basics": [
       {
@@ -125,7 +126,7 @@
             "type": "Microsoft.Solutions.ArmApiControl",
             "request": {
               "method": "GET",
-              "path": "[if(and(and(equals(basics('infrastructureStage'), 'foundation'), equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'existing')), not(empty(coalesce(steps('network').virtualNetwork.id, '')))), concat(coalesce(steps('network').virtualNetwork.id, ''), '?api-version=2024-05-01'), concat('/subscriptions/', subscription().subscriptionId, '?api-version=2022-12-01'))]"
+              "path": "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]"
             }
           },
           {
@@ -134,7 +135,7 @@
             "visible": "[and(and(equals(basics('infrastructureStage'), 'foundation'), equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'existing')), not(empty(coalesce(steps('network').virtualNetwork.id, ''))), or(not(empty(steps('network').virtualNetworkApi.error)), not(equals(toLower(coalesce(steps('network').virtualNetworkApi.id, '')), toLower(coalesce(steps('network').virtualNetwork.id, '')))), not(not(equals(coalesce(steps('network').virtualNetworkApi.properties.subnets, false), false))), empty(steps('network').virtualNetworkApi.properties.subnets)))]",
             "options": {
               "icon": "Warning",
-              "text": "[if(not(empty(steps('network').virtualNetworkApi.error)), concat('서브넷 조회 실패: ', coalesce(steps('network').virtualNetworkApi.error.code, 'ARMReadFailed'), '. 선택한 VNet의 읽기 권한(Microsoft.Network/virtualNetworks/read)과 구독을 확인하십시오. 권한을 자동 변경하지 않습니다.'), if(not(equals(toLower(coalesce(steps('network').virtualNetworkApi.id, '')), toLower(coalesce(steps('network').virtualNetwork.id, '')))), '선택한 VNet의 서브넷 목록을 조회 중입니다. 응답이 바뀌지 않으면 VNet을 다시 선택하십시오. 이전 VNet의 목록으로 배포할 수 없습니다.', if(not(not(equals(coalesce(steps('network').virtualNetworkApi.properties.subnets, false), false))), 'VNet 응답에 서브넷 목록이 없어 선택을 진행할 수 없습니다. VNet 조회 응답을 확인하십시오.', '선택한 VNet에는 서브넷이 없습니다. 기존 서브넷이 있는 VNet을 선택하거나 별도로 승인된 네트워크 준비를 완료하십시오.')))]"
+              "text": "[if(not(empty(steps('network').virtualNetworkApi.error)), concat('서브넷 조회 실패: ', coalesce(steps('network').virtualNetworkApi.error.code, 'ARMReadFailed'), '. 선택한 VNet의 읽기 권한(Microsoft.Network/virtualNetworks/read)과 구독을 확인하십시오. 권한을 자동 변경하지 않습니다.'), if(not(equals(toLower(coalesce(steps('network').virtualNetworkApi.id, '')), toLower(coalesce(steps('network').virtualNetwork.id, '')))), concat('선택한 VNet의 조회 응답이 확인되지 않았습니다. 선택 ID: ', coalesce(steps('network').virtualNetwork.id, ''), ' · 응답 ID: ', if(empty(coalesce(steps('network').virtualNetworkApi.id, '')), '응답 없음', coalesce(steps('network').virtualNetworkApi.id, '')), '. 이 상태는 리전 불일치나 서브넷 없음으로 판단하지 않습니다. 현재 탭을 다시 열어도 지속되면 이 ID와 Portal 진단을 확인하십시오. 이전 응답으로 배포할 수 없습니다.'), if(not(not(equals(coalesce(steps('network').virtualNetworkApi.properties.subnets, false), false))), 'VNet 응답에 서브넷 목록이 없어 선택을 진행할 수 없습니다. VNet 조회 응답을 확인하십시오.', '선택한 VNet에는 서브넷이 없습니다. 기존 서브넷이 있는 VNet을 선택하거나 별도로 승인된 네트워크 준비를 완료하십시오.')))]"
             }
           },
           {

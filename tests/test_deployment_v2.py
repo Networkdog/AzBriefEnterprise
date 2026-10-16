@@ -2432,6 +2432,13 @@ def test_v2_matches_working_kt_navigation_and_subnet_choice_contract() -> None:
         assert ui_definition(name)["config"].get("isWizard", False) == legacy["config"].get(
             "isWizard", False
         )
+        assert ui_definition(name)["config"]["isWizard"] is False
+        assert list(ui_definition(name))[0] == "config"
+    assert ui_definition("infrastructure")["basics"]
+    assert (
+        ui_controls("infrastructure")["virtualNetworkApi"]["request"]
+        == legacy_controls["virtualNetworkApi"]["request"]
+    )
     for name in ("peSubnetName", "foundrySubnetName", "containerAppsSubnetName"):
         assert (
             ui_controls("infrastructure")[name]["constraints"]
@@ -2446,23 +2453,16 @@ def test_v2_matches_working_kt_navigation_and_subnet_choice_contract() -> None:
     assert ui_controls("infrastructure")["virtualNetwork"]["options"] == expected_options
 
 
-@pytest.mark.parametrize("selection", [None, {}, {"id": ""}])
-@pytest.mark.parametrize("mode", [None, "existing", "new"])
-def test_vnet_discovery_never_initializes_with_a_query_only_request(
-    selection: dict[str, str] | None, mode: str | None
-) -> None:
+def test_vnet_discovery_keeps_the_working_kt_direct_resource_dependency() -> None:
     control = ui_controls("infrastructure")["virtualNetworkApi"]
     assert "visible" not in control
-    assert (
-        _evaluate_ui_expression(
-            control["request"]["path"],
-            {},
-            network={"virtualNetwork": selection, "virtualNetworkMode": mode},
-            basics={"infrastructureStage": "foundation"},
-            subscription={"subscriptionId": SUBSCRIPTION},
-            eager_conditionals=True,
-        )
-        == f"/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01"
+    assert control["request"] == {
+        "method": "GET",
+        "path": "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]",
+    }
+    assert not any(
+        token in control["request"]["path"]
+        for token in ("if(", "coalesce(", "basics(", "subscription(", "virtualNetworkMode")
     )
 
 
@@ -2521,26 +2521,15 @@ def test_vnet_discovery_request_and_subnet_choices_follow_selection_changes() ->
                 )
                 == expected
             )
-        network["virtualNetwork"] = None
-        assert (
-            _evaluate_ui_expression(
-                controls["virtualNetworkApi"]["request"]["path"],
-                {},
-                network=network,
-                basics={"infrastructureStage": "foundation"},
-                subscription={"subscriptionId": SUBSCRIPTION},
-                eager_conditionals=True,
-            )
-            == f"/subscriptions/{SUBSCRIPTION}?api-version=2022-12-01"
-        )
 
 
 @pytest.mark.parametrize(
     "response,visible,message",
     [
-        (None, True, "조회 중"),
+        (None, True, "응답 없음"),
         ({"error": {"code": "Forbidden", "message": "private-error-body"}}, True, "Forbidden"),
-        ({"id": "another-vnet", "properties": {"subnets": []}}, True, "조회 중"),
+        ({"id": "another-vnet", "properties": {"subnets": []}}, True, "another-vnet"),
+        ({"id": f"/subscriptions/{SUBSCRIPTION}", "properties": {}}, True, "응답 ID"),
         ({"properties": {}}, True, "서브넷 목록이 없어"),
         ({"properties": {"subnets": None}}, True, "서브넷 목록이 없어"),
         ({"properties": {"subnets": []}}, True, "서브넷이 없습니다"),

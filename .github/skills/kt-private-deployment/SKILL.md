@@ -217,12 +217,16 @@ private/VNet paths.
    Select an existing VNet filtered to the deployment subscription and region.
 2. Read the VNet through `Microsoft.Solutions.ArmApiControl`. This is a nonvisual API
    dependency, not a visible input; do not attach the subnet fields' `visible` gate.
-   Until a selected VNet ID exists, use the existing valid read-only subscription path,
-   never `?api-version=...` without a resource path. Test the request itself across empty
-   initialization, selection, clearing, VNet changes and new/complete modes, not only
-   dropdowns with a prefilled ARM response. Distinguish loading/stale, read failure,
-   missing subnet data and an actually empty list with safe status text/error code.
+   Keep the exact working KT request `concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')`.
+   Do not replace an unresolved ResourceSelector dependency with a subscription GET or
+   condition it on stage/mode: that valid fallback does not prove reactive VNet loading.
+   Test the serialized dependency, selected-ID changes and name-list output, not only
+   dropdowns with a prefilled response. Distinguish absent/different response IDs, read
+   failure, missing subnet data and an actually empty list using safe IDs/error codes.
    Never surface error bodies, assume a read failure means no subnets, or auto-grant access.
+   Explicit isWizard=false preserves non-wizard navigation in both v2 forms. A screenshot
+   with no initial active tab needs Portal initialization diagnostics; do not claim the
+   first-render issue solved merely because clicking Basics works or local tests pass.
 3. Use simple independent dropdowns for the three role subnet selections in both stages:
    - populate choices only from the selected VNet's subnet names using a short nullable-safe map;
      retain a literal empty-choice default, never an automatic first subnet;

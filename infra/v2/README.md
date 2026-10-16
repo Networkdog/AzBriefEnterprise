@@ -241,21 +241,29 @@ parameter file. `existing` retains the approved VNet selector, three exact subne
 and original CIDR/delegation/occupancy/DNS checks. CIDR inputs for new mode never resize or
 reinterpret existing subnets. Cross-RG existing VNet selection remains supported.
 
-Subnet discovery uses a nonvisual `ArmApiControl` without a `visible` property. Its GET
-switches to the selected VNet's full ID only after an ID is available; before selection,
-new-network mode and completion use the existing read-only subscription lookup. This
-prevents an invalid `?api-version=...` request during control initialization or selection
-clearing. The three dropdowns retain the working KT name-only choices and literal blank
-default; choosing another VNet reloads its names without automatically assigning roles.
+Subnet discovery uses a nonvisual `ArmApiControl` without a `visible` property. Its request
+is exactly the working KT direct dependency:
+`concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')`.
+Do not wrap that dependency in stage/mode/empty-ID conditions or substitute a subscription
+GET through `coalesce`: a syntactically valid fallback can leave a non-VNet response and
+does not prove that Portal observes the later selection. The three dropdowns retain the
+working KT name-only choices and literal blank default. New-network and completion use
+their own saved/generated values and never treat a subscription response as network data.
 
-If no subnet choices appear, the network tab distinguishes a pending/stale VNet response,
+If no subnet choices appear, the network tab distinguishes an absent/different VNet response,
 an ARM read error, a response without subnet data and a successfully read VNet with no
-subnets. Only a safe error code is displayed, never the error body. Check the selected
+subnets. Selected/returned ARM IDs distinguish a retained subscription or old VNet response
+from a missing response. Only safe identifiers/error codes are displayed, never error bodies.
+Matching RG/VNet locations do not prove the request ran. Check the selected
 subscription and `Microsoft.Network/virtualNetworks/read` access on the actual network RG.
 Denied, missing or stale reads cannot authorize deployment; do not force validation tags,
 invent subnets or broaden permissions. Publish the generated UI before retesting in a new
 Portal tab. An exact-request/live-ARM replay verifies returned choices, not the authenticated
 Portal rendering or a completed infrastructure/application deployment.
+Both v2 forms explicitly set `isWizard=false`, preserving the working KT non-wizard behavior.
+The infrastructure Basics stage selector remains populated. If the first screen still has
+no active tab until clicked, capture the actual Portal initialization diagnostics; neither a
+static configuration check nor the manual-tab workaround proves that first rendering is fixed.
 
 `new` creates only a dedicated target-RG VNet, with no peering, NSG, route, public IP, NAT
 or changes to customer networks. Defaults are VNet `10.240.0.0/16`, Foundry `10.240.0.0/24`,

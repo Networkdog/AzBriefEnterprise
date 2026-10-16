@@ -307,12 +307,14 @@ Key Vault references. Never grant Hosted evidence permissions to the Container A
 identity. Local/mocked checks are not customer ARM validation or proof of delivery. Pin the CI
 Bicep compiler to the version that generated the checked-in ARM, and test setup on Windows.
 The guided VNet profile must bind Foundry and the VNet to the same deployment region.
-V2 subnet discovery keeps ArmApiControl nonvisual with no visible gate. Before a VNet ID is
-available, use a valid read-only subscription request, never a query-only API path. Preserve
-the KT name-only dropdown expression, blank defaults and separate CIDR/identity/delegation
-guards. Loading/stale, denied/missing-data and truly empty subnet responses need distinct
-safe status text; show error codes only, not bodies. Test request initialization, clearing
-and VNet changes as well as prefilled responses; live ARM replay is not Portal acceptance.
+V2 subnet discovery keeps ArmApiControl nonvisual with no visible gate and exactly the working
+KT direct request dependency on virtualNetwork.id. Do not mask an unresolved selector with
+coalesce/subscription fallback or wrap the request in stage/mode conditions. Preserve name-only
+dropdown choices, blank defaults and separate CIDR/identity/delegation guards. Missing/different
+response IDs, denied/missing-data and truly empty subnets need distinct safe status; show only
+safe IDs/error codes, not bodies. Test the serialized dependency and VNet changes, not just a
+prefilled response. Explicit isWizard=false retains KT navigation; first-render/no-active-tab
+requires actual Portal diagnostics. Live ARM replay is not authenticated Portal acceptance.
 Keep CI `contents: read` permissions at the workflow root, never inside an event. Include the CI
 file itself in both push/PR path filters and retain its deployment-contract regression assertions.
 
