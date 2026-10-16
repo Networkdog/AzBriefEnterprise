@@ -27,20 +27,19 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 추가합니다. 기존 Environment의 Log Analytics와 ACS에 연결된 이메일 도메인을 재사용합니다.
 기존 사설 네트워크·리전 호환성은 사전검사하며, 앱 업데이트는 저장된 ID를 그대로 참조합니다.
 
-신규 v2 인프라에서 Core/Simple GPT-5 모델, 각 모델의 버전·용량과 배포 지역을 선택할 수
-있습니다. 먼저 `--list-model-options`로 리전별 모델 목록, 구독 할당량과 공급 용량을
-확인하십시오. 다른 지역을 선택하면 새 Foundry 계정과 VNet도 그 지역에 배포합니다.
-기존 설치를 옮기거나 모델만 원격 지역으로 연결하는 기능은 아닙니다. 모델·프로젝트가
-없는 기반의 명시적 모델 재선택 방법은 가이드에서 안내합니다.
+모델 선택이 VNet·Environment의 리전을 설정하지 않도록 분리했습니다. 기존 VNet은 실제
+조회된 리전을 그대로 사용하고, 신규 VNet만 기본 사항의 **신규 인프라 배포 리전**을 사용합니다.
+RG 메타데이터나 모델 후보 조회 지역이 이 값을 덮어쓰지 않습니다. 완료·앱 업데이트는 저장된
+인프라 리전을 보존합니다.
 
-새 설치는 v2 인프라 배포에서 **기반 준비**를 선택한 뒤 **네트워크 선택**의
-**LLM 모델·Foundry·VNet 배포 리전**에서 리전을 고릅니다. **기존 기반 완성** 단계에서는
-저장된 리전을 유지하므로 메뉴가 숨겨지며, 앱 배포 템플릿에서도 모델 리전을 바꾸지 않습니다.
-이 리전은 RG의 메타데이터 리전과 별개이며 기본값은 **East US**입니다.
-새 Foundry 계정·하위 모델·VNet을 함께 선택한 리전에 배포하며 기존 VNet은 리전이 같아야 합니다.
-완료 단계는 저장된 리전을 유지하고 기존 리소스를 이동하지 않습니다.
+모델 옵션에는 부모 Foundry의 실제 **모델·quota 리전**을 별도로 표시합니다. 해당 계정 아래에
+직접 만드는 모델 배포에는 독립적인 `location` 필드가 없습니다. **GlobalStandard 추론은
+전역 라우팅되며 선택한 지역에 고정되지 않습니다.** 다른 리전 모델을 쓰려면 별도 모델 리소스와
+[모델 연결](https://learn.microsoft.com/azure/foundry/agents/how-to/connected-models)이 필요하며,
+이 템플릿이 이를 조용히 추가하거나 인증·네트워크를 변경하지 않습니다.
+`--list-model-options --model-regions`는 모델·quota·공급 용량의 읽기 전용 후보 조회입니다.
 
-신규 v2 기본값은 East US, Core `gpt-5.2` / `2025-12-11`, Simple `gpt-5-mini` /
+신규 v2 모델 기본값은 Core `gpt-5.2` / `2025-12-11`, Simple `gpt-5-mini` /
 `2025-08-07`이며 `GlobalStandard` 용량을 각각 200단위로 설정합니다. PTU 배포·예약은
 사용하지 않습니다. 저장된 기존 프로필은 유지하며 배포 전에 현재 quota와 공급 용량을 확인해야 합니다.
 
@@ -647,16 +646,16 @@ archive 저장까지 검증하지는 않습니다.
 RG 인계 정보를 한 번 준비합니다. 앱 배포는 이 인프라를 다시 만들지 않고 App·Job·MCP
 컨테이너를 설치하거나 업데이트합니다. Prompt/Hosted Agent 게시는 별도 검증 절차를 따릅니다.
 
-인프라 폼에서 **기반 준비 → 네트워크 선택 → LLM 모델·Foundry·VNet 배포 리전**을 선택합니다.
-기본값은 RG 메타데이터 리전과 독립적인 **East US**이며, 기존 기반 완성과 앱 업데이트에서는
-저장된 리전을 보존하므로 이 메뉴가 표시되지 않습니다.
+인프라 폼에서 **기반 준비 → 네트워크 선택**을 진행합니다. 기존 VNet은 원래 리전을 유지하며,
+신규 인프라는 기본 사항의 리전을 사용합니다. 모델 옵션은 부모 Foundry 리전을 표시하며
+VNet·Environment를 다른 리전으로 옮기지 않습니다.
 
 **인프라와 앱의 역할:**
 
 | 리소스 | 단계 | 비고 |
 |----------|------|-------|
 | Foundry 계정·모델·프로젝트·Capability Host | 인프라 | Microsoft 관리형 Agent 데이터를 사용하는 Basic VNet 구성. GlobalStandard 전용 |
-| VNet·서브넷·Private Endpoint·DNS | 인프라 | 신규 또는 승인된 기존 VNet. Foundry·모델·VNet은 선택한 리전에 함께 배포 |
+| VNet·서브넷·Private Endpoint·DNS | 인프라 | 신규 또는 승인된 기존 VNet. 사설 Foundry·Environment 호환성은 모델 선택과 별도로 검증 |
 | 앱 상태·archive Blob 저장소 | 인프라 | 사설 container와 Entra 인증. Foundry 대화 저장소와 구분 |
 | 제어면·MCP UAMI와 범위를 제한한 역할 | 인프라 | 별도 identity 유지. Hosted 런타임 권한은 검증된 Agent 게시 후 구성 |
 | 공용 Container Apps Environment·로그·Insights·이메일 | 인프라 | Environment·Workspace·Insights를 각각 하나씩 공유. Entra 인증 유지 |

@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Any, cast
 
 ROOT = Path(__file__).resolve().parents[1]
+INFRASTRUCTURE_REGION = (
+    "if(equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'new'), "
+    "toLower(coalesce(location(), '')), "
+    "toLower(coalesce(steps('network').virtualNetworkApi.location, "
+    "steps('network').virtualNetwork.location, '')))"
+)
 _TAG_INDEX = re.compile(
     r"(steps\('(?:contract|application)'\)\.resourceGroupApi\.tags)\['(azbrief\.v2\.[A-Za-z0-9]+)'\]"
 )
@@ -472,12 +478,15 @@ def _group_resource_names(parameters: dict[str, Any]) -> None:
         )
 
 
-def _extend_guard(parameters: dict[str, Any], marker: str, condition: str) -> None:
-    guard = parameters["outputs"]["portalValidationPassed"]
-    if marker in guard:
-        body = guard[5:-2]
+def _without_guard_extension(expression: str, marker: str) -> str:
+    if marker not in expression:
+        return expression
+    if expression.startswith("and(") and expression.endswith(")"):
+        body = expression[4:-1]
         depth = 0
         quoted = False
+        start = 0
+        arguments = []
         for index, character in enumerate(body):
             if character == "'":
                 quoted = not quoted
@@ -487,10 +496,25 @@ def _extend_guard(parameters: dict[str, Any], marker: str, condition: str) -> No
                 elif character == ")":
                     depth -= 1
                 elif character == "," and depth == 0:
-                    guard = "[" + body[:index] + "]"
-                    break
-        else:
-            raise ValueError("The generated shared-resource guard must remain a bounded extension")
+                    arguments.append(body[start:index].strip())
+                    start = index + 1
+        arguments.append(body[start:].strip())
+        retained = [
+            result
+            for argument in arguments
+            if (result := _without_guard_extension(argument, marker))
+        ]
+        if len(retained) == 1:
+            return retained[0]
+        return "and(" + ", ".join(retained) + ")" if retained else ""
+    return ""
+
+
+def _extend_guard(parameters: dict[str, Any], marker: str, condition: str) -> None:
+    guard = _without_guard_extension(parameters["outputs"]["portalValidationPassed"][1:-1], marker)
+    if not guard:
+        raise ValueError("The base Portal validation must remain after replacing an extension")
+    guard = "[" + guard + "]"
     parameters["outputs"]["portalValidationPassed"] = f"[and({guard[1:-1]}, {condition})]"
 
 
@@ -624,7 +648,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
 
     email_service_id = email_parent(domain_id)
     region = (
-        f"if({foundation}, coalesce(steps('network').modelDeploymentRegion, 'eastus'), "
+        f"if({foundation}, {INFRASTRUCTURE_REGION}, "
         f"coalesce({tags}['azbrief.v2.location'], ''))"
     )
     vnet = (
@@ -1534,13 +1558,32 @@ def _application_shared_binding_guard(parameters: dict[str, Any]) -> None:
     )
 
 
+def _separate_region_inputs(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _separate_region_inputs(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_separate_region_inputs(item) for item in value]
+    if not isinstance(value, str) or not value.startswith("["):
+        return value
+    foundation = "equals(basics('infrastructureStage'), 'foundation')"
+    new_network = "equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'new')"
+    old_region = "coalesce(steps('network').modelDeploymentRegion, 'eastus')"
+    vnet_region = "toLower(coalesce(steps('network').virtualNetworkApi.location, steps('network').virtualNetwork.location, ''))"
+    old_guard = (
+        f"if(and({foundation}, not({new_network})), "
+        f"and(not(empty({vnet_region})), equals({vnet_region}, {old_region})), true)"
+    )
+    new_guard = f"if({foundation}, not(empty({INFRASTRUCTURE_REGION})), true)"
+    return value.replace(old_guard, new_guard).replace(old_region, INFRASTRUCTURE_REGION)
+
+
 def _model_selection_controls(parameters: dict[str, Any]) -> None:
     step = next((step for step in parameters["steps"] if step["name"] == "options"), None)
     if step is None:
         return
     location_config = parameters["config"]["basics"]["location"]
-    location_config["label"] = "Foundry·모델·VNet 배포 지역"
-    location_config["visible"] = False
+    location_config["label"] = "신규 인프라 배포 리전"
+    location_config["visible"] = True
     location_config["resourceTypes"] = [
         "Microsoft.CognitiveServices/accounts",
         "Microsoft.App/managedEnvironments",
@@ -1554,74 +1597,60 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
     names = set(fields) | {"modelCapacity", "simpleModelCapacity", "modelRegionNotice"}
     step["elements"] = [element for element in step["elements"] if element["name"] not in names]
     foundation = "equals(basics('infrastructureStage'), 'foundation')"
-    region = "coalesce(steps('network').modelDeploymentRegion, 'eastus')"
-    new_network = "equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'new')"
-    vnet_region = "toLower(coalesce(steps('network').virtualNetworkApi.location, steps('network').virtualNetwork.location, ''))"
-    same_region = f"and(not(empty({vnet_region})), equals({vnet_region}, {region}))"
+    region = INFRASTRUCTURE_REGION
     network_step = next(step for step in parameters["steps"] if step["name"] == "network")
     network_step["elements"] = [
         element
         for element in network_step["elements"]
-        if element["name"] not in {"modelDeploymentRegion", "modelRegionMismatchNotice"}
+        if element["name"]
+        not in {"modelDeploymentRegion", "modelRegionMismatchNotice", "infrastructureRegionNotice"}
     ]
-    network_step["elements"][:0] = [
+    network_step["elements"].insert(
+        0,
         {
-            "name": "modelDeploymentRegion",
-            "type": "Microsoft.Common.DropDown",
-            "label": "LLM 모델·Foundry·VNet 배포 리전",
-            "defaultValue": "East US",
-            "visible": f"[{foundation}]",
-            "toolTip": "RG의 메타데이터 리전과 독립적입니다. 모델은 부모 Foundry 계정과 같은 리전을 사용합니다. 신규 VNet도 이 리전에 생성하며 기존 VNet은 같은 리전이어야 합니다. GlobalStandard의 추론 처리 위치를 이 리전으로 제한하지는 않습니다.",
-            "constraints": {
-                "required": True,
-                "allowedValues": [
-                    {"label": label, "value": value}
-                    for label, value in (
-                        ("East US", "eastus"),
-                        ("East US 2", "eastus2"),
-                        ("Korea Central", "koreacentral"),
-                        ("Japan East", "japaneast"),
-                        ("Sweden Central", "swedencentral"),
-                    )
-                ],
-            },
-        },
-        {
-            "name": "modelRegionMismatchNotice",
+            "name": "infrastructureRegionNotice",
             "type": "Microsoft.Common.InfoBox",
-            "visible": f"[and({foundation}, not({new_network}), not(empty({vnet_region})), not(equals({vnet_region}, {region})))]",
+            "visible": f"[{foundation}]",
             "options": {
-                "icon": "Warning",
-                "text": "선택한 모델 배포 리전과 기존 VNet의 리전이 다릅니다. 같은 리전의 VNet을 선택하거나 모델 배포 리전을 변경하십시오. 기존 VNet이나 Foundry 계정을 다른 리전으로 이동하지 않습니다.",
+                "icon": "Info",
+                "text": "기존 VNet은 실제 조회된 리전을 그대로 사용합니다. 신규 VNet만 기본 사항의 '신규 인프라 배포 리전'에 생성합니다. 이 설정은 Global Standard의 모델 추론 지역 선택이 아니며, 모델 이름·버전·용량이나 후보 조회 지역을 바꿔도 VNet·Environment의 리전은 변경되지 않습니다.",
             },
         },
-    ]
+    )
     for element in network_step["elements"]:
         if element["name"] == "virtualNetwork":
             element["options"]["filter"]["location"] = "all"
     guard = parameters["outputs"]["portalValidationPassed"]
-    if "modelDeploymentRegion" not in guard:
-        parameters["outputs"][
-            "portalValidationPassed"
-        ] = f"[and({guard[1:-1]}, if(and({foundation}, not({new_network})), {same_region}, true))]"
+    region_guard = f"if({foundation}, not(empty({region})), true)"
+    if region_guard not in guard:
+        parameters["outputs"]["portalValidationPassed"] = f"[and({guard[1:-1]}, {region_guard})]"
     chunks = [
         f"coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.options{index}'], '')"
         for index in range(8)
     ]
     combined = "concat(" + ", ".join(chunks) + ")"
     saved = f"parse(if(empty({combined}), '{{}}', {combined}))"
+    actual_model_region = (
+        "if(equals(coalesce(steps('names').foundryAccountMode, 'new'), 'existing'), "
+        "toLower(coalesce(steps('names').existingFoundryAccountApi.location, '')), "
+        f"{region})"
+    )
     new_profile_notice = (
-        "기반 준비에서 모델 배포 리전을 선택합니다. 신규 기본값은 East US, Core gpt-5.2 / "
-        "Simple gpt-5-mini, GlobalStandard 각 200단위이며 PTU는 사용하지 않습니다. "
-        "CLI --list-model-options --model-regions로 quota·공급 용량을 먼저 확인하십시오. "
-        "신규 Foundry·VNet도 선택한 리전에 배포하며 기존 배포를 옮기지는 않습니다."
+        f"concat('GlobalStandard 모델·quota 리전: ', "
+        f"if(empty({actual_model_region}), '미확인', {actual_model_region}), "
+        "'. 모델 배포의 관리·할당량 리전은 부모 Foundry 계정에서 결정되며 별도 location 속성은 없습니다. "
+        "추론 처리 위치는 Microsoft가 전역으로 라우팅하므로 지역을 고정하지 않습니다. "
+        "다른 리전 모델은 별도 모델 리소스와 연결이 필요하며 이 템플릿이 자동 생성하지 않습니다. "
+        "Core gpt-5.2 / Simple gpt-5-mini, GlobalStandard 각 200단위가 기본이며 PTU는 사용하지 않습니다. "
+        "CLI --list-model-options --model-regions는 읽기 전용 후보 조회이며 인프라 리전을 변경하지 않습니다.')"
     )
     completed_profile_notice = (
         f"concat('저장된 배포: 리전 ', coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.location'], '미확인'), "
         f"', Core ', coalesce({saved}.coreModelName, '미확인'), ' / ', coalesce({saved}.modelVersion, '미확인'), "
         f"', Simple ', coalesce({saved}.simpleModelName, '미확인'), ' / ', coalesce({saved}.simpleModelVersion, {saved}.modelVersion, '미확인'), "
         "'. 기존 기반 완성은 이 값을 재사용하며 신규 기본값으로 변경하지 않습니다. "
-        "모델·리전 메뉴는 기반 준비에서만 표시됩니다. 저장된 모델의 quota가 부족하면 "
+        "모델 이름·버전·용량은 기반 준비에서 선택하며 모델 관리 리전은 부모 계정에서 결정됩니다. "
+        "GlobalStandard의 추론은 전역 라우팅되며 VNet 리전을 설정하지 않습니다. 저장된 모델의 quota가 부족하면 "
         "모델·프로젝트가 모두 없는지 확인한 후 승인된 CLI --stage complete --reselect-models로 "
         "모델만 명시적으로 재선택하십시오. 리전과 기존 자원은 바꾸지 않습니다. PTU는 사용하지 않습니다.')"
     )
@@ -1631,7 +1660,7 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
             "type": "Microsoft.Common.InfoBox",
             "options": {
                 "icon": "Warning",
-                "text": f"[if({foundation}, '{new_profile_notice}', {completed_profile_notice})]",
+                "text": f"[if({foundation}, {new_profile_notice}, {completed_profile_notice})]",
             },
         }
     )
@@ -1690,7 +1719,7 @@ def _model_selection_controls(parameters: dict[str, Any]) -> None:
         if element["name"] == "automaticSettings":
             element["options"][
                 "text"
-            ] = "모델 논리 배포 별칭·Hosted 이름·MCP 연결 이름은 자동 설정합니다. 실제 모델 이름·버전·용량과 신규 배포 지역은 명시 선택하며 카탈로그·quota·공급 용량 검증이 필요합니다."
+            ] = "모델 논리 배포 별칭·Hosted 이름·MCP 연결 이름은 자동 설정합니다. 실제 모델 이름·버전·용량은 명시 선택하며 부모 Foundry 리전의 카탈로그·quota·공급 용량을 검증합니다. 이 모델 설정이 VNet 리전을 변경하지 않습니다."
     complete_location = (
         "coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.location'], '')"
     )
@@ -1724,7 +1753,15 @@ def normalize_ui(
     document: dict[str, Any], network_validations: list[dict[str, Any]]
 ) -> dict[str, Any]:
     result = copy.deepcopy(document)
-    parameters = result["parameters"]
+    parameters = _separate_region_inputs(result["parameters"])
+    result["parameters"] = parameters
+    if any(step["name"] == "contract" for step in parameters["steps"]):
+        existing_guard = parameters["outputs"].get("portalValidationPassed")
+        if isinstance(existing_guard, str):
+            retained = _without_guard_extension(existing_guard[1:-1], "existingFoundryAccountApi")
+            if not retained:
+                raise ValueError("The infrastructure Portal base validation cannot be removed")
+            parameters["outputs"]["portalValidationPassed"] = "[" + retained + "]"
     config = parameters.setdefault("config", {})
     config.pop("isWizard", None)
     config.setdefault("basics", {}).setdefault("resourceGroup", {})["allowExisting"] = True

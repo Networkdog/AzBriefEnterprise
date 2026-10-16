@@ -2473,7 +2473,7 @@ def main() -> int:
     parser.add_argument(
         "--model-regions",
         nargs="+",
-        help="Explicit canonical regions for discovery; does not move an existing Foundry account",
+        help="Read-only model-resource quota/capacity regions; never changes VNet, Environment or account location",
     )
     parser.add_argument(
         "--candidate-models", nargs="+", help="Optional exact GPT-5 model names to narrow discovery"
@@ -2518,7 +2518,7 @@ def main() -> int:
                     "v2_model_options",
                     profiles=rows,
                     azure_mutations=False,
-                    region_scope="new_foundry_and_vnet_location",
+                    region_scope="model_resource_quota_and_capacity",
                     existing_installation_changed=False,
                 )
             elif args.prepare_mcp_authentication:

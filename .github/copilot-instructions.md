@@ -339,12 +339,15 @@ version falls back to Core; new omitted parameters use the independent default. 
 profiles and KT defaults. Read-only --list-model-options combines regional Responses/Agents
 catalog, exact SKU quota and provider capacity, not a reservation or runtime/quality acceptance.
 Strict v2 completion never substitutes models and compares reused model/version/SKU exactly.
-Combine shared quota without conflating distinct versions' provider capacity. New region means
-a new same-region Foundry/VNet/model installation, not an account move or remote-only routing.
-Portal modelDeploymentRegion is independent of RG metadata location and defaults to East US;
-hide native Basics location, never add unsupported defaultValue configuration. The VNet selector
-keeps subscription scope but uses documented location=all so RG location cannot hide candidates.
-Require known matching VNet region before submission, never silently override the selected region.
+Combine shared quota without conflating distinct versions' provider capacity. Model choices and
+read-only --model-regions discovery must never set VNet/Environment location. Remove the combined
+modelDeploymentRegion control: existing VNet supplies its actual known region, and new VNet uses
+the supported native Basics infrastructure location, not a model-region menu. Never add unsupported
+Basics defaultValue configuration. Keep subscription scope and location=all on the VNet selector.
+Display actual parent Foundry model/quota region separately. Same-account model deployments have
+no independent location property; GlobalStandard inference is globally routed, not region-pinned.
+A separate regional model resource/connected-model configuration is a distinct architecture change;
+never silently add remote accounts, keys, gateway connections or alter private networking.
 Completion retains saved location, including older Korea Central installs.
 Completion UI must display the actual saved Core/Simple model versions and region instead of
 advertising new defaults as current values; explain the bounded explicit zero-model/project

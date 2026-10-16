@@ -29,21 +29,20 @@ Log Analytics workspace, and reused Communication Services retains its linked em
 Existing private networking and region compatibility must pass preflight; application updates
 reuse these saved IDs without recreating shared services.
 
-New v2 infrastructure lets you select Core/Simple GPT-5 models, independent versions,
-capacities and the deployment region. Check catalog, quota and provider capacity with
-`--list-model-options` first. A new region also hosts the new Foundry account and VNet;
-this does not move an existing installation or route only its models remotely. The guide
-covers explicit model reselection for a foundation with no models or projects.
+Model selection no longer sets the VNet or Environment region. An existing VNet retains its
+verified actual region; only a new VNet uses the native **New infrastructure deployment region**
+control in Basics. RG metadata and model-candidate discovery do not override either choice.
+Completion and application updates preserve the saved infrastructure location.
 
-For a new installation, choose **기반 준비 (Foundation)** in v2 Infrastructure Deployment, then
-open **네트워크 선택 (Network selection)** to select **LLM 모델·Foundry·VNet 배포 리전**. It is hidden
-during **Complete existing foundation**, which must preserve the saved region; the application
-template also cannot change model regions.
-The network tab's **LLM deployment region** is independent of the resource group's metadata
-location and defaults to **East US**. It selects the new Foundry account, child models and VNet
-together; an existing VNet must match. Completion retains the saved region without moving resources.
+The model options display the actual parent Foundry **model/quota region**, separately from
+infrastructure choices. A model deployed directly under that account has no independent
+`location` field. **GlobalStandard inference is globally routed, not pinned to a selected region.**
+A model in another region requires a separate model resource and a
+[connected-model configuration](https://learn.microsoft.com/azure/foundry/agents/how-to/connected-models);
+this template does not silently add one or change authentication/networking to enable it.
+Use `--list-model-options --model-regions` for read-only model/quota/capacity discovery.
 
-New v2 defaults are East US, Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-mini` /
+New v2 model defaults are Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-mini` /
 `2025-08-07`, each with 200 `GlobalStandard` capacity units. No PTU deployment or reservation
 is used. Existing saved profiles stay unchanged; check current quota and capacity before deployment.
 
@@ -678,16 +677,16 @@ project, private network, app-owned storage, identities, monitoring, email and R
 Application deployment installs or updates the App, Job and managed MCP container without replaying
 that infrastructure. Prompt/Hosted Agent publication and runtime acceptance remain guarded steps.
 
-In the infrastructure form, select **Foundation**, then open **Network selection**. The
-**LLM model / Foundry / VNet deployment region** menu defaults to **East US** independently of
-the RG's metadata location. It is intentionally hidden for completion and application updates.
+In the infrastructure form, select **Foundation**, then **Network selection**. An existing VNet
+keeps its region; new infrastructure uses the native Basics location. Model options report the
+parent Foundry region and never relocate the VNet or Environment.
 
 **Infrastructure and application responsibilities:**
 
 | Resource | Stage | Notes |
 |----------|-------|-------|
 | Foundry account, models, project and Capability Host | Infrastructure | Basic VNet setup with Microsoft-managed agent data; GlobalStandard only |
-| VNet/subnets, Private Endpoints and DNS | Infrastructure | New or approved existing VNet; Foundry, models and VNet share the selected region |
+| VNet/subnets, Private Endpoints and DNS | Infrastructure | New or approved existing VNet; private Foundry/Environment compatibility is validated independently of model selection |
 | App state/archive Blob storage | Infrastructure | Private containers and Entra-only access; not Foundry conversation storage |
 | Control-plane and MCP UAMIs with scoped roles | Infrastructure | Separate identities; Hosted runtime grants follow guarded Agent publication |
 | Shared Container Apps Environment, logs, Insights and email | Infrastructure | One environment/workspace/Insights component; Entra authentication retained |

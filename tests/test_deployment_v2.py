@@ -251,7 +251,7 @@ def test_model_discovery_uses_region_catalog_quota_and_provider_capacity(
     assert not cli.operations
 
 
-def test_portal_can_select_alternative_model_versions_and_new_deployment_region() -> None:
+def test_portal_model_choices_do_not_override_new_infrastructure_location() -> None:
     outputs = ui_definition("infrastructure")["outputs"]
     data = {
         "contract": {"resourceGroupApi": None},
@@ -275,7 +275,7 @@ def test_portal_can_select_alternative_model_versions_and_new_deployment_region(
             _evaluate_ui_expression(
                 outputs[name],
                 data,
-                network={"virtualNetworkMode": "new", "modelDeploymentRegion": "eastus2"},
+                network={"virtualNetworkMode": "new", "modelDeploymentRegion": "koreacentral"},
                 basics={"infrastructureStage": "foundation"},
                 selected_location="eastus2",
                 eager_conditionals=True,
@@ -324,9 +324,10 @@ def test_new_defaults_match_portal_cli_and_global_standard(tmp_path: Path) -> No
     ]
     assert len(deployments) == 2
     assert all(resource["sku"]["name"] == "GlobalStandard" for resource in deployments)
-    assert controls["modelDeploymentRegion"]["defaultValue"] == "East US"
+    assert "modelDeploymentRegion" not in controls
+    assert "modelRegionMismatchNotice" not in controls
     assert controls["virtualNetwork"]["options"]["filter"]["location"] == "all"
-    assert ui_definition("infrastructure")["config"]["basics"]["location"]["visible"] is False
+    assert ui_definition("infrastructure")["config"]["basics"]["location"]["visible"] is True
     assert (
         _evaluate_ui_expression(
             ui_definition("infrastructure")["outputs"]["location"],
@@ -337,8 +338,9 @@ def test_new_defaults_match_portal_cli_and_global_standard(tmp_path: Path) -> No
             selected_location="koreacentral",
             eager_conditionals=True,
         )
-        == "eastus"
+        == "koreacentral"
     )
+    assert all("location" not in resource for resource in deployments)
 
 
 def test_new_defaults_do_not_replace_saved_legacy_models(tmp_path: Path) -> None:
@@ -373,6 +375,7 @@ def test_new_defaults_do_not_replace_saved_legacy_models(tmp_path: Path) -> None
             _evaluate_ui_expression(
                 ui_definition("infrastructure")["outputs"][field],
                 {"contract": {"resourceGroupApi": {"tags": saved}}},
+                network={},
                 basics={"infrastructureStage": "complete"},
             )
             == values[field]
@@ -380,6 +383,7 @@ def test_new_defaults_do_not_replace_saved_legacy_models(tmp_path: Path) -> None
     notice = _evaluate_ui_expression(
         ui_controls("infrastructure")["modelRegionNotice"]["options"]["text"],
         {"contract": {"resourceGroupApi": {"tags": saved}}},
+        network={},
         basics={"infrastructureStage": "complete"},
         eager_conditionals=True,
     )
@@ -2251,12 +2255,12 @@ def test_independent_versions_roundtrip_and_legacy_version_falls_back(tmp_path: 
     "api_region,picker_region,expected",
     [
         ("eastus", "eastus", True),
-        ("koreacentral", "koreacentral", False),
+        ("koreacentral", "koreacentral", True),
         (None, None, False),
         (None, "eastus", True),
     ],
 )
-def test_model_region_is_independent_from_rg_but_matches_existing_vnet(
+def test_existing_vnet_region_is_never_overridden_by_model_or_rg_inputs(
     tmp_path: Path, api_region: str | None, picker_region: str | None, expected: bool
 ) -> None:
     cli, values = infrastructure_cli(tmp_path)
@@ -2278,18 +2282,15 @@ def test_model_region_is_independent_from_rg_but_matches_existing_vnet(
         "contract": {"contractAccepted": True, "resourceGroupApi": None},
         "names": {"namingPrefix": "kt", "namingSuffix": "dev"},
     }
-    assert (
-        _evaluate_ui_expression(
-            ui_definition("infrastructure")["outputs"]["location"],
-            data,
-            network=network,
-            basics={"infrastructureStage": "foundation"},
-            resource_group={"mode": "New", "location": "koreacentral"},
-            selected_location="koreacentral",
-            eager_conditionals=True,
-        )
-        == "eastus"
-    )
+    assert _evaluate_ui_expression(
+        ui_definition("infrastructure")["outputs"]["location"],
+        data,
+        network=network,
+        basics={"infrastructureStage": "foundation"},
+        resource_group={"mode": "New", "location": "koreacentral"},
+        selected_location="koreacentral",
+        eager_conditionals=True,
+    ) == (api_region or picker_region or "")
     assert (
         _evaluate_ui_expression(
             ui_definition("infrastructure")["outputs"]["portalValidationPassed"],

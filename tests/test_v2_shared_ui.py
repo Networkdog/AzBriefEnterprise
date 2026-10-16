@@ -65,6 +65,7 @@ class UiState:
         default_factory=lambda: {"mode": "New", "name": GROUP, "location": "koreacentral"}
     )
     stage: str = "foundation"
+    selected_location: str = "eastus"
 
 
 def evaluate(expression: str, state: UiState, eager: bool = True) -> Any:
@@ -76,6 +77,7 @@ def evaluate(expression: str, state: UiState, eager: bool = True) -> Any:
         subscription={"subscriptionId": SUBSCRIPTION},
         basics={"infrastructureStage": state.stage},
         eager_conditionals=eager,
+        selected_location=state.selected_location,
     )
 
 
@@ -113,7 +115,6 @@ def foundation() -> UiState:
         },
         network={
             "virtualNetworkMode": "existing",
-            "modelDeploymentRegion": "eastus",
             "virtualNetwork": {"id": VNET, "name": "vnet-private", "location": "eastus"},
             "virtualNetworkApi": {
                 "id": VNET,
@@ -370,6 +371,57 @@ def test_default_all_new_keeps_names_network_validation_and_no_existing_ids() ->
     assert output("existingEmailDomainResourceId", state) == ""
     state.network["containerAppsSubnetName"] = state.network["foundrySubnetName"]
     assert output("portalValidationPassed", state) is False
+
+
+def test_model_inputs_never_move_an_existing_network_or_replace_its_known_region() -> None:
+    state = foundation()
+    state.network["virtualNetwork"]["location"] = "koreacentral"
+    state.network["virtualNetworkApi"]["location"] = "koreacentral"
+    state.network["modelDeploymentRegion"] = "eastus"
+    state.selected_location = "swedencentral"
+    state.values["options"].update(coreModelName="gpt-5.1", modelCapacity="50")
+    assert output("location", state) == "koreacentral"
+    assert output("portalValidationPassed", state) is True
+    notice = evaluate(controls()["modelRegionNotice"]["options"]["text"], state)
+    assert "koreacentral" in notice
+    assert "전역" in notice and "별도 location" in notice
+    assert "modelDeploymentRegion" not in controls()
+    assert definition()["config"]["basics"]["location"]["visible"] is True
+
+
+def test_new_infrastructure_uses_only_its_native_location_not_a_legacy_model_input() -> None:
+    state = foundation()
+    state.network.update(
+        virtualNetworkMode="new",
+        newVirtualNetworkName="vnet-private-new",
+        newPeSubnetName="private-endpoints",
+        newFoundrySubnetName="foundry-agents",
+        newContainerAppsSubnetName="container-apps",
+        newNetworkRange="10.240",
+        modelDeploymentRegion="japaneast",
+    )
+    state.selected_location = "koreacentral"
+    assert output("location", state) == "koreacentral"
+    assert output("portalValidationPassed", state) is True
+    state.selected_location = ""
+    assert output("location", state) == ""
+    assert output("portalValidationPassed", state) is False
+
+
+def test_model_region_notice_uses_shared_foundrys_actual_location_without_moving_it() -> None:
+    state = foundation()
+    select_existing(state, "foundryAccount")
+    state.values["existingFoundryAccountApi"]["location"] = "koreacentral"
+    state.network["modelDeploymentRegion"] = "swedencentral"
+    notice = evaluate(controls()["modelRegionNotice"]["options"]["text"], state)
+    assert "GlobalStandard 모델·quota 리전: koreacentral" in notice
+    assert "swedencentral" not in notice
+    assert output("location", state) == "eastus"
+    assert output("portalValidationPassed", state) is False
+    state.network["virtualNetwork"]["location"] = "koreacentral"
+    state.network["virtualNetworkApi"]["location"] = "koreacentral"
+    assert output("location", state) == "koreacentral"
+    assert output("portalValidationPassed", state) is True
 
 
 @pytest.mark.parametrize("name", build_v2_ui.SHARED_RESOURCES)

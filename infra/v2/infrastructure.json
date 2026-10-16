@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "8705412408501298682"
+      "templateHash": "4743827698698810110"
     },
     "description": "One-time AzBrief v2 infrastructure. Foundation and completion are internal orchestration stages; application containers and Agent versions are excluded."
   },
@@ -42,7 +42,7 @@
       "type": "string",
       "defaultValue": "eastus",
       "metadata": {
-        "description": "Foundry, child model and private-network deployment region, independent of the resource-group metadata location. An existing VNet must match."
+        "description": "Infrastructure region, independent of model selection and RG metadata. Existing VNet uses its actual region; same-account model deployments inherit their parent Foundry region, not a model-only location."
       }
     },
     "virtualNetworkMode": {

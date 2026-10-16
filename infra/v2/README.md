@@ -157,8 +157,8 @@ existing compatible models are reused rather than resized or replaced.
   scripts. App/Job deployment does not bypass their import, pytest, roster or smoke gates.
 
 New v2 defaults use Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-mini` / `2025-08-07`,
-with 200 `GlobalStandard` capacity units each. ARM/CLI `location` and the separate Portal
-**LLM deployment region** default to `eastus`, independent of RG metadata location. No PTU SKU,
+with 200 `GlobalStandard` capacity units each. ARM/CLI `location` retains its backward-compatible
+`eastus` infrastructure default; it is not an independent model location. No PTU SKU,
 reservation or automatic PTU fallback is used. Logical aliases remain `gpt-5-terra` / `gpt-5-luna`.
 The existing KT profile and saved v2 choices retain their previous defaults/configuration.
 GlobalStandard processing can leave the account region.
@@ -172,12 +172,25 @@ another subscription's availability nor runtime performance. Recheck both gates 
 
 ## Model And Region Selection
 
-The network tab exposes `modelDeploymentRegion` (default **East US**) separately from the
-resource group's metadata location. It offers East US, East US 2, Korea Central, Japan East and
-Sweden Central; the supported native Basics location control is hidden, not overloaded as model
-selection. The existing VNet selector keeps the chosen subscription but lists all regions,
-using the documented `location: all` filter; matching the selected model region is a separate
-fail-closed check. No undocumented Basics `defaultValue` property is used.
+Infrastructure and model settings are separate. The misleading combined
+`modelDeploymentRegion` control has been removed. An existing VNet supplies its verified actual
+region; a new VNet uses the supported native Basics **New infrastructure deployment region**
+control. Neither model choices nor model discovery can override the VNet/Environment location.
+The VNet picker retains subscription scope and `location: all`; missing network region blocks
+submission instead of falling back to a model region. No undocumented Basics `defaultValue`
+property is used. RG metadata is not used as a substitute for the selected VNet's location.
+
+The model options show the actual parent Foundry model/quota region. Direct
+[`accounts/deployments`](https://learn.microsoft.com/azure/templates/microsoft.cognitiveservices/accounts/deployments)
+resources do not accept a separate model-only `location`. GlobalStandard dynamically routes
+inference globally; it does not pin processing to East US or another chosen region. This is
+different from the account region used for deployment availability/quota. Models in a separate
+regional resource can be used through
+[connected models](https://learn.microsoft.com/azure/foundry/agents/how-to/connected-models),
+but that needs explicit resource, authentication and private-connectivity design, and
+`<connection>/<model>` Agent references. This template does not silently add a remote account,
+API key, gateway connection or a second network. Removing the incorrect UI coupling does not
+claim that unsupported same-account cross-region deployment is implemented.
 The Portal also exposes `coreModelName`, `simpleModelName`, `modelVersion`, `simpleModelVersion`,
 `modelCapacity` and `simpleModelCapacity` only for a new foundation. Logical aliases and the
 six-role policy remain unchanged: Core uses `medium` reasoning and Azure MCP omits reasoning.
@@ -202,13 +215,11 @@ an older saved profile. Completion combines shared quota and checks each selecte
 it never silently substitutes models. Existing aliases are reused without PUT only when model,
 version and SKU agree.
 
-The separate selector drives the new Foundry account, child model deployments and VNet together.
-Changing the RG's metadata location never overrides it. An existing VNet must have a verifiable
-matching region; mismatches and unknown regions block the existing true-only guard rather than
-silently substitute the VNet's region. Completion ignores the new selector and uses the saved
-`azbrief.v2.location`, preserving older Korea Central installs. This is not a remote-model connection
-or an existing-account move. Use a new installation for another region; private/PNA/Entra restrictions
-remain unchanged.
+The private Foundry account and Environment must remain compatible with the selected VNet's
+actual region and exact subnets. This infrastructure constraint does not make model selection
+a network-region control. Completion ignores all new selection controls and uses saved
+`azbrief.v2.location`, preserving older Korea Central installs. Existing resources are not moved;
+private/PNA/Entra restrictions remain unchanged.
 
 A saved `foundation` blocked before any model/project was created may explicitly reselect the six
 physical model/version/capacity fields with `--stage complete --reselect-models` and the approved

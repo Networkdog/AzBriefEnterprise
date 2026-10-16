@@ -34,8 +34,8 @@ the ARM/UI pair from the same source revision.
 Top-level READMEs expose only two plain-text v2 infrastructure/application Portal links, paired
 with their exact CreateUiDefinition files. Do not restore Deploy image buttons or legacy
 Enterprise/KT template links there; preserved legacy templates remain internal compatibility
-assets. Check the public v2 UI for modelDeploymentRegion and its foundation-only visibility,
-not just local source, before diagnosing a missing menu. Keep customer
+assets. Check the exact public v2 ARM/UI pair, not just local source. Do not restore the combined
+modelDeploymentRegion network control or call it an independent GlobalStandard region. Keep customer
 RG resource-name inputs, automatic aliases/MCP settings, explicit v2 models and guarded live
 preflight.
 
@@ -86,16 +86,18 @@ profiles and KT defaults. New omitted Simple version uses its independent defaul
 and old missing saved versions use Core. --list-model-options is read-only catalog/quota/provider
 capacity discovery, not runtime acceptance. Strict v2 selection never uses KT's fallback and
 reuses models only on exact model/version/SKU match. Combine shared quota separately from
-version-specific provider capacity. New region means a new same-region Foundry/VNet/models
-installation, not remote routing or account migration. --stage complete --reselect-models changes
+version-specific provider capacity. Model discovery regions never mutate infrastructure.
+--stage complete --reselect-models changes
 only six physical model fields on saved foundation with zero deployments/projects; all other
 choices stay immutable. Block partial/existing state, denied reads, tag forcing and Host resets.
 For explicitly shared Foundry, zero-state applies to the selected aliases/workload project,
 not unrelated projects/models in the account. Never adopt or replace those other workloads.
-V2 Portal modelDeploymentRegion is separate from RG metadata location, with East US default.
-Hide native Basics location; use documented VNet location=all while retaining subscription scope
-and explicit matching-region checks. Unknown/mismatching VNet regions block, not substitute the
-selection. Completed KRC profiles keep their saved region; no model-only remote routing is implied.
+V2 Portal uses actual existing-VNet location, or native Basics infrastructure location for a new
+VNet. Use documented VNet location=all with subscription scope and exact known region checks.
+Model settings cannot redirect VNet/Environment. Show actual parent Foundry model/quota region:
+direct accounts/deployments has no independent location, and GlobalStandard inference is global.
+Connected models in a separate regional resource need an explicit authentication/network design;
+do not silently add accounts, keys or gateway connections. Completed KRC profiles keep their region.
 Completion InfoBox renders actual saved models/versions/region, not new-default marketing text.
 Preserve legacy missing Simple-version fallback and safe unloaded parsing; identify the explicit
 zero-model/project CLI reselection path without adding silent swaps or readiness bypasses.
