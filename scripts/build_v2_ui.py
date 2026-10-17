@@ -1399,18 +1399,31 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
             f"filter(coalesce({deployments_api}.value, parse('[]')), (deployment) => "
             f"equals(toLower(coalesce(last(split(coalesce(deployment.name, ''), '/')), '')), toLower({alias})))"
         )
+        deployment_properties = "coalesce(deployment.properties, parse('{}'))"
+        deployment_model = f"coalesce({deployment_properties}.model, parse('{{}}'))"
+        deployment_sku = "coalesce(deployment.sku, parse('{}'))"
         compatible = _all(
-            "equals(deployment.properties.provisioningState, 'Succeeded')",
-            "equals(deployment.properties.model.format, 'OpenAI')",
-            f"equals(deployment.properties.model.name, {model})",
-            f"equals(deployment.properties.model.version, {version})",
-            "equals(deployment.sku.name, 'GlobalStandard')",
-            _integer_at_least("deployment.sku.capacity", capacity),
+            f"equals({deployment_properties}.provisioningState, 'Succeeded')",
+            f"equals({deployment_model}.format, 'OpenAI')",
+            f"equals({deployment_model}.name, {model})",
+            f"equals({deployment_model}.version, {version})",
+            f"equals({deployment_sku}.name, 'GlobalStandard')",
+            _integer_at_least(f"{deployment_sku}.capacity", capacity),
         )
         compatible = compatible.replace("deployment.", "candidate.deployment.").replace(
             "saved.options", "candidate.options"
         )
-        selected = f"first(if(empty({matches}), parse('[{{}}]'), {matches}))"
+        unloaded = json.dumps(
+            {
+                "properties": {
+                    "provisioningState": "",
+                    "model": {"format": "", "name": "", "version": ""},
+                },
+                "sku": {"name": "", "capacity": 0},
+            },
+            separators=(",", ":"),
+        )
+        selected = f"first(if(empty({matches}), parse('[{unloaded}]'), {matches}))"
         compatible = (
             "first(map(parse(concat('[{\"deployment\":', "
             f"string({selected}), ',\"options\":', string({options}), '}}]')), "

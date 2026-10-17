@@ -314,6 +314,12 @@ Do not repair this by forcing a guard or editing RG tags. Inactive parent-ID ass
 coalesce native null split elements before concat/toLower, including subnet and email parents.
 Test native-empty semantics and eager branches together for initial/new-VNet/App states, not as
 separate checks. Empty IDs stay empty and cannot satisfy readiness. Verify both forms.
+Model reuse also needs null-safe properties/model/SKU parents. Native coalesce does not catch a
+missing intermediate parent, and even an inactive candidate can be evaluated during initialization.
+Use an empty/zero unloaded schema and retain the real match-count/model/version/SKU/capacity
+requirements. Never seed a success status or positive capacity. Include strict missing-member
+regressions and authenticated first-render/Review checks. Local routing of a corrected artifact
+in Portal is native-engine evidence, not public publication.
 Keep v2 navigation work bounded: project only referenced tag keys, bind source tags before
 derived options/resources, validate the binding directly, and bind a model candidate together
 with its expected options. Do not expand saved completion JSON in foundation-only subnet checks.

@@ -327,6 +327,7 @@ def _evaluate_ui_expression(
     eager_conditionals: bool = False,
     selected_location: str = "",
     native_empty_array_elements: bool = False,
+    strict_null_members: bool = False,
 ) -> object:
     """Evaluate the tested Portal expression subset with strict equality."""
 
@@ -348,6 +349,8 @@ def _evaluate_ui_expression(
         if isinstance(node, ast.Attribute):
             value = evaluate(node.value, bindings)
             if value is None:
+                if strict_null_members:
+                    raise TypeError(f"Cannot read properties of undefined (reading '{node.attr}')")
                 return None
             assert isinstance(value, dict)
             return value.get(node.attr)

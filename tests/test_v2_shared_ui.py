@@ -1032,6 +1032,58 @@ def test_shared_foundry_can_reuse_both_exact_ready_aliases_without_model_puts() 
     assert output("portalValidationPassed", state) is True
 
 
+@pytest.mark.parametrize("role", ["Core", "Simple"])
+@pytest.mark.parametrize("metadata", ["empty", "properties", "model", "sku", "valid"])
+def test_native_model_reuse_handles_unloaded_and_incomplete_parents(
+    role: str, metadata: str
+) -> None:
+    state = foundation()
+    select_existing(state, "foundryAccount")
+    state.values["contract"]["resourceGroupApi"] = {"tags": {}}
+    deployment = model_deployment(state, role)
+    if metadata == "empty":
+        rows = []
+    else:
+        if metadata == "properties":
+            deployment["properties"] = None
+        elif metadata == "model":
+            deployment["properties"]["model"] = None
+        elif metadata == "sku":
+            deployment["sku"] = None
+        rows = [deployment]
+    state.values["sharedFoundryDeploymentsApi"]["value"] = rows
+    actual = _evaluate_ui_expression(
+        definition()["outputs"][f"reuse{role}Model"],
+        {**state.values, "resources": state.values},
+        network=state.network,
+        resource_group=state.group,
+        subscription={"subscriptionId": SUBSCRIPTION},
+        basics={"infrastructureStage": state.stage},
+        selected_location=state.selected_location,
+        native_empty_array_elements=True,
+        eager_conditionals=True,
+        strict_null_members=True,
+    )
+    assert actual is (metadata == "valid")
+
+
+def test_native_coalesce_does_not_protect_a_missing_intermediate_parent() -> None:
+    with pytest.raises(TypeError, match="reading 'provisioningState'"):
+        _evaluate_ui_expression(
+            "[coalesce(parse('{}').properties.provisioningState, '')]",
+            {},
+            strict_null_members=True,
+        )
+    assert (
+        _evaluate_ui_expression(
+            "[coalesce(coalesce(parse('{}').properties, parse('{}')).provisioningState, '')]",
+            {},
+            strict_null_members=True,
+        )
+        == ""
+    )
+
+
 @pytest.mark.parametrize("empty_version", [False, True])
 def test_existing_simple_alias_uses_the_saved_legacy_core_version_fallback(
     empty_version: bool,

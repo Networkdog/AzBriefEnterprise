@@ -66,6 +66,10 @@ or an application update. The true-only deployment guard and exact eight-field I
 Inactive parent-ID branches also coalesce empty native split segments before string operations.
 Tests combine native empty-element behavior with eager evaluation for unloaded and new-VNet
 forms; a hidden empty branch must not prevent the initial form from loading.
+Model-reuse checks likewise normalize missing `properties`, `model` and `sku` parents before
+comparison. An unloaded candidate has only empty/zero failure values, never a ready deployment;
+reuse still requires one actual exact inventory match. This prevents a pre-query model check
+from interrupting Portal initialization before Basics and its subscription controls are ready.
 See the [v2 network guidance](infra/v2/README.md#new-or-existing-vnet) if no choices appear.
 
 The form generator projects only the tag keys each expression uses, binds saved values once per

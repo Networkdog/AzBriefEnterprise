@@ -347,6 +347,13 @@ semantics with eager evaluation for unloaded, new-VNet and empty App states; tes
 properties separately hid a first-load failure. Preserve empty/invalid outputs and the failed
 guard, never substitute a real parent. Include native-boundary regressions and actual
 completion/App acceptance before claiming the fix is deployed.
+Portal model predicates must normalize each nullable metadata parent before reading its child;
+`coalesce(deployment.properties.provisioningState, ...)` cannot protect an absent properties
+object. An unloaded model candidate uses an explicit empty/zero failure schema, never Succeeded,
+GlobalStandard or a positive capacity. Keep exact live inventory cardinality and model/version/
+SKU/capacity predicates. Native bisection isolated reuse outputs stopping initial Basics, so test
+strict missing-member semantics as well as eager/native-empty cases. A local-artifact route in
+the real Portal verifies the engine, not publication of the public ARM/UI pair.
 Keep all shared-ID/ownership/model/readiness/tag-budget checks, and test both forms in the
 authenticated Portal with actual read-only data. Local static UI substitution is not publication
 or successful ARM/runtime installation; never synthesize a ready contract to claim acceptance.

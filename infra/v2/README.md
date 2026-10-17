@@ -324,6 +324,15 @@ returns empty/invalid evidence as before, and retains the false readiness guard.
 cover unloaded and populated new/existing network forms plus an empty application form.
 This is predeployment expression evidence, not authenticated Portal-rendering acceptance.
 
+An authenticated Portal bisection also isolated model-reuse outputs as an initialization blocker:
+before any model query, an empty candidate's `properties.provisioningState` was traversed. A final
+`coalesce` cannot protect that missing parent. The generator now normalizes the properties, model
+and SKU objects and gives an unloaded candidate an explicit empty/zero failure schema. The real
+inventory still needs exactly one compatible row; these placeholders cannot make reuse succeed.
+Regression tests model the native missing-parent exception, including absent/null model metadata.
+Native first-render/Review testing may route the local corrected UI into the authenticated Portal
+while keeping real ARM responses. Such evidence is not a claim that GitHub's public pair changed.
+
 ### Portal expression cost
 
 The normalizer projects only the tag keys an expression reads, validates the saved eight-field
