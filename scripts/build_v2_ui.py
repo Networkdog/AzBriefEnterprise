@@ -7,14 +7,14 @@ import copy
 import json
 import re
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 ROOT = Path(__file__).resolve().parents[1]
 INFRASTRUCTURE_REGION = (
-    "if(equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'new'), "
+    "replace(if(equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'new'), "
     "toLower(coalesce(location(), '')), "
     "toLower(coalesce(steps('network').virtualNetworkApi.location, "
-    "steps('network').virtualNetwork.location, '')))"
+    "steps('network').virtualNetwork.location, ''))), ' ', '')"
 )
 _TAG_INDEX = re.compile(
     r"(steps\('(?:contract|application)'\)\.resourceGroupApi\.tags)\['(azbrief\.v2\.[A-Za-z0-9]+)'\]"
@@ -60,6 +60,89 @@ SHARED_RESOURCES = {
         "Microsoft.Communication/communicationServices",
         "2023-04-01",
         "acs",
+    ),
+}
+RESOURCE_CONTROLS = {
+    "sharedResourceNotice",
+    "savedResourceBindings",
+    "invalidSavedResourceBindings",
+    "logAnalyticsWorkspacesApi",
+    "existingLogAnalyticsWorkspace",
+    "existingLogAnalyticsWorkspaceApi",
+    "existingEmailDomain",
+    "existingEmailDomainApi",
+    "existingEmailServiceApi",
+    "sharedFoundryHostsApi",
+    "sharedFoundryDeploymentsApi",
+    "sharedFoundryProjectsApi",
+} | {
+    field
+    for name in SHARED_RESOURCES
+    for field in (
+        name + "Mode",
+        "existing" + name[0].upper() + name[1:],
+        "existing" + name[0].upper() + name[1:] + "Api",
+        name + "Status",
+    )
+}
+EXISTING_FOUNDRY = "equals(coalesce(steps('names').foundryAccountMode, 'new'), 'existing')"
+EXISTING_ENVIRONMENT = (
+    "equals(coalesce(steps('names').containerAppsEnvironmentMode, 'new'), 'existing')"
+)
+EXISTING_STORAGE = "equals(coalesce(steps('names').storageAccountMode, 'new'), 'existing')"
+_AGENT_INJECTIONS = (
+    "filter(coalesce(steps('names').existingFoundryAccountApi.properties.networkInjections, "
+    "parse('[]')), (injection) => equals(injection.scenario, 'agent'))"
+)
+BOUND_FOUNDRY_SUBNET = (
+    f"coalesce(first(if(empty({_AGENT_INJECTIONS}), parse('[{{}}]'), "
+    f"{_AGENT_INJECTIONS})).subnetArmId, '')"
+)
+BOUND_ENVIRONMENT_SUBNET = (
+    "coalesce(steps('names').existingContainerAppsEnvironmentApi.properties."
+    "vnetConfiguration.infrastructureSubnetId, '')"
+)
+PE_REQUIRED = (
+    f"or(not({EXISTING_FOUNDRY}), not({EXISTING_STORAGE}), "
+    f"and(not({EXISTING_ENVIRONMENT}), "
+    "equals(steps('network').deployContainerAppsPrivateEndpoint, true)))"
+)
+
+
+def _subnet_parent(value: str) -> str:
+    parts = f"split({value}, '/')"
+    return (
+        f"if(empty({value}), '', concat('/subscriptions/', last(take({parts}, 3)), "
+        f"'/resourceGroups/', last(take({parts}, 5)), "
+        f"'/providers/Microsoft.Network/virtualNetworks/', last(take({parts}, 9))))"
+    )
+
+
+EFFECTIVE_VNET_ID = (
+    f"if({EXISTING_ENVIRONMENT}, {_subnet_parent(BOUND_ENVIRONMENT_SUBNET)}, "
+    f"if({EXISTING_FOUNDRY}, {_subnet_parent(BOUND_FOUNDRY_SUBNET)}, "
+    "steps('network').virtualNetwork.id))"
+)
+LOGICAL_NETWORK_READS = {
+    "steps('network').virtualNetwork.name": (
+        f"last(split(coalesce({EFFECTIVE_VNET_ID}, ''), '/'))"
+    ),
+    "steps('network').virtualNetworkMode": (
+        f"if(or({EXISTING_FOUNDRY}, {EXISTING_ENVIRONMENT}), 'existing', "
+        "coalesce(steps('network').virtualNetworkMode, 'existing'))"
+    ),
+    "steps('network').virtualNetwork.id": EFFECTIVE_VNET_ID,
+    "steps('network').foundrySubnetName": (
+        f"if({EXISTING_FOUNDRY}, last(split({BOUND_FOUNDRY_SUBNET}, '/')), "
+        "steps('network').foundrySubnetName)"
+    ),
+    "steps('network').containerAppsSubnetName": (
+        f"if({EXISTING_ENVIRONMENT}, last(split({BOUND_ENVIRONMENT_SUBNET}, '/')), "
+        "steps('network').containerAppsSubnetName)"
+    ),
+    "steps('network').deployContainerAppsPrivateEndpoint": (
+        f"if({EXISTING_ENVIRONMENT}, false, "
+        "equals(steps('network').deployContainerAppsPrivateEndpoint, true))"
     ),
 }
 RESOURCE_BINDING_KEYS = (
@@ -108,6 +191,250 @@ V2_METADATA_TAG_SUFFIXES = (
     "lastApplicationDeploymentAt",
     *(f"options{index}" for index in range(8)),
 )
+
+
+def _map_expression_strings(value: Any, transform: Callable[[str], str]) -> Any:
+    if isinstance(value, dict):
+        return {key: _map_expression_strings(item, transform) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_map_expression_strings(item, transform) for item in value]
+    if isinstance(value, str) and value.startswith("["):
+        return transform(value)
+    return value
+
+
+def _restore_resource_layout(
+    parameters: dict[str, Any], network_validations: list[dict[str, Any]]
+) -> None:
+    resource_step = next(
+        (step for step in parameters["steps"] if step["name"] == "resources"), None
+    )
+    names = next((step for step in parameters["steps"] if step["name"] == "names"), None)
+    if resource_step is not None and names is not None:
+        names["elements"].extend(resource_step["elements"])
+        parameters["steps"].remove(resource_step)
+
+    def restore(expression: str) -> str:
+        expression = expression.replace("steps('resources').", "steps('names').")
+        for source, replacement in sorted(
+            LOGICAL_NETWORK_READS.items(), key=lambda item: len(item[1]), reverse=True
+        ):
+            expression = expression.replace(replacement, source)
+        for rule in network_validations:
+            expression = expression.replace(_conditional_network_rule(rule), rule["isValid"][1:-1])
+        return expression
+
+    restored = _map_expression_strings(parameters, restore)
+    parameters.clear()
+    parameters.update(restored)
+    pe_output = parameters["outputs"].get("peSubnetName", "")
+    prefix = f"[if({PE_REQUIRED}, "
+    if pe_output.startswith(prefix) and pe_output.endswith(", '')]"):
+        parameters["outputs"]["peSubnetName"] = "[" + pe_output[len(prefix) : -len(", '')]")] + "]"
+
+
+def _resource_first_layout(parameters: dict[str, Any]) -> None:
+    names = next((step for step in parameters["steps"] if step["name"] == "names"), None)
+    if names is None:
+        return
+    names["label"] = "워크로드 이름"
+    names["elements"] = [
+        item for item in names["elements"] if item["name"] != "savedWorkloadNotice"
+    ]
+    controls = [item for item in names["elements"] if item["name"] in RESOURCE_CONTROLS]
+    names["elements"] = [
+        item for item in names["elements"] if item["name"] not in RESOURCE_CONTROLS
+    ]
+    tags = "steps('contract').resourceGroupApi.tags"
+    names["elements"].append(
+        {
+            "name": "savedWorkloadNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": "[not(equals(basics('infrastructureStage'), 'foundation'))]",
+            "options": {
+                "icon": "Info",
+                "text": f"[concat('저장된 워크로드 이름을 유지합니다. 프로젝트: ', coalesce({tags}['azbrief.v2.project'], ''), ' · App: ', coalesce({tags}['azbrief.v2.app'], ''), ' · Job: ', coalesce({tags}['azbrief.v2.job'], ''))]",
+            },
+        }
+    )
+    by_name = {item["name"]: item for item in controls}
+    ordered_names = ["sharedResourceNotice"]
+    for name in SHARED_RESOURCES:
+        ordered_names.extend(
+            (
+                name + "Mode",
+                "existing" + name[0].upper() + name[1:],
+                name + "Status",
+            )
+        )
+        if name == "containerAppsEnvironment":
+            ordered_names.append("existingLogAnalyticsWorkspace")
+        elif name == "communicationServices":
+            ordered_names.append("existingEmailDomain")
+    ordered = [by_name[name] for name in ordered_names if name in by_name]
+    ordered.extend(item for item in controls if item["name"] not in ordered_names)
+    resources = {
+        "name": "resources",
+        "label": "서비스 선택",
+        "bladeTitle": "신규 생성 또는 기존 서비스 재사용",
+        "elements": ordered,
+    }
+    contract = next(step for step in parameters["steps"] if step["name"] == "contract")
+    network = next(step for step in parameters["steps"] if step["name"] == "network")
+    options = next(step for step in parameters["steps"] if step["name"] == "options")
+    parameters["steps"] = [contract, resources, network, names, options]
+
+    def relocate(expression: str) -> str:
+        for field in sorted(RESOURCE_CONTROLS, key=len, reverse=True):
+            expression = expression.replace(
+                f"steps('names').{field}", f"steps('resources').{field}"
+            )
+        return expression
+
+    result = _map_expression_strings(parameters, relocate)
+    parameters.clear()
+    parameters.update(result)
+
+
+def _conditional_network_rule(rule: dict[str, Any]) -> str:
+    expression = rule["isValid"]
+    if not isinstance(expression, str):
+        raise ValueError("Network validation must have a string expression.")
+    original = expression[1:-1]
+    if ".peSubnetName" not in original:
+        return original
+    if ".foundrySubnetName" not in original:
+        return f"if({PE_REQUIRED}, {original}, true)"
+    return (
+        f"if({PE_REQUIRED}, {original}, "
+        "not(equals(toLower(coalesce(steps('network').foundrySubnetName, '')), "
+        "toLower(coalesce(steps('network').containerAppsSubnetName, '')))))"
+    )
+
+
+def _conditional_network_inputs(
+    parameters: dict[str, Any], network_validations: list[dict[str, Any]]
+) -> None:
+    network = next((step for step in parameters["steps"] if step["name"] == "network"), None)
+    if network is None:
+        return
+    network["label"] = "네트워크"
+    foundation = "equals(basics('infrastructureStage'), 'foundation')"
+    bound_network = f"or({EXISTING_FOUNDRY}, {EXISTING_ENVIRONMENT})"
+    old_pe_output = parameters["outputs"]["peSubnetName"]
+    prefix = f"[if({PE_REQUIRED}, "
+    if not old_pe_output.startswith(prefix):
+        parameters["outputs"]["peSubnetName"] = f"{prefix}{old_pe_output[1:-1]}, '')]"
+    for rule in network_validations:
+        original = rule["isValid"][1:-1]
+        replacement = _conditional_network_rule(rule)
+        if original != replacement:
+            guard = parameters["outputs"]["portalValidationPassed"]
+            parameters["outputs"]["portalValidationPassed"] = guard.replace(original, replacement)
+    network["elements"] = [
+        element
+        for element in network["elements"]
+        if element["name"]
+        not in {
+            "boundNetworkNotice",
+            "boundFoundrySubnetNotice",
+            "boundEnvironmentSubnetNotice",
+            "advancedNetworkOptions",
+            "savedNetworkNotice",
+        }
+    ]
+    for element in network["elements"]:
+        name = element["name"]
+        if name in {"virtualNetworkMode", "virtualNetwork"}:
+            current = element.get("visible", "true")
+            expression = current[1:-1] if isinstance(current, str) else "true"
+            element["visible"] = f"[and({expression}, not({bound_network}))]"
+        elif name == "foundrySubnetName":
+            element["visible"] = (
+                f"[and({foundation}, not({EXISTING_FOUNDRY}), equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'existing'))]"
+            )
+        elif name == "containerAppsSubnetName":
+            element["visible"] = (
+                f"[and({foundation}, not({EXISTING_ENVIRONMENT}), equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'existing'))]"
+            )
+        elif name == "peSubnetName":
+            element["visible"] = (
+                f"[and({foundation}, {PE_REQUIRED}, equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'existing'))]"
+            )
+        elif name == "existingPrivateDnsZoneIds":
+            element["visible"] = (
+                f"[and({foundation}, equals(steps('network').advancedNetworkOptions, true))]"
+            )
+        elif name == "deployContainerAppsPrivateEndpoint":
+            element["visible"] = (
+                f"[and({foundation}, not({EXISTING_ENVIRONMENT}), equals(steps('network').advancedNetworkOptions, true))]"
+            )
+        elif name == "infrastructureRegionNotice":
+            element["options"]["text"] = (
+                "기존 서비스가 있으면 이미 연결된 VNet을 자동으로 사용합니다. 신규 서비스에 필요한 "
+                "서브넷만 선택하십시오. 모델 옵션은 네트워크를 이동하거나 변경하지 않습니다."
+            )
+    network["elements"].insert(
+        0,
+        {
+            "name": "boundNetworkNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": f"[and({foundation}, {bound_network})]",
+            "options": {
+                "icon": "Info",
+                "text": f"[concat('기존 서비스의 VNet 자동 사용: ', coalesce(steps('network').virtualNetwork.id, '조회 중'))]",
+            },
+        },
+    )
+    for name, condition, source, label in (
+        ("boundFoundrySubnetNotice", EXISTING_FOUNDRY, BOUND_FOUNDRY_SUBNET, "Foundry"),
+        (
+            "boundEnvironmentSubnetNotice",
+            EXISTING_ENVIRONMENT,
+            BOUND_ENVIRONMENT_SUBNET,
+            "Environment",
+        ),
+    ):
+        network["elements"].append(
+            {
+                "name": name,
+                "type": "Microsoft.Common.InfoBox",
+                "visible": f"[and({foundation}, {condition})]",
+                "options": {
+                    "icon": "Info",
+                    "text": f"[concat('{label} 기존 서브넷 자동 사용: ', if(empty({source}), '연결 정보 없음 — 서비스 선택에서 호환성을 확인하십시오.', {source}))]",
+                },
+            }
+        )
+        tags = "steps('contract').resourceGroupApi.tags"
+        network["elements"].append(
+            {
+                "name": "savedNetworkNotice",
+                "type": "Microsoft.Common.InfoBox",
+                "visible": f"[not({foundation})]",
+                "options": {
+                    "icon": "Info",
+                    "text": f"[concat('기반의 네트워크를 그대로 사용합니다. VNet: ', coalesce({tags}['azbrief.v2.vnetRg'], ''), '/', coalesce({tags}['azbrief.v2.vnet'], ''), ' · Foundry: ', coalesce({tags}['azbrief.v2.foundrySubnet'], ''), ' · Environment: ', coalesce({tags}['azbrief.v2.appSubnet'], ''), ' · PE: ', if(empty(coalesce({tags}['azbrief.v2.peSubnet'], '')), '신규 PE 없음', {tags}['azbrief.v2.peSubnet']))]",
+                },
+            }
+        )
+    network["elements"].append(
+        {
+            "name": "advancedNetworkOptions",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "고급 네트워크 옵션 (중앙 DNS 또는 Environment Private Endpoint)",
+            "defaultValue": False,
+            "visible": f"[{foundation}]",
+        }
+    )
+    pattern = re.compile("|".join(re.escape(value) for value in LOGICAL_NETWORK_READS))
+
+    def resolve(expression: str) -> str:
+        return pattern.sub(lambda match: LOGICAL_NETWORK_READS[match.group()], expression)
+
+    result = _map_expression_strings(parameters, resolve)
+    parameters.clear()
+    parameters.update(result)
 
 
 def _all(*expressions: str) -> str:
@@ -755,28 +1082,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
         f"or(equals({network_mode}, 'existing'), "
         f"and(not({existing['foundryAccount']}), not({existing['containerAppsEnvironment']})))"
     )
-    shared_names = {
-        "sharedResourceNotice",
-        "savedResourceBindings",
-        "invalidSavedResourceBindings",
-        "logAnalyticsWorkspacesApi",
-        "existingLogAnalyticsWorkspace",
-        "existingLogAnalyticsWorkspaceApi",
-        "existingEmailDomain",
-        "existingEmailDomainApi",
-        "existingEmailServiceApi",
-        "sharedFoundryHostsApi",
-        "sharedFoundryDeploymentsApi",
-        "sharedFoundryProjectsApi",
-    } | {
-        control
-        for name in SHARED_RESOURCES
-        for control in (
-            name + "Mode",
-            "existing" + name[0].upper() + name[1:],
-            "existing" + name[0].upper() + name[1:] + "Api",
-        )
-    }
+    shared_names = RESOURCE_CONTROLS
     step["label"] = "리소스 선택·이름"
     step["elements"] = [
         element for element in step["elements"] if element["name"] not in shared_names
@@ -789,20 +1095,10 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
             "options": {
                 "icon": "Info",
                 "text": (
-                    "네 서비스를 각각 신규 생성하거나 같은 구독의 기존 리소스에서 선택합니다. 다른 RG도 "
-                    "선택할 수 있으며 ID·시크릿을 직접 입력하지 않습니다. 기존 Foundry와 Environment는 "
-                    "모델과 같은 리전의 기존 VNet·정확한 전용 서브넷에 이미 연결돼 있어야 합니다. 신규 "
-                    "VNet과 함께 재사용할 수 없으며 임의로 전환하지 않습니다. Storage·ACS의 리전은 "
-                    "달라도 됩니다. 읽기 실패·미완료·공용 구성·다른 리소스로의 응답은 차단합니다. "
-                    "공유 Storage에는 이 App 전용 상태·Archive 컨테이너만 만듭니다. 공유 Environment의 "
-                    "실제 로그 workspace를 재사용하며 새 workspace로 대체하지 않습니다. 기존 ACS에 "
-                    "이미 연결된 준비된 도메인과 DoNotReply 발신자를 사용합니다. 공유 리소스의 DNS·"
-                    "Private Endpoint는 새로 만들지 않습니다. 같은 VNet의 기존 승인된 연결·DNS와 "
-                    "Foundry 계정 Host 준비는 승인된 읽기 전용 CLI 사전검사로 먼저 확인하십시오. "
-                    "공유 Foundry의 준비된 계정 Host와 전체 모델·프로젝트 목록을 읽습니다. 모델 별칭은 "
-                    "정확한 모델·버전·GlobalStandard·필요 용량이 일치할 때만 그대로 재사용하며, 없을 "
-                    "때만 생성합니다. 같은 이름의 프로젝트가 이미 있으면 Portal에서 재설정하지 "
-                    "않습니다. 승인된 CLI에서 소유권·프로젝트 Host·텔레메트리의 명시적 재사용을 검증하십시오."
+                    "서비스별로 신규 생성 또는 기존 사용을 먼저 선택하십시오. 다른 RG도 가능합니다. "
+                    "기존 Foundry·Environment의 VNet과 서브넷은 실제 설정에서 자동 인계하며 다시 "
+                    "입력하지 않습니다. 공용 서비스는 사설 프로필과 호환되지 않으면 이유를 표시합니다. "
+                    "다음 네트워크 단계에는 새 리소스에 필요한 입력만 나타납니다."
                 ),
             },
         }
@@ -1101,7 +1397,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
         f"equals({foundry_api}.properties.disableLocalAuth, true)",
         _valid_foundry_subdomain(f"{foundry_api}.properties.customSubDomainName"),
         f"equals(toLower(coalesce({foundry_api}.properties.publicNetworkAccess, '')), 'disabled')",
-        f"equals(toLower(coalesce({foundry_api}.location, '')), toLower({region}))",
+        f"equals(replace(toLower(coalesce({foundry_api}.location, '')), ' ', ''), toLower({region}))",
         f"not(empty(coalesce({foundry_api}.location, '')))",
         f"equals(length(coalesce({foundry_api}.properties.networkInjections, parse('[]'))), 1)",
         f"equals(length(filter(coalesce({foundry_api}.properties.networkInjections, parse('[]')), "
@@ -1128,7 +1424,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
         f"if({foundation}, not(equals(steps('network').deployContainerAppsPrivateEndpoint, true)), not(equals(toLower(coalesce({tags}['azbrief.v2.acaPeEnabled'], '')), 'true')))",
         f"equals({environment_api}.properties.vnetConfiguration.internal, true)",
         f"equals(toLower(coalesce({environment_api}.properties.publicNetworkAccess, '')), 'disabled')",
-        f"equals(toLower(coalesce({environment_api}.location, '')), toLower({region}))",
+        f"equals(replace(toLower(coalesce({environment_api}.location, '')), ' ', ''), toLower({region}))",
         f"not(empty(coalesce({environment_api}.location, '')))",
         f"equals(toLower(coalesce({environment_api}.properties.vnetConfiguration.infrastructureSubnetId, '')), toLower({subnet_ids['containerAppsEnvironment']}))",
         f"not(empty(coalesce({environment_api}.properties.defaultDomain, '')))",
@@ -1308,7 +1604,12 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
     _extend_guard(parameters, "existingFoundryAccountApi", _shared_context(combined))
     for element in step["elements"]:
         if element["name"] == "namingPrefix":
-            element["constraints"]["validations"] = rules
+            element["constraints"]["validations"] = [
+                {
+                    "isValid": f"[if({existing['foundryAccount']}, {project_absent}, true)]",
+                    "message": "선택한 Foundry에 같은 워크로드 프로젝트 이름이 이미 있습니다. 다른 접두사·접미사를 사용하거나 승인된 CLI로 기존 프로젝트 소유권을 확인하십시오.",
+                }
+            ]
         if element["name"] == "resourceNamePreview":
             preview = []
             for name, (prefix, separator) in RESOURCE_NAME_PARTS.items():
@@ -1357,6 +1658,114 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
         )
     )
     step["elements"].extend([*selectors, *readbacks])
+    for name, (label, resource_type, _, _) in SHARED_RESOURCES.items():
+        api = "steps('names').existing" + name[0].upper() + name[1:] + "Api"
+        checks = [
+            (
+                _valid_resource_id(ids[name], resource_type, api),
+                f"{label} 조회가 완료되지 않았습니다. 선택한 리소스의 읽기 권한·ID·준비 상태를 확인하십시오.",
+            )
+        ]
+        if name == "foundryAccount":
+            checks.extend(
+                (
+                    (
+                        f"and(equals(toLower(coalesce({api}.kind, '')), 'aiservices'), equals({api}.properties.allowProjectManagement, true))",
+                        "프로젝트를 지원하는 AIServices Foundry 계정이 필요합니다. 다른 형식의 계정을 자동 변환하지 않습니다.",
+                    ),
+                    (
+                        f"equals(toLower(coalesce({api}.properties.publicNetworkAccess, '')), 'disabled')",
+                        "이 Foundry는 공용 네트워크 접근이 활성화돼 있어 현재 사설 설치와 호환되지 않습니다. 새로 만들기 또는 준비된 사설 계정을 선택하십시오. 기존 계정을 자동 변경하지 않습니다.",
+                    ),
+                    (
+                        f"not(empty({BOUND_FOUNDRY_SUBNET}))",
+                        "이 Foundry에는 고객 VNet 주입이 없습니다. 신규 서브넷을 다시 선택해도 기존 계정은 변환되지 않습니다. 준비된 사설 Foundry 또는 새로 만들기를 선택하십시오.",
+                    ),
+                    (
+                        f"and(equals(length(coalesce({api}.properties.networkInjections, parse('[]'))), 1), equals(length(filter(coalesce({api}.properties.networkInjections, parse('[]')), (injection) => and(equals(injection.scenario, 'agent'), equals(injection.useMicrosoftManagedNetwork, false)))), 1))",
+                        "이 Foundry에는 고객 VNet의 에이전트 전용 주입 연결 하나가 필요합니다. 다른 네트워크 모드를 자동 전환하지 않습니다.",
+                    ),
+                    (
+                        f"equals({api}.properties.disableLocalAuth, true)",
+                        "이 Foundry의 로컬 키 인증이 활성화돼 있습니다. Entra 전용인 준비된 사설 계정을 선택하십시오.",
+                    ),
+                    (
+                        hosts_ready,
+                        "계정 Capability Host가 아직 준비되지 않았습니다. 서비스의 초기화 상태를 확인하십시오.",
+                    ),
+                )
+            )
+        elif name == "containerAppsEnvironment":
+            checks.extend(
+                (
+                    (
+                        f"and(equals({api}.properties.vnetConfiguration.internal, true), equals(toLower(coalesce({api}.properties.publicNetworkAccess, '')), 'disabled'))",
+                        "이 Environment는 내부 VNet·공용 접근 차단 구성이 아닙니다. 기존 환경을 자동 변환하지 않으며 새로 만들기 또는 사설 환경을 선택해야 합니다.",
+                    ),
+                    (
+                        f"not(empty({BOUND_ENVIRONMENT_SUBNET}))",
+                        "이 Environment에는 기존 인프라 서브넷 연결이 없습니다. 신규 선택으로 기존 환경을 변환하지 않습니다.",
+                    ),
+                    (
+                        f"and(not(empty(coalesce({api}.properties.defaultDomain, ''))), not(empty(coalesce({api}.properties.staticIp, ''))))",
+                        "Environment의 내부 도메인·정적 IP 초기화가 끝나지 않았습니다. 준비 상태를 확인하십시오.",
+                    ),
+                    (
+                        f"equals(length(filter(coalesce({api}.properties.workloadProfiles, parse('[]')), (profile) => and(equals(profile.name, 'Consumption'), equals(profile.workloadProfileType, 'Consumption')))), 1)",
+                        "이 설치에 필요한 Consumption 워크로드 프로필이 없습니다. 공유 Environment의 프로필을 자동 변경하지 않습니다.",
+                    ),
+                    (
+                        f"if(and({EXISTING_FOUNDRY}, not(empty({BOUND_FOUNDRY_SUBNET})), "
+                        f"not(empty({BOUND_ENVIRONMENT_SUBNET}))), "
+                        f"equals(toLower({_subnet_parent(BOUND_FOUNDRY_SUBNET)}), "
+                        f"toLower({_subnet_parent(BOUND_ENVIRONMENT_SUBNET)})), true)",
+                        "선택한 Foundry와 Environment가 서로 다른 VNet을 사용합니다. 같은 승인된 VNet에 연결된 서비스를 선택하십시오. 연결을 자동 변경하지 않습니다.",
+                    ),
+                    (
+                        workspace,
+                        "Environment가 실제 사용하는 Log Analytics를 확인할 수 없습니다. 조회가 끝난 뒤 필요할 때만 기존 workspace를 선택하십시오.",
+                    ),
+                )
+            )
+        elif name == "storageAccount":
+            checks.append(
+                (
+                    storage,
+                    "Storage의 공용 접근 차단·Entra 전용·HTTPS/TLS 1.2 구성이 필요합니다. 계정을 자동 변경하지 않습니다.",
+                )
+            )
+        else:
+            checks.append(
+                (
+                    communication,
+                    "ACS에 이미 연결된 준비된 이메일 도메인을 선택하십시오. 다른 도메인을 자동 연결하지 않습니다.",
+                )
+            )
+        if name in {"foundryAccount", "containerAppsEnvironment"}:
+            checks.append(
+                (
+                    f"and(not(empty(coalesce({api}.location, ''))), if(empty(coalesce(steps('network').virtualNetworkApi.location, '')), true, equals(replace(toLower(coalesce({api}.location, '')), ' ', ''), {INFRASTRUCTURE_REGION})))",
+                    "서비스와 연결된 VNet의 리전이 다르거나 확인되지 않았습니다. 기존 리전을 이동하거나 덮어쓰지 않습니다.",
+                )
+            )
+        message = (
+            f"'{label} 기본 설정 조회 완료. 기존 구성은 유지되며 필요한 워크로드만 추가합니다.'"
+        )
+        for condition, failure_message in reversed(checks):
+            message = f"if(not({condition}), '{failure_message}', {message})"
+        step["elements"].append(
+            {
+                "name": name + "Status",
+                "type": "Microsoft.Common.InfoBox",
+                "visible": f"[and({foundation}, {existing[name]})]",
+                "options": {"icon": "Info", "text": f"[{message}]"},
+            }
+        )
+    for element in step["elements"]:
+        if element["name"] == "existingLogAnalyticsWorkspace":
+            element["visible"] = (
+                f"[and({foundation}, {existing['containerAppsEnvironment']}, not({unique_workspace}))]"
+            )
     network_step = next(step for step in parameters["steps"] if step["name"] == "network")
     for element in network_step["elements"]:
         if element["name"] == "newVirtualNetworkName":
@@ -1365,6 +1774,14 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
     for element in options_step["elements"]:
         if element["name"] == "emailDataLocation":
             element["visible"] = f"[and({foundation}, not({existing['communicationServices']}))]"
+        for index, model_field in enumerate(("coreModelName", "simpleModelName")):
+            if element["name"] == model_field:
+                element["constraints"]["validations"] = [
+                    {
+                        "isValid": f"[if({existing['foundryAccount']}, and({inventory_rules[1]}, {model_rules[index]}), true)]",
+                        "message": "선택한 기존 Foundry의 모델 별칭이 이 모델·버전·GlobalStandard·필요 용량과 다르거나 조회되지 않았습니다. 기존 모델을 덮어쓰지 않습니다.",
+                    }
+                ]
 
     def scope_expressions(value: Any) -> Any:
         if isinstance(value, dict):
@@ -1381,6 +1798,24 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
 
     for current in (step, network_step, options_step):
         current["elements"] = scope_expressions(current["elements"])
+    for element in step["elements"]:
+        for name in SHARED_RESOURCES:
+            selector = "existing" + name[0].upper() + name[1:]
+            if element["name"] in {selector, name + "Status"}:
+                element["visible"] = (
+                    f"[and({foundation}, equals(coalesce(steps('names').{name}Mode, "
+                    "'new'), 'existing'))]"
+                )
+        if element["name"] == "existingEmailDomain":
+            element["visible"] = (
+                f"[and({foundation}, equals(coalesce(steps('names').communicationServicesMode, "
+                "'new'), 'existing'))]"
+            )
+        elif element["name"] == "existingLogAnalyticsWorkspace":
+            element["visible"] = (
+                f"[and({foundation}, equals(coalesce(steps('names').containerAppsEnvironmentMode, "
+                f"'new'), 'existing'), not({unique_workspace}))]"
+            )
     for name, value in parameters["outputs"].items():
         if name != "portalValidationPassed":
             parameters["outputs"][name] = scope_expressions(value)
@@ -1870,6 +2305,7 @@ def normalize_ui(
     document: dict[str, Any], network_validations: list[dict[str, Any]]
 ) -> dict[str, Any]:
     result = copy.deepcopy(document)
+    _restore_resource_layout(result["parameters"], network_validations)
     parameters = _separate_region_inputs(result["parameters"])
     result["parameters"] = parameters
     if any(step["name"] == "contract" for step in parameters["steps"]):
@@ -2031,6 +2467,14 @@ def normalize_ui(
                 }
             )
     _application_shared_binding_guard(parameters)
+    if any(step["name"] == "contract" for step in parameters["steps"]):
+        parameters["config"]["basics"]["description"] = (
+            "AzBrief v2 인프라입니다. 기반 준비 → 기존 기반 완성 → 승인된 MCP 인증 준비를 "
+            "마친 뒤 같은 RG의 별도 앱 템플릿으로 설치·업데이트합니다. 인프라만으로 앱이나 "
+            "Agent 코드가 설치되지는 않습니다."
+        )
+        _conditional_network_inputs(parameters, network_validations)
+        _resource_first_layout(parameters)
     return cast(dict[str, Any], _portable_tag_access(result))
 
 

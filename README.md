@@ -29,14 +29,23 @@ Log Analytics workspace, and reused Communication Services retains its linked em
 Existing private networking and region compatibility must pass preflight; application updates
 reuse these saved IDs without recreating shared services.
 
+The infrastructure form now asks for **services first, network second, workload names third**.
+An existing Foundry or Environment supplies its verified VNet and dedicated subnet automatically;
+the form does not ask for that service's subnet again. It asks only for subnets needed by new
+resources, and omits the Private Endpoint subnet when no new endpoint is requested.
+Shared-service incompatibilities appear beside that service, model conflicts beside model options,
+and only project-name conflicts beside the workload prefix. Public or unintegrated shared services
+remain unsupported by this private profile; the template never silently converts them.
+
 Model selection no longer sets the VNet or Environment region. An existing VNet retains its
 verified actual region; only a new VNet uses the native **New infrastructure deployment region**
 control in Basics. RG metadata and model-candidate discovery do not override either choice.
 Completion and application updates preserve the saved infrastructure location.
 
-Existing-VNet subnet lists use the working KT form's direct ResourceSelector-to-ARM dependency,
-without conditional subscription-response substitution. The form distinguishes an absent or
-different response ID, access failure and an empty subnet list; it never preselects a subnet.
+Existing-VNet subnet lists read the selected VNet directly from ARM, or the exact VNet inherited
+from a reused service. They never substitute a subscription response. The form distinguishes an
+absent or different response ID, access failure and an empty subnet list; it never preselects a
+subnet for a new resource. Existing bindings are readbacks, not arbitrary subnet defaults.
 Non-wizard navigation is explicit, rather than relying on an omitted initialization setting.
 Both Portal forms avoid capturing outer parameters in nested `map`/`filter` lambdas.
 The real CreateUI evaluator does not preserve Python-style lexical scope; that defect can
@@ -213,6 +222,9 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   `relevance_evidence` field and immutable archive documents are unchanged. Updated generation
   guidance applies to new analyses after the Hosted code and affected Prompt Agent versions deploy;
   the control-plane release changes the display heading, not historical report text.
+  Single/digest delivery keeps environment evidence and its resource detail in one section,
+  with glossary/source notes beside the related prose. Unmatched sources are retained after
+  additional checks (or the overview when checks are absent), and HTML/plain summaries agree.
 - **Tenant-wide correlation** — Resource Graph queries across every accessible subscription
 - **Verified commands from the docs** — The Learn page an update links to is fetched and its
   `<pre>` command blocks are extracted separately from the prose, so real `az`/PowerShell

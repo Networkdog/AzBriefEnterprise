@@ -25,8 +25,6 @@ from src.email.templates import (
     escape_email_text,
     format_action_items_html,
     format_additional_checks_html,
-    format_affected_resources_html,
-    format_affected_resources_text,
     format_batch_context_html,
     format_digest_intro_html,
     format_digest_table_header_html,
@@ -34,11 +32,13 @@ from src.email.templates import (
     format_email_footer_html,
     format_email_masthead_html,
     format_email_section_html,
+    format_environment_resources_html,
+    format_environment_resources_text,
     format_impact_section_html,
     format_impact_section_text,
     format_quick_decision_html,
-    format_reference_docs_html,
-    format_relevance_evidence_html,
+    format_report_annotations_html,
+    format_report_annotations_text,
     format_report_header_html,
     format_resource_count_text,
     format_timeline_html,
@@ -331,8 +331,13 @@ class EmailService:
                     )
                     + (impact_html if impact_in_overview else ""),
                 ),
-                format_relevance_evidence_html(
-                    getattr(result, "relevance_evidence", ""), language
+                format_environment_resources_html(
+                    getattr(result, "relevance_evidence", ""),
+                    result.affected_resources,
+                    language,
+                    update_category=update_category,
+                    resource_queries=getattr(result, "resource_queries", []),
+                    archive_url=archive_url,
                 ),
                 format_timeline_html(
                     result.action_items if hasattr(result, "action_items") else [],
@@ -340,13 +345,6 @@ class EmailService:
                     language,
                 ),
                 "" if impact_in_overview else impact_html,
-                format_affected_resources_html(
-                    result.affected_resources,
-                    language,
-                    update_category=update_category,
-                    resource_queries=getattr(result, "resource_queries", []),
-                    archive_url=archive_url,
-                ),
                 format_action_items_html(
                     result.action_items if hasattr(result, "action_items") else [],
                     result.recommendations,
@@ -358,8 +356,10 @@ class EmailService:
                     result.additional_checks if hasattr(result, "additional_checks") else [],
                     language,
                 ),
-                format_reference_docs_html(result.reference_docs, language),
             ]
+        )
+        report_body_html = format_report_annotations_html(
+            report_body_html, result.reference_docs, language
         )
 
         html_content = HTML_EMAIL_TEMPLATE.format(
@@ -448,6 +448,7 @@ class EmailService:
             if hasattr(result, "one_line_summary") and result.one_line_summary
             else ""
         )
+        one_line = " ".join(one_line.split())
 
         lines = [
             "=" * 60,
@@ -460,11 +461,6 @@ class EmailService:
         if one_line:
             lines.append(one_line)
 
-        # Relevance evidence
-        relevance_evidence = getattr(result, "relevance_evidence", "")
-        if relevance_evidence:
-            lines.append(f"  {L['relevance_evidence']}: {relevance_evidence}")
-
         published = update.published_date.strftime("%Y-%m-%d") if update.published_date else "-"
         lines.extend(
             [
@@ -476,6 +472,7 @@ class EmailService:
         )
         if archive_url:
             lines.append(f"{L['archive_shared_original']}: {archive_url}")
+        body_start = len(lines)
         lines.extend(
             [
                 "",
@@ -503,18 +500,18 @@ class EmailService:
         if impact_text:
             lines.extend(["-" * 40, impact_text, ""])
 
-        # Affected resources (conditional by update category)
         update_cat = getattr(result, "update_category", "new_feature")
         skip_actions_categories = {"new_service", "region_expansion", "preview"}
-        resources_text = format_affected_resources_text(
+        environment_text = format_environment_resources_text(
+            getattr(result, "relevance_evidence", ""),
             result.affected_resources,
             language,
             update_cat,
             resource_queries=getattr(result, "resource_queries", []),
             archive_url=archive_url,
         )
-        if resources_text:
-            lines.extend(["-" * 40, resources_text, ""])
+        if environment_text:
+            lines.extend(["-" * 40, environment_text, ""])
 
         # Action items (conditional by update category)
         if (
@@ -568,31 +565,14 @@ class EmailService:
                 lines.append(f"  - {check}")
             lines.append("")
 
-        # Reference docs
-        if result.reference_docs:
-            lines.extend(
-                [
-                    "-" * 40,
-                    L["reference_docs"],
-                    "-" * 40,
-                ]
+        lines[body_start:] = [
+            format_report_annotations_text(
+                "\n".join(lines[body_start:]),
+                result.reference_docs,
+                language,
+                overview_text=result.relevance_reason or L["no_analysis"],
             )
-            for doc in result.reference_docs[:5]:
-                if isinstance(doc, dict):
-                    lines.append(f"  - {doc.get('title', 'Document')}")
-                    summary = doc.get("description", "") or doc.get("related_content", "")
-                    if summary:
-                        lines.append(f"    {summary}")
-                    related_content = doc.get("related_content", "")
-                    if doc.get("description") and related_content != summary:
-                        lines.append(f"    {L['doc_context']}: {related_content}")
-                    url = doc.get("url", "")
-                    if url:
-                        lines.append(f"    {url}")
-                else:
-                    lines.append(f"  - {doc}")
-            lines.append("")
-
+        ]
         lines.extend(
             [
                 "",
@@ -998,7 +978,7 @@ class EmailService:
             days = item.get("days_remaining")
             title = escape_email_text(item.get("title", ""))
             count = item.get("affected_resource_count", 0)
-            status = item.get("migration_status", "not_started")
+            retirement_date = item.get("retirement_date") or L["retirement_date_unconfirmed"]
 
             # Color based on urgency
             if days is not None and days <= 30:
@@ -1008,22 +988,16 @@ class EmailService:
             else:
                 day_color = EMAIL_COLORS["success"]
 
-            day_text = f"D-{days}" if days is not None and days >= 0 else "TBD"
+            day_text = f"D-{days:03d}" if days is not None and days >= 0 else "D-???"
             if days is not None and days < 0:
-                day_text = f"D+{abs(days)}"
+                day_text = f"D+{abs(days):03d}"
                 day_color = EMAIL_COLORS["danger"]
 
-            status_label = {
-                "not_started": L["migration_not_started"],
-                "in_progress": L["migration_in_progress"],
-                "completed": L["migration_completed"],
-            }.get(status, L["migration_not_started"])
-
             rows_html += f"""<tr>
-                <td width="80" style="padding: 14px 12px 14px 0; vertical-align: top; font-size: 17px; font-weight: 700; color: {day_color}; border-bottom: 1px solid {EMAIL_COLORS['line']};">{day_text}</td>
+                <td class="azb-countdown-day" width="80" style="padding: 14px 12px 14px 0; vertical-align: top; font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; color: {day_color}; border-bottom: 1px solid {EMAIL_COLORS['line']};">{day_text}</td>
                 <td style="padding: 14px 0; border-bottom: 1px solid {EMAIL_COLORS['line']}; overflow-wrap: anywhere;">
                     <p style="margin: 0; font-size: {FONT_SIZE_PX['body']}px; font-weight: 600; color: {EMAIL_COLORS['ink']}; line-height: 1.8;">{title}</p>
-                    <p style="margin: 6px 0 0; font-size: 12px; color: {EMAIL_COLORS['muted']};">{L['col_resource']}: {escape_email_text(count)} &middot; {status_label}</p>
+                    <p style="margin: 6px 0 0; font-size: 12px; color: {EMAIL_COLORS['muted']};">{escape_email_text(retirement_date)} &middot; {L['col_resource']}: {escape_email_text(count)}</p>
                 </td>
             </tr>"""
 
@@ -1062,7 +1036,14 @@ class EmailService:
 
         # Build each section via existing helpers
         analysis_html = markdown_to_html(result.relevance_reason or "", strip_headings=True)
-        relevance_html = format_relevance_evidence_html(result.relevance_evidence, language)
+        environment_html = format_environment_resources_html(
+            result.relevance_evidence,
+            result.affected_resources,
+            language,
+            update_category=update_category,
+            resource_queries=getattr(result, "resource_queries", []),
+            archive_url=archive_url,
+        )
         timeline_html = format_timeline_html(
             result.action_items if hasattr(result, "action_items") else [],
             update_category,
@@ -1075,13 +1056,6 @@ class EmailService:
             include_heading=not impact_in_overview,
             summary=result.impact_summary,
         )
-        resources_html = format_affected_resources_html(
-            result.affected_resources,
-            language,
-            update_category=update_category,
-            resource_queries=getattr(result, "resource_queries", []),
-            archive_url=archive_url,
-        )
         actions_html = format_action_items_html(
             result.action_items if hasattr(result, "action_items") else [],
             result.recommendations,
@@ -1093,7 +1067,6 @@ class EmailService:
             result.additional_checks if hasattr(result, "additional_checks") else [],
             language,
         )
-        refs_html = format_reference_docs_html(result.reference_docs, language)
         visuals_html = format_visual_assets_html(
             visual_assets or [], language, max_assets=1, include_heading=False
         )
@@ -1102,14 +1075,15 @@ class EmailService:
             analysis_html += impact_html
             impact_html = ""
 
-        return f"""<tr><td class="azb-digest-detail" style="padding: 0;">
+        body_html = f"""<tr><td class="azb-digest-detail" style="padding: 0;">
 <a name="azbrief-detail-{index}" id="azbrief-detail-{index}"></a>
     <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="table-layout: fixed;">
 {format_report_header_html(update, result, language, archive_url, index)}
 {format_quick_decision_html(result, language)}
 {format_email_section_html(L['analysis_summary'], analysis_html)}
-{relevance_html}{timeline_html}{impact_html}{resources_html}{actions_html}{checks_html}{refs_html}
+{environment_html}{timeline_html}{impact_html}{actions_html}{checks_html}
 </table></td></tr>"""
+        return format_report_annotations_html(body_html, result.reference_docs, language)
 
     def build_digest_content(
         self,
@@ -1340,8 +1314,7 @@ class EmailService:
 
             urg = result.urgency.value.upper() if hasattr(result.urgency, "value") else "?"
             rel = result.relevance.value if hasattr(result.relevance, "value") else "?"
-            one_line = result.one_line_summary or ""
-            evidence = getattr(result, "relevance_evidence", "")
+            one_line = " ".join((result.one_line_summary or "").split())
             affected = format_resource_count_text(
                 result.affected_resources,
                 language,
@@ -1355,8 +1328,6 @@ class EmailService:
             )
             if one_line:
                 lines.append(f"     {one_line}")
-            if evidence:
-                lines.append(f"     {L['relevance_evidence']}: {evidence}")
             lines.append(f"     {update.link}")
             archive_url = safe_archive_url(item.get("archive_url", ""))
             if archive_url:
@@ -1382,6 +1353,7 @@ class EmailService:
                     "",
                 ]
             )
+            detail_start = len(lines)
             if result.relevance_reason:
                 lines.extend([result.relevance_reason, ""])
             result_visuals = list(getattr(result, "visual_assets", []) or [])
@@ -1404,15 +1376,16 @@ class EmailService:
             if impact_text:
                 lines.append(impact_text)
                 lines.append("")
-            resources_text = format_affected_resources_text(
+            environment_text = format_environment_resources_text(
+                getattr(result, "relevance_evidence", ""),
                 result.affected_resources,
                 language,
                 getattr(result, "update_category", "new_feature"),
                 resource_queries=getattr(result, "resource_queries", []),
                 archive_url=item.get("archive_url", ""),
             )
-            if resources_text:
-                lines.extend([resources_text, ""])
+            if environment_text:
+                lines.extend([environment_text, ""])
             if hasattr(result, "action_items") and result.action_items:
                 lines.append(
                     f"{L['action_items']} ({len(result.action_items)}{L['count_suffix']}):"
@@ -1422,6 +1395,17 @@ class EmailService:
                     dl = ai.deadline if hasattr(ai, "deadline") and ai.deadline else ""
                     lines.append(f"  - {task}" + (f" ({L['deadline']}: {dl})" if dl else ""))
                 lines.append("")
+            checks = getattr(result, "additional_checks", [])
+            if checks:
+                lines.extend([L["additional_checks"], *(f"  - {check}" for check in checks), ""])
+            lines[detail_start:] = [
+                format_report_annotations_text(
+                    "\n".join(lines[detail_start:]),
+                    result.reference_docs,
+                    language,
+                    overview_text=result.relevance_reason or "",
+                )
+            ]
 
         lines.extend(
             [

@@ -11,13 +11,18 @@ import pytest
 
 from scripts import deploy_v2
 from scripts.deploy_kt import AzureCli
-from tests.test_kt_deployment import _evaluate_ui_expression
+from tests.test_kt_deployment import _evaluate_ui_expression as _evaluate_portal_expression
 
 ROOT = Path(__file__).resolve().parents[1]
 V2 = ROOT / "infra" / "v2"
 SUBSCRIPTION = "00000000-0000-0000-0000-000000000001"
 TENANT = "00000000-0000-0000-0000-000000000002"
 IMAGE = "ghcr.io/example/azbrief@sha256:" + "a" * 64
+
+
+def _evaluate_ui_expression(expression: str, names: dict[str, Any], **options: Any) -> Any:
+    values = {**names, "resources": names.get("resources", {})}
+    return _evaluate_portal_expression(expression, values, **options)
 
 
 def template(name: str) -> dict[str, Any]:
@@ -2323,13 +2328,21 @@ def test_infrastructure_outputs_are_safe_before_rg_and_vnet_load() -> None:
         values = data.setdefault(step["name"], {})
         for control in step["elements"]:
             if "defaultValue" in control:
-                values[control["name"]] = control["defaultValue"]
+                default = control["defaultValue"]
+                choices = control.get("constraints", {}).get("allowedValues", [])
+                if isinstance(choices, list):
+                    default = next(
+                        (choice["value"] for choice in choices if choice.get("label") == default),
+                        default,
+                    )
+                values[control["name"]] = default
     for expression in definition["outputs"].values():
         _evaluate_ui_expression(
             expression,
             data,
             network={},
             resource_group={"mode": "New"},
+            subscription={"subscriptionId": SUBSCRIPTION},
             basics={"infrastructureStage": "foundation"},
             eager_conditionals=True,
         )
@@ -2424,7 +2437,7 @@ def test_generated_v2_forms_do_not_use_string_key_tag_indexes() -> None:
     )
 
 
-def test_v2_matches_working_kt_navigation_and_subnet_choice_contract() -> None:
+def test_v2_keeps_kt_navigation_and_name_only_subnet_choice_contract() -> None:
     legacy = json.loads((ROOT / "infra/kt/createUiDefinition.json").read_text(encoding="utf-8"))[
         "parameters"
     ]
@@ -2438,8 +2451,8 @@ def test_v2_matches_working_kt_navigation_and_subnet_choice_contract() -> None:
         assert list(ui_definition(name))[0] == "config"
     assert ui_definition("infrastructure")["basics"]
     assert (
-        ui_controls("infrastructure")["virtualNetworkApi"]["request"]
-        == legacy_controls["virtualNetworkApi"]["request"]
+        "steps('network').virtualNetwork.id"
+        in ui_controls("infrastructure")["virtualNetworkApi"]["request"]["path"]
     )
     for name in ("peSubnetName", "foundrySubnetName", "containerAppsSubnetName"):
         assert (
@@ -2455,16 +2468,19 @@ def test_v2_matches_working_kt_navigation_and_subnet_choice_contract() -> None:
     assert ui_controls("infrastructure")["virtualNetwork"]["options"] == expected_options
 
 
-def test_vnet_discovery_keeps_the_working_kt_direct_resource_dependency() -> None:
+def test_vnet_discovery_uses_shared_bindings_or_the_direct_picker_dependency() -> None:
+    from scripts.build_v2_ui import EFFECTIVE_VNET_ID
+
     control = ui_controls("infrastructure")["virtualNetworkApi"]
     assert "visible" not in control
+    effective_id = EFFECTIVE_VNET_ID.replace("steps('names').", "steps('resources').")
     assert control["request"] == {
         "method": "GET",
-        "path": "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]",
+        "path": f"[concat({effective_id}, '?api-version=2024-05-01')]",
     }
     assert not any(
         token in control["request"]["path"]
-        for token in ("if(", "coalesce(", "basics(", "subscription(", "virtualNetworkMode")
+        for token in ("basics(", "subscription(", "virtualNetworkMode")
     )
 
 
@@ -2878,7 +2894,11 @@ def infrastructure_parameter_file(tmp_path: Path) -> Path:
     supplied = {
         name: {"value": values[name]}
         for name, definition in schema.items()
-        if "defaultValue" not in definition and name not in deploy_v2.INTERNAL_PARAMETERS
+        if (
+            "defaultValue" not in definition
+            or name in {"peSubnetName", "foundrySubnetName", "containerAppsSubnetName"}
+        )
+        and name not in deploy_v2.INTERNAL_PARAMETERS
     }
     path = tmp_path / "infrastructure.parameters.json"
     path.write_text(json.dumps({"parameters": supplied}), encoding="utf-8")
@@ -2911,6 +2931,7 @@ def infrastructure_cli(tmp_path: Path) -> tuple[FakeV2Azure, dict[str, Any]]:
         "id": vnet_id,
         "location": values["location"],
         "properties": {
+            "provisioningState": "Succeeded",
             "addressSpace": {"addressPrefixes": ["10.60.0.0/16"]},
             "subnets": [
                 {

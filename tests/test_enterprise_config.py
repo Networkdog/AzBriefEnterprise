@@ -422,12 +422,20 @@ class TestSpecialistDeploymentContract:
             "managed_identity",
             "key_vault",
             "state_storage",
-            "evaluation_storage",
+            "failure_log_dcr",
             "log_analytics",
             "application_insights",
             "communication_services",
             "email_service",
         }
+        support = {
+            resource["id"]: resource for resource in variables["adminReadinessSupportResources"]
+        }
+        assert (
+            support["failure_log_dcr"]["resource_type"] == "Microsoft.Insights/dataCollectionRules"
+        )
+        assert support["failure_log_dcr"]["name"] == "[variables('failureLogDcrName')]"
+        assert support["state_storage"]["name"] == "[variables('storageAccountName')]"
         readiness_env_values = [
             item["value"]
             for resource in template["resources"]

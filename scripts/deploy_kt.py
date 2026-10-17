@@ -173,20 +173,39 @@ def _subnet_prefix(subnet: dict[str, Any]) -> str:
     return prefix
 
 
-def plan_subnets(parameters: dict[str, Any], vnet: dict[str, Any]) -> list[SubnetPlan]:
+def normalize_region(value: str) -> str:
+    """Compare Azure display names and canonical locations without accepting unknown regions."""
+    if not isinstance(value, str):
+        raise ValueError("An explicit Azure region is required")
+    region = re.sub(r"\s+", "", value).casefold()
+    if not re.fullmatch(r"[a-z][a-z0-9]{1,39}", region):
+        raise ValueError("An explicit Azure region is required")
+    return region
+
+
+def plan_subnets(
+    parameters: dict[str, Any], vnet: dict[str, Any], *, roles: set[str] | None = None
+) -> list[SubnetPlan]:
     """Validate size, scope, delegation and overlap before proposing any subnet writes."""
-    if parameters["location"].casefold() != vnet["location"].casefold():
+    if normalize_region(parameters["location"]) != normalize_region(vnet["location"]):
         raise ValueError("Foundry and the existing VNet must have the same Azure region")
-    requested_names = [str(parameters[row[1]]).strip() for row in SUBNETS]
+    if roles is not None and not {"foundry", "container_apps"} <= roles <= {
+        row[0] for row in SUBNETS
+    }:
+        raise ValueError("Only the unused Private Endpoint subnet role may be omitted")
+    selected = [row for row in SUBNETS if roles is None or row[0] in roles]
+    requested_names = [str(parameters.get(row[1], "")).strip() for row in selected]
     if any(not name or "/" in name for name in requested_names):
         raise ValueError("Each subnet name must be a non-empty child resource name")
     if len({name.casefold() for name in requested_names}) != len(requested_names):
         raise ValueError("Private Endpoint, Foundry, and Container Apps subnets must be distinct")
     spaces = tuple(_ipv4(cidr) for cidr in vnet["properties"]["addressSpace"]["addressPrefixes"])
     existing = {subnet["name"].casefold(): subnet for subnet in vnet["properties"]["subnets"]}
+    if len(existing) != len(vnet["properties"]["subnets"]):
+        raise ValueError("Existing subnet names must be unambiguous")
     occupied = [(name, _ipv4(_subnet_prefix(subnet))) for name, subnet in existing.items()]
     plans: list[SubnetPlan] = []
-    for role, name_parameter, prefix_parameter, create_parameter, minimum in SUBNETS:
+    for role, name_parameter, prefix_parameter, create_parameter, minimum in selected:
         name = str(parameters[name_parameter]).strip()
         subnet = existing.get(name.casefold())
         supplied = parameters.get(prefix_parameter, "")

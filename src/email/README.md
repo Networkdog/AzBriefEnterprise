@@ -72,6 +72,14 @@ html = markdown_to_html(
 같은 현지화 label을 사용합니다. 적용/가치 근거와 불확실성은 수정 없이 전달하고 리소스가 없다는
 이유로 숨기지 않습니다. 구독자 맞춤화도 역할·관심 서비스가 있으면 리소스 수와 독립적으로
 직무연관성을 평가하며, 입력 JSON에 원본 `relevance_evidence`를 포함합니다.
+단건·digest 조립은 `format_environment_resources_html()` / `format_environment_resources_text()`로
+환경 근거와 리소스 상세를 한 섹션에 표시합니다. Plain text의 근거는 목차에 중복하지 않습니다.
+`format_report_annotations_html()` / `format_report_annotations_text()`는 용어 설명과 출처를
+관련 문단 옆으로 옮기며, 대응 문단이 없는 출처는 추가 확인 사항 뒤에 보존합니다. 추가 확인
+사항이 없으면 개요 끝에 보존합니다. 원본 데이터와 명령문은 변경하지 않습니다. HTML과 plain
+text의 한 줄 요약은 같은 공백 정규화를 적용하며, 종료 카운트다운은 `D+003` / `D-030` /
+`D-???`와 실제 종료일 또는 현지화된 미확정 안내를 표시합니다. 이 표시가 이력의 이행 상태를
+변경하지는 않습니다.
 
 ## 오프라인 미리보기와 검증
 

@@ -43,6 +43,15 @@ preflight.
 
 V2 can independently reference existing Foundry, ACS, Container Apps Environment and
 application Storage by exact typed ARM ID in the same subscription, including other RGs.
+Its Portal order is services, network, then workload names. Derive shared Foundry/Environment
+VNet, region and subnet roles from exact live readbacks rather than asking for the same subnet
+again. Hide shared-role/new-VNet controls, neutralize hidden new-Environment PE values, and ask
+only for subnets needed by new resources. Shared-only managed data can omit the PE role only
+when no new PE is requested; preserve an empty ID, never a fabricated `/subnets/` path.
+The CLI rejects explicit network/region conflicts. Put compatibility errors beside each service
+and model errors beside model options, not the common prefix. A uniquely discovered Environment
+workspace needs no extra picker. Public/uninjected shared resources remain unsupported by the
+private profile. Repeat actual Portal testing after this redesign, not only the earlier lambda fix.
 Never redeploy the shared parents, network, diagnostics, keys or unrelated workloads.
 Create only workload projects/Hosts, apps, private named Blob containers and scoped access.
 Shared Foundry/Environment must already use the selected same-region VNet/subnets and
@@ -217,9 +226,10 @@ private/VNet paths.
    Select an existing VNet filtered to the deployment subscription and region.
 2. Read the VNet through `Microsoft.Solutions.ArmApiControl`. This is a nonvisual API
    dependency, not a visible input; do not attach the subnet fields' `visible` gate.
-   Keep the exact working KT request `concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')`.
-   Do not replace an unresolved ResourceSelector dependency with a subscription GET or
-   condition it on stage/mode: that valid fallback does not prove reactive VNet loading.
+   Keep the working KT request `concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')`.
+   V2 may resolve the VNet ID from a reused parent's verified subnet instead; the no-shared-parent
+   branch retains the direct picker dependency. Never replace an unresolved selector with a
+   subscription GET: that valid fallback does not prove reactive VNet loading.
    Test the serialized dependency, selected-ID changes and name-list output, not only
    dropdowns with a prefilled response. Distinguish absent/different response IDs, read
    failure, missing subnet data and an actually empty list using safe IDs/error codes.

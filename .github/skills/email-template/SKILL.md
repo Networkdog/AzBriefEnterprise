@@ -5,19 +5,9 @@ description: 'Edit HTML email templates for AzBrief reports. Use when: email tem
 
 # Email Template Editing
 
-## Foundry Runtime Guidance
-
-- As the report writer, return only the requested schema; the deterministic renderer owns HTML, CSS, labels,
-    responsiveness, and client compatibility.
-- Layer the content for scanning: decisive summary, compact evidence, operational detail,
-    then executable actions. Do not repeat conclusions across fields.
-- Keep resource reasons and action fields concise, self-contained, and renderable without
-    reconstructing missing context.
-- Use the requested language and verified HTTP(S) links only. Never expose HTML, tracking
-    wrappers, unsafe URLs, fabricated links, schema names, tools, queries, or delivery details in
-    narrative text. Runtime-owned resource query references belong only in the declared structured field.
-
-<!-- End Foundry Runtime Guidance -->
+This is a GitHub Copilot developer skill. Model-facing guidance belongs to
+[`src/agent/foundry_instructions.py`](../../../src/agent/foundry_instructions.py)
+and application prompts, not this developer document.
 
 ## When to Use
 
@@ -124,6 +114,8 @@ Preserve status semantics and text contrast **≥4.5:1** on all retained surface
 | `format_additional_checks_html()` | Additional verification items, placed before references |
 | `format_quick_decision_html()` | Two-column operational facts (scope, action, deadline, work), stacked on mobile |
 | `format_relevance_evidence_html()` | 단건과 digest 상세의 환경 연관성: 적용/가치 근거와 판단 한계를 원문대로 표시 |
+| `format_environment_resources_html()` / `format_environment_resources_text()` | 단건·digest에서 환경 근거와 리소스 상세를 환경 연관성 한 섹션에 조립 |
+| `format_report_annotations_html()` / `format_report_annotations_text()` | 관련 문단 옆에 용어·출처를 배치하고, 대응 문단 없는 출처는 추가 확인 사항 뒤 또는 개요 끝에 보존 |
 | `format_timeline_html()` | Two-column date/milestone list |
 | `format_visual_assets_html()` | Optional full-width Learn screenshots with alt text, captions, and source links; trusted Microsoft HTTPS hosts and PNG/JPEG/GIF only |
 | `format_visual_assets_text()` | Plain-text caption/source fallback for accepted visuals |
@@ -201,7 +193,7 @@ results remain renderable. Both channels use the same identity and reason groupi
 ### Email/Archive Markdown parity
 
 The editorial redesign adds no Markdown vocabulary and changes no analysis behavior, transport,
-or Archive schema. Keep the bounded Foundry Runtime Guidance section unchanged for styling-only work.
+or Archive schema. Keep application-owned Foundry runtime guidance unchanged for styling-only work.
 
 The existing `relevance_evidence` key is labeled Environment Relevance / 환경 연관성 /
 環境との関連性 in Archive, single/digest HTML and plain text, and the judge's rendered report.
@@ -355,7 +347,12 @@ table — intended, since its reading pane is usually narrow.
     which have their own count and rows. Numbered, full-length contents titles link to
     `#azbrief-detail-N`; every analyzed detail links back to `#azbrief-summary`
 - `_build_retirement_countdown_html()` renders a two-column D-day/item list with localized
-    migration-status text, not emoji; the history source and scoped-delivery exclusion are unchanged
+    date-unconfirmed text, actual dates and zero-padded D-day values, not migration-status badges or
+    emoji; the history source and scoped-delivery exclusion are unchanged
+- Single/digest assembly uses the existing combined environment and annotation helpers for HTML
+    and plain text. Preserve evidence once per detailed report, all reference documents, resource
+    identity/query contracts and non-mutating source data. Plain summaries normalize whitespace
+    exactly as HTML; do not leave multiline input in one output channel.
 - Supports protected bootstrap subscribers from `SUBSCRIBERS` plus mutable profiles from the
     private Admin configuration Blob; delivery code resolves the merged list through
     `get_admin_configuration().get_subscribers()`

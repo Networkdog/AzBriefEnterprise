@@ -374,6 +374,15 @@ For an explicitly shared Foundry account, the zero-state check applies to the se
 aliases and workload project; unrelated projects/models are retained, never adopted or replaced.
 
 V2 independently selects new/existing Foundry, ACS, Environment and application Storage.
+The infrastructure UI orders services before networking and workload names. Derive reused
+Foundry/Environment subnet names, VNet and canonical region from exact typed live readbacks;
+hide their manual subnet and incompatible new-VNet inputs. Ask only for new-resource subnets.
+Allow an empty PE role/ID only with managed agent data and no requested new PE; never fabricate
+a subnet ID. CLI-supplied conflicts still fail closed. Shared-service errors belong beside the
+service, model conflicts beside model inputs, and only project-name conflicts beside the prefix.
+Keep public/uninjected services incompatible, resolve a unique Environment workspace without
+another picker, and neutralize hidden new-Environment PE inputs. Repeat live Portal acceptance
+after conditional-layout changes; prior lambda-fix screenshots are not acceptance of a new flow.
 Existing references are exact typed same-subscription ARM IDs, including other RGs. Never PUT
 shared parents, their networking/diagnostics or unrelated workloads. Add only the workload
 project/Host, apps, private workload Blob containers and scoped permissions. Shared Foundry
@@ -632,6 +641,12 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 - Korean resource sections use the shared `affected_resources` label `연관 리소스` in email,
   Archive, and judge Markdown; the empty label is `연관 리소스가 없습니다.`. Keep field names,
   resource selection, and immutable archived content unchanged.
+- Single/digest HTML and plain text use the combined environment/resource helper under the
+  Environment Relevance heading. Apply existing annotation helpers to the detailed body, not
+  metadata: matched glossary/source notes follow their paragraph; unmatched sources follow
+  additional checks or the overview when checks are absent. Preserve every source and original
+  record, normalize plain summaries like HTML, and show zero-padded D-days with actual or
+  localized unconfirmed dates rather than migration badges. Do not weaken release tests.
 - Keep the request-local resource evidence chain connected: `format_rg_result()` registers
   executed results, `analyze_update()` isolates the catalog, and the report parser resolves
   `resource_queries` into every collected identity. Serialize the delivery metadata, preserve
@@ -695,7 +710,7 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
   `format_impact_section_html(..., include_heading=False)`; Change-family impact sections remain
   independent. Preserve meaningful dimension text and the existing empty/placeholder filtering.
 - Styling-only changes add no Markdown vocabulary, analysis behavior, transport, or Archive schema.
-  Leave bounded Foundry Runtime Guidance byte-identical for styling-only documentation work.
+  Leave application-owned Foundry runtime guidance byte-identical for styling-only documentation work.
   See [src/email/README.md](../src/email/README.md) and the [email template skill](skills/email-template/SKILL.md).
 
 ---
@@ -777,19 +792,20 @@ drift checks canonicalize those service representations before comparing them;
 do not replace that semantic comparison with raw payload equality.
 
 Base runtime instructions live in `RUNTIME_AGENT_INSTRUCTIONS`; evidence-specialist instructions
-are derived from `SPECIALIST_PROMPTS` by cutting at the runtime context marker. Every domain document
-under `.github/skills/*/SKILL.md` that contributes runtime behavior has one bounded
-`Foundry Runtime Guidance` section. `scripts/provision_foundry_agents.py` loads only those
-sections and appends a role-scoped set to each immutable Prompt Agent definition; never inject
-the full developer-oriented Skill body. A runtime-section change is instruction drift and must
-be published as a new Agent version. Resource Graph and Azure API FunctionTools are generated
+are derived from `SPECIALIST_PROMPTS` by cutting at the runtime context marker. Role-scoped
+domain guidance belongs to `src/agent/foundry_instructions.py`.
+`scripts/provision_foundry_agents.py` compiles that application-owned guidance into immutable
+Prompt Agent definitions; `.github/skills/*/SKILL.md` files are developer workflows, never runtime
+inputs. Changing application runtime guidance is instruction drift and requires a new Agent
+version. Developer-document cleanup alone does not change those instructions.
+Resource Graph and Azure API FunctionTools are generated
 from live LangChain Pydantic schemas and executed through a bounded Responses function-call
 loop; the Azure MCP specialist receives only the managed MCP server tool. Strict JSON evidence
 schemas are stored on the three evidence-specialist versions. `--check` verifies unique names,
 exact functions, managed server tools, instructions, and schemas. Non-app-owned Foundry tools
 are preserved only when they do not violate the app-owned role boundary.
 
-The architecture runtime section supplies Foundry-only documentation traversal policy to
+The application architecture guidance supplies Foundry-only documentation traversal policy to
 Coordinator, Azure MCP and Azure API: relevant first-hop documents are read, a second hop requires
 an unresolved decision question, and depth never exceeds two. Coordinator owns document fetching;
 specialists preserve public links/questions as gaps without expanding their tools or permissions.

@@ -2110,6 +2110,12 @@ def format_report_annotations_html(body_html: str, docs: list, language: str = "
     overview = soup.select_one(".azb-section-copy")
     if overview is None:
         return body_html
+    fallback = overview
+    checks = soup.select_one(".azb-checks")
+    if checks is not None:
+        checks_section = checks.find_parent(class_="azb-section-copy")
+        if checks_section is not None:
+            fallback = checks_section
     candidates = [
         node
         for node in soup.select(
@@ -2185,7 +2191,7 @@ def format_report_annotations_html(body_html: str, docs: list, language: str = "
         if score:
             insert_note(anchor, note)
         else:
-            overview.append(note)
+            fallback.append(note)
     return str(soup)
 
 
@@ -2196,6 +2202,8 @@ def format_report_annotations_text(
     blocks = re.split(r"(\n[ \t]*\n)", body_text)
     candidates: list[int] = []
     concepts: dict[int, str] = {}
+    checks_heading = get_labels(language)["additional_checks"]
+    checks_anchor: Optional[int] = None
     in_code = False
     for index in range(0, len(blocks), 2):
         block = blocks[index].strip()
@@ -2205,6 +2213,8 @@ def format_report_annotations_text(
             in_code = not in_code
         if protected or not block or not block.strip("-= \n"):
             continue
+        if checks_heading in {line.strip() for line in blocks[index].splitlines()}:
+            checks_anchor = index
         if block.startswith(">"):
             match = re.match(r">\s*\*\*([^*]+)\*\*\s*[：:]", block)
             if match:
@@ -2235,6 +2245,10 @@ def format_report_annotations_text(
         (index for index in reversed(candidates) if blocks[index].strip() in overview_text),
         candidates[0] if candidates else len(blocks) - 1,
     )
+    if checks_anchor is not None:
+        fallback = next(
+            (index for index in reversed(candidates) if index >= checks_anchor), checks_anchor
+        )
     for document in docs or []:
         metadata = document if isinstance(document, dict) else {"title": str(document)}
         scored = [

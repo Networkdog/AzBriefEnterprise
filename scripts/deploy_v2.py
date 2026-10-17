@@ -27,6 +27,7 @@ from scripts.deploy_kt import (
     NETWORK_API,
     AzureCli,
     automatic_service_plan,
+    normalize_region,
     plan_subnets,
     validate_existing_host,
     wait_for_host,
@@ -630,6 +631,19 @@ def validate_tag_budget(tags: dict[str, Any]) -> None:
             raise ValueError("Tags require valid names and string values of at most 256 characters")
 
 
+def _private_endpoint_count(values: dict[str, Any]) -> int:
+    """Count only endpoints created by this workload, not shared parents' existing endpoints."""
+    return (
+        int(values.get("foundryAccountMode", "new") == "new")
+        + int(values.get("storageAccountMode", "new") == "new")
+        + (0 if values.get("useMicrosoftManagedAgentData", False) else 2)
+        + int(
+            values.get("deployContainerAppsPrivateEndpoint", False)
+            and values.get("containerAppsEnvironmentMode", "new") == "new"
+        )
+    )
+
+
 def parse_tag_contract(tags: dict[str, Any], require_ready: bool = True) -> dict[str, str]:
     """Read the bounded, non-secret infrastructure contract, never an arbitrary ARM ID."""
     validate_tag_budget(tags)
@@ -652,8 +666,17 @@ def parse_tag_contract(tags: dict[str, Any], require_ready: bool = True) -> dict
     if any(options.get(mode, "new") == "existing" for mode in SHARED_RESOURCES) and not bindings:
         raise ValueError("Shared infrastructure requires its full resource-ID tags")
     managed_agent_data = options.get("useMicrosoftManagedAgentData", False)
+    unused_pe_subnet = (
+        managed_agent_data
+        and options.get("foundryAccountMode") == "existing"
+        and options.get("storageAccountMode") == "existing"
+        and options.get("containerAppsEnvironmentMode") in {"new", "existing"}
+        and contract[PREFIX + "acaPeEnabled"] == "false"
+    )
     for suffix in TAG_FIELDS.values():
         value = contract.get(PREFIX + suffix, "")
+        if suffix == "peSubnet" and not value and unused_pe_subnet:
+            continue
         if suffix in {"cosmos", "search"} and managed_agent_data:
             if value:
                 raise ValueError(
@@ -923,6 +946,19 @@ def _read_infrastructure(
         controlPlaneClientId=identity["properties"]["clientId"],
         controlPlanePrincipalId=identity["properties"]["principalId"],
         foundryProjectEndpoint=f"https://{account['properties'].get('customSubDomainName') or values['foundryAccountName']}.services.ai.azure.com/api/projects/{values['projectName']}",
+    )
+    vnet_id = (
+        f"/subscriptions/{cli.subscription}/resourceGroups/"
+        f"{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/"
+        f"virtualNetworks/{values['virtualNetworkName']}"
+    )
+    values.update(
+        virtualNetworkResourceId=vnet_id,
+        foundrySubnetResourceId=f"{vnet_id}/subnets/{values['foundrySubnetName']}",
+        infrastructureSubnetId=expected_subnet,
+        privateEndpointSubnetId=(
+            f"{vnet_id}/subnets/{values['peSubnetName']}" if values["peSubnetName"] else ""
+        ),
     )
     return tags, values
 
@@ -1402,7 +1438,7 @@ def prepare_mcp_authentication(cli: AzureCli) -> dict[str, Any]:
         "virtualNetworkName": ("virtualNetworkResourceId", vnet_id),
         "peSubnetName": (
             "privateEndpointSubnetId",
-            f"{vnet_id}/subnets/{values['peSubnetName']}",
+            f"{vnet_id}/subnets/{values['peSubnetName']}" if values["peSubnetName"] else "",
         ),
         "foundrySubnetName": (
             "foundrySubnetResourceId",
@@ -1414,11 +1450,14 @@ def prepare_mcp_authentication(cli: AzureCli) -> dict[str, Any]:
         ),
     }
     for field in TAG_FIELDS:
-        if field not in infrastructure and field in id_backed_bindings:
+        if field in id_backed_bindings:
             id_field, expected_id = id_backed_bindings[field]
-            if str(infrastructure.get(id_field, "")).casefold() != expected_id.casefold():
+            if (id_field in infrastructure or field not in infrastructure) and str(
+                infrastructure.get(id_field, "")
+            ).casefold() != expected_id.casefold():
                 raise ValueError(f"MCP core output binding changed: {field}")
-            infrastructure[field] = values[field]
+            if field not in infrastructure:
+                infrastructure[field] = values[field]
         if str(infrastructure.get(field, "")).casefold() != str(values[field]).casefold():
             raise ValueError(f"MCP core output binding changed: {field}")
     for field in (*RESOURCE_BINDING_TYPES, *sorted(CONTAINER_NAME_FIELDS)):
@@ -1526,6 +1565,15 @@ def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
         )
         for field, value in names.items():
             supplied.setdefault(field, {"value": value})
+    shared_network = any(
+        isinstance(supplied.get(mode), dict) and supplied[mode].get("value") == "existing"
+        for mode in ("foundryAccountMode", "containerAppsEnvironmentMode")
+    )
+    inferred_network_fields = (
+        {"virtualNetworkResourceGroupName", "virtualNetworkName", "location"}
+        if shared_network
+        else set()
+    )
     schema = json.loads((V2 / "infrastructure.json").read_text(encoding="utf-8"))["parameters"]
     if set(supplied) - set(schema) or set(supplied) & INTERNAL_PARAMETERS:
         raise ValueError("Unknown or internally derived infrastructure parameters")
@@ -1537,6 +1585,8 @@ def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
             if not isinstance(supplied[name], dict) or set(supplied[name]) != {"value"}:
                 raise ValueError("Infrastructure parameters must contain explicit literal values")
             value = supplied[name]["value"]
+        elif name in inferred_network_fields:
+            value = ""
         elif "defaultValue" in definition:
             value = copy.deepcopy(definition["defaultValue"])
             if isinstance(value, str) and value.startswith("["):
@@ -1552,7 +1602,7 @@ def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
         if "allowedValues" in definition and value not in definition["allowedValues"]:
             raise ValueError(f"Unsupported infrastructure parameter: {name}")
         if isinstance(value, str) and not definition.get("defaultValue") and not value:
-            if "defaultValue" not in definition:
+            if "defaultValue" not in definition and name not in inferred_network_fields:
                 raise ValueError(f"Empty required infrastructure parameter: {name}")
         for minimum, maximum, measured in (
             ("minLength", "maxLength", len(value) if isinstance(value, str) else None),
@@ -1673,11 +1723,150 @@ def _shared_document(
     resource_scope(resource_id, resource_type, cli.subscription)
     document: dict[str, Any] = cli.get(resource_id, api_version)
     if (
-        str(document.get("id", "")).casefold() != resource_id.casefold()
-        or document.get("properties", {}).get("provisioningState") != "Succeeded"
+        not isinstance(document, dict)
+        or document.get("error")
+        or document.get("nextLink")
+        or str(document.get("id", "")).casefold() != resource_id.casefold()
+        or not isinstance(document.get("properties"), dict)
+        or document["properties"].get("provisioningState") != "Succeeded"
     ):
         raise ValueError("Shared resource is not ready or its typed ARM lookup was redirected")
     return document
+
+
+def _shared_network_bindings(
+    cli: AzureCli, values: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+    """Resolve omitted network inputs from exact private owners, rejecting explicit conflicts."""
+    values = copy.deepcopy(values)
+    documents: dict[str, dict[str, Any]] = {}
+    bound_vnet = ""
+    for mode, role, subnet_field, label in (
+        ("foundryAccountMode", "foundry", "foundrySubnetName", "Foundry"),
+        (
+            "containerAppsEnvironmentMode",
+            "container_apps",
+            "containerAppsSubnetName",
+            "Environment",
+        ),
+    ):
+        if values[mode] != "existing":
+            continue
+        _, reference, _, resource_type, api_version = SHARED_RESOURCES[mode]
+        document = _shared_document(cli, values[reference], resource_type, api_version)
+        props = document["properties"]
+        if str(props.get("publicNetworkAccess", "")).casefold() != "disabled":
+            raise ValueError(f"Shared {label} requires publicNetworkAccess Disabled before reuse")
+        if role == "foundry":
+            injections = props.get("networkInjections")
+            if not isinstance(injections, list) or any(
+                not isinstance(item, dict) for item in injections
+            ):
+                raise ValueError("Shared Foundry requires one existing agent VNet injection")
+            agent_bindings = [item for item in injections if item.get("scenario") == "agent"]
+            if (
+                len(agent_bindings) != 1
+                or agent_bindings[0].get("useMicrosoftManagedNetwork") is not False
+            ):
+                raise ValueError(
+                    "Shared Foundry requires exactly one agent VNet injection with "
+                    "useMicrosoftManagedNetwork false"
+                )
+            subnet_id = agent_bindings[0].get("subnetArmId", "")
+        else:
+            configuration = props.get("vnetConfiguration")
+            if not isinstance(configuration, dict) or configuration.get("internal") is not True:
+                raise ValueError("Shared Environment requires an existing internal VNet binding")
+            subnet_id = configuration.get("infrastructureSubnetId", "")
+        try:
+            _, network_group, subnet_name = resource_scope(
+                subnet_id, "Microsoft.Network/virtualNetworks/subnets", cli.subscription
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Shared {label} requires its exact existing same-subscription subnet ARM ID"
+            ) from exc
+        vnet_id = "/".join(subnet_id.split("/")[:9])
+        if bound_vnet and bound_vnet.casefold() != vnet_id.casefold():
+            raise ValueError("Shared Foundry and Environment must retain the same existing VNet")
+        bound_vnet = vnet_id
+        for field, actual in (
+            ("virtualNetworkResourceGroupName", network_group),
+            ("virtualNetworkName", subnet_id.split("/")[8]),
+            (subnet_field, subnet_name),
+        ):
+            selected = values.get(field, "")
+            if not isinstance(selected, str) or (
+                selected and selected.casefold() != actual.casefold()
+            ):
+                raise ValueError(
+                    f"Shared {label} {field} conflicts with its existing VNet/subnet binding"
+                )
+            if not selected:
+                values[field] = actual
+        region = normalize_region(document.get("location", ""))
+        if values.get("location") and normalize_region(values["location"]) != region:
+            raise ValueError(f"Shared {label} must retain its exact same-region VNet binding")
+        values["location"] = region
+        documents[role] = document
+    values["location"] = normalize_region(values.get("location", ""))
+    if any(
+        not isinstance(values.get(field), str) or not values[field]
+        for field in ("virtualNetworkResourceGroupName", "virtualNetworkName")
+    ):
+        raise ValueError("Select the existing VNet or bind a private shared Foundry/Environment")
+    for mode, field, label in (
+        ("foundryAccountMode", "foundrySubnetName", "Foundry"),
+        ("containerAppsEnvironmentMode", "containerAppsSubnetName", "Environment"),
+    ):
+        if values[mode] == "new" and not values.get(field):
+            raise ValueError(f"New {label} requires an explicit {field}")
+    if _private_endpoint_count(values) and not values.get("peSubnetName"):
+        raise ValueError("New Private Endpoints require an explicit peSubnetName")
+    values.setdefault("peSubnetName", "")
+    if bound_vnet:
+        vnet = _existing_virtual_network(cli, bound_vnet)
+        if normalize_region(vnet.get("location", "")) != values["location"]:
+            raise ValueError("Shared Foundry/Environment must retain their same-region VNet")
+        subnets = vnet["properties"].get("subnets")
+        if not isinstance(subnets, list):
+            raise ValueError("Shared VNet subnet inventory is incomplete")
+        for role, field in (
+            ("foundry", "foundrySubnetName"),
+            ("container_apps", "containerAppsSubnetName"),
+        ):
+            if role not in documents:
+                continue
+            matches = [
+                row
+                for row in subnets
+                if isinstance(row, dict)
+                and str(row.get("name", "")).casefold() == values[field].casefold()
+            ]
+            expected_id = f"{bound_vnet}/subnets/{values[field]}"
+            if (
+                len(matches) != 1
+                or str(matches[0].get("id", expected_id)).casefold() != expected_id.casefold()
+            ):
+                raise ValueError(
+                    "The shared owner's bound subnet is missing, ambiguous or redirected"
+                )
+    return values, documents
+
+
+def _existing_virtual_network(cli: AzureCli, vnet_id: str) -> dict[str, Any]:
+    resource_scope(vnet_id, "Microsoft.Network/virtualNetworks", cli.subscription)
+    vnet = cli.get(vnet_id, NETWORK_API)
+    if (
+        not isinstance(vnet, dict)
+        or str(vnet.get("id", "")).casefold() != vnet_id.casefold()
+        or vnet.get("error")
+        or vnet.get("nextLink")
+        or not isinstance(vnet.get("properties"), dict)
+        or vnet["properties"].get("provisioningState") != "Succeeded"
+    ):
+        raise ValueError("The exact VNet read is incomplete, unready or redirected")
+    return vnet
 
 
 def _shared_private_endpoint(
@@ -1770,23 +1959,16 @@ def _resolve_shared_resources(cli: AzureCli, values: dict[str, Any], stage: str)
         for mode in ("foundryAccountMode", "containerAppsEnvironmentMode")
     ):
         raise ValueError("Existing Foundry/Environment must retain their existing VNet")
+    values, shared_network = _shared_network_bindings(cli, values)
     vnet_id = (
         f"/subscriptions/{cli.subscription}/resourceGroups/{values['virtualNetworkResourceGroupName']}"
         f"/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
     )
     if values["foundryAccountMode"] == "existing":
-        account = _shared_document(
-            cli,
-            values["existingFoundryAccountResourceId"],
-            "Microsoft.CognitiveServices/accounts",
-            FOUNDRY_API,
-        )
+        account = shared_network["foundry"]
         props = account["properties"]
-        expected_subnet = f"{vnet_id}/subnets/{values['foundrySubnetName']}"
-        injections = props.get("networkInjections", [])
         if (
             account.get("kind") != "AIServices"
-            or account.get("location", "").casefold() != values["location"].casefold()
             or props.get("allowProjectManagement") is not True
             or props.get("disableLocalAuth") is not True
             or not isinstance(props.get("customSubDomainName"), str)
@@ -1794,15 +1976,6 @@ def _resolve_shared_resources(cli: AzureCli, values: dict[str, Any], stage: str)
                 r"[A-Za-z0-9][A-Za-z0-9-]{0,63}", props.get("customSubDomainName", "")
             )
             or str(props.get("publicNetworkAccess", "")).casefold() != "disabled"
-            or not isinstance(injections, list)
-            or len(injections) != 1
-            or not any(
-                isinstance(item, dict)
-                and item.get("scenario") == "agent"
-                and item.get("useMicrosoftManagedNetwork") is False
-                and item.get("subnetArmId", "").casefold() == expected_subnet.casefold()
-                for item in injections
-            )
         ):
             raise ValueError(
                 "Shared Foundry must retain project support, Entra-only private access and the exact same-region agent subnet"
@@ -1818,15 +1991,10 @@ def _resolve_shared_resources(cli: AzureCli, values: dict[str, Any], stage: str)
             raise ValueError(
                 "Existing Environment networking is retained; do not request a new Environment Private Endpoint"
             )
-        environment = _shared_document(
-            cli,
-            values["existingContainerAppsEnvironmentResourceId"],
-            "Microsoft.App/managedEnvironments",
-            CONTAINER_ENV_API,
-        )
+        environment = shared_network["container_apps"]
         props = environment["properties"]
         if (
-            environment.get("location", "").casefold() != values["location"].casefold()
+            normalize_region(environment.get("location", "")) != values["location"]
             or str(props.get("publicNetworkAccess", "")).casefold() != "disabled"
             or props.get("vnetConfiguration", {}).get("internal") is not True
             or props.get("vnetConfiguration", {}).get("infrastructureSubnetId", "").casefold()
@@ -2184,7 +2352,7 @@ def prepare_infrastructure(
             raise ValueError("Refusing to overwrite an existing VNet in new-network mode")
         vnet = planned_virtual_network(values)
     else:
-        vnet = cli.get(vnet_id, NETWORK_API)
+        vnet = _existing_virtual_network(cli, vnet_id)
         if network_mode == "new":
             _owned(vnet, vnet_id)
             if vnet["properties"]["addressSpace"]["addressPrefixes"] != [
@@ -2203,10 +2371,14 @@ def prepare_infrastructure(
             },
         }
     )
-    plans = plan_subnets(subnet_parameters, vnet)
+    needed_endpoints = _private_endpoint_count(values)
+    subnet_roles = {"foundry", "container_apps"}
+    if needed_endpoints or values.get("peSubnetName"):
+        subnet_roles.add("private_endpoint")
+    plans = plan_subnets(subnet_parameters, vnet, roles=subnet_roles)
     if any(plan.create for plan in plans):
         raise ValueError(
-            "Prepare all three approved existing subnets before v2 infrastructure deployment"
+            "Prepare every required approved existing subnet before v2 infrastructure deployment"
         )
     existing_subnets = {
         subnet["name"].casefold(): subnet for subnet in vnet["properties"]["subnets"]
@@ -2231,6 +2403,7 @@ def prepare_infrastructure(
                 raise ValueError(
                     "Foundry and Container Apps subnets must be unused by another workload"
                 )
+    if stage == "foundation" and needed_endpoints:
         pe_plan = next(plan for plan in plans if plan.role == "private_endpoint")
         pe_props = existing_subnets[pe_plan.name.casefold()]["properties"]
         used = {row["id"].casefold() for row in pe_props.get("ipConfigurations", [])}
@@ -2238,16 +2411,7 @@ def prepare_infrastructure(
             raise ValueError(
                 "Private Endpoint IP occupancy is unknown; verify free addresses before deployment"
             )
-        needed = (
-            int(values["foundryAccountMode"] == "new")
-            + int(values["storageAccountMode"] == "new")
-            + (0 if values.get("useMicrosoftManagedAgentData", False) else 2)
-            + int(
-                values["deployContainerAppsPrivateEndpoint"]
-                and values["containerAppsEnvironmentMode"] == "new"
-            )
-        )
-        if pe_plan.network.num_addresses - 5 - len(used) < needed:
+        if pe_plan.network.num_addresses - 5 - len(used) < needed_endpoints:
             raise ValueError(
                 "The Private Endpoint subnet does not have the required address budget"
             )

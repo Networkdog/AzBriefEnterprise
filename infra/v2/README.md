@@ -236,19 +236,34 @@ its exhausted quota; only the explicitly approved zero-model/zero-project CLI pa
 
 ## New Or Existing VNet
 
-Choose the mode in the Portal network tab or `virtualNetworkMode` in the protected CLI
-parameter file. `existing` retains the approved VNet selector, three exact subnet choices
-and original CIDR/delegation/occupancy/DNS checks. CIDR inputs for new mode never resize or
-reinterpret existing subnets. Cross-RG existing VNet selection remains supported.
+Choose new/existing services before networking and workload names. Reused Foundry and Environment
+provide their exact infrastructure subnet IDs; the Portal and CLI derive the VNet, region and
+role names from fresh typed ARM readbacks. Their subnet pickers are hidden. When either parent is
+reused, the form inherits that VNet rather than offering a contradictory new VNet. Two reused
+parents must agree on one VNet. A public or uninjected parent remains incompatible with this
+private profile; no parent is converted or redeployed. Service errors appear beside the selected
+service, model conflicts beside the model inputs, and the prefix validates only project-name
+collisions. A unique Environment log workspace is resolved automatically; manual selection is
+shown only when discovery cannot identify a unique workspace.
+
+With no reused network parent, choose the mode in the Portal network tab or
+`virtualNetworkMode` in the protected CLI parameter file. Existing mode retains the approved VNet
+selector and asks only for new-resource role subnets, preserving CIDR/delegation/occupancy/DNS
+checks. The shared roles are verified against their actual owners, not unused manual choices.
+The PE role can be empty only when managed agent data is selected and no new PE is requested;
+it is not a fabricated child ID. The CLI still rejects explicitly conflicting VNet, subnet or
+region inputs. Display locations such as `East US` normalize to canonical `eastus`.
+CIDR inputs for new mode never resize or reinterpret existing subnets. Cross-RG VNet selection
+remains supported. Central DNS overrides and the optional new Environment PE are advanced inputs;
+selecting a shared Environment clears the inactive new-PE output.
 
 Subnet discovery uses a nonvisual `ArmApiControl` without a `visible` property. Its request
-is exactly the working KT direct dependency:
-`concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')`.
-Do not wrap that dependency in stage/mode/empty-ID conditions or substitute a subscription
-GET through `coalesce`: a syntactically valid fallback can leave a non-VNet response and
-does not prove that Portal observes the later selection. The three dropdowns retain the
-working KT name-only choices and literal blank default. New-network and completion use
-their own saved/generated values and never treat a subscription response as network data.
+uses the working KT direct picker dependency when there is no reused network parent, or the
+verified parent subnet's VNet ID otherwise, with `api-version=2024-05-01`. Never substitute a
+subscription GET: a syntactically valid fallback can leave a non-VNet response and does not prove
+that Portal observes later selections. Remaining dropdowns keep KT's name-only choices and
+literal blank default. New-network and completion use their own saved/generated values and never
+treat a subscription response as network data.
 
 If no subnet choices appear, the network tab distinguishes an absent/different VNet response,
 an ARM read error, a response without subnet data and a successfully read VNet with no
@@ -274,7 +289,7 @@ lambda bodies. Binding validation no longer captures an enclosing `opts` lambda;
 checks stay outside per-subnet predicates, and foundation tag budgeting uses only current
 foundation inputs. No ownership, scope, model, tag-budget or readiness checks are removed.
 
-Playwright acceptance of the repaired local definitions used the authenticated Portal and
+Earlier lambda-fix acceptance, before the resource-first redesign, used the authenticated Portal and
 unchanged live Azure data: both forms auto-selected Basics without clicking a tab; the
 infrastructure form populated all ten subnet names, accepted all three role selections and
 refreshed after switching VNet. With Korea Central, the existing production VNet and its

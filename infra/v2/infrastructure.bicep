@@ -18,11 +18,11 @@ param virtualNetworkMode string = 'existing'
 param virtualNetworkResourceGroupName string
 param virtualNetworkName string
 param virtualNetworkAddressPrefix string = '10.240.0.0/16'
-param peSubnetName string
+param peSubnetName string = ''
 param peSubnetAddressPrefix string = '10.240.1.32/28'
-param foundrySubnetName string
+param foundrySubnetName string = ''
 param foundrySubnetAddressPrefix string = '10.240.0.0/24'
-param containerAppsSubnetName string
+param containerAppsSubnetName string = ''
 param containerAppsSubnetAddressPrefix string = '10.240.1.0/27'
 param foundryAccountName string
 @minLength(3)
@@ -106,8 +106,18 @@ var archiveName = !empty(archiveContainerName) ? archiveContainerName : (storage
 var projectId = '${accountId}/projects/${projectName}'
 var foundrySubdomain = foundryAccountMode == 'existing' ? account.properties.customSubDomainName : foundryAccountName
 var projectEndpoint = 'https://${foundrySubdomain}.services.ai.azure.com/api/projects/${projectName}'
+var sharedFoundryInjections = foundryAccountMode == 'existing' ? filter(account.properties.networkInjections ?? [], injection => injection.scenario == 'agent') : []
+var boundFoundrySubnetId = foundryAccountMode == 'existing' ? (sharedFoundryInjections[?0].?subnetArmId ?? '') : ''
+var boundEnvironmentSubnetId = containerAppsEnvironmentMode == 'existing' ? (containerEnvironment.properties.?vnetConfiguration.?infrastructureSubnetId ?? '') : ''
 var networkResourceGroup = virtualNetworkMode == 'new' ? resourceGroup().name : virtualNetworkResourceGroupName
-var vnetId = resourceId(networkResourceGroup, 'Microsoft.Network/virtualNetworks', virtualNetworkName)
+var networkName = virtualNetworkName
+var vnetId = resourceId(networkResourceGroup, 'Microsoft.Network/virtualNetworks', networkName)
+var deploymentLocation = toLower(replace(location, ' ', ''))
+var resolvedFoundrySubnetName = !empty(foundrySubnetName) ? foundrySubnetName : last(split(boundFoundrySubnetId, '/'))
+var resolvedEnvironmentSubnetName = !empty(containerAppsSubnetName) ? containerAppsSubnetName : last(split(boundEnvironmentSubnetId, '/'))
+var foundrySubnetId = foundryAccountMode == 'existing' ? boundFoundrySubnetId : '${vnetId}/subnets/${resolvedFoundrySubnetName}'
+var environmentSubnetId = containerAppsEnvironmentMode == 'existing' ? boundEnvironmentSubnetId : '${vnetId}/subnets/${resolvedEnvironmentSubnetName}'
+var privateEndpointSubnetRequired = foundryAccountMode == 'new' || storageAccountMode == 'new' || !useMicrosoftManagedAgentData || (containerAppsEnvironmentMode == 'new' && deployContainerAppsPrivateEndpoint)
 var manageAzureMcp = empty(azureMcpServerUrl)
 var savedOptions = complete ? json(concat(
   resourceGroup().tags[?'azbrief.v2.options0'] ?? '{}',
@@ -159,31 +169,73 @@ var promptAgentNames = {
   quality_reviewer: '${take(projectName, 47)}-quality-reviewer'
 }
 
+resource networkBindingValidation 'Microsoft.Resources/deployments@2025-04-01' = {
+  name: 'v2-network-binding-validation'
+  properties: {
+    mode: 'Incremental'
+    expressionEvaluationOptions: { scope: 'inner' }
+    parameters: {
+      sharedFoundryPrivateAgentSubnetReady: {
+        value: foundryAccountMode == 'existing' ? (length(sharedFoundryInjections) == 1 && sharedFoundryInjections[?0].?useMicrosoftManagedNetwork == false && account.properties.provisioningState == 'Succeeded' && account.properties.publicNetworkAccess == 'Disabled' && account.properties.allowProjectManagement == true && account.properties.disableLocalAuth == true && toLower(account.id) == toLower(accountId) && toLower(foundrySubnetId) == toLower('${vnetId}/subnets/${resolvedFoundrySubnetName}') && toLower(replace(account.location, ' ', '')) == deploymentLocation) : true
+      }
+      sharedEnvironmentPrivateSubnetReady: {
+        value: containerAppsEnvironmentMode == 'existing' ? (containerEnvironment.properties.provisioningState == 'Succeeded' && containerEnvironment.properties.publicNetworkAccess == 'Disabled' && containerEnvironment.properties.?vnetConfiguration.?internal == true && toLower(containerEnvironment.id) == toLower(environmentId) && toLower(environmentSubnetId) == toLower('${vnetId}/subnets/${resolvedEnvironmentSubnetName}') && toLower(replace(containerEnvironment.location, ' ', '')) == deploymentLocation && !deployContainerAppsPrivateEndpoint) : true
+      }
+      requiredNetworkRolesSelected: {
+        value: !empty(networkResourceGroup) && !empty(networkName) && !empty(resolvedFoundrySubnetName) && !empty(resolvedEnvironmentSubnetName) && (!privateEndpointSubnetRequired || !empty(peSubnetName)) && (virtualNetworkMode != 'new' || (foundryAccountMode == 'new' && containerAppsEnvironmentMode == 'new' && !empty(peSubnetName)))
+      }
+    }
+    template: {
+      '$schema': 'https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#'
+      contentVersion: '1.0.0.0'
+      parameters: {
+        sharedFoundryPrivateAgentSubnetReady: {
+          type: 'bool'
+          allowedValues: [true]
+          metadata: { description: 'Shared Foundry requires one ready, private agent injection on the exact selected same-region VNet/subnet. Existing parents cannot move.' }
+        }
+        sharedEnvironmentPrivateSubnetReady: {
+          type: 'bool'
+          allowedValues: [true]
+          metadata: { description: 'Shared Environment requires its ready internal/PNA-disabled same-region infrastructure subnet; existing networking is retained.' }
+        }
+        requiredNetworkRolesSelected: {
+          type: 'bool'
+          allowedValues: [true]
+          metadata: { description: 'New Foundry/Environment require their dedicated subnets; a Private Endpoint subnet is required only for endpoints this workload creates.' }
+        }
+      }
+      resources: []
+    }
+  }
+}
+
 module network 'new-network.bicep' = if (!complete && virtualNetworkMode == 'new') {
   name: 'v2-new-network'
   params: {
-    location: location
-    virtualNetworkName: virtualNetworkName
+    location: deploymentLocation
+    virtualNetworkName: networkName
     virtualNetworkAddressPrefix: virtualNetworkAddressPrefix
     peSubnetName: peSubnetName
     peSubnetAddressPrefix: peSubnetAddressPrefix
-    foundrySubnetName: foundrySubnetName
+    foundrySubnetName: resolvedFoundrySubnetName
     foundrySubnetAddressPrefix: foundrySubnetAddressPrefix
-    containerAppsSubnetName: containerAppsSubnetName
+    containerAppsSubnetName: resolvedEnvironmentSubnetName
     containerAppsSubnetAddressPrefix: containerAppsSubnetAddressPrefix
     tags: resourceTags
   }
+  dependsOn: [networkBindingValidation]
 }
 
 module foundation 'foundation.bicep' = if (!complete) {
   name: 'v2-foundation'
   params: {
-    location: location
+    location: deploymentLocation
     virtualNetworkResourceGroupName: networkResourceGroup
-    virtualNetworkName: virtualNetworkName
+    virtualNetworkName: networkName
     peSubnetName: peSubnetName
-    foundrySubnetName: foundrySubnetName
-    containerAppsSubnetName: containerAppsSubnetName
+    foundrySubnetName: resolvedFoundrySubnetName
+    containerAppsSubnetName: resolvedEnvironmentSubnetName
     foundryAccountName: foundryAccountName
     storageAccountName: storageAccountName
     cosmosAccountName: cosmosAccountName
@@ -209,16 +261,17 @@ module foundation 'foundation.bicep' = if (!complete) {
     existingEmailDomainResourceId: communicationServicesMode == 'existing' ? domainId : ''
     tags: resourceTags
   }
-  dependsOn: [network]
+  dependsOn: [network, networkBindingValidation]
 }
 
 module mcpIdentity 'mcp-identity.bicep' = if (!complete && manageAzureMcp) {
   name: 'v2-mcp-identity'
   params: {
     name: azureMcpIdentityName
-    location: location
+    location: deploymentLocation
     tags: resourceTags
   }
+  dependsOn: [networkBindingValidation]
 }
 
 resource account 'Microsoft.CognitiveServices/accounts@2025-06-01' existing = {
@@ -261,6 +314,7 @@ module models '../kt/models.bicep' = if (complete) {
     reuseSimple: reuseSimpleModel
     useCoreForSimple: useCoreForSimpleModel
   }
+  dependsOn: [networkBindingValidation]
 }
 
 module project 'foundry-workload.bicep' = if (complete) {
@@ -269,7 +323,7 @@ module project 'foundry-workload.bicep' = if (complete) {
   params: {
     foundryAccountName: foundryAccountName
     projectName: projectName
-    location: location
+    location: deploymentLocation
     storageAccountName: storageAccountName
     cosmosAccountName: cosmosAccountName
     searchServiceName: searchServiceName
@@ -297,6 +351,7 @@ module sharedStorage 'storage-workload.bicep' = if (storageAccountMode == 'exist
     createContainers: !complete
     assignRoles: complete
   }
+  dependsOn: [networkBindingValidation]
 }
 module sharedStorageReader 'shared-observer.bicep' = if (complete && storageAccountMode == 'existing') {
   name: 'v2-shared-storage-reader-${workloadKey}'
@@ -305,6 +360,7 @@ module sharedStorageReader 'shared-observer.bicep' = if (complete && storageAcco
     storageAccountName: storageAccountName
     principalId: identity.properties.principalId
   }
+  dependsOn: [networkBindingValidation]
 }
 module sharedEnvironmentReader 'shared-observer.bicep' = if (complete && containerAppsEnvironmentMode == 'existing') {
   name: 'v2-shared-environment-reader-${workloadKey}'
@@ -313,6 +369,7 @@ module sharedEnvironmentReader 'shared-observer.bicep' = if (complete && contain
     environmentName: containerAppsEnvironmentName
     principalId: identity.properties.principalId
   }
+  dependsOn: [networkBindingValidation]
 }
 module sharedCommunicationAccess 'communication-access.bicep' = if (complete && communicationServicesMode == 'existing') {
   name: 'v2-shared-communication-access-${workloadKey}'
@@ -321,6 +378,7 @@ module sharedCommunicationAccess 'communication-access.bicep' = if (complete && 
     communicationServicesName: communicationServicesName
     principalId: identity.properties.principalId
   }
+  dependsOn: [networkBindingValidation]
 }
 
 module projectTelemetryRole 'monitoring-role.bicep' = if (complete) {
@@ -360,17 +418,17 @@ var infrastructureContract = {
   tenantId: tenant().tenantId
   subscriptionId: subscription().subscriptionId
   resourceGroup: resourceGroup().name
-  location: location
+  location: deploymentLocation
   tags: resourceTags
   virtualNetworkResourceGroupName: networkResourceGroup
-  virtualNetworkName: virtualNetworkName
+  virtualNetworkName: networkName
   virtualNetworkResourceId: vnetId
-  foundrySubnetName: foundrySubnetName
-  foundrySubnetResourceId: '${vnetId}/subnets/${foundrySubnetName}'
-  containerAppsSubnetName: containerAppsSubnetName
-  infrastructureSubnetId: '${vnetId}/subnets/${containerAppsSubnetName}'
+  foundrySubnetName: resolvedFoundrySubnetName
+  foundrySubnetResourceId: foundrySubnetId
+  containerAppsSubnetName: resolvedEnvironmentSubnetName
+  infrastructureSubnetId: environmentSubnetId
   peSubnetName: peSubnetName
-  privateEndpointSubnetId: '${vnetId}/subnets/${peSubnetName}'
+  privateEndpointSubnetId: empty(peSubnetName) ? '' : '${vnetId}/subnets/${peSubnetName}'
   deployContainerAppsPrivateEndpoint: deployContainerAppsPrivateEndpoint
   containerAppsEnvironmentName: containerAppsEnvironmentName
   containerAppsEnvironmentResourceId: containerEnvironment.id
@@ -446,7 +504,7 @@ output ktFoundation object = {
   tenantId: tenant().tenantId
   subscriptionId: subscription().subscriptionId
   resourceGroup: resourceGroup().name
-  location: location
+  location: deploymentLocation
   runtimeSetup: {
     schemaVersion: 1
     foundryAccountName: foundryAccountName

@@ -21,6 +21,7 @@ from src.email.templates import (
     FONT_STACK_DISPLAY,
     FONT_STACK_SANS,
     SEMANTIC_ACCENT_WIDTH_PX,
+    format_additional_checks_html,
     format_affected_resources_html,
     format_affected_resources_text,
     format_digest_intro_html,
@@ -205,6 +206,30 @@ def test_report_notes_preserve_order_safety_and_every_document():
     ]
     assert soup.find(["script", "img"]) is None
     assert soup.select_one('a[href^="javascript:"]') is None
+
+
+@pytest.mark.parametrize("language", ["ko", "en", "ja"])
+def test_unmatched_sources_follow_checks_without_moving_matched_notes(language):
+    paragraph = "TLS 1.2 protects the connection."
+    check = "Verify the installed version."
+    docs = [
+        {"title": "TLS 1.2", "description": "Matched source fact."},
+        {"title": "Unmatched source", "description": "Retained unmatched fact."},
+    ]
+    body = format_email_section_html(
+        "Overview", markdown_to_html(paragraph)
+    ) + format_additional_checks_html([check], language)
+    html = format_report_annotations_html(body, docs, language)
+    text = format_report_annotations_text(
+        f"{paragraph}\n\n{get_labels(language)['additional_checks']}\n\n{check}",
+        docs,
+        language,
+        overview_text=paragraph,
+    )
+    for rendered in (html, text):
+        assert rendered.index(paragraph) < rendered.index("Matched source fact.")
+        assert rendered.index("Matched source fact.") < rendered.index(check)
+        assert rendered.index(check) < rendered.index("Retained unmatched fact.")
 
 
 @pytest.mark.parametrize("kind", ["single", "digest"])

@@ -73,7 +73,7 @@ class UiState:
 def evaluate(expression: str, state: UiState, eager: bool = True) -> Any:
     return _evaluate_ui_expression(
         expression,
-        state.values,
+        {**state.values, "resources": state.values},
         network=state.network,
         resource_group=state.group,
         subscription={"subscriptionId": SUBSCRIPTION},
@@ -308,7 +308,7 @@ def save_tags(state: UiState, *, bindings: bool = True) -> dict[str, str]:
         "azbrief.v2.location": "eastus",
         "azbrief.v2.vnetRg": NETWORK_GROUP,
         "azbrief.v2.vnet": "vnet-private",
-        "azbrief.v2.peSubnet": "private-endpoints",
+        "azbrief.v2.peSubnet": output("peSubnetName", state),
         "azbrief.v2.foundrySubnet": "foundry-agents",
         "azbrief.v2.appSubnet": "container-apps",
         "azbrief.v2.coreModel": "gpt-5-terra",
@@ -476,6 +476,159 @@ def test_existing_selectors_are_subscription_scoped_and_not_manual_id_fields() -
     assert not any(name.endswith("Guard") for name in selected_controls)
 
 
+def test_service_selection_precedes_network_and_workload_naming() -> None:
+    assert [step["name"] for step in definition()["steps"]] == [
+        "contract",
+        "resources",
+        "network",
+        "names",
+        "options",
+    ]
+    service_step = next(step for step in definition()["steps"] if step["name"] == "resources")
+    names = [element["name"] for element in service_step["elements"]]
+    for name in build_v2_ui.SHARED_RESOURCES:
+        selector = "existing" + name[0].upper() + name[1:]
+        assert names.index(name + "Mode") < names.index(selector) < names.index(name + "Status")
+    assert "namingPrefix" not in names and "namingSuffix" not in names
+    prefix_rules = controls()["namingPrefix"]["constraints"]["validations"]
+    assert len(prefix_rules) == 1
+    assert "프로젝트" in prefix_rules[0]["message"]
+    assert not any(
+        "Storage" in rule["message"] or "Environment" in rule["message"] for rule in prefix_rules
+    )
+
+
+@pytest.mark.parametrize("name", tuple(build_v2_ui.SHARED_RESOURCES))
+def test_foundation_selector_visibility_uses_only_current_mode_without_saved_context(name):
+    state = foundation()
+    selector = "existing" + name[0].upper() + name[1:]
+    selected = controls()
+    for control in (selector, name + "Status"):
+        assert "map(" not in selected[control]["visible"]
+        assert "resourceGroupApi" not in selected[control]["visible"]
+        assert evaluate(selected[control]["visible"], state) is False
+    select_existing(state, name)
+    assert evaluate(selected[selector]["visible"], state) is True
+    assert evaluate(selected[name + "Status"]["visible"], state) is True
+    if name == "containerAppsEnvironment":
+        assert evaluate(selected["existingLogAnalyticsWorkspace"]["visible"], state) is False
+    if name == "communicationServices":
+        assert evaluate(selected["existingEmailDomain"]["visible"], state) is True
+    state.stage = "complete"
+    assert evaluate(selected[selector]["visible"], state) is False
+
+
+@pytest.mark.parametrize("foundry_existing", [False, True])
+@pytest.mark.parametrize("environment_existing", [False, True])
+def test_shared_parents_derive_bound_subnets_without_a_manual_vnet_or_role_selection(
+    foundry_existing: bool, environment_existing: bool
+) -> None:
+    state = foundation()
+    for name, selected in (
+        ("foundryAccount", foundry_existing),
+        ("containerAppsEnvironment", environment_existing),
+    ):
+        if selected:
+            select_existing(state, name)
+    if foundry_existing or environment_existing:
+        state.network["virtualNetwork"] = None
+    if foundry_existing:
+        state.network["foundrySubnetName"] = "stale-manual-foundry"
+    if environment_existing:
+        state.network["containerAppsSubnetName"] = "stale-manual-environment"
+    assert evaluate(controls()["foundrySubnetName"]["visible"], state) is not foundry_existing
+    assert (
+        evaluate(controls()["containerAppsSubnetName"]["visible"], state)
+        is not environment_existing
+    )
+    assert evaluate(controls()["virtualNetwork"]["visible"], state) is not (
+        foundry_existing or environment_existing
+    )
+    assert output("virtualNetworkName", state) == "vnet-private"
+    assert output("virtualNetworkResourceGroupName", state) == NETWORK_GROUP
+    assert output("foundrySubnetName", state) == "foundry-agents"
+    assert output("containerAppsSubnetName", state) == "container-apps"
+    assert evaluate(controls()["virtualNetworkApi"]["request"]["path"], state) == (
+        VNET + "?api-version=2024-05-01"
+    )
+    assert output("portalValidationPassed", state) is True
+
+
+@pytest.mark.parametrize("stage", ["foundation", "complete"])
+def test_all_shared_parent_services_require_no_new_private_endpoint_subnet(stage: str) -> None:
+    state = foundation()
+    for name in build_v2_ui.SHARED_RESOURCES:
+        select_existing(state, name)
+    state.network["virtualNetwork"] = None
+    state.network["foundrySubnetName"] = None
+    state.network["containerAppsSubnetName"] = None
+    state.network["peSubnetName"] = None
+    assert evaluate(controls()["peSubnetName"]["visible"], state) is False
+    assert output("peSubnetName", state) == ""
+    if stage == "complete":
+        state = complete(state)
+        assert output("peSubnetName", state) == ""
+    assert output("portalValidationPassed", state) is True
+
+
+@pytest.mark.parametrize("name", ["foundryAccount", "containerAppsEnvironment"])
+def test_shared_region_display_names_match_canonical_vnet_regions(name: str) -> None:
+    state = foundation()
+    select_existing(state, name)
+    selector = "existing" + name[0].upper() + name[1:]
+    state.values[selector + "Api"]["location"] = "East US"
+    state.network["virtualNetworkApi"]["location"] = "East US"
+    assert output("location", state) == "eastus"
+    assert output("portalValidationPassed", state) is True
+
+
+def test_completion_tabs_display_saved_network_and_workload_instead_of_new_inputs() -> None:
+    state = foundation()
+    for name in build_v2_ui.SHARED_RESOURCES:
+        select_existing(state, name)
+    state = complete(state)
+    selected = controls()
+    for name in ("savedNetworkNotice", "savedWorkloadNotice"):
+        assert evaluate(selected[name]["visible"], state) is True
+    network_text = evaluate(selected["savedNetworkNotice"]["options"]["text"], state)
+    assert "vnet-private" in network_text
+    assert "foundry-agents" in network_text and "container-apps" in network_text
+    assert "신규 PE 없음" in network_text
+    names_text = evaluate(selected["savedWorkloadNotice"]["options"]["text"], state)
+    assert output("projectName", state) in names_text
+    assert output("containerAppName", state) in names_text
+    for name in ("foundrySubnetName", "containerAppsSubnetName", "peSubnetName", "namingPrefix"):
+        assert evaluate(selected[name]["visible"], state) is False
+
+
+def test_different_shared_parent_vnets_are_explained_beside_the_environment() -> None:
+    state = foundation()
+    select_existing(state, "foundryAccount")
+    select_existing(state, "containerAppsEnvironment")
+    state.values["existingContainerAppsEnvironmentApi"]["properties"]["vnetConfiguration"][
+        "infrastructureSubnetId"
+    ] = (VNET.replace("vnet-private", "vnet-other") + "/subnets/container-apps")
+    status = evaluate(controls()["containerAppsEnvironmentStatus"]["options"]["text"], state)
+    assert "서로 다른 VNet" in status
+    assert output("portalValidationPassed", state) is False
+
+
+@pytest.mark.parametrize("name", ["foundryAccount", "containerAppsEnvironment"])
+def test_public_shared_service_has_a_specific_status_not_a_prefix_error(name: str) -> None:
+    state = foundation()
+    select_existing(state, name)
+    selector = "existing" + name[0].upper() + name[1:]
+    state.values[selector + "Api"]["properties"]["publicNetworkAccess"] = "Enabled"
+    if name == "containerAppsEnvironment":
+        state.values[selector + "Api"]["properties"]["vnetConfiguration"] = None
+    status = evaluate(controls()[name + "Status"]["options"]["text"], state)
+    assert "공용" in status and "사설" in status
+    assert "자동" in status
+    for rule in controls()["namingPrefix"]["constraints"]["validations"]:
+        assert evaluate(rule["isValid"], state) is True
+    assert output("portalValidationPassed", state) is False
+
+
 @pytest.mark.parametrize("name", build_v2_ui.SHARED_RESOURCES)
 @pytest.mark.parametrize("stage", ["foundation", "complete"])
 def test_exact_typed_get_uses_selected_or_saved_id_not_the_workload_rg(
@@ -559,11 +712,13 @@ def test_shared_network_owners_require_exact_existing_network_and_region(
         owner[key] = owner[key].replace(
             "/subnets/", "/subnets/other-" if failure == "subnet" else "/other-vnet/subnets/"
         )
-    assert output("portalValidationPassed", state) is False
     if failure == "new_vnet":
+        assert output("virtualNetworkMode", state) == "existing"
+        assert output("portalValidationPassed", state) is True
         rule = controls()["newVirtualNetworkName"]["constraints"]["validations"][0]
-        assert evaluate(rule["isValid"], state) is False
-        assert "신규 VNet" in rule["message"]
+        assert evaluate(rule["isValid"], state) is True
+    else:
+        assert output("portalValidationPassed", state) is False
 
 
 @pytest.mark.parametrize("internal", [None, False, 1, "true"])
@@ -827,10 +982,10 @@ def test_existing_workload_project_requires_cli_host_and_telemetry_verification(
     if stage == "complete":
         state = complete(state)
     assert output("portalValidationPassed", state) is False
-    rule = controls()["namingPrefix"]["constraints"]["validations"][1]
+    rule = controls()["namingPrefix"]["constraints"]["validations"][0]
     assert evaluate(rule["isValid"], state) is False
     assert "CLI" in rule["message"]
-    assert "Host" in rule["message"] and "텔레메트리" in rule["message"]
+    assert "프로젝트 소유권" in rule["message"]
 
 
 @pytest.mark.parametrize("kind", ["StorageV2", "BlobStorage", "BlockBlobStorage"])
@@ -851,7 +1006,11 @@ def test_shared_environment_never_requests_a_new_private_endpoint(stage: str) ->
         tags = save_tags(state)
         tags["azbrief.v2.acaPeEnabled"] = "true"
         state = complete(state, tags)
-    assert output("portalValidationPassed", state) is False
+    if stage == "foundation":
+        assert output("deployContainerAppsPrivateEndpoint", state) is False
+        assert output("portalValidationPassed", state) is True
+    else:
+        assert output("portalValidationPassed", state) is False
 
 
 @pytest.mark.parametrize(
@@ -1430,9 +1589,9 @@ def test_empty_controls_and_initial_responses_evaluate_safely(eager: bool) -> No
                         element["name"] == "virtualNetworkApi"
                         and expression == element["request"]["path"]
                     ):
-                        assert expression == (
-                            "[concat(steps('network').virtualNetwork.id, '?api-version=2024-05-01')]"
-                        )
+                        assert "steps('network').virtualNetwork.id" in expression
+                        assert "existingFoundryAccountApi" in expression
+                        assert "existingContainerAppsEnvironmentApi" in expression
                         with pytest.raises(AssertionError, match="concat must use strings"):
                             evaluate(expression, state, eager)
                     else:
@@ -1446,7 +1605,7 @@ def test_initial_all_new_guard_needs_no_optional_subscription_fixture() -> None:
     assert (
         _evaluate_ui_expression(
             definition()["outputs"]["portalValidationPassed"],
-            state.values,
+            {**state.values, "resources": state.values},
             network=state.network,
             resource_group=state.group,
             basics={"infrastructureStage": "foundation"},
@@ -1479,7 +1638,7 @@ def test_app_image_keeps_ready_only_guards_and_validates_saved_binding_chunks() 
         assert (
             _evaluate_ui_expression(
                 definition()["outputs"][f"reuse{role}Model"],
-                state.values,
+                {**state.values, "resources": state.values},
                 network=state.network,
                 resource_group=state.group,
                 basics={"infrastructureStage": "foundation"},

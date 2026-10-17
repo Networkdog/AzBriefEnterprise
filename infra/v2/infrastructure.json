@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "4743827698698810110"
+      "templateHash": "3101798843334236204"
     },
     "description": "One-time AzBrief v2 infrastructure. Foundation and completion are internal orchestration stages; application containers and Agent versions are excluded."
   },
@@ -64,21 +64,24 @@
       "defaultValue": "10.240.0.0/16"
     },
     "peSubnetName": {
-      "type": "string"
+      "type": "string",
+      "defaultValue": ""
     },
     "peSubnetAddressPrefix": {
       "type": "string",
       "defaultValue": "10.240.1.32/28"
     },
     "foundrySubnetName": {
-      "type": "string"
+      "type": "string",
+      "defaultValue": ""
     },
     "foundrySubnetAddressPrefix": {
       "type": "string",
       "defaultValue": "10.240.0.0/24"
     },
     "containerAppsSubnetName": {
-      "type": "string"
+      "type": "string",
+      "defaultValue": ""
     },
     "containerAppsSubnetAddressPrefix": {
       "type": "string",
@@ -344,7 +347,10 @@
     "archiveName": "[if(not(empty(parameters('archiveContainerName'))), parameters('archiveContainerName'), if(equals(parameters('storageAccountMode'), 'existing'), format('azbrief-archive-{0}', toLower(parameters('containerAppName'))), 'azbrief-archive'))]",
     "projectId": "[format('{0}/projects/{1}', variables('accountId'), parameters('projectName'))]",
     "networkResourceGroup": "[if(equals(parameters('virtualNetworkMode'), 'new'), resourceGroup().name, parameters('virtualNetworkResourceGroupName'))]",
-    "vnetId": "[resourceId(variables('networkResourceGroup'), 'Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]",
+    "networkName": "[parameters('virtualNetworkName')]",
+    "vnetId": "[resourceId(variables('networkResourceGroup'), 'Microsoft.Network/virtualNetworks', variables('networkName'))]",
+    "deploymentLocation": "[toLower(replace(parameters('location'), ' ', ''))]",
+    "privateEndpointSubnetRequired": "[or(or(or(equals(parameters('foundryAccountMode'), 'new'), equals(parameters('storageAccountMode'), 'new')), not(parameters('useMicrosoftManagedAgentData'))), and(equals(parameters('containerAppsEnvironmentMode'), 'new'), parameters('deployContainerAppsPrivateEndpoint')))]",
     "manageAzureMcp": "[empty(parameters('azureMcpServerUrl'))]",
     "savedOptions": "[if(variables('complete'), json(concat(coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options0'), '{}'), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options1'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options2'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options3'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options4'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options5'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options6'), ''), coalesce(tryGet(resourceGroup().tags, 'azbrief.v2.options7'), ''))), createObject())]",
     "mcpClientId": "[if(and(variables('manageAzureMcp'), variables('complete')), coalesce(tryGet(variables('savedOptions'), 'azureMcpClientId'), ''), '')]",
@@ -389,6 +395,62 @@
   },
   "resources": [
     {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "v2-network-binding-validation",
+      "properties": {
+        "mode": "Incremental",
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "parameters": {
+          "sharedFoundryPrivateAgentSubnetReady": {
+            "value": "[if(equals(parameters('foundryAccountMode'), 'existing'), and(and(and(and(and(and(and(and(equals(length(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray())), 1), equals(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'useMicrosoftManagedNetwork'), false())), equals(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').provisioningState, 'Succeeded')), equals(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').publicNetworkAccess, 'Disabled')), equals(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').allowProjectManagement, true())), equals(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').disableLocalAuth, true())), equals(toLower(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName'))), toLower(variables('accountId')))), equals(toLower(if(equals(parameters('foundryAccountMode'), 'existing'), if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/')))))), toLower(format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/'))))))), equals(toLower(replace(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01', 'full').location, ' ', '')), variables('deploymentLocation'))), true())]"
+          },
+          "sharedEnvironmentPrivateSubnetReady": {
+            "value": "[if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), and(and(and(and(and(and(equals(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').provisioningState, 'Succeeded'), equals(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').publicNetworkAccess, 'Disabled')), equals(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'internal'), true())), equals(toLower(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))), toLower(variables('environmentId')))), equals(toLower(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/')))))), toLower(format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/'))))))), equals(toLower(replace(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01', 'full').location, ' ', '')), variables('deploymentLocation'))), not(parameters('deployContainerAppsPrivateEndpoint'))), true())]"
+          },
+          "requiredNetworkRolesSelected": {
+            "value": "[and(and(and(and(and(not(empty(variables('networkResourceGroup'))), not(empty(variables('networkName')))), not(empty(if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/')))))), not(empty(if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/')))))), or(not(variables('privateEndpointSubnetRequired')), not(empty(parameters('peSubnetName'))))), or(not(equals(parameters('virtualNetworkMode'), 'new')), and(and(equals(parameters('foundryAccountMode'), 'new'), equals(parameters('containerAppsEnvironmentMode'), 'new')), not(empty(parameters('peSubnetName'))))))]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "sharedFoundryPrivateAgentSubnetReady": {
+              "type": "bool",
+              "allowedValues": [
+                true
+              ],
+              "metadata": {
+                "description": "Shared Foundry requires one ready, private agent injection on the exact selected same-region VNet/subnet. Existing parents cannot move."
+              }
+            },
+            "sharedEnvironmentPrivateSubnetReady": {
+              "type": "bool",
+              "allowedValues": [
+                true
+              ],
+              "metadata": {
+                "description": "Shared Environment requires its ready internal/PNA-disabled same-region infrastructure subnet; existing networking is retained."
+              }
+            },
+            "requiredNetworkRolesSelected": {
+              "type": "bool",
+              "allowedValues": [
+                true
+              ],
+              "metadata": {
+                "description": "New Foundry/Environment require their dedicated subnets; a Private Endpoint subnet is required only for endpoints this workload creates."
+              }
+            }
+          },
+          "resources": []
+        }
+      }
+    },
+    {
       "condition": "[and(not(variables('complete')), equals(parameters('virtualNetworkMode'), 'new'))]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
@@ -400,10 +462,10 @@
         "mode": "Incremental",
         "parameters": {
           "location": {
-            "value": "[parameters('location')]"
+            "value": "[variables('deploymentLocation')]"
           },
           "virtualNetworkName": {
-            "value": "[parameters('virtualNetworkName')]"
+            "value": "[variables('networkName')]"
           },
           "virtualNetworkAddressPrefix": {
             "value": "[parameters('virtualNetworkAddressPrefix')]"
@@ -414,15 +476,11 @@
           "peSubnetAddressPrefix": {
             "value": "[parameters('peSubnetAddressPrefix')]"
           },
-          "foundrySubnetName": {
-            "value": "[parameters('foundrySubnetName')]"
-          },
+          "foundrySubnetName": "[if(not(empty(parameters('foundrySubnetName'))), createObject('value', parameters('foundrySubnetName')), createObject('value', last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/'))))]",
           "foundrySubnetAddressPrefix": {
             "value": "[parameters('foundrySubnetAddressPrefix')]"
           },
-          "containerAppsSubnetName": {
-            "value": "[parameters('containerAppsSubnetName')]"
-          },
+          "containerAppsSubnetName": "[if(not(empty(parameters('containerAppsSubnetName'))), createObject('value', parameters('containerAppsSubnetName')), createObject('value', last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/'))))]",
           "containerAppsSubnetAddressPrefix": {
             "value": "[parameters('containerAppsSubnetAddressPrefix')]"
           },
@@ -533,7 +591,10 @@
             }
           }
         }
-      }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'v2-network-binding-validation')]"
+      ]
     },
     {
       "condition": "[not(variables('complete'))]",
@@ -547,23 +608,19 @@
         "mode": "Incremental",
         "parameters": {
           "location": {
-            "value": "[parameters('location')]"
+            "value": "[variables('deploymentLocation')]"
           },
           "virtualNetworkResourceGroupName": {
             "value": "[variables('networkResourceGroup')]"
           },
           "virtualNetworkName": {
-            "value": "[parameters('virtualNetworkName')]"
+            "value": "[variables('networkName')]"
           },
           "peSubnetName": {
             "value": "[parameters('peSubnetName')]"
           },
-          "foundrySubnetName": {
-            "value": "[parameters('foundrySubnetName')]"
-          },
-          "containerAppsSubnetName": {
-            "value": "[parameters('containerAppsSubnetName')]"
-          },
+          "foundrySubnetName": "[if(not(empty(parameters('foundrySubnetName'))), createObject('value', parameters('foundrySubnetName')), createObject('value', last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/'))))]",
+          "containerAppsSubnetName": "[if(not(empty(parameters('containerAppsSubnetName'))), createObject('value', parameters('containerAppsSubnetName')), createObject('value', last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/'))))]",
           "foundryAccountName": {
             "value": "[parameters('foundryAccountName')]"
           },
@@ -31357,7 +31414,8 @@
         }
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Resources/deployments', 'v2-new-network')]"
+        "[resourceId('Microsoft.Resources/deployments', 'v2-new-network')]",
+        "[resourceId('Microsoft.Resources/deployments', 'v2-network-binding-validation')]"
       ]
     },
     {
@@ -31375,7 +31433,7 @@
             "value": "[parameters('azureMcpIdentityName')]"
           },
           "location": {
-            "value": "[parameters('location')]"
+            "value": "[variables('deploymentLocation')]"
           },
           "tags": {
             "value": "[variables('resourceTags')]"
@@ -31471,7 +31529,10 @@
             }
           }
         }
-      }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'v2-network-binding-validation')]"
+      ]
     },
     {
       "condition": "[variables('complete')]",
@@ -31625,7 +31686,10 @@
             }
           }
         }
-      }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'v2-network-binding-validation')]"
+      ]
     },
     {
       "condition": "[variables('complete')]",
@@ -31647,7 +31711,7 @@
             "value": "[parameters('projectName')]"
           },
           "location": {
-            "value": "[parameters('location')]"
+            "value": "[variables('deploymentLocation')]"
           },
           "storageAccountName": {
             "value": "[parameters('storageAccountName')]"
@@ -32315,7 +32379,8 @@
         }
       },
       "dependsOn": [
-        "[resourceId('Microsoft.Resources/deployments', 'v2-foundation')]"
+        "[resourceId('Microsoft.Resources/deployments', 'v2-foundation')]",
+        "[resourceId('Microsoft.Resources/deployments', 'v2-network-binding-validation')]"
       ]
     },
     {
@@ -32388,7 +32453,10 @@
             }
           ]
         }
-      }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'v2-network-binding-validation')]"
+      ]
     },
     {
       "condition": "[and(variables('complete'), equals(parameters('containerAppsEnvironmentMode'), 'existing'))]",
@@ -32460,7 +32528,10 @@
             }
           ]
         }
-      }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'v2-network-binding-validation')]"
+      ]
     },
     {
       "condition": "[and(variables('complete'), equals(parameters('communicationServicesMode'), 'existing'))]",
@@ -32545,7 +32616,10 @@
             }
           ]
         }
-      }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'v2-network-binding-validation')]"
+      ]
     },
     {
       "condition": "[variables('complete')]",
@@ -32796,17 +32870,17 @@
               "tenantId": "[tenant().tenantId]",
               "subscriptionId": "[subscription().subscriptionId]",
               "resourceGroup": "[resourceGroup().name]",
-              "location": "[parameters('location')]",
+              "location": "[variables('deploymentLocation')]",
               "tags": "[variables('resourceTags')]",
               "virtualNetworkResourceGroupName": "[variables('networkResourceGroup')]",
-              "virtualNetworkName": "[parameters('virtualNetworkName')]",
+              "virtualNetworkName": "[variables('networkName')]",
               "virtualNetworkResourceId": "[variables('vnetId')]",
-              "foundrySubnetName": "[parameters('foundrySubnetName')]",
-              "foundrySubnetResourceId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('foundrySubnetName'))]",
-              "containerAppsSubnetName": "[parameters('containerAppsSubnetName')]",
-              "infrastructureSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('containerAppsSubnetName'))]",
+              "foundrySubnetName": "[if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/')))]",
+              "foundrySubnetResourceId": "[if(equals(parameters('foundryAccountMode'), 'existing'), if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/')))))]",
+              "containerAppsSubnetName": "[if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/')))]",
+              "infrastructureSubnetId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/')))))]",
               "peSubnetName": "[parameters('peSubnetName')]",
-              "privateEndpointSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName'))]",
+              "privateEndpointSubnetId": "[if(empty(parameters('peSubnetName')), '', format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName')))]",
               "deployContainerAppsPrivateEndpoint": "[parameters('deployContainerAppsPrivateEndpoint')]",
               "containerAppsEnvironmentName": "[parameters('containerAppsEnvironmentName')]",
               "containerAppsEnvironmentResourceId": "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
@@ -32959,17 +33033,17 @@
               "tenantId": "[tenant().tenantId]",
               "subscriptionId": "[subscription().subscriptionId]",
               "resourceGroup": "[resourceGroup().name]",
-              "location": "[parameters('location')]",
+              "location": "[variables('deploymentLocation')]",
               "tags": "[variables('resourceTags')]",
               "virtualNetworkResourceGroupName": "[variables('networkResourceGroup')]",
-              "virtualNetworkName": "[parameters('virtualNetworkName')]",
+              "virtualNetworkName": "[variables('networkName')]",
               "virtualNetworkResourceId": "[variables('vnetId')]",
-              "foundrySubnetName": "[parameters('foundrySubnetName')]",
-              "foundrySubnetResourceId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('foundrySubnetName'))]",
-              "containerAppsSubnetName": "[parameters('containerAppsSubnetName')]",
-              "infrastructureSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('containerAppsSubnetName'))]",
+              "foundrySubnetName": "[if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/')))]",
+              "foundrySubnetResourceId": "[if(equals(parameters('foundryAccountMode'), 'existing'), if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/')))))]",
+              "containerAppsSubnetName": "[if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/')))]",
+              "infrastructureSubnetId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/')))))]",
               "peSubnetName": "[parameters('peSubnetName')]",
-              "privateEndpointSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName'))]",
+              "privateEndpointSubnetId": "[if(empty(parameters('peSubnetName')), '', format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName')))]",
               "deployContainerAppsPrivateEndpoint": "[parameters('deployContainerAppsPrivateEndpoint')]",
               "containerAppsEnvironmentName": "[parameters('containerAppsEnvironmentName')]",
               "containerAppsEnvironmentResourceId": "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
@@ -33116,17 +33190,17 @@
         "tenantId": "[tenant().tenantId]",
         "subscriptionId": "[subscription().subscriptionId]",
         "resourceGroup": "[resourceGroup().name]",
-        "location": "[parameters('location')]",
+        "location": "[variables('deploymentLocation')]",
         "tags": "[variables('resourceTags')]",
         "virtualNetworkResourceGroupName": "[variables('networkResourceGroup')]",
-        "virtualNetworkName": "[parameters('virtualNetworkName')]",
+        "virtualNetworkName": "[variables('networkName')]",
         "virtualNetworkResourceId": "[variables('vnetId')]",
-        "foundrySubnetName": "[parameters('foundrySubnetName')]",
-        "foundrySubnetResourceId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('foundrySubnetName'))]",
-        "containerAppsSubnetName": "[parameters('containerAppsSubnetName')]",
-        "infrastructureSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('containerAppsSubnetName'))]",
+        "foundrySubnetName": "[if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/')))]",
+        "foundrySubnetResourceId": "[if(equals(parameters('foundryAccountMode'), 'existing'), if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/')))))]",
+        "containerAppsSubnetName": "[if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/')))]",
+        "infrastructureSubnetId": "[if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/')))))]",
         "peSubnetName": "[parameters('peSubnetName')]",
-        "privateEndpointSubnetId": "[format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName'))]",
+        "privateEndpointSubnetId": "[if(empty(parameters('peSubnetName')), '', format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName')))]",
         "deployContainerAppsPrivateEndpoint": "[parameters('deployContainerAppsPrivateEndpoint')]",
         "containerAppsEnvironmentName": "[parameters('containerAppsEnvironmentName')]",
         "containerAppsEnvironmentResourceId": "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName'))]",
@@ -33183,7 +33257,7 @@
         "tenantId": "[tenant().tenantId]",
         "subscriptionId": "[subscription().subscriptionId]",
         "resourceGroup": "[resourceGroup().name]",
-        "location": "[parameters('location')]",
+        "location": "[variables('deploymentLocation')]",
         "runtimeSetup": {
           "schemaVersion": 1,
           "foundryAccountName": "[parameters('foundryAccountName')]",
@@ -33195,7 +33269,7 @@
           "modelDeploymentName": "[parameters('modelDeploymentName')]",
           "simpleModelDeploymentName": "[parameters('simpleModelDeploymentName')]",
           "promptAgentNames": "[variables('promptAgentNames')]",
-          "azureMcpServerUrl": "[createObject('schemaVersion', 2, 'profile', 'kt-private-v2', 'infrastructureComplete', variables('complete'), 'mcpAuthenticationPending', and(variables('complete'), variables('manageAzureMcp')), 'portalValidationPassed', parameters('portalValidationPassed'), 'applicationReady', false(), 'hostedRuntimeRolesPending', true(), 'deploymentName', deployment().name, 'tenantId', tenant().tenantId, 'subscriptionId', subscription().subscriptionId, 'resourceGroup', resourceGroup().name, 'location', parameters('location'), 'tags', variables('resourceTags'), 'virtualNetworkResourceGroupName', variables('networkResourceGroup'), 'virtualNetworkName', parameters('virtualNetworkName'), 'virtualNetworkResourceId', variables('vnetId'), 'foundrySubnetName', parameters('foundrySubnetName'), 'foundrySubnetResourceId', format('{0}/subnets/{1}', variables('vnetId'), parameters('foundrySubnetName')), 'containerAppsSubnetName', parameters('containerAppsSubnetName'), 'infrastructureSubnetId', format('{0}/subnets/{1}', variables('vnetId'), parameters('containerAppsSubnetName')), 'peSubnetName', parameters('peSubnetName'), 'privateEndpointSubnetId', format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName')), 'deployContainerAppsPrivateEndpoint', parameters('deployContainerAppsPrivateEndpoint'), 'containerAppsEnvironmentName', parameters('containerAppsEnvironmentName'), 'containerAppsEnvironmentResourceId', extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), 'foundryAccountResourceId', variables('accountId'), 'foundryAccountSubdomain', if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName')), 'storageAccountResourceId', variables('storageId'), 'communicationServicesResourceId', variables('communicationId'), 'logAnalyticsWorkspaceResourceId', variables('workspaceId'), 'emailDomainResourceId', variables('domainId'), 'stateContainerName', variables('stateName'), 'archiveContainerName', variables('archiveName'), 'environmentDefaultDomain', if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value), 'containerAppName', parameters('containerAppName'), 'schedulerJobName', parameters('schedulerJobName'), 'controlPlaneIdentityName', parameters('controlPlaneIdentityName'), 'controlPlaneIdentityResourceId', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), 'controlPlanePrincipalId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityPrincipalId.value), 'controlPlaneClientId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').clientId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityClientId.value), 'storageAccountName', parameters('storageAccountName'), 'cosmosAccountName', if(parameters('useMicrosoftManagedAgentData'), '', parameters('cosmosAccountName')), 'searchServiceName', if(parameters('useMicrosoftManagedAgentData'), '', parameters('searchServiceName')), 'useMicrosoftManagedAgentData', parameters('useMicrosoftManagedAgentData'), 'logAnalyticsWorkspaceName', parameters('logAnalyticsWorkspaceName'), 'applicationInsightsName', parameters('applicationInsightsName'), 'communicationServicesName', parameters('communicationServicesName'), 'emailServiceName', parameters('emailServiceName'), 'communicationServicesEndpoint', if(variables('complete'), format('https://{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('communicationId'), '/')[2], split(variables('communicationId'), '/')[4]), 'Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value), 'emailSenderAddress', if(variables('complete'), format('DoNotReply@{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('domainId'), '/')[2], split(variables('domainId'), '/')[4]), 'Microsoft.Communication/emailServices/domains', split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[0], split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value), 'stateContainerUrl', format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('stateName')), 'archiveContainerUrl', format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('archiveName')), 'foundryAccountName', parameters('foundryAccountName'), 'projectName', parameters('projectName'), 'foundryProjectResourceId', variables('projectId'), 'foundryProjectEndpoint', format('https://{0}.services.ai.azure.com/api/projects/{1}', if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName')), parameters('projectName')), 'foundryProjectPrincipalId', if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload')), '2025-04-01').outputs.principalId.value, ''), 'foundryHostedAgentName', parameters('foundryHostedAgentName'), 'modelDeploymentName', parameters('modelDeploymentName'), 'simpleModelDeploymentName', parameters('simpleModelDeploymentName'), 'promptAgentNames', variables('promptAgentNames'), 'azureMcpServerUrl', if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl')), 'azureMcpProjectConnectionName', parameters('azureMcpProjectConnectionName'), 'azureMcpEntraAppUniqueName', format('azbrief-v2-mcp-{0}', uniqueString(resourceGroup().id)), 'azureMcpContainerAppName', parameters('azureMcpContainerAppName'), 'azureMcpIdentityName', parameters('azureMcpIdentityName')).azureMcpServerUrl]",
+          "azureMcpServerUrl": "[createObject('schemaVersion', 2, 'profile', 'kt-private-v2', 'infrastructureComplete', variables('complete'), 'mcpAuthenticationPending', and(variables('complete'), variables('manageAzureMcp')), 'portalValidationPassed', parameters('portalValidationPassed'), 'applicationReady', false(), 'hostedRuntimeRolesPending', true(), 'deploymentName', deployment().name, 'tenantId', tenant().tenantId, 'subscriptionId', subscription().subscriptionId, 'resourceGroup', resourceGroup().name, 'location', variables('deploymentLocation'), 'tags', variables('resourceTags'), 'virtualNetworkResourceGroupName', variables('networkResourceGroup'), 'virtualNetworkName', variables('networkName'), 'virtualNetworkResourceId', variables('vnetId'), 'foundrySubnetName', if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/'))), 'foundrySubnetResourceId', if(equals(parameters('foundryAccountMode'), 'existing'), if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('foundrySubnetName'))), parameters('foundrySubnetName'), last(split(if(equals(parameters('foundryAccountMode'), 'existing'), coalesce(tryGet(tryGet(if(equals(parameters('foundryAccountMode'), 'existing'), filter(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').networkInjections, createArray()), lambda('injection', equals(lambdaVariables('injection').scenario, 'agent'))), createArray()), 0), 'subnetArmId'), ''), ''), '/'))))), 'containerAppsSubnetName', if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/'))), 'infrastructureSubnetId', if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), format('{0}/subnets/{1}', variables('vnetId'), if(not(empty(parameters('containerAppsSubnetName'))), parameters('containerAppsSubnetName'), last(split(if(equals(parameters('containerAppsEnvironmentMode'), 'existing'), coalesce(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01'), 'vnetConfiguration'), 'infrastructureSubnetId'), ''), ''), '/'))))), 'peSubnetName', parameters('peSubnetName'), 'privateEndpointSubnetId', if(empty(parameters('peSubnetName')), '', format('{0}/subnets/{1}', variables('vnetId'), parameters('peSubnetName'))), 'deployContainerAppsPrivateEndpoint', parameters('deployContainerAppsPrivateEndpoint'), 'containerAppsEnvironmentName', parameters('containerAppsEnvironmentName'), 'containerAppsEnvironmentResourceId', extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), 'foundryAccountResourceId', variables('accountId'), 'foundryAccountSubdomain', if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName')), 'storageAccountResourceId', variables('storageId'), 'communicationServicesResourceId', variables('communicationId'), 'logAnalyticsWorkspaceResourceId', variables('workspaceId'), 'emailDomainResourceId', variables('domainId'), 'stateContainerName', variables('stateName'), 'archiveContainerName', variables('archiveName'), 'environmentDefaultDomain', if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value), 'containerAppName', parameters('containerAppName'), 'schedulerJobName', parameters('schedulerJobName'), 'controlPlaneIdentityName', parameters('controlPlaneIdentityName'), 'controlPlaneIdentityResourceId', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), 'controlPlanePrincipalId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').principalId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityPrincipalId.value), 'controlPlaneClientId', if(variables('complete'), reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('controlPlaneIdentityName')), '2023-01-31').clientId, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.identityClientId.value), 'storageAccountName', parameters('storageAccountName'), 'cosmosAccountName', if(parameters('useMicrosoftManagedAgentData'), '', parameters('cosmosAccountName')), 'searchServiceName', if(parameters('useMicrosoftManagedAgentData'), '', parameters('searchServiceName')), 'useMicrosoftManagedAgentData', parameters('useMicrosoftManagedAgentData'), 'logAnalyticsWorkspaceName', parameters('logAnalyticsWorkspaceName'), 'applicationInsightsName', parameters('applicationInsightsName'), 'communicationServicesName', parameters('communicationServicesName'), 'emailServiceName', parameters('emailServiceName'), 'communicationServicesEndpoint', if(variables('complete'), format('https://{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('communicationId'), '/')[2], split(variables('communicationId'), '/')[4]), 'Microsoft.Communication/communicationServices', parameters('communicationServicesName')), '2023-04-01').hostName), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailEndpoint.value), 'emailSenderAddress', if(variables('complete'), format('DoNotReply@{0}', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('domainId'), '/')[2], split(variables('domainId'), '/')[4]), 'Microsoft.Communication/emailServices/domains', split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[0], split(format('{0}/{1}', split(variables('domainId'), '/')[8], split(variables('domainId'), '/')[10]), '/')[1]), '2023-04-01').fromSenderDomain), reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.emailSenderAddress.value), 'stateContainerUrl', format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('stateName')), 'archiveContainerUrl', format('https://{0}.blob.{1}/{2}', parameters('storageAccountName'), environment().suffixes.storage, variables('archiveName')), 'foundryAccountName', parameters('foundryAccountName'), 'projectName', parameters('projectName'), 'foundryProjectResourceId', variables('projectId'), 'foundryProjectEndpoint', format('https://{0}.services.ai.azure.com/api/projects/{1}', if(equals(parameters('foundryAccountMode'), 'existing'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts', parameters('foundryAccountName')), '2025-06-01').customSubDomainName, parameters('foundryAccountName')), parameters('projectName')), 'foundryProjectPrincipalId', if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', if(equals(parameters('foundryAccountMode'), 'existing'), format('v2-foundry-workload-{0}', variables('workloadKey')), 'v2-foundry-workload')), '2025-04-01').outputs.principalId.value, ''), 'foundryHostedAgentName', parameters('foundryHostedAgentName'), 'modelDeploymentName', parameters('modelDeploymentName'), 'simpleModelDeploymentName', parameters('simpleModelDeploymentName'), 'promptAgentNames', variables('promptAgentNames'), 'azureMcpServerUrl', if(variables('manageAzureMcp'), format('https://{0}.{1}', parameters('azureMcpContainerAppName'), if(variables('complete'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('environmentId'), '/')[2], split(variables('environmentId'), '/')[4]), 'Microsoft.App/managedEnvironments', parameters('containerAppsEnvironmentName')), '2026-01-01').defaultDomain, reference(resourceId('Microsoft.Resources/deployments', 'v2-foundation'), '2025-04-01').outputs.environmentDefaultDomain.value)), parameters('azureMcpServerUrl')), 'azureMcpProjectConnectionName', parameters('azureMcpProjectConnectionName'), 'azureMcpEntraAppUniqueName', format('azbrief-v2-mcp-{0}', uniqueString(resourceGroup().id)), 'azureMcpContainerAppName', parameters('azureMcpContainerAppName'), 'azureMcpIdentityName', parameters('azureMcpIdentityName')).azureMcpServerUrl]",
           "azureMcpProjectConnectionName": "[parameters('azureMcpProjectConnectionName')]",
           "schedulerJobName": "[parameters('schedulerJobName')]",
           "applicationInsightsName": "[parameters('applicationInsightsName')]",

@@ -1438,7 +1438,7 @@ def test_impact_label_column_has_outlook_safe_width():
 def test_additional_checks_precede_references(
     sample_update, sample_analysis_result, builder, language
 ):
-    """Additional checks precede references in rendered single and digest reports."""
+    """Additional checks precede unmatched references in both delivery formats."""
     check = "Check the installed version before deployment."
     reference = "Deployment verification reference"
     sample_analysis_result.additional_checks = [check]
@@ -1455,8 +1455,8 @@ def test_additional_checks_precede_references(
             [{"update": sample_update, "result": sample_analysis_result, "skip_reason": ""}],
             language=language,
         )
-    html = content["html_content"]
-    assert html.index(check) < html.index(reference)
+    for rendered in (content["html_content"], content["plain_content"]):
+        assert rendered.index(check) < rendered.index(reference)
 
 
 def test_save_html_to_out_survives_an_unwritable_directory(tmp_path, monkeypatch):
