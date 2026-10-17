@@ -1782,6 +1782,60 @@ def test_empty_controls_and_initial_responses_evaluate_safely(eager: bool) -> No
                 evaluate(rule["isValid"], state, eager)
 
 
+@pytest.mark.parametrize("network_mode", ["existing", "new"])
+@pytest.mark.parametrize("loaded", [False, True])
+def test_native_empty_segments_are_safe_in_eager_foundation_outputs(
+    network_mode: str, loaded: bool
+) -> None:
+    state = (
+        foundation()
+        if loaded
+        else UiState(values={"contract": {"resourceGroupApi": None}, "options": {}}, network={})
+    )
+    state.network["virtualNetworkMode"] = network_mode
+    if network_mode == "new":
+        state.network.update(
+            newVirtualNetworkName="vnet-new",
+            newPeSubnetName="private-endpoints",
+            newFoundrySubnetName="foundry-agents",
+            newContainerAppsSubnetName="container-apps",
+            newNetworkRange="10.241",
+        )
+    for name, expression in definition()["outputs"].items():
+        actual = _evaluate_ui_expression(
+            expression,
+            {**state.values, "resources": state.values},
+            network=state.network,
+            resource_group=state.group,
+            subscription={"subscriptionId": SUBSCRIPTION},
+            basics={"infrastructureStage": state.stage},
+            selected_location=state.selected_location,
+            native_empty_array_elements=True,
+            eager_conditionals=True,
+        )
+        if name == "portalValidationPassed":
+            assert actual is loaded
+
+
+def test_native_eager_empty_application_outputs_keep_an_explicit_failed_guard() -> None:
+    outputs = definition("application")["outputs"]
+    for name, expression in outputs.items():
+        actual = (
+            _evaluate_ui_expression(
+                expression,
+                {"application": {"resourceGroupApi": None}},
+                resource_group={"mode": "Existing", "name": GROUP},
+                subscription={"subscriptionId": SUBSCRIPTION},
+                native_empty_array_elements=True,
+                eager_conditionals=True,
+            )
+            if isinstance(expression, str) and expression.startswith("[")
+            else expression
+        )
+        if name == "portalValidationPassed":
+            assert actual is False
+
+
 def test_initial_all_new_guard_needs_no_optional_subscription_fixture() -> None:
     state = foundation()
     assert (

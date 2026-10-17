@@ -310,7 +310,10 @@ V2 native completion also needs explicit string-boundary predicates. A live mini
 probe returned false for empty split-element equality where Python returned true. Use
 startsWith/endsWith for saved JSON, ARM roots, container/ACS suffixes and application timestamps;
 preserve typed IDs, contiguous chunks, all eight resource fields and the true-only guard.
-Do not repair this by forcing a guard or editing RG tags. Verify both completion and App forms.
+Do not repair this by forcing a guard or editing RG tags. Inactive parent-ID assembly must
+coalesce native null split elements before concat/toLower, including subnet and email parents.
+Test native-empty semantics and eager branches together for initial/new-VNet/App states, not as
+separate checks. Empty IDs stay empty and cannot satisfy readiness. Verify both forms.
 Keep v2 navigation work bounded: project only referenced tag keys, bind source tags before
 derived options/resources, validate the binding directly, and bind a model candidate together
 with its expected options. Do not expand saved completion JSON in foundation-only subnet checks.

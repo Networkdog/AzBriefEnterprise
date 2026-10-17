@@ -341,8 +341,12 @@ failure is an acceptance blocker, not permission to inject CLI credentials into 
 Native Portal also treats empty split-array elements differently from Python equality.
 Use startsWith/endsWith for saved-JSON boundaries, ARM roots, container/ACS suffixes and UTC
 timestamp suffixes, not equals(last(split(...)), ''). Preserve exact chunk, ID, owner and
-eight-field checks; a valid saved binding must not degrade to {}. Include native-boundary
-regressions and actual completion/App acceptance before claiming the fix is deployed.
+eight-field checks; a valid saved binding must not degrade to {}. Inactive parent/subnet/email
+branches must coalesce native null split segments before concat/toLower. Combine native-empty
+semantics with eager evaluation for unloaded, new-VNet and empty App states; testing those
+properties separately hid a first-load failure. Preserve empty/invalid outputs and the failed
+guard, never substitute a real parent. Include native-boundary regressions and actual
+completion/App acceptance before claiming the fix is deployed.
 Keep all shared-ID/ownership/model/readiness/tag-budget checks, and test both forms in the
 authenticated Portal with actual read-only data. Local static UI substitution is not publication
 or successful ARM/runtime installation; never synthesize a ready contract to claim acceptance.

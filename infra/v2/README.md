@@ -316,6 +316,14 @@ ARM roots, container-name suffixes, ACS host suffixes and application UTC timest
 tests exercise the native empty-element case and the exact parsed eight-field resource shape.
 Do not replace a failed guard with a constant or change stored tags to work around this defect.
 
+The fresh-install replay also combines native empty-element semantics with eager branch
+evaluation. An unused shared subnet/email parent can contain empty split elements while the
+new-VNet branch is selected; those elements must be normalized before `concat` or `toLower`,
+even when an outer `if` ultimately returns an empty ID. The generator preserves valid IDs,
+returns empty/invalid evidence as before, and retains the false readiness guard. Regressions
+cover unloaded and populated new/existing network forms plus an empty application form.
+This is predeployment expression evidence, not authenticated Portal-rendering acceptance.
+
 ### Portal expression cost
 
 The normalizer projects only the tag keys an expression reads, validates the saved eight-field

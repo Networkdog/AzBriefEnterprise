@@ -112,9 +112,9 @@ PE_REQUIRED = (
 def _subnet_parent(value: str) -> str:
     parts = f"split({value}, '/')"
     return (
-        f"if(empty({value}), '', concat('/subscriptions/', last(take({parts}, 3)), "
-        f"'/resourceGroups/', last(take({parts}, 5)), "
-        f"'/providers/Microsoft.Network/virtualNetworks/', last(take({parts}, 9))))"
+        f"if(empty({value}), '', concat('/subscriptions/', coalesce(last(take({parts}, 3)), ''), "
+        f"'/resourceGroups/', coalesce(last(take({parts}, 5)), ''), "
+        f"'/providers/Microsoft.Network/virtualNetworks/', coalesce(last(take({parts}, 9)), '')))"
     )
 
 
@@ -216,6 +216,13 @@ def _restore_resource_layout(
 
     def restore(expression: str) -> str:
         expression = expression.replace("steps('resources').", "steps('names').")
+        for value in (BOUND_ENVIRONMENT_SUBNET, BOUND_FOUNDRY_SUBNET):
+            updated = _subnet_parent(value)
+            previous = updated
+            for count in (3, 5, 9):
+                segment = f"last(take(split({value}, '/'), {count}))"
+                previous = previous.replace(f"coalesce({segment}, '')", segment)
+            expression = expression.replace(previous, updated)
         for source, replacement in sorted(
             LOGICAL_NETWORK_READS.items(), key=lambda item: len(item[1]), reverse=True
         ):
@@ -517,7 +524,7 @@ def _valid_resource_id(resource_id: str, resource_type: str, api: str = "") -> s
                 f"empty({api}.nextLink)",
                 f"equals(toLower(coalesce({api}.id, '')), toLower(rid))",
                 f"equals(toLower(coalesce({api}.type, '')), '{resource_type.lower()}')",
-                f"equals(toLower(last(split(coalesce({api}.name, ''), '/'))), toLower(last(split(rid, '/'))))",
+                f"equals(toLower(coalesce(last(split(coalesce({api}.name, ''), '/')), '')), toLower(coalesce(last(split(rid, '/')), '')))",
                 f"equals({api}.properties.provisioningState, 'Succeeded')",
             )
         )
@@ -570,7 +577,7 @@ def _child_inventory(api: str, parent_id: str, resource_type: str) -> str:
         _id_predicate("coalesce(item.id, '')", resource_type),
         f"startsWith(toLower(coalesce(item.id, '')), concat(toLower({parent_id}), '/{child_type.lower()}/'))",
         f"equals(toLower(coalesce(item.type, '')), '{resource_type.lower()}')",
-        f"equals(toLower(last(split(coalesce(item.name, ''), '/'))), toLower(last(split(coalesce(item.id, ''), '/'))))",
+        f"equals(toLower(coalesce(last(split(coalesce(item.name, ''), '/')), '')), toLower(coalesce(last(split(coalesce(item.id, ''), '/')), '')))",
     )
     return _all(
         _complete_inventory(api),
@@ -611,7 +618,7 @@ def _binding_validation(
             (
                 _valid_resource_id(resource_id, resource_type),
                 f"equals(last(split({resource_id}, '/')), coalesce({tags}['azbrief.v2.{tag}'], ''))",
-                f"if(equals({mode}, 'new'), equals(toLower(last(take(split({resource_id}, '/'), 5))), toLower(coalesce(resourceGroup().name, ''))), true)",
+                f"if(equals({mode}, 'new'), equals(toLower(coalesce(last(take(split({resource_id}, '/'), 5)), '')), toLower(coalesce(resourceGroup().name, ''))), true)",
             )
         )
     for name, resource_type, tag in (
@@ -629,7 +636,7 @@ def _binding_validation(
             (
                 _valid_resource_id(resource_id, resource_type),
                 f"equals({leaf}, coalesce({tags}['azbrief.v2.{tag}'], ''))",
-                f"if(equals(coalesce(opts.{owner}Mode, 'new'), 'new'), equals(toLower(last(take(split({resource_id}, '/'), 5))), toLower(coalesce(resourceGroup().name, ''))), true)",
+                f"if(equals(coalesce(opts.{owner}Mode, 'new'), 'new'), equals(toLower(coalesce(last(take(split({resource_id}, '/'), 5)), '')), toLower(coalesce(resourceGroup().name, ''))), true)",
             )
         )
     shared_containers = _all(
@@ -1064,9 +1071,9 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
     def email_parent(resource_id: str) -> str:
         parts = f"split({resource_id}, '/')"
         return (
-            f"if(empty({resource_id}), '', concat('/subscriptions/', last(take({parts}, 3)), '/resourceGroups/', "
-            f"last(take({parts}, 5)), '/providers/Microsoft.Communication/emailServices/', "
-            f"last(take({parts}, 9))))"
+            f"if(empty({resource_id}), '', concat('/subscriptions/', coalesce(last(take({parts}, 3)), ''), '/resourceGroups/', "
+            f"coalesce(last(take({parts}, 5)), ''), '/providers/Microsoft.Communication/emailServices/', "
+            f"coalesce(last(take({parts}, 9)), '')))"
         )
 
     email_service_id = email_parent(domain_id)
@@ -1076,7 +1083,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
     )
     vnet = (
         f"if({foundation}, coalesce(steps('network').virtualNetwork.id, ''), "
-        f"concat('/subscriptions/', last(take(split(coalesce({saved}.foundryAccountResourceId, ''), '/'), 3)), "
+        f"concat('/subscriptions/', coalesce(last(take(split(coalesce({saved}.foundryAccountResourceId, ''), '/'), 3)), ''), "
         f"'/resourceGroups/', coalesce({tags}['azbrief.v2.vnetRg'], ''), "
         f"'/providers/Microsoft.Network/virtualNetworks/', coalesce({tags}['azbrief.v2.vnet'], '')))"
     )
@@ -1345,7 +1352,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
     )
     project_absent = (
         f"empty(filter(coalesce({projects_api}.value, parse('[]')), (project) => "
-        f"equals(toLower(last(split(coalesce(project.name, ''), '/'))), toLower({project_name}))))"
+        f"equals(toLower(coalesce(last(split(coalesce(project.name, ''), '/')), '')), toLower({project_name}))))"
     )
     core_version = (
         f"if({foundation}, coalesce(steps('options').modelVersion, '2025-12-11'), "
@@ -1390,7 +1397,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
         )
         matches = (
             f"filter(coalesce({deployments_api}.value, parse('[]')), (deployment) => "
-            f"equals(toLower(last(split(coalesce(deployment.name, ''), '/'))), toLower({alias})))"
+            f"equals(toLower(coalesce(last(split(coalesce(deployment.name, ''), '/')), '')), toLower({alias})))"
         )
         compatible = _all(
             "equals(deployment.properties.provisioningState, 'Succeeded')",

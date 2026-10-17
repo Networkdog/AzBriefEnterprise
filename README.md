@@ -63,6 +63,9 @@ leave the initial tab blank and prevent live subnet responses from reaching the 
 Use explicit `startsWith`/`endsWith` for ARM-ID and saved-JSON boundaries: native Portal equality
 on empty `split` elements is not Python's empty-string equality and can wrongly block completion
 or an application update. The true-only deployment guard and exact eight-field ID binding remain.
+Inactive parent-ID branches also coalesce empty native split segments before string operations.
+Tests combine native empty-element behavior with eager evaluation for unloaded and new-VNet
+forms; a hidden empty branch must not prevent the initial form from loading.
 See the [v2 network guidance](infra/v2/README.md#new-or-existing-vnet) if no choices appear.
 
 The form generator projects only the tag keys each expression uses, binds saved values once per
