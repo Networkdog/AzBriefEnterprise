@@ -406,18 +406,18 @@ def _conditional_network_inputs(
                 },
             }
         )
-        tags = "steps('contract').resourceGroupApi.tags"
-        network["elements"].append(
-            {
-                "name": "savedNetworkNotice",
-                "type": "Microsoft.Common.InfoBox",
-                "visible": f"[not({foundation})]",
-                "options": {
-                    "icon": "Info",
-                    "text": f"[concat('기반의 네트워크를 그대로 사용합니다. VNet: ', coalesce({tags}['azbrief.v2.vnetRg'], ''), '/', coalesce({tags}['azbrief.v2.vnet'], ''), ' · Foundry: ', coalesce({tags}['azbrief.v2.foundrySubnet'], ''), ' · Environment: ', coalesce({tags}['azbrief.v2.appSubnet'], ''), ' · PE: ', if(empty(coalesce({tags}['azbrief.v2.peSubnet'], '')), '신규 PE 없음', {tags}['azbrief.v2.peSubnet']))]",
-                },
-            }
-        )
+    tags = "steps('contract').resourceGroupApi.tags"
+    network["elements"].append(
+        {
+            "name": "savedNetworkNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": f"[not({foundation})]",
+            "options": {
+                "icon": "Info",
+                "text": f"[concat('기반의 네트워크를 그대로 사용합니다. VNet: ', coalesce({tags}['azbrief.v2.vnetRg'], ''), '/', coalesce({tags}['azbrief.v2.vnet'], ''), ' · Foundry: ', coalesce({tags}['azbrief.v2.foundrySubnet'], ''), ' · Environment: ', coalesce({tags}['azbrief.v2.appSubnet'], ''), ' · PE: ', if(empty(coalesce({tags}['azbrief.v2.peSubnet'], '')), '신규 PE 없음', {tags}['azbrief.v2.peSubnet']))]",
+            },
+        }
+    )
     network["elements"].append(
         {
             "name": "advancedNetworkOptions",
@@ -2346,6 +2346,126 @@ def _safe_initial_outputs(parameters: dict[str, Any]) -> None:
             parameters["outputs"][name] = expression
 
 
+def _foundation_input_visibility(parameters: dict[str, Any]) -> None:
+    contract = next((step for step in parameters["steps"] if step["name"] == "contract"), None)
+    if contract is None:
+        return
+    foundation = "equals(basics('infrastructureStage'), 'foundation')"
+    api = "steps('contract').resourceGroupApi"
+    tags = f"coalesce({api}.tags, parse('{{}}'))"
+    saved = (
+        "or("
+        + ", ".join(
+            f"contains({tags}, 'azbrief.v2.{key}')"
+            for key in ("schema", "profile", "state", "options0", "resources0")
+        )
+        + ")"
+    )
+    exact_read = _all(
+        "equals(resourceGroup().mode, 'Existing')",
+        f"equals(toLower(coalesce({api}.id, '')), toLower(concat('/subscriptions/', "
+        "subscription().subscriptionId, '/resourceGroups/', coalesce(resourceGroup().name, ''))))",
+        f"empty({api}.error)",
+        f"empty({api}.nextLink)",
+    )
+    condition = _all(
+        foundation,
+        f"or(equals(resourceGroup().mode, 'New'), and({exact_read}, not({saved})))",
+    )
+    for step in parameters["steps"]:
+        if step["name"] not in {"resources", "network", "names", "options"}:
+            continue
+        for element in step["elements"]:
+            if element["type"] == "Microsoft.Solutions.ArmApiControl":
+                continue
+            current = element.get("visible", True)
+            if element["type"] == "Microsoft.Common.InfoBox" and (
+                not isinstance(current, str)
+                or foundation not in current
+                or f"not({foundation})" in current
+            ):
+                continue
+            if current is False:
+                continue
+            prefix = f"[and({condition}, "
+            if isinstance(current, str) and current.startswith(prefix):
+                continue
+            expression = current[1:-1] if isinstance(current, str) else "true"
+            element["visible"] = f"{prefix}{expression})]"
+    contract["elements"] = [
+        element for element in contract["elements"] if element["name"] != "savedStageNotice"
+    ]
+    contract["elements"].append(
+        {
+            "name": "savedStageNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": f"[and({foundation}, {exact_read}, {saved})]",
+            "options": {
+                "icon": "Warning",
+                "text": (
+                    "이 RG에는 기반 선택이 이미 저장돼 있어 서비스·네트워크를 다시 묻지 않습니다. "
+                    "기반 준비만 완료했다면 Basics의 '기존 기반 완성'을 선택하십시오. mcp_pending이면 "
+                    "승인된 MCP 인증 준비를, ready이면 앱 배포를 진행하십시오. 누락된 태그는 진단하고 "
+                    "기반 준비를 다시 실행하거나 저장값을 강제로 바꾸지 마십시오."
+                ),
+            },
+        }
+    )
+
+
+def _application_saved_setup(parameters: dict[str, Any]) -> None:
+    step = next((step for step in parameters["steps"] if step["name"] == "application"), None)
+    if step is None:
+        return
+    step["elements"] = [
+        element for element in step["elements"] if element["name"] != "savedInfrastructureNotice"
+    ]
+    text = "concat('기반의 저장값을 그대로 사용합니다. 서비스 배포 방식 · '"
+    for name, label in (
+        ("foundryAccount", "Foundry"),
+        ("storageAccount", "Storage"),
+        ("containerAppsEnvironment", "Environment"),
+        ("communicationServices", "ACS"),
+    ):
+        text += f", '{label}: ', coalesce(saved.options.{name}Mode, 'new'), ' | '"
+    text += (
+        ", 'VNet: ', coalesce(tags.azbrief_v2_vnetRg, ''), '/', "
+        "coalesce(tags.azbrief_v2_vnet, ''), ' · Foundry: ', "
+        "coalesce(tags.azbrief_v2_foundrySubnet, ''), ' · Environment: ', "
+        "coalesce(tags.azbrief_v2_appSubnet, ''), ' · PE: ', "
+        "coalesce(tags.azbrief_v2_peSubnet, ''))"
+    )
+    step["elements"].append(
+        {
+            "name": "savedInfrastructureNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": "[not(empty(steps('application').resourceGroupApi.tags['azbrief.v2.state']))]",
+            "options": {
+                "icon": "Info",
+                "text": "[" + _shared_context(text, "application") + "]",
+            },
+        }
+    )
+
+
+def _validate_control_names(parameters: dict[str, Any]) -> None:
+    scopes = [("basics", parameters["basics"])]
+    step_names: set[str] = set()
+    for step in parameters["steps"]:
+        if step["name"] in step_names:
+            raise ValueError(f"Duplicate Portal step name: {step['name']}")
+        step_names.add(step["name"])
+        scopes.append((step["name"], step["elements"]))
+    for scope, elements in scopes:
+        names: set[str] = set()
+        for element in elements:
+            if element["name"] in names:
+                raise ValueError(f"Duplicate Portal control name: {scope}.{element['name']}")
+            names.add(element["name"])
+            if "elements" in element:
+                scopes.append((scope + "." + element["name"], element["elements"]))
+
+
 def normalize_ui(
     document: dict[str, Any], network_validations: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -2361,7 +2481,7 @@ def normalize_ui(
                 raise ValueError("The infrastructure Portal base validation cannot be removed")
             parameters["outputs"]["portalValidationPassed"] = "[" + retained + "]"
     config = parameters.setdefault("config", {})
-    config["isWizard"] = False
+    config["isWizard"] = True
     config.setdefault("basics", {}).setdefault("resourceGroup", {})["allowExisting"] = True
     _safe_initial_outputs(parameters)
     for step in parameters["steps"]:
@@ -2520,7 +2640,16 @@ def normalize_ui(
         )
         _conditional_network_inputs(parameters, network_validations)
         _resource_first_layout(parameters)
-    return cast(dict[str, Any], _portable_tag_access(result))
+        _foundation_input_visibility(parameters)
+        parameters["config"]["basics"]["location"][
+            "visible"
+        ] = "[equals(basics('infrastructureStage'), 'foundation')]"
+    else:
+        parameters["config"]["basics"].setdefault("location", {})["visible"] = False
+        _application_saved_setup(parameters)
+    normalized = cast(dict[str, Any], _portable_tag_access(result))
+    _validate_control_names(normalized["parameters"])
+    return normalized
 
 
 def main() -> int:

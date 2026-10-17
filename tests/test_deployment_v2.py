@@ -504,7 +504,9 @@ def test_new_defaults_match_portal_cli_and_global_standard(tmp_path: Path) -> No
     assert "modelDeploymentRegion" not in controls
     assert "modelRegionMismatchNotice" not in controls
     assert controls["virtualNetwork"]["options"]["filter"]["location"] == "all"
-    assert ui_definition("infrastructure")["config"]["basics"]["location"]["visible"] is True
+    assert ui_definition("infrastructure")["config"]["basics"]["location"]["visible"] == (
+        "[equals(basics('infrastructureStage'), 'foundation')]"
+    )
     assert (
         _evaluate_ui_expression(
             ui_definition("infrastructure")["outputs"]["location"],
@@ -2314,7 +2316,7 @@ def test_option_tags_reject_partial_unknown_and_oversized_saved_inputs(tmp_path:
 def test_ui_uses_supported_control_schema_and_legacy_network_guards(tmp_path: Path) -> None:
     for name in ("infrastructure", "application"):
         definition = ui_definition(name)
-        assert definition["config"].get("isWizard", False) is False
+        assert definition["config"]["isWizard"] is True
         assert definition["config"]["basics"]["resourceGroup"]["allowExisting"] is True
         assert all("visible" not in step for step in definition["steps"])
         for control in ui_controls(name).values():
@@ -2607,18 +2609,16 @@ def test_generated_v2_forms_do_not_use_string_key_tag_indexes() -> None:
     )
 
 
-def test_v2_keeps_kt_navigation_and_name_only_subnet_choice_contract() -> None:
+def test_v2_starts_with_basics_and_keeps_kt_name_only_subnet_choice_contract() -> None:
     legacy = json.loads((ROOT / "infra/kt/createUiDefinition.json").read_text(encoding="utf-8"))[
         "parameters"
     ]
     legacy_network = next(step for step in legacy["steps"] if step["name"] == "network")
     legacy_controls = {element["name"]: element for element in legacy_network["elements"]}
     for name in ("infrastructure", "application"):
-        assert ui_definition(name)["config"].get("isWizard", False) == legacy["config"].get(
-            "isWizard", False
-        )
-        assert ui_definition(name)["config"]["isWizard"] is False
+        assert ui_definition(name)["config"]["isWizard"] is True
         assert list(ui_definition(name))[0] == "config"
+    assert legacy["config"].get("isWizard", False) is False
     assert ui_definition("infrastructure")["basics"]
     assert (
         "steps('network').virtualNetwork.id"
@@ -2741,8 +2741,10 @@ def test_subnet_discovery_distinguishes_loading_failed_empty_and_ready_reads(
     assert (
         _evaluate_ui_expression(
             status["visible"],
-            {},
+            {"contract": {"resourceGroupApi": None}},
             network=network,
+            resource_group={"mode": "New"},
+            subscription={"subscriptionId": SUBSCRIPTION},
             basics={"infrastructureStage": "foundation"},
             eager_conditionals=True,
         )
@@ -2762,12 +2764,14 @@ def test_subnet_discovery_distinguishes_loading_failed_empty_and_ready_reads(
         assert (
             _evaluate_ui_expression(
                 status["visible"],
-                {},
+                {"contract": {"resourceGroupApi": None}},
                 network={
                     **network,
                     "virtualNetworkMode": mode,
                     "virtualNetwork": selection,
                 },
+                resource_group={"mode": "New"},
+                subscription={"subscriptionId": SUBSCRIPTION},
                 basics={"infrastructureStage": stage},
                 eager_conditionals=True,
             )

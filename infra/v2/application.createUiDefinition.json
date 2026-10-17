@@ -8,9 +8,12 @@
         "description": "같은 기존 RG의 완료된 v2 인프라를 사용해 앱과 읽기 전용 MCP 서버를 설치하거나 이미지를 업데이트합니다. 리소스 이름·모델·MCP 주소는 저장된 태그로 참조합니다.",
         "resourceGroup": {
           "allowExisting": true
+        },
+        "location": {
+          "visible": false
         }
       },
-      "isWizard": false
+      "isWizard": true
     },
     "basics": [],
     "steps": [
@@ -115,6 +118,15 @@
             "options": {
               "icon": "Info",
               "text": "메일 수신자·관리자·Archive 독자를 배포자로 기본 설정하고 모든 웹 UI를 켜려면 최초 설치를 python -m scripts.deploy_v2 application --subscription <구독> --tenant <테넌트> --resource-group <RG> --image <승인된 이미지 digest> --mode deploy로 실행하십시오. CLI가 전용 Entra 로그인 앱과 기간 제한 시크릿을 준비합니다. Portal만으로 최초 설치하면 웹 UI는 꺼진 상태이며, Portal 업데이트는 기존 수신자·인증·접근 목록을 보존합니다. 로그인 권한·사설 접속·실제 발송은 별도 확인합니다."
+            }
+          },
+          {
+            "name": "savedInfrastructureNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": "[not(empty(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.state\":', '\"azbrief_v2_state\":')).azbrief_v2_state))]",
+            "options": {
+              "icon": "Info",
+              "text": "[first(map(parse(concat('[{\"tags\":', replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief_v2_appSubnet\":', '\"azbrief/v2/appSubnet\":'), '\"azbrief.v2.appSubnet\":', '\"azbrief_v2_appSubnet\":'), '\"azbrief_v2_foundrySubnet\":', '\"azbrief/v2/foundrySubnet\":'), '\"azbrief.v2.foundrySubnet\":', '\"azbrief_v2_foundrySubnet\":'), '\"azbrief_v2_options0\":', '\"azbrief/v2/options0\":'), '\"azbrief.v2.options0\":', '\"azbrief_v2_options0\":'), '\"azbrief_v2_options1\":', '\"azbrief/v2/options1\":'), '\"azbrief.v2.options1\":', '\"azbrief_v2_options1\":'), '\"azbrief_v2_options2\":', '\"azbrief/v2/options2\":'), '\"azbrief.v2.options2\":', '\"azbrief_v2_options2\":'), '\"azbrief_v2_options3\":', '\"azbrief/v2/options3\":'), '\"azbrief.v2.options3\":', '\"azbrief_v2_options3\":'), '\"azbrief_v2_options4\":', '\"azbrief/v2/options4\":'), '\"azbrief.v2.options4\":', '\"azbrief_v2_options4\":'), '\"azbrief_v2_options5\":', '\"azbrief/v2/options5\":'), '\"azbrief.v2.options5\":', '\"azbrief_v2_options5\":'), '\"azbrief_v2_options6\":', '\"azbrief/v2/options6\":'), '\"azbrief.v2.options6\":', '\"azbrief_v2_options6\":'), '\"azbrief_v2_options7\":', '\"azbrief/v2/options7\":'), '\"azbrief.v2.options7\":', '\"azbrief_v2_options7\":'), '\"azbrief_v2_peSubnet\":', '\"azbrief/v2/peSubnet\":'), '\"azbrief.v2.peSubnet\":', '\"azbrief_v2_peSubnet\":'), '\"azbrief_v2_vnet\":', '\"azbrief/v2/vnet\":'), '\"azbrief.v2.vnet\":', '\"azbrief_v2_vnet\":'), '\"azbrief_v2_vnetRg\":', '\"azbrief/v2/vnetRg\":'), '\"azbrief.v2.vnetRg\":', '\"azbrief_v2_vnetRg\":'), '}]')), (source) => first(map(parse(concat('[{', '\"tags\":', string(source.tags), ',', '\"options\":', string(parse(if(not(empty(concat(coalesce(source.tags.azbrief_v2_options0, ''), coalesce(source.tags.azbrief_v2_options1, ''), coalesce(source.tags.azbrief_v2_options2, ''), coalesce(source.tags.azbrief_v2_options3, ''), coalesce(source.tags.azbrief_v2_options4, ''), coalesce(source.tags.azbrief_v2_options5, ''), coalesce(source.tags.azbrief_v2_options6, ''), coalesce(source.tags.azbrief_v2_options7, '')))), concat(coalesce(source.tags.azbrief_v2_options0, ''), coalesce(source.tags.azbrief_v2_options1, ''), coalesce(source.tags.azbrief_v2_options2, ''), coalesce(source.tags.azbrief_v2_options3, ''), coalesce(source.tags.azbrief_v2_options4, ''), coalesce(source.tags.azbrief_v2_options5, ''), coalesce(source.tags.azbrief_v2_options6, ''), coalesce(source.tags.azbrief_v2_options7, '')), '{}'))), '}]')), (context) => concat('기반의 저장값을 그대로 사용합니다. 서비스 배포 방식 · ', 'Foundry: ', coalesce(context.options.foundryAccountMode, 'new'), ' | ', 'Storage: ', coalesce(context.options.storageAccountMode, 'new'), ' | ', 'Environment: ', coalesce(context.options.containerAppsEnvironmentMode, 'new'), ' | ', 'ACS: ', coalesce(context.options.communicationServicesMode, 'new'), ' | ', 'VNet: ', coalesce(context.tags.azbrief_v2_vnetRg, ''), '/', coalesce(context.tags.azbrief_v2_vnet, ''), ' · Foundry: ', coalesce(context.tags.azbrief_v2_foundrySubnet, ''), ' · Environment: ', coalesce(context.tags.azbrief_v2_appSubnet, ''), ' · PE: ', coalesce(context.tags.azbrief_v2_peSubnet, ''))))))]"
             }
           }
         ]

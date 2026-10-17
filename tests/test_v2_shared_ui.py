@@ -59,6 +59,16 @@ def controls(name: str = "infrastructure") -> dict[str, dict[str, Any]]:
     }
 
 
+def foundation_inputs() -> list[dict[str, Any]]:
+    return [
+        element
+        for step in definition()["steps"]
+        if step["name"] in {"resources", "network", "names", "options"}
+        for element in step["elements"]
+        if element["type"] not in {"Microsoft.Common.InfoBox", "Microsoft.Solutions.ArmApiControl"}
+    ]
+
+
 @dataclass
 class UiState:
     values: dict[str, Any]
@@ -388,7 +398,7 @@ def test_model_inputs_never_move_an_existing_network_or_replace_its_known_region
     assert "koreacentral" in notice
     assert "전역" in notice and "별도 location" in notice
     assert "modelDeploymentRegion" not in controls()
-    assert definition()["config"]["basics"]["location"]["visible"] is True
+    assert evaluate(definition()["config"]["basics"]["location"]["visible"], state) is True
 
 
 def test_new_infrastructure_uses_only_its_native_location_not_a_legacy_model_input() -> None:
@@ -542,13 +552,14 @@ def test_native_completion_keeps_actual_resource_binding_instead_of_an_empty_obj
 
 
 @pytest.mark.parametrize("name", tuple(build_v2_ui.SHARED_RESOURCES))
-def test_foundation_selector_visibility_uses_only_current_mode_without_saved_context(name):
+def test_foundation_selector_visibility_uses_current_mode_and_raw_rg_read_gate(name):
     state = foundation()
     selector = "existing" + name[0].upper() + name[1:]
     selected = controls()
     for control in (selector, name + "Status"):
         assert "map(" not in selected[control]["visible"]
-        assert "resourceGroupApi" not in selected[control]["visible"]
+        assert "parse(concat(" not in selected[control]["visible"]
+        assert "azbrief.v2.options0" in selected[control]["visible"]
         assert evaluate(selected[control]["visible"], state) is False
     select_existing(state, name)
     assert evaluate(selected[selector]["visible"], state) is True
@@ -640,8 +651,104 @@ def test_completion_tabs_display_saved_network_and_workload_instead_of_new_input
     names_text = evaluate(selected["savedWorkloadNotice"]["options"]["text"], state)
     assert output("projectName", state) in names_text
     assert output("containerAppName", state) in names_text
-    for name in ("foundrySubnetName", "containerAppsSubnetName", "peSubnetName", "namingPrefix"):
-        assert evaluate(selected[name]["visible"], state) is False
+    for element in foundation_inputs():
+        visible = element.get("visible", True)
+        assert visible is False or evaluate(visible, state) is False, element["name"]
+    assert evaluate(definition()["config"]["basics"]["location"]["visible"], state) is False
+
+
+@pytest.mark.parametrize("name", ["infrastructure", "application"])
+def test_portal_control_names_are_unique_in_each_native_scope(name: str) -> None:
+    document = definition(name)
+    scopes = {"basics": document["basics"]}
+    scopes.update({step["name"]: step["elements"] for step in document["steps"]})
+    for scope, elements in scopes.items():
+        names = [element["name"] for element in elements]
+        assert len(names) == len(set(names)), scope
+
+
+@pytest.mark.parametrize("response", [None, {"error": {"code": "AuthorizationFailed"}}, {}])
+def test_existing_rg_inputs_wait_for_an_exact_successful_tag_read(response: object) -> None:
+    state = foundation()
+    state.group["mode"] = "Existing"
+    state.values["contract"]["resourceGroupApi"] = response
+    for element in foundation_inputs():
+        visible = element.get("visible", True)
+        assert visible is False or evaluate(visible, state) is False, element["name"]
+
+
+def test_foundation_questions_open_only_for_an_unbound_existing_rg() -> None:
+    state = foundation()
+    state.group["mode"] = "Existing"
+    group_id = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}"
+    response = {"id": group_id, "tags": {"customer": "retain"}}
+    state.values["contract"]["resourceGroupApi"] = response
+    for name in (*[name + "Mode" for name in build_v2_ui.SHARED_RESOURCES], "virtualNetworkMode"):
+        assert evaluate(controls()[name]["visible"], state) is True
+    response["id"] = group_id + "-previous-selection"
+    for element in foundation_inputs():
+        visible = element.get("visible", True)
+        assert visible is False or evaluate(visible, state) is False, element["name"]
+
+
+@pytest.mark.parametrize("saved_state", ["foundation", "mcp_pending", "ready"])
+def test_saved_rg_never_reopens_foundation_questions_or_silently_switches_stage(
+    saved_state: str,
+) -> None:
+    state = complete(foundation())
+    state.values["contract"]["resourceGroupApi"]["tags"]["azbrief.v2.state"] = saved_state
+    state.values["contract"]["resourceGroupApi"][
+        "id"
+    ] = f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{GROUP}"
+    state.stage = "foundation"
+    for element in foundation_inputs():
+        visible = element.get("visible", True)
+        assert visible is False or evaluate(visible, state) is False, element["name"]
+    assert output("infrastructureStage", state) == "foundation"
+    assert output("portalValidationPassed", state) is False
+    notice = controls()["savedStageNotice"]
+    assert evaluate(notice["visible"], state) is True
+    assert "기존 기반 완성" in notice["options"]["text"]
+    assert "ready" in notice["options"]["text"]
+
+
+def test_application_has_only_delivery_inputs_and_a_read_only_saved_setup_summary() -> None:
+    state = foundation()
+    select_existing(state, "storageAccount")
+    tags = save_tags(state)
+    tags["azbrief.v2.state"] = "ready"
+    application = UiState(
+        values={"application": {"resourceGroupApi": {"tags": tags}}},
+        network={},
+        group={"mode": "Existing", "name": GROUP},
+    )
+    assert definition("application")["config"]["basics"]["location"]["visible"] is False
+    selected = controls("application")
+    assert not set(selected) & {element["name"] for element in foundation_inputs()}
+    notice = selected["savedInfrastructureNotice"]
+    assert notice["type"] == "Microsoft.Common.InfoBox"
+    text = evaluate(notice["options"]["text"], application)
+    assert "vnet-private" in text and "foundry-agents" in text and "container-apps" in text
+    assert "Storage: existing" in text
+
+
+@pytest.mark.parametrize("scope", ["basics", "steps", "elements", "nested"])
+def test_generator_rejects_duplicate_native_control_and_step_names(scope: str) -> None:
+    document: dict[str, Any] = {
+        "basics": [],
+        "steps": [{"name": "inputs", "elements": []}],
+    }
+    duplicated = [{"name": "same", "type": "Microsoft.Common.InfoBox"}] * 2
+    if scope == "steps":
+        document["steps"] *= 2
+    elif scope == "basics":
+        document["basics"] = duplicated
+    elif scope == "elements":
+        document["steps"][0]["elements"] = duplicated
+    else:
+        document["steps"][0]["elements"] = [{"name": "section", "elements": duplicated}]
+    with pytest.raises(ValueError, match="Duplicate Portal"):
+        build_v2_ui._validate_control_names(document)
 
 
 def test_different_shared_parent_vnets_are_explained_beside_the_environment() -> None:

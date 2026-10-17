@@ -236,6 +236,20 @@ its exhausted quota; only the explicitly approved zero-model/zero-project CLI pa
 
 ## New Or Existing VNet
 
+Service modes and network selections are collected only during **Foundation**. Foundation
+already writes the modes into `azbrief.v2.options0..7`, exact parent IDs into
+`azbrief.v2.resources0..7`, and VNet RG/name plus PE/Foundry/Environment subnet names into their
+existing tags. **Complete existing foundation** reads those values; it has no editable service,
+VNet, subnet, workload-name or model-selection inputs. Application deployment likewise reads the
+saved contract and shows a read-only service/network summary. No extra tags or tag-budget slots
+are needed for this behavior.
+
+For an Existing RG, foundation inputs stay hidden until the response ID matches the current
+subscription/RG and the read succeeds without a pending page. A saved or incomplete v2 handoff
+does not reopen fresh inputs. If Basics still says Foundation, an explicit warning directs the
+operator to completion, MCP preparation or App deployment; it never changes the selected stage.
+Completion and App hide the native deployment-location input and retain the saved region.
+
 Choose new/existing services before networking and workload names. Reused Foundry and Environment
 provide their exact infrastructure subnet IDs; the Portal and CLI derive the VNet, region and
 role names from fresh typed ARM readbacks. Their subnet pickers are hidden. When either parent is
@@ -275,9 +289,13 @@ Denied, missing or stale reads cannot authorize deployment; do not force validat
 invent subnets or broaden permissions. Publish the generated UI before retesting in a new
 Portal tab. An exact-request/live-ARM replay verifies returned choices, not the authenticated
 Portal rendering or a completed infrastructure/application deployment.
-Both v2 forms explicitly set `isWizard=false`, preserving the working KT non-wizard behavior.
-The infrastructure Basics stage selector remains populated. This setting alone does not fix
-evaluation failures or prove that the initial tab renders.
+Both v2 forms explicitly set `isWizard=true`: the supported wizard flow makes **Basics** the
+initial available step and validates each step before **Next**. This intentionally replaces
+v2's free tab navigation; the legacy KT form is unchanged. The infrastructure Basics stage
+selector remains populated. The normalizer also rejects duplicate names in every native scope,
+including nested Sections and step names. The duplicated `savedNetworkNotice` that previously
+reached the published infrastructure form is now emitted only once. These structural checks
+do not replace authenticated Portal first-render acceptance.
 
 The real Portal investigation reproduced both failures after loading the exact published
 ARM/UI pair: no initially selected tab, and no subnet control output even though an ARM batch
@@ -307,7 +325,8 @@ metadata. Tag budgeting binds the source tags once and uses integer ceiling divi
 256-character chunks. All scope, ownership, model, chunk, 2,048-character and 50-tag checks remain;
 there are no mutable hidden cache controls or extra discovery requests.
 
-In the before/after offline comparison, the infrastructure form decreased from 1,480,561 to
+In the expression-optimization comparison, before the later saved-stage visibility and wizard
+changes, the infrastructure form decreased from 1,480,561 to
 712,995 UTF-8 bytes and the application form from 117,944 to 58,172 bytes. The completion guard
 decreased from 299,188 to 183,883 characters. Nine-sample synthetic guard-replay medians decreased
 from 289.5 to 135.8 ms for a new foundation, 226.1 to 146.8 ms for shared services, and 279.8 to
@@ -516,9 +535,10 @@ documented string/replace/parse functions, rather than assuming ARM-style string
 indexing is accepted. Stored tag keys and option JSON values remain unchanged. A Python AST
 test harness is not the Portal parser; a repeated error after publication still requires
 the real CreateUIDef diagnostics or authenticated browser console to establish its cause.
-Comparison with the working KT definition retains its default non-wizard navigation,
-VNet selector options, three exact subnet choice expressions/defaults and five validation
-rules. `bladeTitle` is optional in the official schema and also absent from some KT steps;
+Comparison with the working KT definition retains its VNet selector options, three exact
+subnet choice expressions/defaults and five validation rules. V2 intentionally differs in
+navigation by enabling the Basics-first wizard. `bladeTitle` is optional in the official schema
+and also absent from some KT steps;
 do not label its absence a proven cause. The v2-only initial tag-contract step remains a
 separate difference. Structural parity reduces candidates but does not establish a fix
 without a real Portal reload/diagnostic comparison.

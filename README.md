@@ -29,13 +29,20 @@ Log Analytics workspace, and reused Communication Services retains its linked em
 Existing private networking and region compatibility must pass preflight; application updates
 reuse these saved IDs without recreating shared services.
 
-The infrastructure form now asks for **services first, network second, workload names third**.
+The foundation form asks for **services first, network second, workload names third**.
 An existing Foundry or Environment supplies its verified VNet and dedicated subnet automatically;
 the form does not ask for that service's subnet again. It asks only for subnets needed by new
 resources, and omits the Private Endpoint subnet when no new endpoint is requested.
 Shared-service incompatibilities appear beside that service, model conflicts beside model options,
 and only project-name conflicts beside the workload prefix. Public or unintegrated shared services
 remain unsupported by this private profile; the template never silently converts them.
+
+These are **foundation-only questions**. Completion reads service modes from `azbrief.v2.options*`,
+exact IDs from `azbrief.v2.resources*`, and the saved VNet/subnet name tags. It never asks for
+those choices again; application deployment shows a read-only summary instead. A previously
+tagged RG also hides fresh foundation inputs when Basics still says Foundation and explains
+which stage to select. Existing-RG inputs wait for the exact successful RG read; missing,
+denied or stale responses do not reopen an empty installation form or change the selected stage.
 
 Model selection no longer sets the VNet or Environment region. An existing VNet retains its
 verified actual region; only a new VNet uses the native **New infrastructure deployment region**
@@ -46,7 +53,10 @@ Existing-VNet subnet lists read the selected VNet directly from ARM, or the exac
 from a reused service. They never substitute a subscription response. The form distinguishes an
 absent or different response ID, access failure and an empty subnet list; it never preselects a
 subnet for a new resource. Existing bindings are readbacks, not arbitrary subnet defaults.
-Non-wizard navigation is explicit, rather than relying on an omitted initialization setting.
+Both v2 forms explicitly enable the supported wizard flow: start at **Basics**, validate each
+step, and use **Next** to continue. The legacy KT form retains its navigation.
+Generated control names must be unique in every scope; normalization rejects duplicates
+instead of allowing conflicting controls to reach Portal.
 Both Portal forms avoid capturing outer parameters in nested `map`/`filter` lambdas.
 The real CreateUI evaluator does not preserve Python-style lexical scope; that defect can
 leave the initial tab blank and prevent live subnet responses from reaching the controls.

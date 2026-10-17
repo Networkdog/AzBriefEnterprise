@@ -313,8 +313,18 @@ coalesce/subscription fallback or wrap the request in stage/mode conditions. Pre
 dropdown choices, blank defaults and separate CIDR/identity/delegation guards. Missing/different
 response IDs, denied/missing-data and truly empty subnets need distinct safe status; show only
 safe IDs/error codes, not bodies. Test the serialized dependency and VNet changes, not just a
-prefilled response. Explicit isWizard=false retains KT navigation; first-render/no-active-tab
-requires actual Portal diagnostics. Live ARM replay is not authenticated Portal acceptance.
+prefilled response. V2 explicitly sets isWizard=true so Basics is the initial available tab and
+Next validates each step; retain legacy KT navigation unchanged. Reject duplicate control/step
+names in every native scope, including Sections. Never collapse controls into a dict before
+testing uniqueness: that hid duplicate savedNetworkNotice rows. Actual first-render acceptance
+still requires an authenticated Portal; live ARM replay is not a substitute.
+Foundation writes all service modes to options chunks, typed resource IDs to resource chunks,
+and exact VNet/subnet names to the existing tags. Completion and application reuse those values
+without infrastructure questions; App shows only a read-only summary. Gate every foundation
+input, not just resource selectors, on Foundation plus a New RG or exact successful unbound RG
+read. Saved, loading, denied, paged or stale Existing-RG responses never reopen fresh inputs.
+If the selected stage is still Foundation for a saved RG, show a stage-specific warning without
+silently changing the stage or weakening the guard. Hide the location picker for completion/App.
 Real CreateUI does not resolve enclosing lambda parameters from nested map/filter lambdas.
 The browser reproduced invalid split(saved.resources...) and blank tabs/missing subnet outputs
 despite a successful live VNet GET. Bind source tags before deriving saved options/resources,

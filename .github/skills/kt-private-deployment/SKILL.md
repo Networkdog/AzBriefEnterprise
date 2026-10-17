@@ -141,7 +141,14 @@ CustomDeploymentBlade error is a Portal UI symptom, not an Azure Graph deploymen
 Read dotted tag names through temporary dot-access projections, preserving stored keys and
 option JSON values. Do not equate the Python test evaluator with the actual Portal parser;
 repeat symptoms need authenticated CreateUIDef diagnostics, not another success claim.
-Use the working KT default non-wizard navigation and exact selector/subnet choice contract.
+Keep the working KT selector/subnet choice contract. V2 explicitly uses isWizard=true to start
+at Basics and validate each step before Next; leave the legacy KT navigation unchanged.
+Foundation stores service modes in options chunks, full IDs in resource chunks, and the exact
+VNet/subnet names in existing tags. Completion/App never ask for those choices again. Gate all
+foundation inputs on the selected Foundation stage and a New RG or exact successful unbound RG
+read. Saved/loading/denied/stale RGs never reopen a fresh form. Warn when a saved RG is still on
+Foundation without silently changing the stage. App shows a read-only saved setup summary.
+Reject duplicate control names before publishing, including nested Sections and step names.
 Compare schema-required differences before editing optional titles or shared properties.
 VNet RG outputs must come from the selected ARM ID, not the picker's optional resourceGroup
 field. Test id/name/location-only picker fixtures, cross-RG networks, customer casing and
@@ -234,16 +241,18 @@ private/VNet paths.
    dropdowns with a prefilled response. Distinguish absent/different response IDs, read
    failure, missing subnet data and an actually empty list using safe IDs/error codes.
    Never surface error bodies, assume a read failure means no subnets, or auto-grant access.
-   Explicit isWizard=false preserves non-wizard navigation in both v2 forms. A screenshot
-   with no initial active tab needs Portal initialization diagnostics; do not claim the
-   first-render issue solved merely because clicking Basics works or local tests pass.
+   Explicit isWizard=true starts both v2 forms at Basics with sequential validation; this does
+   not change legacy KT navigation. Remove duplicate saved-network notices and reject duplicate
+   native names during generation. A screenshot with no initial active tab still needs Portal
+   diagnostics; do not claim browser acceptance merely because clicking Basics or local tests work.
    Real Portal probes also established that nested map/filter lambdas cannot capture an
    enclosing saved/opts/context parameter. This caused blank initial tabs and absent VNet
    output despite successful ARM data. Keep each predicate's inputs in its own binding and inline
    remaining shared references; move static owner checks outside per-subnet predicates. Retain
    binding/mode/tag-budget/readiness checks and reject cross-lambda captures in both generated
    forms. Python lexical closure tests alone cannot establish Portal compatibility.
-3. Use simple independent dropdowns for the three role subnet selections in both stages:
+3. Use simple independent dropdowns for the three role subnet selections in legacy KT stages.
+   V2 asks for them only during Foundation and restores tags during completion/App:
    - populate choices only from the selected VNet's subnet names using a short nullable-safe map;
      retain a literal empty-choice default, never an automatic first subnet;
      compose the choice array through JSON strings rather than assuming ARM-style array concat;
