@@ -48,6 +48,15 @@ RG 메타데이터나 모델 후보 조회 지역이 이 값을 덮어쓰지 않
 두 Portal 폼은 중첩 `map`·`filter`에서 바깥 람다의 변수를 캡처하지 않습니다.
 실제 CreateUI 평가기는 Python과 같은 렉시컬 스코프를 보장하지 않아, 이 결함이 있으면
 첫 탭이 비거나 실제 서브넷 응답이 컨트롤에 전달되지 않을 수 있습니다.
+ARM ID·저장된 JSON의 경계는 `startsWith`·`endsWith`로 확인합니다. 실제 Portal에서 `split`의
+빈 요소를 비교한 결과는 Python의 빈 문자열 비교와 달라 완료·앱 업데이트를 잘못 차단할 수
+있습니다. `true`만 허용하는 배포 가드와 정확한 8개 필드의 리소스 ID 검증은 그대로 유지합니다.
+
+폼 생성기는 각 식에서 쓰는 태그 키만 변환하고 컨텍스트별 저장 값을 한 번씩 바인딩하며,
+모델 후보와 비교할 옵션을 같은 람다 범위에 둡니다. 기반 단계의 서브넷 검사는 완료 단계의
+메타데이터를 반복 확장하지 않습니다. 검증을 없애거나 변경 가능한 숨은 캐시를 추가하지 않고
+선택·단계 이동 시 반복 파싱을 줄입니다. 오프라인 식 평가 시간은 실제 Portal Next 버튼의
+응답 시간과 다르므로, 게시된 ARM/UI 쌍을 인증된 정책 준수 브라우저에서도 확인해야 합니다.
 
 모델 옵션에는 부모 Foundry의 실제 **모델·quota 리전**을 별도로 표시합니다. 해당 계정 아래에
 직접 만드는 모델 배포에는 독립적인 `location` 필드가 없습니다. **GlobalStandard 추론은
@@ -59,6 +68,16 @@ RG 메타데이터나 모델 후보 조회 지역이 이 값을 덮어쓰지 않
 신규 v2 모델 기본값은 Core `gpt-5.2` / `2025-12-11`, Simple `gpt-5-mini` /
 `2025-08-07`이며 `GlobalStandard` 용량을 각각 200단위로 설정합니다. PTU 배포·예약은
 사용하지 않습니다. 저장된 기존 프로필은 유지하며 배포 전에 현재 quota와 공급 용량을 확인해야 합니다.
+
+첫 앱 설치에서 불변 `*.azurecr.io` 이미지를 사용하면 App과 Job은 저장된 워크로드 UAMI로
+인증합니다. 설치 전에 필요한 pull 권한만 부여해야 하며, ABAC 레지스트리에는 기존 AcrPull이
+아니라 정확한 저장소 조건의 Repository Reader가 필요합니다. 앱 템플릿이 레지스트리 권한을
+바꾸지는 않습니다. 명시한 레지스트리 설정이 우선하며 이후 업데이트는 기존 설정·시크릿을 유지합니다.
+첫 설치가 App만 만든 상태에서 중단되면 원인을 확인한 뒤 `--recover-initial-install`로 명시적으로
+복구합니다. 최초 설치 미완료 태그와 읽을 수 있는 원래 API 키가 있을 때만 같은 키로 누락된 Job을
+만들며, 키가 없거나 이미 설치를 완료한 환경을 초기화하는 경로로 사용하지 않습니다.
+Portal 업데이트는 App·Job의 기존 값을 독립적인 서버 측 보안 스냅샷으로 읽어 ARM의 자기 참조
+순환을 피합니다. 시크릿을 Portal 입력이나 일반 배포 이력에 노출하지 않습니다.
 
 완료 단계 안내에는 신규 기본값 대신 저장된 모델·버전·리전이 표시됩니다. 이전 5.6 프로필은
 모델·프로젝트가 0개임을 검증한 승인된 `--stage complete --reselect-models`를 실행하기 전까지
@@ -928,13 +947,20 @@ python -m scripts.provision_foundry_agents --delete
 ```
 
 각 Agent의 기본 standing instruction은 `src/agent/foundry_backend.py`의
-`RUNTIME_AGENT_INSTRUCTIONS` 또는 `SPECIALIST_PROMPTS`에서 옵니다. `.github/skills/` 아래 일곱
-도메인 문서에도 범위가 제한된 `Foundry Runtime Guidance` 섹션이 있습니다. Provisioning은 이
-압축된 섹션만 읽어 역할별 집합을 immutable Foundry Agent instruction으로 컴파일합니다.
+`RUNTIME_AGENT_INSTRUCTIONS` 또는 `SPECIALIST_PROMPTS`에서 옵니다. 역할별 도메인 지침은
+`src/agent/foundry_instructions.py`가 관리하며 `.github/skills/`의 개발 워크플로는 런타임
+입력이 아닙니다. Provisioning은 애플리케이션 소유 지침을 역할별 immutable Foundry Agent
+instruction으로 컴파일합니다.
 Resource Graph에는 KQL guidance, Azure API에는 service-integration guidance, Report Writer에는
 report/language/email guidance, Quality Reviewer에는 evaluation rubric을 제공합니다. 개발 절차,
 파일 경로, test 명령은 모델 context에 들어가지 않습니다. Runtime guidance 변경은 `--check`에서
 instruction drift로 나타나며 새 Prompt Agent version이 필요합니다.
+단위 테스트는 프로젝트·Hosted·6개 역할의 연결값을 격리하므로 실제 배포 환경의 Agent 이름이
+누락된 테스트 설정을 대신하거나 실제 프로젝트를 호출하지 않습니다. Pytest 프로세스에서만
+테스트별 환경·설정 캐시를 복구하며 부모 배포 프로세스의 정확한 연결값은 유지합니다.
+Python MCP SDK는 두 의존성 명세에서 검증된 `2.0.0`으로 고정하며, 이후 minor 버전은 도구
+오류·사설 호스트 배포 검사를 거쳐 적용합니다. Azd의 비어 있는 선택적 자격 증명은 배포
+프로세스 환경에서만 제거하며, 값이 있는 명시적 자격 증명과 지정한 테넌트는 바꾸지 않습니다.
 
 분석 중 Microsoft Learn MCP 또는 Azure MCP에서 찾은 기술 문서는 원문을 깊이 0으로 두고,
 판단에 영향을 주는 본문 링크를 1단계까지 탐색합니다. 1단계 문서로도 구체적인 질문에 답할 수

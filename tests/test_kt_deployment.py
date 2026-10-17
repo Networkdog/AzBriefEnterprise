@@ -326,6 +326,7 @@ def _evaluate_ui_expression(
     basics: dict[str, object] | None = None,
     eager_conditionals: bool = False,
     selected_location: str = "",
+    native_empty_array_elements: bool = False,
 ) -> object:
     """Evaluate the tested Portal expression subset with strict equality."""
 
@@ -398,7 +399,9 @@ def _evaluate_ui_expression(
         if function == "concat":
             if all(isinstance(value, str) for value in arguments):
                 return "".join(arguments)
-            assert parameters is not None, "CreateUiDefinition concat must use strings"
+            assert parameters is not None, (
+                "CreateUiDefinition concat must use strings: " + ast.unparse(node)[:250]
+            )
             assert all(isinstance(value, list) for value in arguments)
             return [item for value in arguments for item in value]
         if function == "steps":
@@ -440,6 +443,21 @@ def _evaluate_ui_expression(
             return dict(zip(arguments[::2], arguments[1::2]))
         if function == "createArray":
             return arguments
+        if function == "union":
+            assert all(isinstance(value, dict) for value in arguments)
+            return {key: item for value in arguments for key, item in value.items()}
+        if function == "resourceId":
+            assert resource_group is not None and subscription is not None
+            resource_type, *resource_names = arguments
+            parts = resource_type.split("/")
+            assert len(parts) == len(resource_names) + 1
+            path = "/".join(
+                [parts[0], *(item for pair in zip(parts[1:], resource_names) for item in pair)]
+            )
+            return (
+                f"/subscriptions/{subscription['subscriptionId']}"
+                f"/resourceGroups/{resource_group['name']}/providers/{path}"
+            )
         if function == "environment":
             assert not arguments
             return {"authentication": {"loginEndpoint": "https://login.microsoftonline.com/"}}
@@ -512,12 +530,16 @@ def _evaluate_ui_expression(
         if function == "startsWith":
             assert len(arguments) == 2 and all(isinstance(value, str) for value in arguments)
             return arguments[0].startswith(arguments[1])
+        if function == "endsWith":
+            assert len(arguments) == 2 and all(isinstance(value, str) for value in arguments)
+            return arguments[0].endswith(arguments[1])
         if function == "split":
             assert len(arguments) == 2 and all(isinstance(value, str) for value in arguments)
             return arguments[0].split(arguments[1])
         if function == "last":
             assert len(arguments) == 1 and isinstance(arguments[0], list) and arguments[0]
-            return arguments[0][-1]
+            value = arguments[0][-1]
+            return None if native_empty_array_elements and value == "" else value
         if function == "first":
             assert len(arguments) == 1 and isinstance(arguments[0], list) and arguments[0]
             return arguments[0][0]
@@ -545,6 +567,13 @@ def _evaluate_ui_expression(
         if function == "sub":
             assert len(arguments) == 2 and all(type(value) is int for value in arguments)
             return arguments[0] - arguments[1]
+        if function == "add":
+            assert len(arguments) == 2 and all(type(value) is int for value in arguments)
+            return arguments[0] + arguments[1]
+        if function == "div":
+            assert len(arguments) == 2 and all(type(value) is int for value in arguments)
+            assert arguments[0] >= 0 and arguments[1] > 0
+            return arguments[0] // arguments[1]
         if function == "equals":
             assert len(arguments) == 2
             return type(arguments[0]) is type(arguments[1]) and arguments[0] == arguments[1]

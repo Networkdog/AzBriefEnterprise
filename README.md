@@ -50,7 +50,17 @@ Non-wizard navigation is explicit, rather than relying on an omitted initializat
 Both Portal forms avoid capturing outer parameters in nested `map`/`filter` lambdas.
 The real CreateUI evaluator does not preserve Python-style lexical scope; that defect can
 leave the initial tab blank and prevent live subnet responses from reaching the controls.
+Use explicit `startsWith`/`endsWith` for ARM-ID and saved-JSON boundaries: native Portal equality
+on empty `split` elements is not Python's empty-string equality and can wrongly block completion
+or an application update. The true-only deployment guard and exact eight-field ID binding remain.
 See the [v2 network guidance](infra/v2/README.md#new-or-existing-vnet) if no choices appear.
+
+The form generator projects only the tag keys each expression uses, binds saved values once per
+context, and keeps model candidates and their expected options in the same lambda scope.
+Foundation-only subnet checks do not expand completion metadata. This reduces repeated parsing
+during selection and navigation without removing validation or introducing mutable hidden caches.
+Offline expression timings are not measured Portal Next-button latency; verify the published
+ARM/UI pair in an authenticated, policy-compliant browser.
 
 The model options display the actual parent Foundry **model/quota region**, separately from
 infrastructure choices. A model deployed directly under that account has no independent
@@ -63,6 +73,17 @@ Use `--list-model-options --model-regions` for read-only model/quota/capacity di
 New v2 model defaults are Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-mini` /
 `2025-08-07`, each with 200 `GlobalStandard` capacity units. No PTU deployment or reservation
 is used. Existing saved profiles stay unchanged; check current quota and capacity before deployment.
+
+For the first application install from an immutable `*.azurecr.io` image, App and Job use the
+saved workload UAMI for registry authentication. Grant only the required pull permission before
+installation; ABAC-enabled registries need Repository Reader with an exact-repository condition,
+not legacy AcrPull. The app template never changes registry permissions. Explicit registry
+configuration wins, and subsequent updates preserve the existing configuration and secrets.
+An interrupted initial App-only install requires explicit `--recover-initial-install` after
+diagnosis; it can create the missing Job only with the original readable API key and a
+never-deployed tag pair. Missing keys or completed installations never become reset paths.
+Native updates use an independent secure server-side App/Job snapshot, avoiding ARM
+self-reference cycles without exposing secrets in Portal inputs or deployment history.
 
 Completion displays the actual saved model/version/region, not the new defaults. An older
 5.6 profile still requests 5.6 until an approved `--stage complete --reselect-models` operation
@@ -967,14 +988,21 @@ missing or an unexpected name is present, and remove only explicitly confirmed o
 versions.
 
 Each Agent's base standing instruction comes from `RUNTIME_AGENT_INSTRUCTIONS` or
-`SPECIALIST_PROMPTS` in `src/agent/foundry_backend.py`. The seven domain documents under
-`.github/skills/` additionally own a bounded `Foundry Runtime Guidance` section. Provisioning
-loads only those compact sections and compiles a role-specific set into the immutable Foundry
-Agent instruction. Resource Graph receives KQL guidance, Azure API receives service-integration
+`SPECIALIST_PROMPTS` in `src/agent/foundry_backend.py`. Role-scoped domain guidance is owned by
+`src/agent/foundry_instructions.py`; `.github/skills/` contains developer workflows and is never
+a runtime input. Provisioning compiles the application-owned guidance into each immutable
+Foundry Agent instruction. Resource Graph receives KQL guidance, Azure API receives service-integration
 guidance, report writer receives report/language/email guidance, and quality reviewer receives the
 evaluation rubric. Developer procedures, file paths, and test commands never enter model context.
 A runtime-guidance change appears as instruction drift in `--check` and requires a new Prompt
 Agent version.
+Unit tests isolate project, Hosted and six-role bindings so a configured deployment roster cannot
+satisfy a missing test roster or send unit requests to the real project. The pytest process restores
+its environment and settings cache per test; the parent deployment retains its exact bindings.
+The Python MCP SDK is pinned to the verified `2.0.0` in both dependency manifests; later minor
+versions require the tool-error and private-host publication gates before promotion. Empty
+optional azd credential placeholders are removed from the deployment process environment,
+while explicit non-empty credentials and the configured tenant remain unchanged.
 
 During analysis, technical documentation discovered through Microsoft Learn MCP or Azure MCP
 is read with bounded link traversal: the starting article is depth 0, decision-relevant links

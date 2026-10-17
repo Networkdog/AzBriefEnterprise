@@ -472,7 +472,7 @@ def _saved_chunks(step: str, kind: str, tags_alias: str = "") -> tuple[str, str,
         _all(
             contiguous,
             f"startsWith({joined}, '{{')",
-            f"equals(last(split({joined}, '}}')), '')",
+            f"endsWith({joined}, '}}')",
         )
         if kind == "resources"
         else f"not(empty({joined}))"
@@ -490,7 +490,7 @@ def _id_predicate(resource_id: str, resource_type: str) -> str:
 
     return _all(
         f"equals(length({segments}), {7 + 2 * len(types)})",
-        f"equals({part(1)}, '')",
+        f"startsWith({resource_id}, '/')",
         f"equals({part(2)}, 'subscriptions')",
         f"equals({part(3)}, toLower(subscription().subscriptionId))",
         f"equals({part(4)}, 'resourcegroups')",
@@ -550,7 +550,7 @@ def _valid_blob_container(value: str) -> str:
         f"greaterOrEquals(length({name}), 3)",
         f"lessOrEquals(length({name}), 63)",
         f"not(startsWith({name}, '-'))",
-        f"not(empty(last(split({name}, '-'))))",
+        f"not(endsWith({name}, '-'))",
         f"not(contains({name}, '--'))",
         f"empty({remainder})",
     )
@@ -632,7 +632,6 @@ def _binding_validation(
                 f"if(equals(coalesce(opts.{owner}Mode, 'new'), 'new'), equals(toLower(last(take(split({resource_id}, '/'), 5))), toLower(coalesce(resourceGroup().name, ''))), true)",
             )
         )
-    bindings = f"parse(concat('[', string({saved}), ']'))"
     shared_containers = _all(
         _valid_blob_container("binding.stateContainerName"),
         _valid_blob_container("binding.archiveContainerName"),
@@ -648,13 +647,9 @@ def _binding_validation(
     )
     valid_binding = _all(
         contiguous,
-        f"equals(length(filter({bindings}, (binding) => "
-        + _all(
-            keys,
-            *id_rules,
-            f"if(equals(coalesce(opts.storageAccountMode, 'new'), 'existing'), {shared_containers}, {new_containers})",
-        )
-        + ")), 1)",
+        keys,
+        *id_rules,
+        f"if(equals(coalesce(opts.storageAccountMode, 'new'), 'existing'), {shared_containers}, {new_containers})",
     )
     valid_options = _all(
         *(
@@ -665,7 +660,8 @@ def _binding_validation(
         + _all(*(f"equals(coalesce(opts.{name}Mode, 'new'), 'new')" for name in SHARED_RESOURCES))
         + ")",
     )
-    return re.sub(r"\bopts\.", lambda _: options + ".", valid_options)
+    valid_options = re.sub(r"\bopts\.", lambda _: options + ".", valid_options)
+    return re.sub(r"\bbinding\b", lambda _: saved, valid_options)
 
 
 def _inline_shared_references(expression: str, step: str, include_saved: bool) -> str:
@@ -730,7 +726,7 @@ def _expand_nested_lambda_references(expression: str, step: str, include_saved: 
 
 
 def _shared_context(expression: str, step: str = "contract", include_saved: bool = True) -> str:
-    """Bind one context, expanding references captured by nested Portal lambdas."""
+    """Bind required shared values without native Portal lambda captures."""
     expression = _expand_nested_lambda_references(expression, step, include_saved)
     expression = re.sub(
         r"(?<![\w.])tags\['azbrief\.v2\.([A-Za-z0-9]+)'\]",
@@ -746,21 +742,51 @@ def _shared_context(expression: str, step: str = "contract", include_saved: bool
     expression = expression.replace("saved.options", "context.options").replace(
         "saved.resources", "context.resources"
     )
-    projection = f"string(coalesce(steps('{step}').resourceGroupApi.tags, parse('{{}}')))"
-    for suffix in (*V2_METADATA_TAG_SUFFIXES, *(f"resources{i}" for i in range(8))):
-        projection = (
-            f"""replace({projection}, '"azbrief_v2_{suffix}":', '"azbrief/v2/{suffix}":')"""
+    saved_names = (
+        tuple(name for name in ("options", "resources") if f"context.{name}" in expression)
+        if include_saved
+        else ()
+    )
+    values: dict[str, str] = {}
+    projection = ""
+    if "context.tags" in expression or saved_names:
+        suffixes = {
+            match[1] or match[2]
+            for match in re.finditer(
+                r"context\.tags\.azbrief_v2_([A-Za-z0-9]+)"
+                r"|contains\(context\.tags,\s*'azbrief_v2_([A-Za-z0-9]+)'",
+                expression,
+            )
+        }
+        suffixes.update(f"{name}{index}" for name in saved_names for index in range(8))
+        projection = f"string(coalesce(steps('{step}').resourceGroupApi.tags, parse('{{}}')))"
+        for suffix in sorted(suffixes):
+            projection = (
+                f"""replace({projection}, '"azbrief_v2_{suffix}":', '"azbrief/v2/{suffix}":')"""
+            )
+            projection = (
+                f"""replace({projection}, '"azbrief.v2.{suffix}":', '"azbrief_v2_{suffix}":')"""
+            )
+        if "context.tags" in expression:
+            values["tags"] = "string(source.tags)" if saved_names else projection
+    for name in saved_names:
+        value, _, _ = _saved_chunks(step, name, "source.tags")
+        values[name] = f"string({value})"
+    if not values:
+        return expression
+    fields = ["'[{'"]
+    for index, (name, value) in enumerate(values.items()):
+        if index:
+            fields.append("','")
+        fields.extend((f"'\"{name}\":'", value))
+    fields.append("'}]'")
+    result = f"first(map(parse(concat({', '.join(fields)})), (context) => {expression}))"
+    if saved_names:
+        result = (
+            f"first(map(parse(concat('[{{\"tags\":', {projection}, '}}]')), "
+            f"(source) => {result}))"
         )
-        projection = (
-            f"""replace({projection}, '"azbrief.v2.{suffix}":', '"azbrief_v2_{suffix}":')"""
-        )
-    options, _, _ = _saved_chunks(step, "options")
-    resources, _, _ = _saved_chunks(step, "resources")
-    fields = f"'[{{\"tags\":', {projection}"
-    if include_saved:
-        fields += f", ',\"options\":', string({options}), ',\"resources\":', string({resources})"
-    fields += ", '}]'"
-    return f"first(map(parse(concat({fields})), (context) => {expression}))"
+    return result
 
 
 def derive_resource_names(prefix: str, suffix: str) -> dict[str, str]:
@@ -961,15 +987,13 @@ def _foundation_tag_budget(
     )
     available = "50"
     for key in V2_METADATA_TAG_SUFFIXES:
-        available = f"sub({available}, if(contains({tags}, 'azbrief.v2.{key}'), 0, 1))"
-    count = (
-        "length(filter(parse('[0,256,512,768,1024,1280,1536,1792]'), "
-        f"(offset) => greater(length({text}), offset)))"
-    )
-    return _all(
+        available = f"sub({available}, if(contains(budget, 'azbrief.v2.{key}'), 0, 1))"
+    count = f"div(add(length({text}), 255), 256)"
+    valid = _all(
         f"lessOrEquals(length({text}), 2048)",
-        f"lessOrEquals(length({tags}), sub({available}, {count}))",
+        f"lessOrEquals(length(budget), sub({available}, {count}))",
     )
+    return f"first(map(parse(concat('[', string({tags}), ']')), (budget) => {valid}))"
 
 
 def _shared_resource_controls(parameters: dict[str, Any]) -> None:
@@ -988,6 +1012,14 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
     existing = {name: f"equals({mode}, 'existing')" for name, mode in modes.items()}
     ids = {
         name: f"if({foundation}, coalesce(steps('names').existing{name[0].upper() + name[1:]}.id, ''), coalesce({saved}.{name}ResourceId, ''))"
+        for name in SHARED_RESOURCES
+    }
+    foundation_existing = {
+        name: f"equals(coalesce(steps('names').{name}Mode, 'new'), 'existing')"
+        for name in SHARED_RESOURCES
+    }
+    foundation_ids = {
+        name: f"coalesce(steps('names').existing{name[0].upper() + name[1:]}.id, '')"
         for name in SHARED_RESOURCES
     }
     workspace_api = "steps('names').existingLogAnalyticsWorkspaceApi"
@@ -1058,13 +1090,23 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
             ("containerAppsEnvironment", "containerAppsSubnetName", "appSubnet"),
         )
     }
+    foundation_subnet_ids = {
+        name: (
+            "concat(coalesce(steps('network').virtualNetwork.id, ''), '/subnets/', "
+            f"coalesce(steps('network').{control}, ''))"
+        )
+        for name, control in (
+            ("foundryAccount", "foundrySubnetName"),
+            ("containerAppsEnvironment", "containerAppsSubnetName"),
+        )
+    }
     subnet_readbacks = {
         name: (
             f"if({foundation}, equals(length(filter("
             "coalesce(steps('network').virtualNetworkApi.properties.subnets, parse('[]')), "
             "(subnet) => "
             + _all(
-                f"equals(toLower(coalesce(subnet.id, '')), toLower({subnet_ids[name]}))",
+                f"equals(toLower(coalesce(subnet.id, '')), toLower({foundation_subnet_ids[name]}))",
                 f"equals(toLower(coalesce(subnet.name, '')), toLower(coalesce(steps('network').{control}, '')))",
             )
             + ")), 1), true)"
@@ -1309,9 +1351,10 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
         f"if({foundation}, coalesce(steps('options').modelVersion, '2025-12-11'), "
         f"coalesce({options}.modelVersion, ''))"
     )
-    active_accounts = (
-        f"filter(split({ids['foundryAccount']}, '?'), (account) => "
-        f"and({existing['foundryAccount']}, not(empty(account))))"
+    active_account = _all(
+        existing["foundryAccount"],
+        f"not(empty({ids['foundryAccount']}))",
+        f"not(contains({ids['foundryAccount']}, '?'))",
     )
     model_rules = []
     for role, alias_tag, alias_default, model_field, default_model, capacity_field in (
@@ -1357,7 +1400,15 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
             "equals(deployment.sku.name, 'GlobalStandard')",
             _integer_at_least("deployment.sku.capacity", capacity),
         )
-        exact_match = f"equals(length(filter({matches}, (deployment) => {compatible})), 1)"
+        compatible = compatible.replace("deployment.", "candidate.deployment.").replace(
+            "saved.options", "candidate.options"
+        )
+        selected = f"first(if(empty({matches}), parse('[{{}}]'), {matches}))"
+        compatible = (
+            "first(map(parse(concat('[{\"deployment\":', "
+            f"string({selected}), ',\"options\":', string({options}), '}}]')), "
+            f"(candidate) => {compatible}))"
+        )
         model_rules.append(
             _all(
                 f"not(empty({alias}))",
@@ -1365,16 +1416,16 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
                 f"startsWith({model}, 'gpt-5')",
                 f"not(empty({version}))",
                 f"lessOrEquals(length({matches}), 1)",
-                f"empty(filter({matches}, (deployment) => not({compatible})))",
+                f"if(empty({matches}), true, {compatible})",
             )
         )
         parameters["outputs"][f"reuse{role}Model"] = (
             "["
             + _all(
-                f"equals(length({active_accounts}), 1)",
+                active_account,
                 inventory_rules[1],
                 f"equals(length({matches}), 1)",
-                exact_match,
+                compatible,
             )
             + "]"
         )
@@ -1386,7 +1437,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
         *model_rules,
     )
     shared_foundry_inventory = _all(
-        f"equals(length({active_accounts}), 1)",
+        active_account,
         valid_inventory,
     )
     foundry_api = "steps('names').existingFoundryAccountApi"
@@ -1442,7 +1493,7 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
     domain_api = "steps('names').existingEmailDomainApi"
     communication = _all(
         f"not(empty(coalesce({acs_api}.properties.hostName, '')))",
-        f"equals(last(split(toLower(coalesce({acs_api}.properties.hostName, '')), '.communication.azure.com')), '')",
+        f"endsWith(toLower(coalesce({acs_api}.properties.hostName, '')), '.communication.azure.com')",
         f"not(empty(coalesce({acs_api}.properties.dataLocation, '')))",
         linked_domain,
         _valid_resource_id(domain_id, "Microsoft.Communication/emailServices/domains", domain_api),
@@ -1520,13 +1571,13 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
         exact_binding = (
             f"equals(length(filter(coalesce({owner_api}.properties.networkInjections, parse('[]')), "
             f"(injection) => and(equals(injection.scenario, 'agent'), "
-            f"equals(toLower(coalesce(injection.subnetArmId, '')), toLower({subnet_ids[name]}))))), 1)"
+            f"equals(toLower(coalesce(injection.subnetArmId, '')), toLower({foundation_subnet_ids[name]}))))), 1)"
             if name == "foundryAccount"
-            else f"equals(toLower(coalesce({owner_api}.properties.vnetConfiguration.infrastructureSubnetId, '')), toLower({subnet_ids[name]}))"
+            else f"equals(toLower(coalesce({owner_api}.properties.vnetConfiguration.infrastructureSubnetId, '')), toLower({foundation_subnet_ids[name]}))"
         )
         verified_owner = _all(
-            existing[name],
-            _valid_resource_id(ids[name], SHARED_RESOURCES[name][1], owner_api),
+            foundation_existing[name],
+            _valid_resource_id(foundation_ids[name], SHARED_RESOURCES[name][1], owner_api),
             subnet_readbacks[name],
             exact_binding,
         )
@@ -1576,14 +1627,6 @@ def _shared_resource_controls(parameters: dict[str, Any]) -> None:
             "message": "네 서비스의 배포 방식은 신규 생성 또는 기존 리소스 사용이어야 합니다.",
         }
     )
-    foundation_existing = {
-        name: f"equals(coalesce(steps('names').{name}Mode, 'new'), 'existing')"
-        for name in SHARED_RESOURCES
-    }
-    foundation_ids = {
-        name: f"coalesce(steps('names').existing{name[0].upper() + name[1:]}.id, '')"
-        for name in SHARED_RESOURCES
-    }
     budget = _foundation_tag_budget(
         foundation_existing,
         foundation_ids,
@@ -2073,8 +2116,11 @@ def _application_deployment_tag_guard(parameters: dict[str, Any]) -> None:
     if not any(step["name"] == "application" for step in parameters["steps"]):
         return
     existing = parameters["outputs"]["portalValidationPassed"]
-    if "azbrief_v2_applicationState" in existing or "azbrief.v2.applicationState" in existing:
-        return
+    for marker in ("azbrief_v2_applicationState", "azbrief.v2.applicationState"):
+        retained = _without_guard_extension(existing[1:-1], marker)
+        if not retained:
+            raise ValueError("The application Portal base validation cannot be removed.")
+        existing = "[" + retained + "]"
     tags = "coalesce(steps('application').resourceGroupApi.tags, parse('{}'))"
     state_key = "azbrief.v2.applicationState"
     timestamp_key = "azbrief.v2.lastApplicationDeploymentAt"
@@ -2086,7 +2132,7 @@ def _application_deployment_tag_guard(parameters: dict[str, Any]) -> None:
     pair = (
         f"or(and(not({has_state}), not({has_timestamp})), "
         f"and({has_state}, {has_timestamp}, or(and(equals({state}, 'not_deployed'), empty({timestamp})), "
-        f"and(equals({state}, 'deployed'), equals(length({timestamp}), 20), equals(last(split({timestamp}, 'Z')), '')))))"
+        f"and(equals({state}, 'deployed'), equals(length({timestamp}), 20), endsWith({timestamp}, 'Z')))))"
     )
     parameters["outputs"]["portalValidationPassed"] = f"[and({existing[1:-1]}, {budget}, {pair})]"
 
@@ -2096,11 +2142,10 @@ def _application_shared_binding_guard(parameters: dict[str, Any]) -> None:
     if step is None:
         return
     condition = _shared_context(
-        _binding_validation("application", "tags"),
+        _binding_validation("application", "tags", "saved.options", "saved.resources"),
         "application",
-        include_saved=False,
     )
-    _extend_guard(parameters, "binding.stateContainerName", condition)
+    _extend_guard(parameters, "stateContainerName", condition)
     image = next(element for element in step["elements"] if element["name"] == "containerImage")
     image["constraints"]["validations"].append(
         {

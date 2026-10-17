@@ -72,27 +72,38 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existi
   name: infrastructureTags['azbrief.v2.foundry']
 }
 
-resource existingApp 'Microsoft.App/containerApps@2026-01-01' existing = {
-  name: infrastructureTags['azbrief.v2.app']
-}
-resource existingJob 'Microsoft.App/jobs@2026-01-01' existing = {
-  name: infrastructureTags['azbrief.v2.job']
-}
 var liveUpdate = preserveExistingSettings && reuseExistingApiKey
-var previousAppSecrets = liveUpdate ? existingApp.listSecrets().value : []
-var previousJobSecrets = liveUpdate ? existingJob.listSecrets().value : []
+module existingSettings 'application-snapshot.bicep' = {
+  name: 'v2-application-readback'
+  params: {
+    appName: infrastructureTags['azbrief.v2.app']
+    jobName: infrastructureTags['azbrief.v2.job']
+    readExistingSettings: liveUpdate
+  }
+}
+var imageRegistry = toLower(split(containerImage, '/')[0])
+var initialManagedRegistry = !reuseExistingApiKey && endsWith(imageRegistry, '.azurecr.io') ? {
+  registries: [
+    {
+      server: imageRegistry
+      identity: controlPlaneIdentity.id
+    }
+  ]
+} : {}
+var previousAppSecrets = liveUpdate ? existingSettings.outputs.snapshot.appSecrets : []
+var previousJobSecrets = liveUpdate ? existingSettings.outputs.snapshot.jobSecrets : []
 var suppliedAppSecretNames = map(existingSecrets.?app ?? [], secret => secret.name)
 var suppliedJobSecretNames = map(existingSecrets.?job ?? [], secret => secret.name)
 var resolvedAppSecrets = concat(filter(previousAppSecrets, secret => !contains(suppliedAppSecretNames, secret.name)), existingSecrets.?app ?? [])
 var resolvedJobSecrets = concat(filter(previousJobSecrets, secret => !contains(suppliedJobSecretNames, secret.name)), existingSecrets.?job ?? [])
-var resolvedAppConfiguration = union(liveUpdate ? existingApp.properties.configuration : {}, appConfiguration)
-var resolvedJobConfiguration = union(liveUpdate ? existingJob.properties.configuration : {}, jobConfiguration)
-var resolvedAppTemplate = union(liveUpdate ? existingApp.properties.template : {}, appTemplate)
-var resolvedJobTemplate = union(liveUpdate ? existingJob.properties.template : {}, jobTemplate)
+var resolvedAppConfiguration = union(initialManagedRegistry, liveUpdate ? existingSettings.outputs.snapshot.appConfiguration : {}, appConfiguration)
+var resolvedJobConfiguration = union(initialManagedRegistry, liveUpdate ? existingSettings.outputs.snapshot.jobConfiguration : {}, jobConfiguration)
+var resolvedAppTemplate = union(liveUpdate ? existingSettings.outputs.snapshot.appTemplate : {}, appTemplate)
+var resolvedJobTemplate = union(liveUpdate ? existingSettings.outputs.snapshot.jobTemplate : {}, jobTemplate)
 var suppliedAppEnvironmentNames = map(appEnvironment, item => item.name)
 var suppliedJobEnvironmentNames = map(jobEnvironment, item => item.name)
-var resolvedAppEnvironment = concat(filter(liveUpdate ? (existingApp.properties.template.containers[0].?env ?? []) : [], item => !contains(suppliedAppEnvironmentNames, item.name)), appEnvironment)
-var resolvedJobEnvironment = concat(filter(liveUpdate ? (existingJob.properties.template.containers[0].?env ?? []) : [], item => !contains(suppliedJobEnvironmentNames, item.name)), jobEnvironment)
+var resolvedAppEnvironment = concat(filter(liveUpdate ? (existingSettings.outputs.snapshot.appTemplate.containers[0].?env ?? []) : [], item => !contains(suppliedAppEnvironmentNames, item.name)), appEnvironment)
+var resolvedJobEnvironment = concat(filter(liveUpdate ? (existingSettings.outputs.snapshot.jobTemplate.containers[0].?env ?? []) : [], item => !contains(suppliedJobEnvironmentNames, item.name)), jobEnvironment)
 
 resource containerEnvironment 'Microsoft.App/managedEnvironments@2026-01-01' existing = {
   scope: resourceGroup(split(environmentId, '/')[2], split(environmentId, '/')[4])

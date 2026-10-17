@@ -284,10 +284,52 @@ ARM/UI pair: no initially selected tab, and no subnet control output even though
 returned the selected Korea Central VNet with ten subnets. A minimal live Portal trial showed
 that a nested lambda cannot resolve an enclosing `saved` parameter; a single-scope lambda and
 its null-safe equivalent work. Python's lexical closures had hidden this defect in offline
-tests. The generator now binds one shared context and expands shared references within nested
+tests. The generator binds source tags before deriving saved options/resources, passes values
+between independent lambda scopes, and expands remaining shared references within nested
 lambda bodies. Binding validation no longer captures an enclosing `opts` lambda; shared-owner
 checks stay outside per-subnet predicates, and foundation tag budgeting uses only current
 foundation inputs. No ownership, scope, model, tag-budget or readiness checks are removed.
+
+Native Portal completion exposed a second evaluator mismatch: comparing an empty leading or
+trailing `split` element with `''` returned false even though the same offline Python expression
+passed. Saved resource JSON therefore became `{}`, and the true-only ARM guard correctly blocked
+deployment. Both forms now use documented `startsWith`/`endsWith` boundary predicates for JSON,
+ARM roots, container-name suffixes, ACS host suffixes and application UTC timestamps. Regression
+tests exercise the native empty-element case and the exact parsed eight-field resource shape.
+Do not replace a failed guard with a constant or change stored tags to work around this defect.
+
+### Portal expression cost
+
+The normalizer projects only the tag keys an expression reads, validates the saved eight-field
+binding directly, and binds a model candidate together with its expected options. Foundation-only
+subnet/owner checks use current foundation inputs instead of repeatedly decoding completion
+metadata. Tag budgeting binds the source tags once and uses integer ceiling division for actual
+256-character chunks. All scope, ownership, model, chunk, 2,048-character and 50-tag checks remain;
+there are no mutable hidden cache controls or extra discovery requests.
+
+In the before/after offline comparison, the infrastructure form decreased from 1,480,561 to
+712,995 UTF-8 bytes and the application form from 117,944 to 58,172 bytes. The completion guard
+decreased from 299,188 to 183,883 characters. Nine-sample synthetic guard-replay medians decreased
+from 289.5 to 135.8 ms for a new foundation, 226.1 to 146.8 ms for shared services, and 279.8 to
+138.8 ms for completion. These include the Python harness's parsing/evaluation work; they are
+**not browser Next-button timings** and do not measure ARM request latency.
+Regression budgets prevent either form exceeding 900,000 unindented UTF-8 bytes or a 200,000-character
+guard. They are growth limits, not a user-facing latency SLO.
+
+A public form can still contain the old boundary predicate until the paired artifacts are
+published. Compare the exact fetched ARM/UI revision before retesting. A live-tag expression
+replay and a real ARM deployment through an authorized CLI are separate from customer Portal
+acceptance. If the browser is denied by device-compliance policy, stop that path; never copy CLI
+tokens into it or claim an authenticated Portal interaction result.
+
+Live CLI acceptance of the completion change replayed all 57 form outputs against a real saved
+foundation and matched every value to strict preflight. The unchanged public infrastructure ARM
+passed validation and what-if, then deployed successfully with those computed outputs. Readback
+confirmed both original model/version/capacity selections, the project and Host, unchanged saved
+bindings/options, and retained private networking. Managed MCP correctly stopped at `mcp_pending`;
+directory preparation, application installation and runtime delivery were not part of that test.
+The automated browser was denied by device-compliance policy, so authenticated Portal navigation
+and end-to-end Next-button latency remain unverified.
 
 Earlier lambda-fix acceptance, before the resource-first redesign, used the authenticated Portal and
 unchanged live Azure data: both forms auto-selected Basics without clicking a tab; the
@@ -578,6 +620,34 @@ python -m scripts.deploy_v2 application --subscription <subscription-guid> --ten
 
 Use [application.configuration.example.json](application.configuration.example.json)
 as a non-secret patch example. To update only the image, omit `--configuration`.
+For an initial immutable ACR image, the template derives its registry host and uses the saved
+control-plane UAMI for both App and Job. This is first-install-only; explicit App/Job registry
+configuration overrides it, and updates retain existing authentication and secrets. Pregrant
+image pull in the infrastructure/access preparation: an ABAC registry needs Container Registry
+Repository Reader restricted to the exact repository; legacy RBAC uses its supported pull role.
+Do not enable the ACR admin account, make the repository public, grant registry-wide pull for
+convenience, or put registry credentials in ordinary environment variables. Non-ACR registries
+continue to require explicit configuration. The app template creates no registry role assignment.
+Native Portal updates read existing App/Job settings and API secrets through the independent
+[application-snapshot.bicep](application-snapshot.bicep) deployment. Its output is `secureObject`,
+consumed server-side with `listOutputsWithSecureValues`; no secret values enter UI outputs or
+ordinary deployment history. The module never depends on the App/Job it snapshots. Initial
+installation runs it with reads disabled, so absent resources are not queried. This removes
+the ARM circular dependency caused by referencing an App directly while overwriting that same
+App. App/Job, authentication and requested MCP completion still precede the successful tag write.
+If a first install failed after creating the App but before creating the Job, normal updates
+still refuse the partial baseline. Diagnose the original failure first. Once the exact owned
+App is stable and its existing API secret is readable, use explicit
+`--recover-initial-install` with the same immutable image and reviewed configuration, first
+`--mode preflight`, then `validate`/`what-if`/`deploy`. Recovery requires
+`applicationState=not_deployed` with an empty successful-deployment timestamp, retains all App
+settings/authentication/secrets and copies the same API secret to the missing Job. It rejects
+foreign identities, in-flight resources, job-only state and missing/unreadable keys; it never
+deletes resources, invents a replacement key or resets a completed installation.
+For a registry-only initialization failure, the RP's documented JSON Merge Patch can correct
+only `properties.configuration.registries` without sending a `secrets` field; confirm the App
+reaches Succeeded before recovery. CLI wrappers that list secrets may themselves fail while
+the initial App is Failed. Do not turn that read failure into a key reset.
 The file can patch `appEnvironment`, `jobEnvironment`, App/Job configuration/templates,
 `webAuthConfiguration` and secure `existingSecrets.app`/`existingSecrets.job` arrays.
 Secret entries use `name` plus `value`, or existing Key Vault `keyVaultUrl`/`identity`.

@@ -209,6 +209,14 @@ python -m scripts.provision_foundry_agents --check
 ```
 
 `--check` is read-only but requires Foundry data-plane access. Do not run create/update/delete operations as part of a unit test. Tests must override every `FOUNDRY_*` environment variable with an explicit value, including an empty string, so `.env` cannot leak into the test process.
+`tests/conftest.py` isolates project/Hosted/six-role names and Hosted prompt aliases before each
+test and clears cached settings afterward. A test that needs a roster sets it explicitly.
+Run the full suite with configured deployment names to catch inherited-environment failures;
+never skip the private-host test gate because it runs under a configured named azd environment.
+Keep the MCP Python SDK at the verified manifest pin until both in-process tool-error behavior and
+the private publication gate pass with a candidate upgrade. Importing an azd environment must
+omit empty optional client-secret/certificate/federation placeholders without removing explicit
+credentials. This is deployment-process hygiene, not a model/identity fallback or a machine change.
 
 ## Skills and Toolbox
 

@@ -498,6 +498,49 @@ def test_service_selection_precedes_network_and_workload_naming() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "expression,expected",
+    [
+        ("[equals(last(split('x}', '}')), '')]", False),
+        ("[equals(last(take(split('/subscriptions/a', '/'), 1)), '')]", False),
+        ("[endsWith('x}', '}')]", True),
+        ("[startsWith('/subscriptions/a', '/')]", True),
+    ],
+)
+def test_native_portal_empty_array_elements_require_explicit_boundary_predicates(
+    expression: str, expected: bool
+) -> None:
+    assert _evaluate_ui_expression(expression, {}, native_empty_array_elements=True) is expected
+
+
+def test_native_completion_keeps_actual_resource_binding_instead_of_an_empty_object() -> None:
+    state = foundation()
+    state = complete(state)
+    assert (
+        _evaluate_ui_expression(
+            definition()["outputs"]["portalValidationPassed"],
+            {**state.values, "resources": state.values},
+            network=state.network,
+            resource_group=state.group,
+            subscription={"subscriptionId": SUBSCRIPTION},
+            basics={"infrastructureStage": state.stage},
+            native_empty_array_elements=True,
+        )
+        is True
+    )
+    saved, _, _ = build_v2_ui._saved_chunks("contract", "resources")
+    expression = build_v2_ui._portable_tag_access("[" + saved + "]")
+    assert _evaluate_ui_expression(
+        expression,
+        state.values,
+        native_empty_array_elements=True,
+    ) == binding_values(foundation())
+    for name in ("infrastructure", "application"):
+        guard = definition(name)["outputs"]["portalValidationPassed"]
+        assert "endsWith(" in guard
+        assert "startsWith(rid, '/')" in guard
+
+
 @pytest.mark.parametrize("name", tuple(build_v2_ui.SHARED_RESOURCES))
 def test_foundation_selector_visibility_uses_only_current_mode_without_saved_context(name):
     state = foundation()
@@ -1565,6 +1608,38 @@ def test_scoped_tag_projection_does_not_rewrite_options_or_shadow_canonical_keys
     }
     expression = "[" + build_v2_ui._shared_context("saved.options") + "]"
     assert evaluate(expression, state) == options
+
+
+def test_shared_context_only_serializes_values_used_by_the_expression() -> None:
+    expression = build_v2_ui._shared_context("tags.azbrief_v2_schema")
+    assert '"azbrief.v2.schema":' in expression
+    assert '"azbrief.v2.storage":' not in expression
+    assert ',"options":' not in expression
+    assert ',"resources":' not in expression
+    state = complete(foundation())
+    assert evaluate("[" + expression + "]", state) == "2"
+
+
+def test_saved_binding_validation_does_not_create_an_extra_lambda_scope() -> None:
+    expression = build_v2_ui._binding_validation(
+        "contract", "tags", "saved.options", "saved.resources"
+    )
+    assert "(binding) =>" not in expression
+    assert "length(saved.resources)" in expression
+    state = complete(foundation())
+    assert evaluate("[" + build_v2_ui._shared_context(expression) + "]", state) is True
+
+
+@pytest.mark.parametrize("size", [0, 1, 255, 256, 257, 2048])
+def test_portal_tag_chunk_count_uses_integer_ceiling_at_boundaries(size: int) -> None:
+    assert _evaluate_ui_expression(f"[div(add({size}, 255), 256)]", {}) == (size + 255) // 256
+
+
+@pytest.mark.parametrize("name", ["infrastructure", "application"])
+def test_portal_form_expression_size_stays_bounded(name: str) -> None:
+    document = definition(name)
+    assert len(json.dumps(document, ensure_ascii=False).encode("utf-8")) < 900_000
+    assert len(document["outputs"]["portalValidationPassed"]) < 200_000
 
 
 @pytest.mark.parametrize("eager", [False, True])

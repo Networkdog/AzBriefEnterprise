@@ -317,8 +317,22 @@ prefilled response. Explicit isWizard=false retains KT navigation; first-render/
 requires actual Portal diagnostics. Live ARM replay is not authenticated Portal acceptance.
 Real CreateUI does not resolve enclosing lambda parameters from nested map/filter lambdas.
 The browser reproduced invalid split(saved.resources...) and blank tabs/missing subnet outputs
-despite a successful live VNet GET. Bind one shared context and expand references in nested
-lambda bodies; never rely on Python lexical closure behavior in the offline evaluator.
+despite a successful live VNet GET. Bind source tags before deriving saved options/resources,
+pass values explicitly between independent lambda scopes, and expand remaining shared references
+in nested lambda bodies; never rely on Python lexical closures in the offline evaluator.
+Project only referenced tag keys, validate the saved binding directly, and bind each model
+candidate with its expected options instead of expanding the saved JSON in every predicate.
+Foundation-only subnet/owner checks use only foundation inputs. Tag budgeting binds the source
+tags once and uses integer ceiling division for 256-character chunks; keep the 2,048-character
+and 50-tag limits. Both forms have regression budgets of 900,000 unindented UTF-8 bytes and
+200,000 guard characters. These are expression-growth guards, not Portal latency guarantees.
+Do not use editable hidden caches or remove safety checks to meet them. Browser conditional-access
+failure is an acceptance blocker, not permission to inject CLI credentials into the browser.
+Native Portal also treats empty split-array elements differently from Python equality.
+Use startsWith/endsWith for saved-JSON boundaries, ARM roots, container/ACS suffixes and UTC
+timestamp suffixes, not equals(last(split(...)), ''). Preserve exact chunk, ID, owner and
+eight-field checks; a valid saved binding must not degrade to {}. Include native-boundary
+regressions and actual completion/App acceptance before claiming the fix is deployed.
 Keep all shared-ID/ownership/model/readiness/tag-budget checks, and test both forms in the
 authenticated Portal with actual read-only data. Local static UI substitution is not publication
 or successful ARM/runtime installation; never synthesize a ready contract to claim acceptance.
@@ -374,6 +388,22 @@ For an explicitly shared Foundry account, the zero-state check applies to the se
 aliases and workload project; unrelated projects/models are retained, never adopted or replaced.
 
 V2 independently selects new/existing Foundry, ACS, Environment and application Storage.
+The initial immutable ACR image uses the saved workload UAMI in both App/Job registry entries.
+Explicit registry configuration wins; updates preserve existing settings. Prerequisite pull
+permissions remain infrastructure-owned: use an exact-repository ABAC Reader condition when
+required, never AcrPull on an ABAC registry, registry admin credentials, public image exposure,
+or new registry roles inside the application template.
+Initial App-only recovery is explicit (`--recover-initial-install`), requires the never-deployed
+tag pair and an existing readable App key, and preserves settings/authentication while creating
+the missing Job with the same key. Never reinterpret denied/unreadable secrets, an in-flight
+resource or a completed installation as permission to reset it. Registry-only merge patches
+omit secrets entirely; verify Succeeded before reading/preserving the original key.
+Native Portal updates snapshot App/Job values in a separate nested deployment with a secureObject
+output. Never directly reference/listSecrets a resource from its own PUT, or pass that resource's
+symbol to the snapshot and reintroduce a dependency cycle. Keep the direct module symbol for
+secure output access; an unconditional module with a guarded read avoids nullable secure-output
+indirection. Initial installs perform no reads of missing App/Job resources. Success tags still
+depend on all requested App/Job/auth/MCP work.
 The infrastructure UI orders services before networking and workload names. Derive reused
 Foundry/Environment subnet names, VNet and canonical region from exact typed live readbacks;
 hide their manual subnet and incompatible new-VNet inputs. Ask only for new-resource subnets.
@@ -716,6 +746,17 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 ---
 
 ## Testing
+
+The shared test fixture blanks project/Hosted/six-role Foundry bindings and Hosted prompt aliases
+per test, clearing cached settings before/afterward. Tests must explicitly set any roster they
+need. This keeps a configured private deployment environment from satisfying an omitted test
+roster or making a unit test contact a real project; no deployment setting is changed outside
+the pytest child process. Verify the full suite with a non-empty external roster as well.
+Keep `mcp==2.0.0` synchronized in both manifests until a later SDK passes tool-error transport
+and private-host publication checks. During azd environment import, remove only empty optional
+credential placeholders through the Env provider. PowerShell can convert a null string argument
+to an empty environment value; do not let that select an invalid ClientSecretCredential. Preserve
+nonempty explicit credentials and tenant values, and never modify `.env` or machine settings.
 
 ### Offline Email Preview
 

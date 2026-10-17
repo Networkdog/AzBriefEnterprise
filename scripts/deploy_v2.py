@@ -1033,7 +1033,12 @@ def _merge_dicts(existing: dict[str, Any], patch: dict[str, Any]) -> dict[str, A
 
 
 def _surface(
-    cli: AzureCli, resource_id: str, collection: str, values: dict[str, Any]
+    cli: AzureCli,
+    resource_id: str,
+    collection: str,
+    values: dict[str, Any],
+    *,
+    recover_initial_install: bool = False,
 ) -> dict[str, Any] | None:
     rows = cli.collection(f"{cli.group_id}/providers/Microsoft.App/{collection}", CONTAINER_ENV_API)
     matches = [row for row in rows if row["id"].casefold() == resource_id.casefold()]
@@ -1046,7 +1051,8 @@ def _surface(
     props = resource["properties"]
     identities = resource.get("identity", {})
     if (
-        props.get("provisioningState") != "Succeeded"
+        props.get("provisioningState")
+        not in ({"Succeeded", "Failed"} if recover_initial_install else {"Succeeded"})
         or props.get("environmentId", "").casefold() != values["environmentResourceId"].casefold()
         or props.get("workloadProfileName") != "Consumption"
         or identities.get("type") != "UserAssigned"
@@ -1152,6 +1158,7 @@ def prepare_application(
     configuration: dict[str, Any] | None = None,
     *,
     deployment_user: dict[str, Any] | None = None,
+    recover_initial_install: bool = False,
 ) -> dict[str, Any]:
     """Preserve existing App/Job settings and secrets while deriving a fail-closed install/update."""
     if not IMAGE_PATTERN.fullmatch(image):
@@ -1162,11 +1169,20 @@ def prepare_application(
             "Application configuration contains unknown or infrastructure-owned fields"
         )
     tags, values = read_infrastructure(cli)
+    if recover_initial_install and (
+        tags.get(PREFIX + "applicationState") != "not_deployed"
+        or tags.get(PREFIX + "lastApplicationDeploymentAt") != ""
+    ):
+        raise ValueError("Initial-install recovery requires an explicit never-deployed tag pair")
     app_id = f"{cli.group_id}/providers/Microsoft.App/containerApps/{values['containerAppName']}"
     job_id = f"{cli.group_id}/providers/Microsoft.App/jobs/{values['schedulerJobName']}"
-    app = _surface(cli, app_id, "containerApps", values)
-    job = _surface(cli, job_id, "jobs", values)
-    if (app is None) != (job is None):
+    app = _surface(
+        cli, app_id, "containerApps", values, recover_initial_install=recover_initial_install
+    )
+    job = _surface(cli, job_id, "jobs", values, recover_initial_install=recover_initial_install)
+    if recover_initial_install and app is None:
+        raise ValueError("Initial-install recovery requires the exact existing App and API secret")
+    if (app is None) != (job is None) and not (recover_initial_install and app is not None):
         raise ValueError(
             "Partial application installation needs explicit recovery, not a guessed key rotation"
         )
@@ -1196,8 +1212,10 @@ def prepare_application(
             if name in app_patch and "value" in app_patch[name]:
                 job_defaults[name] = copy.deepcopy(app_patch[name])
         parameters["jobEnvironment"] = list(job_defaults.values())
-    if app is not None and job is not None:
+    if app is not None:
         for label, resource in (("app", app), ("job", job)):
+            if resource is None:
+                continue
             props = resource["properties"]
             parameters[f"{label}Configuration"] = copy.deepcopy(props["configuration"])
             parameters[f"{label}Configuration"].pop("secrets", None)
@@ -1238,9 +1256,18 @@ def prepare_application(
             for secret in parameters["existingSecrets"]["job"]
             if secret["name"] == "orchestrator-api-key"
         ]
-        if len(keys) != 1 or job_keys != keys:
+        if len(keys) != 1 or (job is not None and job_keys != keys):
             raise ValueError(
                 "App and Job must have one matching readable API secret; never rotate on failure"
+            )
+        if job is None:
+            parameters["existingSecrets"]["job"] = copy.deepcopy(keys)
+        if recover_initial_install:
+            logger.warning(
+                "v2_initial_install_recovery_selected",
+                app_state=app["properties"]["provisioningState"],
+                scheduler_present=job is not None,
+                api_key_reused=True,
             )
     for label in ("app", "job"):
         for suffix in ("Configuration", "Template"):
@@ -1354,11 +1381,12 @@ def run_application(
     name: str,
     *,
     automatic_setup: bool = True,
+    recover_initial_install: bool = False,
 ) -> None:
     """Require fresh preflight before every validate, preview and application write."""
     operations = ("validate", "what-if", "create") if mode == "deploy" else (mode,)
     for operation in operations:
-        baseline = prepare_application(cli, image)
+        baseline = prepare_application(cli, image, recover_initial_install=recover_initial_install)
         if automatic_setup and not baseline["reuseExistingApiKey"]:
             _, values = read_infrastructure(cli)
             user = _deployment_user(cli)
@@ -1380,7 +1408,9 @@ def run_application(
                     "Concurrent application installation detected; never replace its defaults"
                 )
         else:
-            parameters = prepare_application(cli, image, configuration)
+            parameters = prepare_application(
+                cli, image, configuration, recover_initial_install=recover_initial_install
+            )
         if operation != "preflight":
             deploy_template(cli, V2 / "application.json", parameters, operation, name)
         logger.info(
@@ -2630,6 +2660,11 @@ def main() -> int:
     parser.add_argument("--prepare-mcp-authentication", action="store_true")
     parser.add_argument("--no-automatic-setup", action="store_true")
     parser.add_argument(
+        "--recover-initial-install",
+        action="store_true",
+        help="Explicit never-deployed App recovery; preserve its existing API secret and create only a missing Job",
+    )
+    parser.add_argument(
         "--list-model-options",
         action="store_true",
         help="Read-only regional GPT-5 catalog, quota and provider capacity",
@@ -2657,7 +2692,12 @@ def main() -> int:
         if (args.model_regions or args.candidate_models) and not args.list_model_options:
             raise ValueError("Model discovery filters require --list-model-options")
         if args.phase == "infrastructure":
-            if args.image or args.configuration or args.no_automatic_setup:
+            if (
+                args.image
+                or args.configuration
+                or args.no_automatic_setup
+                or args.recover_initial_install
+            ):
                 raise ValueError("Application inputs do not belong in infrastructure deployment")
             if args.list_model_options:
                 if (
@@ -2736,6 +2776,7 @@ def main() -> int:
                 args.mode,
                 args.name + "-application",
                 automatic_setup=not args.no_automatic_setup,
+                recover_initial_install=args.recover_initial_install,
             )
     except (
         ValueError,

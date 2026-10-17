@@ -239,8 +239,8 @@ private/VNet paths.
    first-render issue solved merely because clicking Basics works or local tests pass.
    Real Portal probes also established that nested map/filter lambdas cannot capture an
    enclosing saved/opts/context parameter. This caused blank initial tabs and absent VNet
-   output despite successful ARM data. Keep one context binding and inline shared references
-   inside nested lambdas; move static owner checks outside per-subnet predicates. Retain
+   output despite successful ARM data. Keep each predicate's inputs in its own binding and inline
+   remaining shared references; move static owner checks outside per-subnet predicates. Retain
    binding/mode/tag-budget/readiness checks and reject cross-lambda captures in both generated
    forms. Python lexical closure tests alone cannot establish Portal compatibility.
 3. Use simple independent dropdowns for the three role subnet selections in both stages:
@@ -297,6 +297,39 @@ private/VNet paths.
     Local tests/schema are not customer Portal acceptance; verify the published pair separately.
 
 Portal discovery depends on the deploying principal having read access to the VNet links and zones.
+V2 native completion also needs explicit string-boundary predicates. A live minimal Portal
+probe returned false for empty split-element equality where Python returned true. Use
+startsWith/endsWith for saved JSON, ARM roots, container/ACS suffixes and application timestamps;
+preserve typed IDs, contiguous chunks, all eight resource fields and the true-only guard.
+Do not repair this by forcing a guard or editing RG tags. Verify both completion and App forms.
+Keep v2 navigation work bounded: project only referenced tag keys, bind source tags before
+derived options/resources, validate the binding directly, and bind a model candidate together
+with its expected options. Do not expand saved completion JSON in foundation-only subnet checks.
+Bind tag-budget inputs once and compute 256-character chunks with integer ceiling division,
+retaining actual chunk counts, the 2,048-character payload limit and the 50-tag ceiling.
+The generated forms enforce 900,000 unindented UTF-8 bytes and 200,000 guard characters in
+regression tests. No checks may be dropped and no mutable hidden caches added to meet those
+budgets. Offline replay timings do not establish actual Next-button latency. Publish the exact
+ARM/UI pair and repeat authenticated Portal acceptance; a device-compliance denial stays blocking
+and must never be bypassed by transferring CLI tokens to the browser.
+For first installation of an immutable ACR image, App/Job default to the saved workload UAMI;
+explicit registry settings override this and updates retain them. Pregrant only exact-repository
+pull access (ABAC Repository Reader when applicable). Application deployment never creates
+registry roles or enables the registry admin account.
+An App-only interrupted first install is not a normal update. The explicit
+`--recover-initial-install` path requires a never-deployed tag pair and the original readable
+App API key; it preserves App settings/auth and copies that key to the missing Job. Wrong owner,
+identity/environment/profile/topology, in-flight state, job-only state, completed tags and
+unreadable/missing keys stay blocked. Correct registry-only initialization via a documented
+merge patch omitting secrets, then verify Succeeded before using this recovery. Never rotate
+on a secret-read failure or fake a missing App in inventory.
+For native Portal image updates, use the independent secure application snapshot module rather
+than referencing/listing secrets on a resource in the same PUT. Pass saved string names, not App
+symbols that introduce reverse dependencies. Keep secrets in secureObject outputs and preserve
+the final App/Job/auth/MCP tag dependencies. Initial installs disable the snapshot's live reads.
+Use the tested MCP Python SDK pin in both manifests. A configured private-host pytest run must
+not inherit real Foundry roles. Empty optional azd credentials are removed through the process Env
+provider; explicit nonempty credentials are never discarded to hide an authentication failure.
 If a linked central zone is in another subscription or outside that read scope, require its explicit
 resource ID rather than silently creating a competing zone.
 

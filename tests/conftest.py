@@ -1,6 +1,28 @@
 """Shared test fixtures and configuration."""
 
+from collections.abc import Iterator
+
 import pytest
+
+from src.config import SPECIALIST_AGENT_ROLES, get_settings
+
+
+@pytest.fixture(autouse=True)
+def isolate_foundry_runtime_bindings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep a configured deployment roster out of tests that omit an explicit role."""
+    names = [
+        "FOUNDRY_PROJECT_ENDPOINT",
+        "FOUNDRY_HOSTED_AGENT_NAME",
+        *(f"FOUNDRY_{role.upper()}_AGENT_NAME" for role in SPECIALIST_AGENT_ROLES),
+        *(f"AZBRIEF_PROMPT_{role.upper()}_AGENT_NAME" for role in SPECIALIST_AGENT_ROLES),
+    ]
+    for name in names:
+        monkeypatch.setenv(name, "")
+    get_settings.cache_clear()
+    try:
+        yield
+    finally:
+        get_settings.cache_clear()
 
 
 @pytest.fixture

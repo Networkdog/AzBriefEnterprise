@@ -71,8 +71,11 @@ function Invoke-AzdJson {
 }
 
 function Get-AgentState {
+    param([string]$StagingPath)
+
     $state = Invoke-AzdJson -ArgumentList @(
         "ai", "agent", "show", $Service,
+        "--cwd", $StagingPath,
         "--environment", $Environment,
         "--no-prompt",
         "--output", "json"
@@ -104,10 +107,21 @@ function Import-AzdEnvironment {
         "--environment", $Environment,
         "--output", "json"
     )
+    $optionalCredentialNames = @(
+        "AZURE_CLIENT_ID", "AZURE_CLIENT_SECRET", "AZURE_CLIENT_CERTIFICATE_PATH",
+        "AZURE_CLIENT_CERTIFICATE_PASSWORD", "AZURE_FEDERATED_TOKEN_FILE"
+    )
     foreach ($property in $values.PSObject.Properties) {
+        $value = [string]$property.Value
+        if ($property.Name -in $optionalCredentialNames -and $value.Length -eq 0) {
+            if (Test-Path -LiteralPath "Env:$($property.Name)") {
+                Remove-Item -LiteralPath "Env:$($property.Name)"
+            }
+            continue
+        }
         [Environment]::SetEnvironmentVariable(
             $property.Name,
-            [string]$property.Value,
+            $value,
             "Process"
         )
     }
@@ -115,20 +129,93 @@ function Import-AzdEnvironment {
 
 function New-DeploymentStagingDirectory {
     param(
-        [Parameter(Mandatory = $true)]
-        [string]$PackagePath
+        [string]$PackagePath = ""
     )
 
+    $hostedName = $env:FOUNDRY_HOSTED_AGENT_NAME
+    if ($hostedName -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$') {
+        throw "FOUNDRY_HOSTED_AGENT_NAME must identify the exact 1-63 character deployment target."
+    }
+    $sourceEnvironmentPath = Join-Path $repoRoot ".azure\$Environment"
+    if (-not (Test-Path -LiteralPath $sourceEnvironmentPath -PathType Container)) {
+        throw "Configure the explicit named azd environment before creating a deployment workspace."
+    }
+    $failureTelemetryNames = @(
+        "AZURE_MONITOR_INGESTION_ENDPOINT", "AZURE_MONITOR_DCR_RULE_ID", "AZURE_MONITOR_DCR_STREAM_NAME"
+    )
+    $configuredTelemetry = @($failureTelemetryNames | Where-Object {
+        -not [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_, "Process"))
+    })
+    if ($configuredTelemetry.Count -notin @(0, $failureTelemetryNames.Count)) {
+        throw "Failure-log ingestion requires all three explicit endpoint/rule/stream bindings."
+    }
     $stagingPath = Join-Path (
         [System.IO.Path]::GetTempPath()
     ) "azbrief-hosted-deploy-$([guid]::NewGuid().ToString('N'))"
-    Expand-Archive -LiteralPath $PackagePath -DestinationPath $stagingPath
-    Copy-Item -LiteralPath (Join-Path $repoRoot "azure.yaml") -Destination $stagingPath
-    Copy-Item -LiteralPath (Join-Path $repoRoot ".agentignore") -Destination $stagingPath
-    if (Test-Path -LiteralPath (Join-Path $repoRoot ".azure") -PathType Container) {
-        Copy-Item -LiteralPath (Join-Path $repoRoot ".azure") -Destination $stagingPath -Recurse
+    $requestedWhatIf = $WhatIfPreference
+    $completed = $false
+    try {
+        $WhatIfPreference = $false
+        if ($PackagePath) {
+            Expand-Archive -LiteralPath $PackagePath -DestinationPath $stagingPath -WhatIf:$false
+        }
+        else {
+            New-Item -ItemType Directory -Path $stagingPath | Out-Null
+            $inputs = @(& git -C $repoRoot ls-files -- src hosted_agent_main.py requirements.txt pyproject.toml README.md LICENSE)
+            if ($LASTEXITCODE -ne 0 -or $inputs.Count -eq 0) {
+                throw "The reviewed tracked runtime input list could not be read."
+            }
+            foreach ($relative in $inputs) {
+                $destination = Join-Path $stagingPath $relative
+                New-Item -ItemType Directory -Path (Split-Path $destination) -Force | Out-Null
+                Copy-Item -LiteralPath (Join-Path $repoRoot $relative) -Destination $destination
+            }
+        }
+        $manifestPath = Join-Path $stagingPath "azure.yaml"
+        $manifest = [System.IO.File]::ReadAllText(
+            (Join-Path $repoRoot "azure.yaml"), [System.Text.Encoding]::UTF8
+        )
+        $namePattern = '(?m)^([ \t]*)name:[ \t]*\$\{FOUNDRY_HOSTED_AGENT_NAME\}[ \t]*(\r?)$'
+        if ([regex]::Matches($manifest, $namePattern).Count -ne 1) {
+            throw "The Hosted manifest must contain exactly one explicit target-name binding."
+        }
+        $manifest = [regex]::Replace($manifest, $namePattern, {
+            param($match)
+            "$($match.Groups[1].Value)name: $hostedName$($match.Groups[2].Value)"
+        })
+        if ($configuredTelemetry.Count -eq 0) {
+            foreach ($name in $failureTelemetryNames) {
+                $escaped = [regex]::Escape($name)
+                $pattern = '(?m)^[ \t]*-[ \t]*name:[ \t]*' + $escaped +
+                    '[ \t]*\r?\n[ \t]*value:[ \t]*\$\{' + $escaped + '\}[ \t]*(?:\r?\n|$)'
+                if ([regex]::Matches($manifest, $pattern).Count -gt 1) {
+                    throw "The optional failure-log manifest binding is ambiguous: $name"
+                }
+                $manifest = [regex]::Replace($manifest, $pattern, "")
+            }
+            Write-Host "Optional failure-log ingestion is unconfigured; retain stdout/project telemetry without empty DCR bindings."
+        }
+        [System.IO.File]::WriteAllText(
+            $manifestPath, $manifest, [System.Text.UTF8Encoding]::new($false)
+        )
+        Copy-Item -LiteralPath (Join-Path $repoRoot ".agentignore") -Destination $stagingPath
+        $azurePath = Join-Path $stagingPath ".azure"
+        New-Item -ItemType Directory -Path $azurePath | Out-Null
+        Copy-Item -LiteralPath $sourceEnvironmentPath -Destination $azurePath -Recurse
+        [System.IO.File]::WriteAllText(
+            (Join-Path $azurePath "config.json"),
+            (@{ defaultEnvironment = $Environment } | ConvertTo-Json),
+            [System.Text.UTF8Encoding]::new($false)
+        )
+        $completed = $true
+        return $stagingPath
     }
-    return $stagingPath
+    finally {
+        if (-not $completed -and (Test-Path -LiteralPath $stagingPath)) {
+            Remove-Item -LiteralPath $stagingPath -Recurse -Force
+        }
+        $WhatIfPreference = $requestedWhatIf
+    }
 }
 
 function Sync-AzdEnvironmentFromStaging {
@@ -171,11 +258,16 @@ function Get-DirtyRuntimePaths {
 }
 
 function Invoke-Doctor {
-    Invoke-NativeChecked -FilePath "azd" -ArgumentList @(
+    param([string]$StagingPath, [switch]$LocalOnly)
+
+    $arguments = @(
         "ai", "agent", "doctor",
+        "--cwd", $StagingPath,
         "--environment", $Environment,
         "--no-prompt"
     )
+    if ($LocalOnly) { $arguments += "--local-only" }
+    Invoke-NativeChecked -FilePath "azd" -ArgumentList $arguments
 }
 
 if (-not (Test-Path -LiteralPath $activateScript -PathType Leaf)) {
@@ -238,12 +330,9 @@ try {
         )
     }
 
-    if (-not $SkipDoctor) {
-        Invoke-Doctor
-    }
-
     if ($FromPackage) {
         $packagePath = (Resolve-Path -LiteralPath $FromPackage).Path
+        $deploymentStagingPath = New-DeploymentStagingDirectory -PackagePath $packagePath
     }
     else {
         if (-not $OutputPath) {
@@ -253,9 +342,21 @@ try {
         $packagePath = [System.IO.Path]::GetFullPath($OutputPath, $repoRoot)
         $packageDirectory = Split-Path -Parent $packagePath
         New-Item -ItemType Directory -Path $packageDirectory -Force | Out-Null
+        $deploymentStagingPath = New-DeploymentStagingDirectory
+    }
 
+    if (-not $SkipDoctor) {
+        $preflightState = Get-AgentState -StagingPath $deploymentStagingPath
+        $initialDeployment = $preflightState.Status -ceq "not_deployed"
+        if ($initialDeployment) {
+            Write-Host "First Hosted deployment: local doctor before deploy; full doctor remains mandatory afterward."
+        }
+        Invoke-Doctor -StagingPath $deploymentStagingPath -LocalOnly:$initialDeployment
+    }
+    if (-not $FromPackage) {
         Invoke-NativeChecked -FilePath "azd" -ArgumentList @(
             "package", $Service,
+            "--cwd", $deploymentStagingPath,
             "--environment", $Environment,
             "--output-path", $packagePath,
             "--no-prompt"
@@ -274,7 +375,7 @@ try {
         return
     }
 
-    $before = Get-AgentState
+    $before = Get-AgentState -StagingPath $deploymentStagingPath
     if ($env:FOUNDRY_HOSTED_AGENT_NAME -and $before.Status -cne "not_deployed" -and
         $before.Name -cne $env:FOUNDRY_HOSTED_AGENT_NAME) {
         throw "The existing Hosted Agent does not match the configured target; no deployment was started."
@@ -288,7 +389,6 @@ try {
         return
     }
 
-    $deploymentStagingPath = New-DeploymentStagingDirectory -PackagePath $packagePath
     Invoke-NativeChecked -FilePath "azd" -ArgumentList @(
         "deploy", $Service,
         "--cwd", $deploymentStagingPath,
@@ -298,14 +398,14 @@ try {
 
     Sync-AzdEnvironmentFromStaging -StagingPath $deploymentStagingPath
     Import-AzdEnvironment
-    $after = Get-AgentState
+    $after = Get-AgentState -StagingPath $deploymentStagingPath
     if ($after.Status -ne "active" -or
         ($env:FOUNDRY_HOSTED_AGENT_NAME -and $after.Name -cne $env:FOUNDRY_HOSTED_AGENT_NAME)) {
         throw "Hosted Agent deployment did not activate the configured target (status=$($after.Status))"
     }
 
     if (-not $SkipDoctor) {
-        Invoke-Doctor
+        Invoke-Doctor -StagingPath $deploymentStagingPath
     }
 
     if (-not $SkipSmokeTest) {

@@ -115,6 +115,178 @@ def test_managed_default_keeps_app_storage_and_roundtrips_mode(tmp_path: Path) -
     assert deploy_v2.parse_tag_contract(saved, require_ready=False)
 
 
+@pytest.mark.parametrize("reuse", [False, True])
+@pytest.mark.parametrize(
+    "registry", ["example.azurecr.io", "EXAMPLE.azurecr.io", "ghcr.io", "mcr.microsoft.com"]
+)
+def test_first_acr_application_install_uses_only_the_existing_workload_identity(
+    reuse: bool, registry: str
+) -> None:
+    document = template("application")
+    identity_name = "id-test-control-plane"
+    expected = (
+        {
+            "registries": [
+                {
+                    "server": registry.lower(),
+                    "identity": (
+                        f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-workload"
+                        "/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+                        + identity_name
+                    ),
+                }
+            ]
+        }
+        if not reuse and registry.lower().endswith(".azurecr.io")
+        else {}
+    )
+    parameters = {
+        "containerImage": registry + "/azbrief@sha256:" + "a" * 64,
+        "reuseExistingApiKey": reuse,
+        "preserveExistingSettings": False,
+        "infrastructureTags": {"azbrief.v2.identity": identity_name},
+        "appConfiguration": {},
+        "jobConfiguration": {},
+    }
+    expressions = {"initialManagedRegistry": document["variables"]["initialManagedRegistry"]}
+    for field, resource_type in (
+        ("appConfiguration", "Microsoft.App/containerApps"),
+        ("jobConfiguration", "Microsoft.App/jobs"),
+    ):
+        expression = (
+            "union(variables('initialManagedRegistry'), if(variables('liveUpdate'), "
+            f"listOutputsWithSecureValues('existingSettings', '2025-04-01').snapshot.{field}, "
+            f"createObject()), parameters('{field}'))"
+        )
+        resource = next(row for row in resources(document) if row["type"] == resource_type)
+        assert expression in resource["properties"]["configuration"]
+        expressions[field] = "[" + expression + "]"
+    for expression in expressions.values():
+        assert (
+            _evaluate_ui_expression(
+                expression,
+                {},
+                parameters=parameters,
+                variables=document["variables"],
+                resource_group={"name": "rg-workload"},
+                subscription={"subscriptionId": SUBSCRIPTION},
+            )
+            == expected
+        )
+    explicit = {
+        "registries": [{"server": registry, "username": "pull-only", "passwordSecretRef": "pull"}]
+    }
+    parameters.update(appConfiguration=explicit, jobConfiguration=explicit)
+    for field in ("appConfiguration", "jobConfiguration"):
+        assert (
+            _evaluate_ui_expression(
+                expressions[field],
+                {},
+                parameters=parameters,
+                variables=document["variables"],
+                resource_group={"name": "rg-workload"},
+                subscription={"subscriptionId": SUBSCRIPTION},
+            )
+            == explicit
+        )
+
+
+def test_portal_updates_snapshot_existing_state_without_a_resource_self_dependency() -> None:
+    document = template("application")
+    snapshot = module(document, "v2-application-readback")
+    assert not snapshot.get("dependsOn")
+    assert snapshot["properties"]["parameters"]["readExistingSettings"]["value"] == (
+        "[variables('liveUpdate')]"
+    )
+    child = snapshot["properties"]["template"]
+    assert set(child["outputs"]) == {"snapshot"}
+    assert child["outputs"]["snapshot"]["type"] == "secureObject"
+    assert not list(resources(child))
+    assert (
+        _evaluate_ui_expression(
+            child["outputs"]["snapshot"]["value"], {}, parameters={"readExistingSettings": False}
+        )
+        == {}
+    )
+    for resource_type in ("Microsoft.App/containerApps", "Microsoft.App/jobs"):
+        target = next(row for row in resources(document) if row["type"] == resource_type)
+        serialized = json.dumps(target["properties"])
+        assert "listOutputsWithSecureValues('existingSettings', '2025-04-01')" in serialized
+        assert "existingSettings" in target["dependsOn"]
+        assert "reference('containerApp')" not in serialized
+        assert "reference('schedulerJob')" not in serialized
+        assert "listSecrets('containerApp'" not in serialized
+        assert "listSecrets('schedulerJob'" not in serialized
+
+
+def test_explicit_initial_recovery_preserves_failed_apps_key_and_creates_missing_job(
+    capsys,
+) -> None:
+    cli = FakeV2Azure()
+    cli.install()
+    cli.tags.update(deploy_v2.APPLICATION_TAG_DEFAULTS)
+    cli.documents[cli.app_id]["properties"]["provisioningState"] = "Failed"
+    cli.collections[f"{cli.group_id}/providers/Microsoft.App/jobs"] = []
+    app_secrets = copy.deepcopy(cli.secret_values[cli.app_id])
+    with pytest.raises(ValueError, match="ownership"):
+        deploy_v2.prepare_application(cli, IMAGE)
+    prepared = deploy_v2.prepare_application(cli, IMAGE, recover_initial_install=True)
+    key = next(secret for secret in app_secrets if secret["name"] == "orchestrator-api-key")
+    assert prepared["reuseExistingApiKey"] is True
+    assert prepared["existingSecrets"]["app"] == app_secrets
+    assert prepared["existingSecrets"]["job"] == [key]
+    assert prepared["appConfiguration"]["ingress"]["targetPort"] == 8000
+    assert prepared["webAuthConfiguration"]["platform"]["enabled"] is True
+    assert prepared["jobConfiguration"] == {}
+    assert "apiKey" not in prepared
+    assert cli.secret_values[cli.app_id] == app_secrets
+    output = capsys.readouterr()
+    assert key["value"] not in output.out + output.err
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "completed",
+        "missing-tags",
+        "missing-app",
+        "unreadable-secret",
+        "no-key",
+        "running",
+        "foreign",
+    ],
+)
+def test_explicit_initial_recovery_never_adopts_or_rotates_on_missing_evidence(
+    failure: str,
+) -> None:
+    cli = FakeV2Azure()
+    cli.install()
+    cli.tags.update(deploy_v2.APPLICATION_TAG_DEFAULTS)
+    cli.documents[cli.app_id]["properties"]["provisioningState"] = "Failed"
+    cli.collections[f"{cli.group_id}/providers/Microsoft.App/jobs"] = []
+    if failure == "completed":
+        cli.tags[deploy_v2.PREFIX + "applicationState"] = "deployed"
+        cli.tags[deploy_v2.PREFIX + "lastApplicationDeploymentAt"] = "2026-10-17T00:00:00Z"
+    elif failure == "missing-tags":
+        for name in deploy_v2.APPLICATION_TAG_KEYS:
+            cli.tags.pop(name, None)
+    elif failure == "missing-app":
+        cli.collections[f"{cli.group_id}/providers/Microsoft.App/containerApps"] = []
+    elif failure == "unreadable-secret":
+        cli.denied.add(cli.app_id)
+    elif failure == "no-key":
+        cli.secret_values[cli.app_id] = []
+    elif failure == "running":
+        cli.documents[cli.app_id]["properties"]["provisioningState"] = "Updating"
+    else:
+        cli.documents[cli.app_id]["identity"]["userAssignedIdentities"] = {"foreign": {}}
+    secrets = copy.deepcopy(cli.secret_values)
+    with pytest.raises((RuntimeError, ValueError)):
+        deploy_v2.prepare_application(cli, IMAGE, recover_initial_install=True)
+    assert cli.secret_values == secrets
+    assert not cli.operations
+
+
 def test_legacy_byo_parameters_require_explicit_mode_false(tmp_path: Path) -> None:
     path = infrastructure_parameter_file(tmp_path)
     document = json.loads(path.read_text(encoding="utf-8"))
@@ -497,15 +669,12 @@ def test_application_deployment_record_waits_for_every_application_resource() ->
         in record["properties"]["tags"]
     )
     dependencies = record["dependsOn"]
-    assert any(
-        "Microsoft.App/containerApps'" in dependency and "authConfigs" not in dependency
-        for dependency in dependencies
-    )
-    assert any("Microsoft.App/jobs'" in dependency for dependency in dependencies)
-    assert any(
-        "Microsoft.App/containerApps/authConfigs'" in dependency for dependency in dependencies
-    )
-    assert any("v2-managed-mcp-application" in dependency for dependency in dependencies)
+    assert document["languageVersion"] == "2.0"
+    assert set(dependencies) == {"containerApp", "schedulerJob", "webAuth", "mcp"}
+    assert document["resources"]["containerApp"]["type"] == "Microsoft.App/containerApps"
+    assert document["resources"]["schedulerJob"]["type"] == "Microsoft.App/jobs"
+    assert document["resources"]["webAuth"]["type"] == "Microsoft.App/containerApps/authConfigs"
+    assert document["resources"]["mcp"]["name"] == "v2-managed-mcp-application"
     assert (
         document["parameters"]["applicationDeploymentTimestamp"]["defaultValue"]
         == "[utcNow('yyyy-MM-ddTHH:mm:ssZ')]"
@@ -732,12 +901,12 @@ def test_app_and_job_share_image_and_secret_but_keep_distinct_commands() -> None
     document = template("application")
     app = next(
         resource["properties"]["template"]
-        for resource in document["resources"]
+        for resource in resources(document)
         if resource["type"] == "Microsoft.App/containerApps"
     )
     job = next(
         resource["properties"]["template"]
-        for resource in document["resources"]
+        for resource in resources(document)
         if resource["type"] == "Microsoft.App/jobs"
     )
     assert "parameters('containerImage')" in app
@@ -750,7 +919,7 @@ def test_app_and_job_share_image_and_secret_but_keep_distinct_commands() -> None
     assert "reuseExistingApiKey" in json.dumps(document["resources"])
     job_configuration = next(
         resource["properties"]["configuration"]
-        for resource in document["resources"]
+        for resource in resources(document)
         if resource["type"] == "Microsoft.App/jobs"
     )
     assert "manualTriggerConfig" in job_configuration
@@ -2045,7 +2214,8 @@ def test_application_shares_verified_web_origins_with_job_delivery() -> None:
             origins.append(body[start:end])
     assert len(set(origins)) == 1
     assert origins[0].startswith("format('https://{0}.{1}', ")
-    assert "variables('environmentId')" in origins[0]
+    assert "reference('containerEnvironment').defaultDomain" in origins[0]
+    assert "variables('environmentId')" in json.dumps(declared["containerEnvironment"])
 
 
 def test_saved_customer_options_round_trip_and_application_rejects_foundation(

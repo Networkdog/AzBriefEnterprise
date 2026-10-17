@@ -5,6 +5,7 @@ import os
 import re
 import shutil
 import subprocess
+import zipfile
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -13,6 +14,196 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "setup_customer.ps1"
 SUBSCRIPTION = "00000000-0000-0000-0000-000000000001"
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
+def test_hosted_environment_import_omits_only_empty_optional_credentials(tmp_path: Path) -> None:
+    harness = tmp_path / "hosted-environment.ps1"
+    harness.write_text(
+        r"""
+param([string]$Source)
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw 'The deployment script has invalid syntax.' }
+$definition = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -ceq 'Import-AzdEnvironment'
+}, $true)
+if (-not $definition) { throw 'The real environment importer is missing.' }
+. ([scriptblock]::Create($definition.Extent.Text))
+$Environment = 'isolated-test'
+$script:fixture = [ordered]@{
+    AZURE_CLIENT_ID = ''
+    AZURE_CLIENT_SECRET = ''
+    AZURE_CLIENT_CERTIFICATE_PATH = ''
+    AZURE_CLIENT_CERTIFICATE_PASSWORD = ''
+    AZURE_FEDERATED_TOKEN_FILE = ''
+    FOUNDRY_MODEL_DEPLOYMENT = ''
+    AZURE_TENANT_ID = '00000000-0000-0000-0000-000000000002'
+}
+function Invoke-AzdJson {
+    param([string[]]$ArgumentList)
+    [pscustomobject]$script:fixture
+}
+Import-AzdEnvironment
+foreach ($name in $script:fixture.Keys) {
+    $value = [Environment]::GetEnvironmentVariable($name, 'Process')
+    if ($name -like 'AZURE_CLIENT_*' -or $name -eq 'AZURE_FEDERATED_TOKEN_FILE') {
+        if ($null -ne $value) { throw "An empty optional credential remains configured: $name" }
+    }
+}
+$script:fixture.AZURE_CLIENT_ID = '00000000-0000-0000-0000-000000000003'
+$script:fixture.AZURE_CLIENT_SECRET = 'synthetic-preserve-this-value'
+Import-AzdEnvironment
+if ($env:AZURE_CLIENT_ID -cne $script:fixture.AZURE_CLIENT_ID -or
+    $env:AZURE_CLIENT_SECRET -cne $script:fixture.AZURE_CLIENT_SECRET -or
+    $env:AZURE_TENANT_ID -cne $script:fixture.AZURE_TENANT_ID) {
+    throw 'Explicit credentials or the tenant were changed.'
+}
+""",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        [
+            "pwsh",
+            "-NoLogo",
+            "-NoProfile",
+            "-File",
+            str(harness),
+            "-Source",
+            str(ROOT / "scripts" / "deploy_hosted_agent.ps1"),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not installed")
+@pytest.mark.parametrize("from_package", [False, True])
+@pytest.mark.parametrize("telemetry", ["none", "complete", "partial"])
+def test_hosted_workspace_binds_only_the_selected_name_and_environment(
+    tmp_path: Path, from_package: bool, telemetry: str
+) -> None:
+    repo = tmp_path / "source"
+    (repo / "src").mkdir(parents=True)
+    (repo / "src" / "__init__.py").write_text("", encoding="utf-8")
+    (repo / "hosted_agent_main.py").write_text("import src\n", encoding="utf-8")
+    manifest = (
+        "services:\n  runtime:\n    name: ${FOUNDRY_HOSTED_AGENT_NAME}\n"
+        "    environmentVariables:\n      - name: OTEL_ENABLED\n        value: 'true'\n"
+        + "".join(
+            f"      - name: {name}\n        value: ${{{name}}}\n"
+            for name in (
+                "AZURE_MONITOR_INGESTION_ENDPOINT",
+                "AZURE_MONITOR_DCR_RULE_ID",
+                "AZURE_MONITOR_DCR_STREAM_NAME",
+            )
+        )
+    )
+    (repo / "azure.yaml").write_text(manifest, encoding="utf-8")
+    (repo / ".agentignore").write_text(".env\n.azure/\n", encoding="utf-8")
+    (repo / ".env").write_text("DO_NOT_COPY=synthetic\n", encoding="utf-8")
+    for name in ("selected", "unrelated"):
+        target = repo / ".azure" / name
+        target.mkdir(parents=True)
+        (target / ".env").write_text("SYNTHETIC=1\n", encoding="utf-8")
+    for arguments in (("init", "-q"), ("add", ".")):
+        subprocess.run(
+            ["git", "-C", str(repo), *arguments], capture_output=True, check=True, timeout=30
+        )
+    package = tmp_path / "runtime.zip"
+    if from_package:
+        with zipfile.ZipFile(package, "w") as archive:
+            archive.write(repo / "src" / "__init__.py", "src/__init__.py")
+            archive.write(repo / "hosted_agent_main.py", "hosted_agent_main.py")
+    harness = tmp_path / "workspace.ps1"
+    harness.write_text(
+        r"""
+param([string]$Source, [string]$Root, [string]$Package, [string]$Telemetry)
+$ErrorActionPreference = 'Stop'
+$tokens = $null
+$errors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Source, [ref]$tokens, [ref]$errors)
+$definition = $ast.Find({
+    param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -ceq 'New-DeploymentStagingDirectory'
+}, $true)
+. ([scriptblock]::Create($definition.Extent.Text))
+$repoRoot = $Root
+$Environment = 'selected'
+$env:FOUNDRY_HOSTED_AGENT_NAME = 'customer-specific-hosted'
+$telemetryNames = @('AZURE_MONITOR_INGESTION_ENDPOINT','AZURE_MONITOR_DCR_RULE_ID','AZURE_MONITOR_DCR_STREAM_NAME')
+foreach ($name in $telemetryNames) {
+    if (Test-Path -LiteralPath "Env:$name") { Remove-Item -LiteralPath "Env:$name" }
+}
+if ($Telemetry -ne 'none') { $env:AZURE_MONITOR_INGESTION_ENDPOINT = 'https://example.ingest.monitor.azure.com' }
+if ($Telemetry -eq 'complete') {
+    $env:AZURE_MONITOR_DCR_RULE_ID = 'dcr-synthetic'
+    $env:AZURE_MONITOR_DCR_STREAM_NAME = 'Custom-Synthetic_CL'
+}
+$WhatIfPreference = $true
+$stage = ''
+try {
+    if ($Telemetry -eq 'partial') {
+        $blocked = $false
+        try { New-DeploymentStagingDirectory -PackagePath $Package } catch {
+            if ($_.Exception.Message -notmatch 'all three explicit') { throw }
+            $blocked = $true
+        }
+        if (-not $blocked) { throw 'Partial telemetry was silently accepted.' }
+        return
+    }
+    $stage = New-DeploymentStagingDirectory -PackagePath $Package
+    if ($WhatIfPreference -ne $true) { throw 'Caller preferences changed.' }
+    $manifest = Get-Content -LiteralPath (Join-Path $stage 'azure.yaml') -Raw -Encoding UTF8
+    if (-not $manifest.Contains('name: customer-specific-hosted') -or $manifest.Contains('${FOUNDRY_HOSTED_AGENT_NAME}')) {
+        throw 'The exact Hosted name is not bound in the isolated manifest.'
+    }
+    if (Test-Path -LiteralPath (Join-Path $stage '.env')) { throw 'Developer credentials were copied.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $stage '.azure\selected\.env'))) { throw 'The selected environment is missing.' }
+    if (Test-Path -LiteralPath (Join-Path $stage '.azure\unrelated')) { throw 'Another environment was copied.' }
+    if (-not (Test-Path -LiteralPath (Join-Path $stage 'src\__init__.py'))) { throw 'Runtime content is missing.' }
+    foreach ($name in $telemetryNames) {
+        if ($manifest.Contains($name) -ne ($Telemetry -eq 'complete')) { throw 'Optional telemetry bindings are inconsistent.' }
+    }
+    if (-not $manifest.Contains('name: OTEL_ENABLED')) { throw 'Core telemetry was disabled.' }
+    $doctor = $ast.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+        $node.Name -ceq 'Invoke-Doctor'
+    }, $true)
+    . ([scriptblock]::Create($doctor.Extent.Text))
+    function Invoke-NativeChecked {
+        param([string]$FilePath, [string[]]$ArgumentList)
+        $script:doctorArguments = $ArgumentList
+    }
+    Invoke-Doctor -StagingPath $stage -LocalOnly
+    if ('--local-only' -notin $script:doctorArguments -or $stage -notin $script:doctorArguments) { throw 'Initial doctor does not target the bound workspace.' }
+    Invoke-Doctor -StagingPath $stage
+    if ('--local-only' -in $script:doctorArguments -or $stage -notin $script:doctorArguments) { throw 'Post-deploy doctor is not complete.' }
+} finally {
+    if ($stage) { Remove-Item -LiteralPath $stage -Recurse -Force -WhatIf:$false }
+}
+""",
+        encoding="utf-8",
+    )
+    arguments = [
+        "pwsh", "-NoLogo", "-NoProfile", "-File", str(harness),
+        "-Source", str(ROOT / "scripts" / "deploy_hosted_agent.ps1"), "-Root", str(repo),
+        "-Telemetry", telemetry,
+    ]
+    if from_package:
+        arguments.extend(["-Package", str(package)])
+    result = subprocess.run(arguments, capture_output=True, text=True, timeout=60, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (repo / "azure.yaml").read_text(encoding="utf-8") == manifest
 
 
 def customer_script_copy(tmp_path: Path) -> tuple[Path, Path]:
