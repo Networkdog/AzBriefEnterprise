@@ -15,8 +15,8 @@
 Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication Services
 · Container App 제어면 + `/admin` + `/mcp` · 기본값은 VNet 주입 + Private Endpoint
 
-1. [v2 인프라 배포](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.createUiDefinition.json)
-2. [v2 앱 배포](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
+1. [v2 인프라 배포](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Ffoundation.createUiDefinition.json)
+2. [v2 앱 배포](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.input.createUiDefinition.json)
 
 [v2 배포 가이드](infra/v2/README.md): 같은 리소스 그룹의 인프라 준비를 완료한 뒤 앱을 설치하거나 업데이트합니다.
 
@@ -30,14 +30,14 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 기반 준비 폼은 **서비스 선택 → 네트워크 → 워크로드 이름** 순서로 진행합니다. 기존 Foundry나
 Environment를 사용하면 실제 VNet·전용 서브넷을 자동 인계하므로 해당 서브넷을 다시 묻지
 않습니다. 새 리소스에 필요한 서브넷만 선택하며 새 Private Endpoint가 없으면 PE 서브넷도
-생략합니다. 공유 서비스의 호환성 오류는 해당 서비스 옆에, 모델 충돌은 모델 옵션에 표시하고
-이름 접두사에는 프로젝트 이름 충돌만 표시합니다. 공용이거나 VNet에 연결되지 않은 공유
+생략합니다. 공유 서비스 옆 안내에는 **Review + create**에서 수행할 서버 검증을 설명합니다.
+소유권·서브넷·모델 충돌은 리소스를 쓰기 전에 ARM 검증에서 차단합니다. 공용이거나 VNet에 연결되지 않은 공유
 서비스는 이 사설 프로필에서 계속 차단하며 기존 서비스를 자동 변환하지 않습니다.
 
 이 항목은 **기반 준비에서만 묻습니다**. 완료 단계는 `azbrief.v2.options*`의 서비스 배포 방식,
 `azbrief.v2.resources*`의 정확한 ID와 VNet·서브넷 이름 태그를 그대로 읽습니다. 다시 선택하지
-않으며 앱 배포에는 읽기 전용 요약만 표시합니다. 이미 태그가 있는 RG에서 Basics의 단계가
-기반 준비로 남아 있어도 신규 입력을 숨기고 진행할 단계를 안내합니다. 기존 RG는 정확한 조회가
+않으며 앱 배포에는 읽기 전용 요약만 표시합니다. 이미 태그가 있는 RG에서는 신규 입력을 숨기고
+별도 완료 화면의 링크를 안내합니다. 기존 RG는 정확한 조회가
 끝나야 기반 입력을 표시하며, 응답 대기·권한 오류·이전 RG 응답을 빈 신규 설치로 해석하거나
 선택한 단계를 자동 변경하지 않습니다.
 
@@ -68,10 +68,18 @@ ARM ID·저장된 JSON의 경계는 `startsWith`·`endsWith`로 확인합니다.
 일치 항목이 하나일 때만 가능합니다. 모델 조회 전 검사가 Basics와 구독 컨트롤의 초기화를
 중단하는 문제를 막기 위한 처리입니다.
 
-폼 생성기는 각 식에서 쓰는 태그 키만 변환하고 컨텍스트별 저장 값을 한 번씩 바인딩하며,
-모델 후보와 비교할 옵션을 같은 람다 범위에 둡니다. 기반 단계의 서브넷 검사는 완료 단계의
-메타데이터를 반복 확장하지 않습니다. 검증을 없애거나 변경 가능한 숨은 캐시를 추가하지 않고
-선택·단계 이동 시 반복 파싱을 줄입니다. 오프라인 식 평가 시간은 실제 Portal Next 버튼의
+인프라 링크는 기반 준비 전용 화면을 열고 Basics 안내에서 기존 기반 완성 전용 화면으로
+이동합니다. 앱 링크도 별도 입력 화면을 사용합니다. 입력마다 재평가되던 단계 선택과 거대한
+검증식을 분리하고, 기존 범위·소유권·서브넷·모델·준비 상태 검증은 생성된 ARM 검증 모듈에서
+**모든 리소스 쓰기 전에** 수행합니다. 사용자 입력과 허용된 비밀 없는 ARM 조회값은 별도
+의존성 그래프로 전달하므로 일반 선택을 바꿀 때 전체 리소스 증거를 다시 인코딩하지 않습니다.
+조회 전 상태는 계속 미확인으로 남고, 오류·다음 페이지 URL은 존재 여부만 전달합니다.
+태그가 없는 정상 RG는 ARM의 `tags` 속성 자체가 없어도 빈 태그 집합으로 처리합니다.
+단계별로 제거한 입력의 참조도 정리하고 네이티브 바인딩의 `false`·빈 문자열을 보존해,
+저장값 조회 전 상태가 Basics 초기화를 막거나 준비 완료로 해석되지 않도록 합니다.
+필수값·형식 검사와 앱의 기반/MCP 준비 오류는 네이티브 화면에서 유지합니다. `true`만 허용하는
+동의 가드도 유지하되 서버 검증을 대신하지 않습니다. 기존 통합 폼은 호환성·정책 원본으로
+보존하며 README의 새 진입 링크로 사용하지 않습니다. 오프라인 식 평가 시간은 실제 Portal Next 버튼의
 응답 시간과 다르므로, 게시된 ARM/UI 쌍을 인증된 정책 준수 브라우저에서도 확인해야 합니다.
 
 모델 옵션에는 부모 Foundry의 실제 **모델·quota 리전**을 별도로 표시합니다. 해당 계정 아래에
@@ -99,8 +107,8 @@ Portal 업데이트는 App·Job의 기존 값을 독립적인 서버 측 보안 
 모델·프로젝트가 0개임을 검증한 승인된 `--stage complete --reselect-models`를 실행하기 전까지
 5.6을 계속 요청합니다. 이 복구는 기존 리전을 이동하지 않습니다.
 
-`foundation` 성공은 인프라 첫 단계만 완료됐다는 뜻입니다. 같은 RG에서 인프라 버튼의
-**기존 기반 완성**을 실행하고 승인된 MCP 인증 준비까지 마친 뒤 `azbrief.v2.state=ready`를
+`foundation` 성공은 인프라 첫 단계만 완료됐다는 뜻입니다. 인프라 화면의 **기존 기반 완성**
+링크에서 같은 RG를 선택하고 승인된 MCP 인증 준비까지 마친 뒤 `azbrief.v2.state=ready`를
 확인해야 앱 버튼을 사용할 수 있습니다. 앱 Validation의 `portalValidationPassed=false`는
 이 값을 강제로 바꾸라는 뜻이 아닙니다.
 

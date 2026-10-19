@@ -195,9 +195,17 @@ try {
         encoding="utf-8",
     )
     arguments = [
-        "pwsh", "-NoLogo", "-NoProfile", "-File", str(harness),
-        "-Source", str(ROOT / "scripts" / "deploy_hosted_agent.ps1"), "-Root", str(repo),
-        "-Telemetry", telemetry,
+        "pwsh",
+        "-NoLogo",
+        "-NoProfile",
+        "-File",
+        str(harness),
+        "-Source",
+        str(ROOT / "scripts" / "deploy_hosted_agent.ps1"),
+        "-Root",
+        str(repo),
+        "-Telemetry",
+        telemetry,
     ]
     if from_package:
         arguments.extend(["-Package", str(package)])
@@ -493,13 +501,13 @@ def test_readme_buttons_publish_the_same_arm_and_ui_pair() -> None:
         assert "deploytoazurebutton" not in text
         assert "azbrief-enterprise-deploy.json" not in text
         assert "infra/enterprise/main.bicep" not in text
-        for stage in ("infrastructure", "application"):
+        for stage, view in (("infrastructure", "foundation"), ("application", "application.input")):
             stage_links = [
                 link for link in decoded_links if f"/uri/{expected_root}v2/{stage}.json" in link
             ]
             assert len(stage_links) == 1
             assert (
-                f"/createUIDefinitionUri/{expected_root}v2/{stage}.createUiDefinition.json"
+                f"/createUIDefinitionUri/{expected_root}v2/{view}.createUiDefinition.json"
                 in stage_links[0]
             )
         destinations = [unquote(link) for link in re.findall(r"\]\(([^)]+)\)", text)]

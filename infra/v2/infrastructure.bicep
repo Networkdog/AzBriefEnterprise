@@ -7,6 +7,13 @@ param infrastructureStage string = 'foundation'
 @allowed([true])
 @description('Read-only Portal validation result. The guarded CLI validates before submitting; false always blocks deployment.')
 param portalValidationPassed bool = true
+@allowed(['cli', 'portal'])
+@description('Portal input views require the generated server-side policy before any resource write. CLI retains its guarded preflight.')
+param portalVerificationMode string = 'cli'
+@description('Allow-listed non-secret Portal observations. Never include credentials or raw error bodies.')
+param portalEvidence object = {}
+@description('Separately evaluated non-secret ARM observations; independent of ordinary input changes.')
+param portalResourceEvidence object = {}
 @maxLength(10)
 param namingPrefix string = ''
 @maxLength(10)
@@ -93,6 +100,68 @@ param tags object = {
 }
 
 var complete = infrastructureStage == 'complete'
+module portalVerification 'infrastructure.portal-policy.json' = if (portalVerificationMode == 'portal') {
+  name: 'v2-portal-verification'
+  params: {
+    evidence: union(portalEvidence, portalResourceEvidence)
+    inputs: {
+      infrastructureStage: infrastructureStage
+      location: location
+      virtualNetworkResourceGroupName: virtualNetworkResourceGroupName
+      virtualNetworkName: virtualNetworkName
+      peSubnetName: peSubnetName
+      foundrySubnetName: foundrySubnetName
+      containerAppsSubnetName: containerAppsSubnetName
+      foundryAccountName: foundryAccountName
+      storageAccountName: storageAccountName
+      cosmosAccountName: cosmosAccountName
+      searchServiceName: searchServiceName
+      projectName: projectName
+      containerAppsEnvironmentName: containerAppsEnvironmentName
+      containerAppName: containerAppName
+      schedulerJobName: schedulerJobName
+      controlPlaneIdentityName: controlPlaneIdentityName
+      logAnalyticsWorkspaceName: logAnalyticsWorkspaceName
+      applicationInsightsName: applicationInsightsName
+      communicationServicesName: communicationServicesName
+      emailServiceName: emailServiceName
+      modelDeploymentName: modelDeploymentName
+      simpleModelDeploymentName: simpleModelDeploymentName
+      foundryHostedAgentName: foundryHostedAgentName
+      azureMcpContainerAppName: azureMcpContainerAppName
+      azureMcpIdentityName: azureMcpIdentityName
+      azureMcpProjectConnectionName: azureMcpProjectConnectionName
+      deployContainerAppsPrivateEndpoint: deployContainerAppsPrivateEndpoint
+      existingPrivateDnsZoneIds: existingPrivateDnsZoneIds
+      emailDataLocation: emailDataLocation
+      searchSku: searchSku
+      coreModelName: coreModelName
+      simpleModelName: simpleModelName
+      modelVersion: modelVersion
+      modelCapacity: modelCapacity
+      simpleModelCapacity: simpleModelCapacity
+      namingPrefix: namingPrefix
+      namingSuffix: namingSuffix
+      useMicrosoftManagedAgentData: useMicrosoftManagedAgentData
+      virtualNetworkMode: virtualNetworkMode
+      virtualNetworkAddressPrefix: virtualNetworkAddressPrefix
+      foundrySubnetAddressPrefix: foundrySubnetAddressPrefix
+      containerAppsSubnetAddressPrefix: containerAppsSubnetAddressPrefix
+      peSubnetAddressPrefix: peSubnetAddressPrefix
+      simpleModelVersion: simpleModelVersion
+      foundryAccountMode: foundryAccountMode
+      existingFoundryAccountResourceId: existingFoundryAccountResourceId
+      storageAccountMode: storageAccountMode
+      existingStorageAccountResourceId: existingStorageAccountResourceId
+      containerAppsEnvironmentMode: containerAppsEnvironmentMode
+      existingContainerAppsEnvironmentResourceId: existingContainerAppsEnvironmentResourceId
+      communicationServicesMode: communicationServicesMode
+      existingCommunicationServicesResourceId: existingCommunicationServicesResourceId
+      existingLogAnalyticsWorkspaceResourceId: existingLogAnalyticsWorkspaceResourceId
+      existingEmailDomainResourceId: existingEmailDomainResourceId
+    }
+  }
+}
 var workloadKey = uniqueString(resourceGroup().id)
 var resourceTags = union(tags, { application: 'AzBrief', customer: 'KT', deploymentProfile: 'kt-private-v2' })
 var accountId = foundryAccountMode == 'existing' ? existingFoundryAccountResourceId : resourceId('Microsoft.CognitiveServices/accounts', foundryAccountName)
@@ -171,6 +240,7 @@ var promptAgentNames = {
 
 resource networkBindingValidation 'Microsoft.Resources/deployments@2025-04-01' = {
   name: 'v2-network-binding-validation'
+  dependsOn: [portalVerification]
   properties: {
     mode: 'Incremental'
     expressionEvaluationOptions: { scope: 'inner' }
@@ -310,8 +380,8 @@ module models '../kt/models.bicep' = if (complete) {
     simpleModelVersion: empty(simpleModelVersion) ? modelVersion : simpleModelVersion
     modelCapacity: modelCapacity
     simpleModelCapacity: simpleModelCapacity
-    reuseCore: reuseCoreModel
-    reuseSimple: reuseSimpleModel
+    reuseCore: portalVerificationMode == 'portal' ? portalVerification!.outputs.reuseCoreModel : reuseCoreModel
+    reuseSimple: portalVerificationMode == 'portal' ? portalVerification!.outputs.reuseSimpleModel : reuseSimpleModel
     useCoreForSimple: useCoreForSimpleModel
   }
   dependsOn: [networkBindingValidation]

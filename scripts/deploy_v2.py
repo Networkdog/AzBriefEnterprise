@@ -176,6 +176,9 @@ INTERNAL_PARAMETERS = frozenset(
         "useCoreForSimpleModel",
         "reuseExistingFoundrySetup",
         "reuseExistingTelemetryConnection",
+        "portalVerificationMode",
+        "portalEvidence",
+        "portalResourceEvidence",
     }
 )
 

@@ -6,6 +6,7 @@ import copy
 import json
 import re
 import subprocess
+from functools import lru_cache
 from itertools import combinations
 from pathlib import Path
 from typing import Any
@@ -328,14 +329,19 @@ def _evaluate_ui_expression(
     selected_location: str = "",
     native_empty_array_elements: bool = False,
     strict_null_members: bool = False,
+    custom_functions: dict[str, dict[str, Any]] | None = None,
+    strict_object_members: bool = False,
+    native_falsy_first: bool = False,
 ) -> object:
     """Evaluate the tested Portal expression subset with strict equality."""
 
+    variable_values: dict[str, object] = {}
+
+    @lru_cache(maxsize=None)
     def parse_expression(value: str) -> ast.expr:
-        source = re.sub(r"\((\w+)\)\s*=>", r"lambda \1:", value[1:-1])
-        source = re.sub(r"\b(and|or|not|if)\(", r"ui_\1(", source)
-        source = re.sub(r"\blambda\(", "arm_lambda(", source)
-        return ast.parse(source, mode="eval").body
+        from scripts.ui_expressions import parse_expression as parse_portal_expression
+
+        return parse_portal_expression(value)
 
     def evaluate(node: ast.expr, bindings: dict[str, object]) -> object:
         if isinstance(node, ast.Constant):
@@ -353,6 +359,8 @@ def _evaluate_ui_expression(
                     raise TypeError(f"Cannot read properties of undefined (reading '{node.attr}')")
                 return None
             assert isinstance(value, dict)
+            if strict_object_members and node.attr not in value:
+                raise ValueError(f"ARM object property '{node.attr}' is missing")
             return value.get(node.attr)
         if isinstance(node, ast.Subscript):
             value = evaluate(node.value, bindings)
@@ -363,6 +371,25 @@ def _evaluate_ui_expression(
                 return value.get(index)
             assert isinstance(value, list) and isinstance(index, int)
             return value[index]
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+            assert custom_functions is not None and isinstance(node.func.value, ast.Name)
+            definition = custom_functions[node.func.value.id + "." + node.func.attr]
+            arguments = [evaluate(argument, bindings) for argument in node.args]
+            bound_parameters = {
+                item["name"]: value for item, value in zip(definition["parameters"], arguments)
+            }
+            assert len(bound_parameters) == len(definition["parameters"])
+            result = evaluate(
+                parse_expression(definition["output"]["value"]),
+                {**bindings, "__parameters": bound_parameters},
+            )
+            assert (
+                type(result)
+                is {"bool": bool, "string": str, "int": int, "object": dict}[
+                    definition["output"]["type"]
+                ]
+            )
+            return result
         assert isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         function = node.func.id
         if function == "ui_if":
@@ -372,7 +399,7 @@ def _evaluate_ui_expression(
                 branches = [evaluate(argument, bindings) for argument in node.args[1:]]
                 return branches[0] if condition else branches[1]
             return evaluate(node.args[1] if condition else node.args[2], bindings)
-        if function in {"filter", "map"}:
+        if function in {"filter", "map", "toObject"}:
             rows = evaluate(node.args[0], bindings)
             predicate = node.args[1]
             assert isinstance(rows, list)
@@ -388,6 +415,16 @@ def _evaluate_ui_expression(
                 body = predicate.args[1]
             if function == "map":
                 return [evaluate(body, {**bindings, variable_name: row}) for row in rows]
+            if function == "toObject":
+                value_lambda = node.args[2]
+                assert isinstance(value_lambda, ast.Call)
+                value_name = evaluate(value_lambda.args[0], bindings)
+                return {
+                    evaluate(body, {**bindings, variable_name: row}): evaluate(
+                        value_lambda.args[1], {**bindings, value_name: row}
+                    )
+                    for row in rows
+                }
             return [row for row in rows if evaluate(body, {**bindings, variable_name: row}) is True]
         arguments = [evaluate(argument, bindings) for argument in node.args]
         if function == "resourceGroup":
@@ -424,15 +461,19 @@ def _evaluate_ui_expression(
             return (basics or {"deploymentStage": "foundation"})[arguments[0]]
         if function == "parameters":
             assert parameters is not None and len(arguments) == 1 and isinstance(arguments[0], str)
-            return parameters[arguments[0]]
+            return bindings.get("__parameters", parameters)[arguments[0]]
         if function == "lambdaVariables":
             assert len(arguments) == 1 and isinstance(arguments[0], str)
             return bindings[arguments[0]]
         if function == "variables":
             assert variables is not None and len(arguments) == 1 and isinstance(arguments[0], str)
+            if custom_functions is not None and arguments[0] in variable_values:
+                return variable_values[arguments[0]]
             value = variables[arguments[0]]
             if isinstance(value, str) and value.startswith("[") and value.endswith("]"):
-                return evaluate(parse_expression(value), bindings)
+                value = evaluate(parse_expression(value), bindings)
+            if custom_functions is not None:
+                variable_values[arguments[0]] = value
             return value
         if function == "null":
             assert not arguments
@@ -506,18 +547,31 @@ def _evaluate_ui_expression(
             return arguments[0].replace(arguments[1], arguments[2])
         if function == "string":
             assert len(arguments) == 1
+            if isinstance(arguments[0], str):
+                return arguments[0]
             if type(arguments[0]) is bool and parameters is not None:
                 return str(arguments[0])
             return json.dumps(arguments[0], ensure_ascii=False, separators=(",", ":"))
-        if function == "base64":
+        if function in {"base64", "encodeBase64"}:
             assert len(arguments) == 1 and isinstance(arguments[0], str)
             return base64.b64encode(arguments[0].encode("utf-8")).decode("ascii")
+        if function == "base64ToString":
+            assert len(arguments) == 1 and isinstance(arguments[0], str)
+            return base64.b64decode(arguments[0]).decode("utf-8")
         if function == "format":
             assert isinstance(arguments[0], str)
             return arguments[0].format(*arguments[1:])
-        if function == "parse":
+        if function in {"parse", "json"}:
             assert len(arguments) == 1 and isinstance(arguments[0], str)
             return json.loads(arguments[0])
+        if function == "tryGet":
+            value, key = arguments
+            if value is None:
+                return None
+            if isinstance(value, list):
+                return value[key] if 0 <= key < len(value) else None
+            assert isinstance(value, dict)
+            return value.get(key)
         if function == "coalesce":
             return next(value for value in arguments if value is not None)
         if function == "empty":
@@ -542,6 +596,8 @@ def _evaluate_ui_expression(
         if function == "last":
             assert len(arguments) == 1 and isinstance(arguments[0], list) and arguments[0]
             value = arguments[0][-1]
+            if native_falsy_first and value is False:
+                return None
             return None if native_empty_array_elements and value == "" else value
         if function == "first":
             assert len(arguments) == 1 and isinstance(arguments[0], list) and arguments[0]

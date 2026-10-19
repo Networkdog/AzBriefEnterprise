@@ -7,6 +7,11 @@ param infrastructureTags object = resourceGroup().tags
 @allowed([true])
 @description('Read-only Portal contract/inventory validation result. False blocks deployment.')
 param portalValidationPassed bool = true
+@allowed(['cli', 'portal'])
+param portalVerificationMode string = 'cli'
+@description('Allow-listed non-secret Portal observations for the generated server-side validation policy.')
+param portalEvidence object = {}
+param portalResourceEvidence object = {}
 
 @allowed(['2'])
 param infrastructureSchema string = infrastructureTags['azbrief.v2.schema']
@@ -50,6 +55,19 @@ param tags object = {
 }
 param jobTags object = tags
 
+module portalVerification 'application.portal-policy.json' = if (portalVerificationMode == 'portal') {
+  name: 'v2-portal-verification'
+  params: {
+    evidence: union(portalEvidence, portalResourceEvidence)
+    inputs: {
+      infrastructureTags: infrastructureTags
+      containerImage: containerImage
+      reuseExistingApiKey: reuseExistingApiKey
+      preserveExistingSettings: preserveExistingSettings
+    }
+  }
+}
+
 var resourceBindings = json(concat(
   infrastructureTags[?'azbrief.v2.resources0'] ?? '{}',
   infrastructureTags[?'azbrief.v2.resources1'] ?? '',
@@ -75,6 +93,7 @@ resource foundryAccount 'Microsoft.CognitiveServices/accounts@2025-06-01' existi
 var liveUpdate = preserveExistingSettings && reuseExistingApiKey
 module existingSettings 'application-snapshot.bicep' = {
   name: 'v2-application-readback'
+  dependsOn: [portalVerification]
   params: {
     appName: infrastructureTags['azbrief.v2.app']
     jobName: infrastructureTags['azbrief.v2.job']
@@ -233,6 +252,7 @@ var jobConfigurationDefaults = union({
 } : {})
 
 resource containerApp 'Microsoft.App/containerApps@2026-01-01' = {
+  dependsOn: [portalVerification]
   name: infrastructureTags['azbrief.v2.app']
   location: infrastructureTags['azbrief.v2.location']
   tags: tags
@@ -260,6 +280,7 @@ resource webAuth 'Microsoft.App/containerApps/authConfigs@2026-01-01' = if (!emp
 }
 
 resource schedulerJob 'Microsoft.App/jobs@2026-01-01' = {
+  dependsOn: [portalVerification]
   name: infrastructureTags['azbrief.v2.job']
   location: infrastructureTags['azbrief.v2.location']
   tags: jobTags
@@ -277,6 +298,7 @@ resource schedulerJob 'Microsoft.App/jobs@2026-01-01' = {
 
 module mcp 'mcp-application.bicep' = if (contains(infrastructureTags, 'azbrief.v2.options0')) {
   name: 'v2-managed-mcp-application'
+  dependsOn: [portalVerification]
   params: {
     infrastructureTags: infrastructureTags
     installManagedMcp: !reuseExistingApiKey

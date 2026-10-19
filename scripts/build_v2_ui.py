@@ -9,6 +9,9 @@ import re
 from pathlib import Path
 from typing import Any, Callable, cast
 
+from scripts.portal_policy import build_policy, evidence_expression
+from scripts.ui_expressions import compile_expression
+
 ROOT = Path(__file__).resolve().parents[1]
 INFRASTRUCTURE_REGION = (
     "replace(if(equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'new'), "
@@ -191,9 +194,13 @@ V2_METADATA_TAG_SUFFIXES = (
     "lastApplicationDeploymentAt",
     *(f"options{index}" for index in range(8)),
 )
+PORTAL_TAG_KEYS = tuple(
+    "azbrief.v2." + suffix
+    for suffix in (*V2_METADATA_TAG_SUFFIXES, *(f"resources{i}" for i in range(8)))
+)
 
 
-def _map_expression_strings(value: Any, transform: Callable[[str], str]) -> Any:
+def _map_expression_strings(value: Any, transform: Callable[[str], str | bool]) -> Any:
     if isinstance(value, dict):
         return {key: _map_expression_strings(item, transform) for key, item in value.items()}
     if isinstance(value, list):
@@ -2486,6 +2493,101 @@ def _validate_control_names(parameters: dict[str, Any]) -> None:
                 scopes.append((scope + "." + element["name"], element["elements"]))
 
 
+def specialize_ui(document: dict[str, Any], stage: str) -> dict[str, Any]:
+    """Generate an immutable phase view while retaining the complete deployment predicates."""
+    unavailable: set[tuple[str, str]] = set()
+    if stage == "complete":
+        unavailable.add(("network", "virtualNetworkApi"))
+    for step in document["parameters"]["steps"]:
+        for element in step["elements"]:
+            visible = element.get("visible", True)
+            if isinstance(visible, str) and visible.startswith("["):
+                visible = compile_expression(visible, stage)
+            if visible is False and element["type"] != "Microsoft.Solutions.ArmApiControl":
+                unavailable.add((step["name"], element["name"]))
+    result = _map_expression_strings(
+        copy.deepcopy(document),
+        lambda expression: compile_expression(
+            expression,
+            stage,
+            unavailable,
+            set(document["parameters"]["outputs"]) | set(RESOURCE_BINDING_KEYS),
+        ),
+    )
+    parameters = result["parameters"]
+    parameters["basics"] = [
+        element for element in parameters["basics"] if element["name"] != "infrastructureStage"
+    ]
+    for step in parameters["steps"]:
+        step["elements"] = [
+            element
+            for element in step["elements"]
+            if (step["name"], element["name"]) not in unavailable
+        ]
+    parameters["steps"] = [step for step in parameters["steps"] if step["elements"]]
+    other = "completion" if stage == "foundation" else "foundation"
+    url = (
+        "https://portal.azure.com/#create/Microsoft.Template/uri/"
+        "https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain"
+        "%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/"
+        "https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain"
+        f"%2Finfra%2Fv2%2F{other}.createUiDefinition.json"
+    )
+    text = (
+        "기반 준비 전용 화면입니다. 서비스·네트워크·모델 선택은 이 단계에서만 저장합니다. "
+        "이미 기반 준비를 완료했다면 이 안내의 링크로 '기존 기반 완성' 화면을 열고 같은 RG를 "
+        "선택하십시오. 선택값을 다시 입력하거나 인프라를 다시 만들지 않습니다."
+        if stage == "foundation"
+        else "기존 기반 완성 전용 화면입니다. 기반 준비를 마친 같은 RG만 선택하십시오. "
+        "저장된 서비스·네트워크·모델 선택은 변경하지 않습니다. 처음 설치하는 경우 이 안내의 "
+        "링크로 기반 준비 화면을 먼저 여십시오."
+    )
+    parameters["config"]["basics"]["description"] = text
+    parameters["basics"].append(
+        {
+            "name": "phaseNavigation",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {"icon": "Info", "text": text, "uri": url},
+        }
+    )
+    _server_verified_inputs(parameters, document["parameters"])
+    _validate_control_names(parameters)
+    return result
+
+
+def _server_verified_inputs(parameters: dict[str, Any], canonical: dict[str, Any]) -> None:
+    for step in parameters["steps"]:
+        for element in step["elements"]:
+            if element["name"] == "containerImage":
+                element["constraints"]["validations"] = [
+                    rule
+                    for rule in element["constraints"].get("validations", [])
+                    if "azbrief_v2_state" in rule.get("isValid", "")
+                ]
+            else:
+                element.get("constraints", {}).pop("validations", None)
+            if element["name"] in {name + "Status" for name in SHARED_RESOURCES}:
+                element["options"]["text"] = (
+                    "기존 서비스의 ID·소유권·사설 네트워크·모델 호환성은 Review + create에서 "
+                    "ARM이 검증합니다. 조회 실패·미완료 응답은 배포를 허용하지 않습니다."
+                )
+    outputs = parameters["outputs"]
+    for name in ("reuseCoreModel", "reuseSimpleModel"):
+        outputs.pop(name, None)
+    application = any(step["name"] == "application" for step in parameters["steps"])
+    control = (
+        "steps('application').deploymentAccepted"
+        if application
+        else "steps('contract').contractAccepted"
+    )
+    outputs["portalValidationPassed"] = f"[equals({control}, true)]"
+    outputs["portalVerificationMode"] = "portal"
+    outputs["portalEvidence"] = evidence_expression(canonical, PORTAL_TAG_KEYS, parameters)
+    outputs["portalResourceEvidence"] = evidence_expression(
+        canonical, PORTAL_TAG_KEYS, parameters, resources=True
+    )
+
+
 def normalize_ui(
     document: dict[str, Any], network_validations: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -2702,6 +2804,52 @@ def main() -> int:
                 raise ValueError(f"Normalize {path.name} with python -m scripts.build_v2_ui")
         else:
             path.write_text(content, encoding="utf-8", newline="")
+        policy = build_policy(normalized["parameters"], PORTAL_TAG_KEYS)
+        policy_path = ROOT / "infra/v2" / f"{name}.portal-policy.json"
+        policy_content = json.dumps(policy, ensure_ascii=False, indent=2) + "\n"
+        if args.check:
+            if (
+                not policy_path.is_file()
+                or policy_path.read_text(encoding="utf-8") != policy_content
+            ):
+                raise ValueError(
+                    f"Regenerate {policy_path.name} with python -m scripts.build_v2_ui"
+                )
+        else:
+            policy_path.write_text(policy_content, encoding="utf-8", newline="")
+        if name == "infrastructure":
+            for stage, filename in (
+                ("foundation", "foundation.createUiDefinition.json"),
+                ("complete", "completion.createUiDefinition.json"),
+            ):
+                specialized = specialize_ui(normalized, stage)
+                content = json.dumps(specialized, ensure_ascii=False, indent=2) + "\n"
+                path = ROOT / "infra/v2" / filename
+                if args.check:
+                    if not path.is_file() or path.read_text(encoding="utf-8") != content:
+                        raise ValueError(
+                            f"Regenerate {filename} with python -m scripts.build_v2_ui"
+                        )
+                else:
+                    path.write_text(content, encoding="utf-8", newline="")
+        else:
+            lean = _map_expression_strings(
+                copy.deepcopy(normalized),
+                lambda expression: compile_expression(
+                    expression,
+                    "complete",
+                    context_fields=set(normalized["parameters"]["outputs"])
+                    | set(RESOURCE_BINDING_KEYS),
+                ),
+            )
+            _server_verified_inputs(lean["parameters"], normalized["parameters"])
+            path = ROOT / "infra/v2" / "application.input.createUiDefinition.json"
+            content = json.dumps(lean, ensure_ascii=False, indent=2) + "\n"
+            if args.check:
+                if not path.is_file() or path.read_text(encoding="utf-8") != content:
+                    raise ValueError(f"Regenerate {path.name} with python -m scripts.build_v2_ui")
+            else:
+                path.write_text(content, encoding="utf-8", newline="")
     return 0
 
 

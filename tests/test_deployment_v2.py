@@ -194,7 +194,7 @@ def test_first_acr_application_install_uses_only_the_existing_workload_identity(
 def test_portal_updates_snapshot_existing_state_without_a_resource_self_dependency() -> None:
     document = template("application")
     snapshot = module(document, "v2-application-readback")
-    assert not snapshot.get("dependsOn")
+    assert snapshot.get("dependsOn") == ["portalVerification"]
     assert snapshot["properties"]["parameters"]["readExistingSettings"]["value"] == (
         "[variables('liveUpdate')]"
     )

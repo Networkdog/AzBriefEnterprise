@@ -46,11 +46,61 @@ and separately approved evidence scopes remain operator-managed.
 | [monitoring-role.bicep](monitoring-role.bicep), [subscription-reader.bicep](subscription-reader.bicep) | Scoped role modules, never application resources |
 | [deploy_v2.py](../../scripts/deploy_v2.py) | Explicit-target preflight and Incremental deployment CLI |
 | [test_deployment_v2.py](../../tests/test_deployment_v2.py) | Offline ARM and install/update contract tests |
-| [infrastructure.createUiDefinition.json](infrastructure.createUiDefinition.json), [application.createUiDefinition.json](application.createUiDefinition.json) | Paired Portal forms attached by each README Deploy button |
-| [build_v2_ui.py](../../scripts/build_v2_ui.py) | Normalize supported form guards and reuse the tested KT network validation contract |
+| [foundation.createUiDefinition.json](foundation.createUiDefinition.json), [completion.createUiDefinition.json](completion.createUiDefinition.json), [application.input.createUiDefinition.json](application.input.createUiDefinition.json) | Phase-specific Portal input views; completion is linked from the infrastructure view |
+| [infrastructure.createUiDefinition.json](infrastructure.createUiDefinition.json), [application.createUiDefinition.json](application.createUiDefinition.json) | Retained combined compatibility forms and canonical policy sources |
+| [build_v2_ui.py](../../scripts/build_v2_ui.py), [ui_expressions.py](../../scripts/ui_expressions.py), [portal_policy.py](../../scripts/portal_policy.py) | Generate phase views and the same server-side scope, field-validation, ownership, subnet, model and readiness policy |
+| [infrastructure.portal-policy.json](infrastructure.portal-policy.json), [application.portal-policy.json](application.portal-policy.json) | Generated ARM source modules; included in the compiled parents and required before Portal resource writes |
 | [mcp-identity.bicep](mcp-identity.bicep), [mcp-application.bicep](mcp-application.bicep) | Dedicated infrastructure-owned Reader UAMI and application-owned read-only MCP container |
 
 Never hand-edit the compiled JSON. CI pins Bicep 0.46.1 and checks all four artifacts.
+The two policy JSON sources are generated from the canonical forms, not hand-written parent
+ARM outputs. Run `python -m scripts.build_v2_ui` before compiling the parents; `--check`
+also verifies every generated policy and input view.
+
+### Portal validation and responsiveness
+
+The README infrastructure entry opens Foundation; its Basics notice opens the separate
+**Complete existing foundation** view. There is no reactive stage selector in either view.
+Completion and App retain the exact saved RG contract without asking for service/network choices.
+All input views start at Basics with `isWizard=true`.
+
+Input selections and non-secret ARM observations have separate output/dependency graphs.
+The generated policy verifies both policy fingerprints, actual ARM scope/current saved tags,
+every emitted parameter binding, the complete canonical guard and every original visible field
+predicate. Existing model reuse is decided by that policy, not an editable client flag.
+Every resource write waits for verification; `portalValidationPassed` remains true-only consent.
+Native required/regex checks and App foundation/MCP/missing-ready messages remain on the form.
+The guarded CLI and original compatibility views retain their existing preflight behavior.
+
+Evidence is an explicit field allow-list, with type-preserving scalar encoding. Null/missing
+inventory is not a successful empty list. Only declared non-secret tags and metadata are copied;
+error bodies, signed continuation links, credentials and App/Job secrets are excluded. The tag
+budget uses the current server-side count, including policy-added tags on a newly created RG.
+An untagged RG can omit the ARM `tags` property entirely; use `tryGet` before coalescing it.
+Do not serialize `steps('name')` as an object: it is a native control namespace. Read individual
+controls and serialize only their real values.
+Phase pruning also removes references to inactive inputs; completion does not mount the
+foundation-only unresolved VNet selector/read. Optional saved-option/binding members remain
+unknown until read, without missing-member exceptions. The native engine returns null from
+`first([false])` and `first([""])`: project object rows before member access and preserve
+false/empty results in known one-row bindings instead of turning them into unknown values.
+
+Offline evaluation/size checks are not Portal latency acceptance. Measure repeated native
+selections and data-ready Next actions with the exact paired ARM/UI source; record sample count,
+P95, ARM request count and missing-member diagnostics. A locally routed artifact is not a public
+publication or proof of a new infrastructure/application deployment.
+The [server-policy contracts](../../tests/test_portal_policy.py) exercise foundation, saved
+completion and App acceptance/rejection, including exact model-reuse outputs, mismatching
+versions, incomplete inventories and infrastructure readiness. These remain offline regressions,
+not a substitute for the authenticated Portal checks above.
+Distinguish local evaluation time from native Basics provider/Policy checks. A measured App
+Basics transition included a 1,531 ms ARM batch of provider reads and `checkPolicyRestrictions`;
+these required platform checks are not removed to meet a network-free input latency target.
+Browser routing alone cannot replace the template that ARM dereferences from `templateLink`.
+For unpublished candidate acceptance, bind the exact compiled ARM inline in the owned validation/
+deployment requests, preserve all parameters and authorization, never mock responses, and verify
+the deployed export. ARM export omits root metadata and capitalizes root parameter/output types;
+normalize only those observed differences. This is not publication of the public README links.
 
 ## Prerequisites
 

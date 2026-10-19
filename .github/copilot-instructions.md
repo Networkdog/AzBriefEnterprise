@@ -61,6 +61,26 @@ MCP-pending or missing-ready prerequisites before ARM submission. Confirm the ac
 public artifact version. A separate CLI/snapshot App smoke is not customer Portal acceptance;
 never force tags, broaden permissions or silently swap models to suppress this failure.
 
+V2 Portal uses dedicated foundation/completion/application input views. Keep the original
+combined forms as canonical policy/compatibility sources. Generate the pre-write ARM policy
+modules with `scripts/build_v2_ui.py`, then compile both Bicep parents. Preserve every canonical
+field predicate and parameter binding, policy fingerprints, actual scope/current-tag checks and
+the true-only consent guard. Every Portal resource write must wait for server verification.
+Inner ARM scope can omit `resourceGroup().tags` on an untagged RG; use `tryGet` before coalescing.
+Keep input evidence separate from ARM-resource evidence so ordinary selections do not re-encode
+all observations. Copy only allow-listed non-secret fields; preserve types/missing inventories,
+reduce errors/continuation URLs to presence, and never include secrets. Native required/format
+and App foundation/MCP readiness messages remain. `steps('name')` is a control namespace, not
+a serializable JSON object; read individual controls. Measure native P95 and error/request counts,
+not just generated size or Python replay. Local routing is not publication or live deployment.
+Remove dangling references when phase inputs are pruned; keep removed input values unknown and
+do not mount the foundation-only unresolved VNet read in completion. Native scalar `first`
+collapses false/empty values to null: use object member projection and preserve known one-row
+boolean/string binding results. Keep optional saved metadata missing-safe without inventing readiness.
+Native Basics can perform provider/Policy RPCs; record their time separately, never bypass them.
+ARM fetches `templateLink` server-side, regardless of a browser route. Unpublished source acceptance
+must use the exact candidate body without changing parameters/authorization or mocking responses.
+
 AzBrief follows advanced Agentic AI design principles for reliability, resilience, and quality.
 
 ### Core Philosophy

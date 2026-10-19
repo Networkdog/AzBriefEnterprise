@@ -94,7 +94,31 @@ def evaluate(expression: str, state: UiState, eager: bool = True) -> Any:
 
 
 def output(name: str, state: UiState, eager: bool = True) -> Any:
-    return evaluate(definition()["outputs"][name], state, eager)
+    expected = evaluate(definition()["outputs"][name], state, eager)
+    if name in {"portalValidationPassed", "reuseCoreModel", "reuseSimpleModel"}:
+        return expected
+    view = "foundation" if state.stage == "foundation" else "completion"
+    expression = definition(view)["outputs"][name]
+    actual = (
+        _evaluate_ui_expression(
+            expression,
+            {
+                **state.values,
+                "resources": state.values,
+                "verification": {"runValidation": True},
+            },
+            network=state.network,
+            resource_group=state.group,
+            subscription={"subscriptionId": SUBSCRIPTION},
+            basics={},
+            eager_conditionals=eager,
+            selected_location=state.selected_location,
+        )
+        if isinstance(expression, str) and expression.startswith("[")
+        else expression
+    )
+    assert actual == expected, (view, name)
+    return expected
 
 
 def foundation() -> UiState:

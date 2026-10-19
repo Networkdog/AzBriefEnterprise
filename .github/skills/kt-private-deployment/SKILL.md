@@ -325,9 +325,30 @@ derived options/resources, validate the binding directly, and bind a model candi
 with its expected options. Do not expand saved completion JSON in foundation-only subnet checks.
 Bind tag-budget inputs once and compute 256-character chunks with integer ceiling division,
 retaining actual chunk counts, the 2,048-character payload limit and the 50-tag ceiling.
-The generated forms enforce 900,000 unindented UTF-8 bytes and 200,000 guard characters in
-regression tests. No checks may be dropped and no mutable hidden caches added to meet those
-budgets. Offline replay timings do not establish actual Next-button latency. Publish the exact
+The retained compatibility forms enforce 900,000 unindented UTF-8 bytes and 200,000 guard characters.
+New Portal entry points use separate foundation/completion/application input views and generated
+ARM policy source modules. Generate both with `scripts/build_v2_ui.py`, then compile the parents.
+Keep every original visible-field predicate, exact parameter/tag binding, current ARM scope/tag
+freshness and policy fingerprints. Every Portal resource write waits for verification; model
+reuse is server-derived. The true-only consent guard is not a readiness bypass. Preserve native
+required/regex checks and App foundation/MCP/missing-ready messages.
+Use `tryGet(resourceGroup(), 'tags')` before coalescing: inner ARM scope can omit untagged RG tags.
+Separate input evidence (under 20,000 characters) from ARM-resource evidence (under 140,000);
+otherwise changing one input re-encodes the entire snapshot. Encode only allow-listed non-secret
+fields, preserve scalar types and missing inventories, and reduce errors/nextLink to presence.
+Never serialize `steps('name')` or intrinsic control namespaces as JSON objects: read individual
+controls, then serialize their actual values. No checks may be dropped and no mutable hidden
+caches added for speed. Offline replay timings do not establish actual Next-button latency.
+Pruned phase inputs must leave no dangling native references; unavailable input values stay null.
+Completion omits the foundation-only unresolved VNet selector/read, not any server policy predicate.
+Native `first([false])`/`first([""])` return null. Project object members instead of scalar first
+results, and preserve boolean/string results of known one-row bindings. Test missing optional saved
+fields and both explicit-empty and absent Simple versions; never let a null become a ready fact.
+Basics provider/Policy checks are real network work, not the zero-HTTP evaluation benchmark.
+ARM dereferences `templateLink` itself: a browser JSON route does not replace that source. For
+unpublished acceptance, use the exact candidate inline in owned requests without modifying selected
+parameters, authorization, guards or responses, and verify the deployed export. This is not publication.
+Record native samples/P95, ARM requests and missing-member diagnostics. Publish the exact
 ARM/UI pair and repeat authenticated Portal acceptance; a device-compliance denial stays blocking
 and must never be bypassed by transferring CLI tokens to the browser.
 For first installation of an immutable ACR image, App/Job default to the saved workload UAMI;

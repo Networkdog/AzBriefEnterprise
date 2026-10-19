@@ -15,8 +15,8 @@
 Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication Services
 · Container App control plane + `/admin` + `/mcp` · VNet injection + Private Endpoint by default
 
-1. [v2 Infrastructure Deployment](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.createUiDefinition.json)
-2. [v2 Application Deployment](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.createUiDefinition.json)
+1. [v2 Infrastructure Deployment](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Ffoundation.createUiDefinition.json)
+2. [v2 Application Deployment](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.input.createUiDefinition.json)
 
 [v2 deployment guide](infra/v2/README.md): complete infrastructure in the same resource group before installing or updating the application.
 
@@ -33,15 +33,16 @@ The foundation form asks for **services first, network second, workload names th
 An existing Foundry or Environment supplies its verified VNet and dedicated subnet automatically;
 the form does not ask for that service's subnet again. It asks only for subnets needed by new
 resources, and omits the Private Endpoint subnet when no new endpoint is requested.
-Shared-service incompatibilities appear beside that service, model conflicts beside model options,
-and only project-name conflicts beside the workload prefix. Public or unintegrated shared services
+Shared-service notices explain the server-side verification performed at **Review + create**.
+Ownership, subnet and model conflicts block ARM validation before any resource writes.
+Public or unintegrated shared services
 remain unsupported by this private profile; the template never silently converts them.
 
 These are **foundation-only questions**. Completion reads service modes from `azbrief.v2.options*`,
 exact IDs from `azbrief.v2.resources*`, and the saved VNet/subnet name tags. It never asks for
 those choices again; application deployment shows a read-only summary instead. A previously
-tagged RG also hides fresh foundation inputs when Basics still says Foundation and explains
-which stage to select. Existing-RG inputs wait for the exact successful RG read; missing,
+tagged RG also hides fresh foundation inputs and links to the separate completion view.
+Existing-RG inputs wait for the exact successful RG read; missing,
 denied or stale responses do not reopen an empty installation form or change the selected stage.
 
 Model selection no longer sets the VNet or Environment region. An existing VNet retains its
@@ -72,10 +73,19 @@ reuse still requires one actual exact inventory match. This prevents a pre-query
 from interrupting Portal initialization before Basics and its subscription controls are ready.
 See the [v2 network guidance](infra/v2/README.md#new-or-existing-vnet) if no choices appear.
 
-The form generator projects only the tag keys each expression uses, binds saved values once per
-context, and keeps model candidates and their expected options in the same lambda scope.
-Foundation-only subnet checks do not expand completion metadata. This reduces repeated parsing
-during selection and navigation without removing validation or introducing mutable hidden caches.
+The infrastructure entry opens the dedicated foundation view; its Basics notice links to the
+dedicated completion view. The application entry has its own input view. These views remove the
+reactive stage switch and run the canonical scope, ownership, subnet, model and readiness policy
+in a generated ARM validation module **before every resource write**. Input values and allow-listed
+non-secret ARM observations use separate dependency graphs, so an ordinary selection does not
+re-encode all live-resource evidence. Missing reads remain unknown; errors and continuation URLs
+are reduced to presence flags, never copied into deployment parameters.
+An untagged RG may omit the ARM `tags` property entirely; it remains a valid empty tag set.
+Phase views also remove dangling input references and preserve false/empty native binding results,
+so unloaded saved metadata cannot interrupt Basics or be mistaken for readiness.
+Required/format checks and application foundation/MCP readiness messages remain native.
+The true-only consent guard remains; it does not replace server verification. The original
+combined forms remain compatibility/policy sources, not the new README entry points.
 Offline expression timings are not measured Portal Next-button latency; verify the published
 ARM/UI pair in an authenticated, policy-compliant browser.
 
@@ -106,8 +116,8 @@ Completion displays the actual saved model/version/region, not the new defaults.
 5.6 profile still requests 5.6 until an approved `--stage complete --reselect-models` operation
 passes the zero-model/zero-project checks; it never moves the existing region.
 
-`foundation` success is only the first infrastructure phase. Reopen the infrastructure button
-with **Complete existing foundation** for the same RG, finish authorized MCP preparation,
+`foundation` success is only the first infrastructure phase. Follow the infrastructure form's
+**Complete existing foundation** link for the same RG, finish authorized MCP preparation,
 and confirm `azbrief.v2.state=ready` before using the application button. An application
 Validation failure with `portalValidationPassed=false` is not permission to force that value.
 
