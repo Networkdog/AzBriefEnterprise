@@ -145,6 +145,24 @@ def evidence_schema(parameters: dict[str, Any], tag_keys: tuple[str, ...]) -> di
                         "error": "presence",
                         "nextLink": "presence",
                     }
+                elif name == "mcpSetupNetworkApi":
+                    fields[name] = {
+                        **RESOURCE,
+                        "properties": {
+                            "provisioningState": None,
+                            "subnets": [
+                                {
+                                    "id": None,
+                                    "name": None,
+                                    "properties": {
+                                        "delegations": [{"properties": {"serviceName": None}}],
+                                    },
+                                }
+                            ],
+                        },
+                        "error": "presence",
+                        "nextLink": "presence",
+                    }
                 elif name == "virtualNetworkApi":
                     fields[name] = {
                         **RESOURCE,

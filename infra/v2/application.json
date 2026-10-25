@@ -6,7 +6,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.46.1.21595",
-      "templateHash": "17476298088343737949"
+      "templateHash": "16612396365302086410"
     },
     "description": "Repeatable AzBrief v2 application installation/update with final RG deployment metadata. No foundation, model, BYO, RBAC or diagnostics writes."
   },
@@ -332,7 +332,7 @@
           "contentVersion": "1.0.0.0",
           "metadata": {
             "_generator": "scripts.build_v2_ui",
-            "policyHash": "c4523638e99fa8ff4907f6b4a46b601c31164b437d038e19d0184da1f2868454",
+            "policyHash": "6ffe8d5b7861c2808b8a68fca862da6560cb0117a84f251d715bb8956ed23f96",
             "description": "Generated server-side equivalent of the canonical UI policy; do not edit."
           },
           "parameters": {
@@ -466,10 +466,10 @@
                     "value": "[equals(tryGet(parameters('evidence'), 'schema'), 1)]"
                   },
                   "policyVersion": {
-                    "value": "[equals(tryGet(parameters('evidence'), 'policyHash'), 'c4523638e99fa8ff4907f6b4a46b601c31164b437d038e19d0184da1f2868454')]"
+                    "value": "[equals(tryGet(parameters('evidence'), 'policyHash'), '6ffe8d5b7861c2808b8a68fca862da6560cb0117a84f251d715bb8956ed23f96')]"
                   },
                   "resourcePolicyVersion": {
-                    "value": "[equals(tryGet(parameters('evidence'), 'resourcePolicyHash'), 'c4523638e99fa8ff4907f6b4a46b601c31164b437d038e19d0184da1f2868454')]"
+                    "value": "[equals(tryGet(parameters('evidence'), 'resourcePolicyHash'), '6ffe8d5b7861c2808b8a68fca862da6560cb0117a84f251d715bb8956ed23f96')]"
                   },
                   "scopeMatches": {
                     "value": "[or(equals(variables('groupMode'), 'New'), equals(toLower(coalesce(variables('portalContext').application.resourceGroupApi.id, '')), toLower(resourceGroup().id)))]"

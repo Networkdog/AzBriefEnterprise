@@ -108,6 +108,11 @@ RESOURCE_BINDING_TYPES = {
     "emailDomainResourceId": "Microsoft.Communication/emailServices/domains",
 }
 CONTAINER_NAME_FIELDS = {"stateContainerName", "archiveContainerName"}
+MCP_AUTOMATION_TYPES = {
+    "identityResourceId": "Microsoft.ManagedIdentity/userAssignedIdentities",
+    "subnetResourceId": "Microsoft.Network/virtualNetworks/subnets",
+    "storageAccountResourceId": "Microsoft.Storage/storageAccounts",
+}
 OPTION_FIELDS = {
     "emailDataLocation": str,
     "searchSku": str,
@@ -235,6 +240,23 @@ def decode_resource_bindings(tags: dict[str, str]) -> dict[str, str]:
     return bindings
 
 
+def validate_mcp_automation(value: object, subscription: str | None = None) -> dict[str, str]:
+    """Accept only three explicit non-secret setup resources; no implicit identity grants."""
+    if not isinstance(value, dict):
+        raise ValueError("MCP automation configuration must be an object")
+    if not value:
+        return {}
+    if set(value) != set(MCP_AUTOMATION_TYPES):
+        raise ValueError(
+            "MCP automation requires exactly identity, ACI subnet and setup Storage IDs"
+        )
+    for field, resource_type in MCP_AUTOMATION_TYPES.items():
+        resource_scope(value[field], resource_type, subscription)
+    if len(json.dumps(value, separators=(",", ":"))) > 1000:
+        raise ValueError("MCP automation setup IDs exceed their bounded option budget")
+    return {field: value[field] for field in MCP_AUTOMATION_TYPES}
+
+
 def resource_bindings(cli: AzureCli, values: dict[str, Any]) -> dict[str, str]:
     """Resolve new resources locally and shared resources only from their explicit full IDs."""
     bindings: dict[str, str] = {}
@@ -266,6 +288,72 @@ def resource_bindings(cli: AzureCli, values: dict[str, Any]) -> dict[str, str]:
     for field, resource_type in RESOURCE_BINDING_TYPES.items():
         resource_scope(bindings[field], resource_type, cli.subscription)
     return bindings
+
+
+def normalize_foundry_publishing_access(
+    value: object, subscription: str | None = None
+) -> dict[str, list[str]]:
+    """Validate an explicit bounded inbound publishing policy without widening its sources."""
+    if not isinstance(value, dict):
+        raise ValueError("Foundry publishing access must be an object")
+    if not value:
+        return {}
+    fields = {"publicIpRanges", "subnetResourceIds"}
+    if set(value) != fields or any(not isinstance(value[field], list) for field in fields):
+        raise ValueError(
+            "Foundry publishing access requires publicIpRanges and subnetResourceIds arrays"
+        )
+    blocked = tuple(
+        IPv4Network(cidr)
+        for cidr in (
+            "0.0.0.0/8",
+            "10.0.0.0/8",
+            "100.64.0.0/10",
+            "127.0.0.0/8",
+            "169.254.0.0/16",
+            "172.16.0.0/12",
+            "192.0.0.0/24",
+            "192.0.2.0/24",
+            "192.168.0.0/16",
+            "198.18.0.0/15",
+            "198.51.100.0/24",
+            "203.0.113.0/24",
+            "224.0.0.0/4",
+            "240.0.0.0/4",
+        )
+    )
+    networks: list[IPv4Network] = []
+    public: list[str] = []
+    for item in value["publicIpRanges"]:
+        if not isinstance(item, str) or item != item.strip():
+            raise ValueError("Foundry publishing rules require explicit public IPv4 addresses")
+        try:
+            network = IPv4Network(item, strict=True)
+        except ValueError as exc:
+            raise ValueError(
+                "Foundry publishing rules require public IPv4 or canonical CIDR"
+            ) from exc
+        if not network.is_global or any(network.overlaps(entry) for entry in blocked):
+            raise ValueError("Foundry publishing rules must contain public IPv4 addresses only")
+        if any(network.overlaps(previous) for previous in networks):
+            raise ValueError("Foundry publishing public IP rules must not overlap")
+        networks.append(network)
+        if network.prefixlen >= 31:
+            public.extend(str(address) for address in network)
+        else:
+            public.append(str(network))
+        if len(public) > 100:
+            raise ValueError("Foundry publishing access exceeds 100 public IP rules")
+    subnets: list[str] = []
+    for item in value["subnetResourceIds"]:
+        resource_scope(item, "Microsoft.Network/virtualNetworks/subnets", subscription)
+        normalized = item.lower()
+        if normalized in subnets:
+            raise ValueError("Foundry publishing subnet rules must be unique")
+        subnets.append(normalized)
+    if len(subnets) > 100 or not (public or subnets):
+        raise ValueError("Foundry publishing access requires a bounded non-empty allow-list")
+    return {"publicIpRanges": sorted(public), "subnetResourceIds": sorted(subnets)}
 
 
 def deployer_environment_defaults(user: dict[str, Any]) -> dict[str, str]:
@@ -740,6 +828,8 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
             "azureMcpAppRoleId",
             "namingPrefix",
             "namingSuffix",
+            "mcpAutomation",
+            "foundryPublishingAccess",
         }
         | NETWORK_OPTION_FIELDS
         | set(SHARED_RESOURCES)
@@ -752,6 +842,11 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
         raise ValueError("Invalid saved infrastructure option type")
     if "manageAzureMcp" in options and type(options["manageAzureMcp"]) is not bool:
         raise ValueError("Invalid managed MCP setting")
+    validate_mcp_automation(options.get("mcpAutomation", {}))
+    if "foundryPublishingAccess" in options:
+        options["foundryPublishingAccess"] = normalize_foundry_publishing_access(
+            options["foundryPublishingAccess"]
+        )
     if (
         "useMicrosoftManagedAgentData" in options
         and type(options["useMicrosoftManagedAgentData"]) is not bool
@@ -782,6 +877,8 @@ def decode_tag_options(tags: dict[str, str]) -> dict[str, Any]:
             "namingPrefix",
             "namingSuffix",
             "simpleModelVersion",
+            "mcpAutomation",
+            "foundryPublishingAccess",
         }
         - NETWORK_OPTION_FIELDS
         - set(SHARED_RESOURCES)
@@ -937,8 +1034,7 @@ def _read_infrastructure(
         _owned(account, account_id)
     else:
         _owned_project(cli, values, account_id)
-    if str(account["properties"].get("publicNetworkAccess", "")).casefold() != "disabled":
-        raise ValueError("The tagged Foundry account must retain disabled public access")
+    _verify_foundry_publishing_access(cli, values, account)
     reused, telemetry = validate_existing_host(cli, account_id, values)
     if not reused or not telemetry:
         raise ValueError("Completed v2 project/BYO and Application Insights bindings are required")
@@ -1517,15 +1613,21 @@ def prepare_mcp_authentication(cli: AzureCli) -> dict[str, Any]:
     ):
         raise ValueError("Core output must provide the deterministic MCP directory uniqueName")
     identity_id = f"{cli.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{values['azureMcpIdentityName']}"
-    _owned(cli.get(identity_id, "2023-01-31"), identity_id)
-    apps = cli.json(
-        "ad",
-        "app",
-        "list",
-        "--filter",
-        f"uniqueName eq '{unique_name}'",
-        "--query",
-        "[].{id:id,appId:appId,uniqueName:uniqueName,displayName:displayName}",
+    mcp_identity = cli.get(identity_id, "2023-01-31")
+    _owned(mcp_identity, identity_id)
+    automation = _verify_mcp_automation(cli, values)
+    apps = (
+        []
+        if automation
+        else cli.json(
+            "ad",
+            "app",
+            "list",
+            "--filter",
+            f"uniqueName eq '{unique_name}'",
+            "--query",
+            "[].{id:id,appId:appId,uniqueName:uniqueName,displayName:displayName}",
+        )
     )
     if not isinstance(apps, list) or len(apps) > 1:
         raise ValueError("MCP directory inventory is incomplete or ambiguous")
@@ -1547,6 +1649,13 @@ def prepare_mcp_authentication(cli: AzureCli) -> dict[str, Any]:
     }
     if len(json.dumps(completed_options, ensure_ascii=False, separators=(",", ":"))) > 2048:
         raise ValueError("MCP preparation exceeds the saved option tag budget")
+    if automation:
+        return {
+            "infrastructure": infrastructure,
+            "infrastructureOptions": options,
+            "automation": automation,
+            "mcpPrincipalId": str(UUID(mcp_identity["properties"]["principalId"])),
+        }
     return {"infrastructure": infrastructure, "infrastructureOptions": options}
 
 
@@ -1557,7 +1666,16 @@ def run_mcp_authentication(cli: AzureCli, mode: str, name: str) -> None:
         parameters = prepare_mcp_authentication(cli)
         if operation != "preflight":
             deploy_template(
-                cli, V2 / "mcp-authentication.json", parameters, operation, name + "-mcp-auth"
+                cli,
+                V2
+                / (
+                    "mcp-authentication-automatic.json"
+                    if parameters.get("automation")
+                    else "mcp-authentication.json"
+                ),
+                parameters,
+                operation,
+                name + "-mcp-auth",
             )
         logger.info(
             "v2_mcp_preparation_operation_complete", operation=operation, application_ready=False
@@ -1692,6 +1810,13 @@ def load_infrastructure_parameters(path: Path) -> dict[str, Any]:
         if values["storageAccountMode"] == "new" and values[field] != prefix:
             raise ValueError("New Storage retains the existing v2 workload container names")
     values["simpleModelVersion"] = values.get("simpleModelVersion") or values["modelVersion"]
+    values["foundryPublishingAccess"] = normalize_foundry_publishing_access(
+        values.get("foundryPublishingAccess", {})
+    )
+    if values["foundryPublishingAccess"] and (
+        values["foundryAccountMode"] != "new" or not values["useMicrosoftManagedAgentData"]
+    ):
+        raise ValueError("Foundry publishing access is only for new managed-data Foundry accounts")
     if len(values["tags"]) > 15:
         raise ValueError("Resource tags must also fit the Private DNS 15-tag limit")
     return values
@@ -1726,8 +1851,18 @@ def make_tag_contract(
     )
     options.update({field: values[field] for field in NETWORK_OPTION_FIELDS if field in values})
     options.update({field: values.get(field, "new") for field in SHARED_RESOURCES})
+    automation = validate_mcp_automation(
+        values.get("mcpAutomation", {}), values.get("subscriptionId")
+    )
+    if automation:
+        options["mcpAutomation"] = automation
+    publishing = normalize_foundry_publishing_access(
+        values.get("foundryPublishingAccess", {}), values.get("subscriptionId")
+    )
+    if publishing:
+        options["foundryPublishingAccess"] = publishing
     encoded = json.dumps(options, ensure_ascii=False, separators=(",", ":"))
-    if len(encoded) > 8 * 256:
+    if len(encoded) + (108 if automation else 0) > 8 * 256:
         raise ValueError("Saved infrastructure options exceed the 2048-character tag budget")
     contract.update(
         {key: encoded[index * 256 : (index + 1) * 256] for index, key in enumerate(OPTION_TAG_KEYS)}
@@ -1765,6 +1900,139 @@ def _shared_document(
     ):
         raise ValueError("Shared resource is not ready or its typed ARM lookup was redirected")
     return document
+
+
+def _verify_foundry_publishing_access(
+    cli: AzureCli, values: dict[str, Any], account: dict[str, Any] | None = None
+) -> dict[str, list[str]]:
+    """Verify exact allowed clients and retain private-only validation outside the opt-in mode."""
+    policy = normalize_foundry_publishing_access(
+        values.get("foundryPublishingAccess", {}), cli.subscription
+    )
+    if not policy:
+        if (
+            account is not None
+            and str(account["properties"].get("publicNetworkAccess", "")).casefold() != "disabled"
+        ):
+            raise ValueError("The tagged Foundry account must retain disabled public access")
+        return {}
+    if values.get("foundryAccountMode", "new") != "new" or not values.get(
+        "useMicrosoftManagedAgentData", False
+    ):
+        raise ValueError("Foundry publishing access is only for new managed-data Foundry accounts")
+    for subnet_id in policy["subnetResourceIds"]:
+        subnet = _shared_document(
+            cli, subnet_id, "Microsoft.Network/virtualNetworks/subnets", NETWORK_API
+        )
+        endpoints = subnet["properties"].get("serviceEndpoints") or []
+        if not any(
+            isinstance(endpoint, dict)
+            and endpoint.get("service") == "Microsoft.CognitiveServices"
+            and endpoint.get("provisioningState") == "Succeeded"
+            for endpoint in endpoints
+        ):
+            raise ValueError(
+                "Foundry publishing client subnet requires a ready CognitiveServices service endpoint"
+            )
+    if account is None:
+        return policy
+    props = account["properties"]
+    expected_subnet = (
+        f"/subscriptions/{cli.subscription}/resourceGroups/{values['virtualNetworkResourceGroupName']}"
+        f"/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
+        f"/subnets/{values['foundrySubnetName']}"
+    ).casefold()
+    injections = props.get("networkInjections") or []
+    acls = props.get("networkAcls") or {}
+    if (
+        props.get("disableLocalAuth") is not True
+        or len(injections) != 1
+        or str(injections[0].get("subnetArmId", "")).casefold() != expected_subnet
+        or injections[0].get("useMicrosoftManagedNetwork") is not False
+        or acls.get("defaultAction") != "Deny"
+        or acls.get("bypass", "None") != "None"
+    ):
+        raise ValueError(
+            "Foundry publishing requires preserved injection, Entra-only auth and default deny"
+        )
+    actual = (
+        normalize_foundry_publishing_access(
+            {
+                "publicIpRanges": [entry["value"] for entry in acls.get("ipRules", [])],
+                "subnetResourceIds": [entry["id"] for entry in acls.get("virtualNetworkRules", [])],
+            },
+            cli.subscription,
+        )
+        if acls.get("ipRules") or acls.get("virtualNetworkRules")
+        else {}
+    )
+    access = str(props.get("publicNetworkAccess", "")).casefold()
+    if not (
+        (access == "enabled" and actual == policy)
+        or (access == "disabled" and actual in ({}, policy))
+    ):
+        raise ValueError("Foundry publishing access differs from its saved exact allow-list")
+    return policy
+
+
+def _verify_mcp_automation(cli: AzureCli, values: dict[str, Any]) -> dict[str, str]:
+    """Read setup prerequisites without granting consent, changing networks or reading keys."""
+    automation = validate_mcp_automation(values.get("mcpAutomation", {}), cli.subscription)
+    if not automation:
+        return {}
+    if values.get("azureMcpServerUrl") and values.get("manageAzureMcp") is not True:
+        raise ValueError("Automatic MCP setup is only for the managed workload MCP service")
+    identity = cli.get(automation["identityResourceId"], "2023-01-31")
+    if (
+        str(identity.get("id", "")).casefold() != automation["identityResourceId"].casefold()
+        or str(identity.get("type", "")).casefold()
+        != MCP_AUTOMATION_TYPES["identityResourceId"].casefold()
+        or str(identity.get("properties", {}).get("tenantId", "")).casefold()
+        != cli.tenant.casefold()
+    ):
+        raise ValueError("The MCP setup identity is unreadable, redirected or in another tenant")
+    UUID(identity["properties"]["principalId"])
+    UUID(identity["properties"]["clientId"])
+    if automation["identityResourceId"].casefold() in {
+        f"{cli.group_id}/providers/Microsoft.ManagedIdentity/userAssignedIdentities/{values[name]}".casefold()
+        for name in ("controlPlaneIdentityName", "azureMcpIdentityName")
+    }:
+        raise ValueError("MCP setup requires a separate deployment-only identity")
+    subnet = _shared_document(
+        cli, automation["subnetResourceId"], MCP_AUTOMATION_TYPES["subnetResourceId"], NETWORK_API
+    )
+    props = subnet["properties"]
+    delegations = props.get("delegations") or []
+    if (
+        len(delegations) != 1
+        or delegations[0].get("properties", {}).get("serviceName")
+        != "Microsoft.ContainerInstance/containerGroups"
+    ):
+        raise ValueError("MCP automation needs an existing ACI-only execution subnet")
+    vnet_id = "/".join(automation["subnetResourceId"].split("/")[:9])
+    vnet = _existing_virtual_network(cli, vnet_id)
+    if normalize_region(vnet["location"]) != normalize_region(values["location"]):
+        raise ValueError("The MCP automation execution VNet must use the workload region")
+    storage = _shared_document(
+        cli,
+        automation["storageAccountResourceId"],
+        MCP_AUTOMATION_TYPES["storageAccountResourceId"],
+        "2023-05-01",
+    )
+    if (
+        automation["storageAccountResourceId"].casefold()
+        == resource_bindings(cli, values)["storageAccountResourceId"].casefold()
+        or storage.get("kind") not in {"StorageV2", "FileStorage"}
+        or normalize_region(storage["location"]) != normalize_region(values["location"])
+        or (
+            storage["properties"].get("publicNetworkAccess") != "Disabled"
+            and storage["properties"].get("networkAcls", {}).get("defaultAction") != "Deny"
+        )
+    ):
+        raise ValueError(
+            "MCP automation requires separate approved private/restricted File Storage"
+        )
+    return automation
 
 
 def _shared_network_bindings(
@@ -2285,7 +2553,10 @@ def prepare_infrastructure(
 ) -> dict[str, Any]:
     """Keep infrastructure one-time, reuse the approved network and derive completion decisions."""
     cli.assert_context()
+    publishing = _verify_foundry_publishing_access(cli, values)
+    values = {**values, "foundryPublishingAccess": publishing}
     values = _resolve_shared_resources(cli, values, stage)
+    _verify_mcp_automation(cli, values)
     bindings = resource_bindings(cli, values)
     network_mode = values.get("virtualNetworkMode", "existing")
     if network_mode not in {"existing", "new"}:
@@ -2312,6 +2583,8 @@ def prepare_infrastructure(
         saved_options = decode_tag_options(saved)
         if not saved_options:
             raise ValueError("Completion requires saved foundation options")
+        if publishing != saved_options.get("foundryPublishingAccess", {}):
+            raise ValueError("Saved Foundry publishing access is immutable on completion")
         if allow_model_reselection:
             account_id = bindings["foundryAccountResourceId"]
             deployments = cli.collection(f"{account_id}/deployments", FOUNDRY_API)
@@ -2375,6 +2648,16 @@ def prepare_infrastructure(
         for field in ("namingPrefix", "namingSuffix"):
             if values.get(field, "") != saved_options.get(field, ""):
                 raise ValueError(f"Refusing to change saved foundation option: {field}")
+        if {
+            field: value.casefold()
+            for field, value in validate_mcp_automation(values.get("mcpAutomation", {})).items()
+        } != {
+            field: value.casefold()
+            for field, value in validate_mcp_automation(
+                saved_options.get("mcpAutomation", {})
+            ).items()
+        }:
+            raise ValueError("Saved MCP automation resources are immutable on completion")
     validate_tag_budget({**group_tags, **contract})
     vnet_id = f"/subscriptions/{cli.subscription}/resourceGroups/{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}"
     if network_mode == "new" and stage == "foundation":
@@ -2518,6 +2801,7 @@ def prepare_infrastructure(
         prepared["existingPrivateDnsZoneIds"] = saved_dns
     if stage == "complete":
         account_id = bindings["foundryAccountResourceId"]
+        _verify_foundry_publishing_access(cli, values, cli.get(account_id, FOUNDRY_API))
         if values["foundryAccountMode"] == "existing":
             _owned_project(cli, values, account_id, allow_missing=True)
         reused, telemetry = validate_existing_host(cli, account_id, values)

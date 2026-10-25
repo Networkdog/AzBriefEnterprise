@@ -1,0 +1,462 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.0",
+  "metadata": {
+    "_generator": {
+      "name": "bicep",
+      "version": "0.46.1.21595",
+      "templateHash": "15423040229468832554"
+    },
+    "description": "Resume only the exact successful pending core with an explicitly preauthorized setup identity. No core, model, application or permission replay."
+  },
+  "parameters": {
+    "automation": {
+      "type": "object"
+    },
+    "portalValidationPassed": {
+      "type": "bool",
+      "allowedValues": [
+        true
+      ]
+    }
+  },
+  "variables": {
+    "savedTags": "[coalesce(tryGet(resourceGroup(), 'tags'), createObject())]",
+    "bindings": "[json(concat(coalesce(tryGet(variables('savedTags'), 'azbrief.v2.resources0'), '{}'), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.resources1'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.resources2'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.resources3'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.resources4'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.resources5'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.resources6'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.resources7'), '')))]",
+    "options": "[json(concat(coalesce(tryGet(variables('savedTags'), 'azbrief.v2.options0'), '{}'), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.options1'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.options2'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.options3'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.options4'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.options5'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.options6'), ''), coalesce(tryGet(variables('savedTags'), 'azbrief.v2.options7'), '')))]",
+    "accountId": "[coalesce(tryGet(variables('bindings'), 'foundryAccountResourceId'), resourceId('Microsoft.CognitiveServices/accounts', variables('savedTags')['azbrief.v2.foundry']))]",
+    "savedNames": {
+      "location": "[variables('savedTags')['azbrief.v2.location']]",
+      "containerAppsEnvironmentName": "[variables('savedTags')['azbrief.v2.environment']]",
+      "containerAppName": "[variables('savedTags')['azbrief.v2.app']]",
+      "schedulerJobName": "[variables('savedTags')['azbrief.v2.job']]",
+      "controlPlaneIdentityName": "[variables('savedTags')['azbrief.v2.identity']]",
+      "storageAccountName": "[variables('savedTags')['azbrief.v2.storage']]",
+      "cosmosAccountName": "[variables('savedTags')['azbrief.v2.cosmos']]",
+      "searchServiceName": "[variables('savedTags')['azbrief.v2.search']]",
+      "logAnalyticsWorkspaceName": "[variables('savedTags')['azbrief.v2.workspace']]",
+      "applicationInsightsName": "[variables('savedTags')['azbrief.v2.insights']]",
+      "communicationServicesName": "[variables('savedTags')['azbrief.v2.acs']]",
+      "emailServiceName": "[variables('savedTags')['azbrief.v2.email']]",
+      "foundryAccountName": "[variables('savedTags')['azbrief.v2.foundry']]",
+      "projectName": "[variables('savedTags')['azbrief.v2.project']]",
+      "foundryHostedAgentName": "[variables('savedTags')['azbrief.v2.hosted']]",
+      "modelDeploymentName": "[variables('savedTags')['azbrief.v2.coreModel']]",
+      "simpleModelDeploymentName": "[variables('savedTags')['azbrief.v2.simpleModel']]",
+      "virtualNetworkResourceGroupName": "[variables('savedTags')['azbrief.v2.vnetRg']]",
+      "virtualNetworkName": "[variables('savedTags')['azbrief.v2.vnet']]",
+      "peSubnetName": "[variables('savedTags')['azbrief.v2.peSubnet']]",
+      "foundrySubnetName": "[variables('savedTags')['azbrief.v2.foundrySubnet']]",
+      "containerAppsSubnetName": "[variables('savedTags')['azbrief.v2.appSubnet']]"
+    },
+    "expectedIds": {
+      "foundryAccountResourceId": "[variables('accountId')]",
+      "containerAppsEnvironmentResourceId": "[coalesce(tryGet(variables('bindings'), 'containerAppsEnvironmentResourceId'), resourceId('Microsoft.App/managedEnvironments', variables('savedNames').containerAppsEnvironmentName))]",
+      "storageAccountResourceId": "[coalesce(tryGet(variables('bindings'), 'storageAccountResourceId'), resourceId('Microsoft.Storage/storageAccounts', variables('savedNames').storageAccountName))]",
+      "communicationServicesResourceId": "[coalesce(tryGet(variables('bindings'), 'communicationServicesResourceId'), resourceId('Microsoft.Communication/communicationServices', variables('savedNames').communicationServicesName))]",
+      "logAnalyticsWorkspaceResourceId": "[coalesce(tryGet(variables('bindings'), 'logAnalyticsWorkspaceResourceId'), resourceId('Microsoft.OperationalInsights/workspaces', variables('savedNames').logAnalyticsWorkspaceName))]",
+      "emailDomainResourceId": "[coalesce(tryGet(variables('bindings'), 'emailDomainResourceId'), resourceId('Microsoft.Communication/emailServices/domains', variables('savedNames').emailServiceName, 'AzureManagedDomain'))]"
+    }
+  },
+  "resources": [
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "v2-mcp-exact-pending-core",
+      "properties": {
+        "mode": "Incremental",
+        "parameters": {
+          "approved": {
+            "value": "[not(contains(createArray(parameters('portalValidationPassed'), equals(variables('savedTags')['azbrief.v2.schema'], '2'), equals(variables('savedTags')['azbrief.v2.profile'], 'kt-private-v2'), equals(variables('savedTags')['azbrief.v2.state'], 'mcp_pending'), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').provisioningState, 'Succeeded'), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.schemaVersion, 2), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.profile, 'kt-private-v2'), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.infrastructureComplete, true()), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.tenantId, tenant().tenantId), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.subscriptionId, subscription().subscriptionId), equals(toLower(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.resourceGroup), toLower(resourceGroup().name)), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.deploymentName, variables('savedTags')['azbrief.v2.deployment']), empty(filter(items(variables('savedNames')), lambda('item', not(equals(toLower(string(coalesce(tryGet(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value, lambdaVariables('item').key), ''))), toLower(lambdaVariables('item').value)))))), empty(filter(items(variables('expectedIds')), lambda('item', or(not(equals(toLower(string(coalesce(tryGet(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value, lambdaVariables('item').key), ''))), toLower(lambdaVariables('item').value))), not(equals(toLower(split(lambdaVariables('item').value, '/')[2]), toLower(subscription().subscriptionId))))))), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.stateContainerName, coalesce(tryGet(variables('bindings'), 'stateContainerName'), 'azbrief-state')), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.archiveContainerName, coalesce(tryGet(variables('bindings'), 'archiveContainerName'), 'azbrief-archive')), equals(toLower(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.controlPlaneIdentityResourceId), toLower(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('savedNames').controlPlaneIdentityName))), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.deployContainerAppsPrivateEndpoint, equals(variables('savedTags')['azbrief.v2.acaPeEnabled'], 'true')), equals(toLower(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.foundryAccountResourceId), toLower(variables('accountId'))), equals(toLower(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.foundryProjectResourceId), toLower(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts/projects', split(format('{0}/{1}', variables('savedTags')['azbrief.v2.foundry'], variables('savedTags')['azbrief.v2.project']), '/')[0], split(format('{0}/{1}', variables('savedTags')['azbrief.v2.foundry'], variables('savedTags')['azbrief.v2.project']), '/')[1]))), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.foundryProjectPrincipalId, reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.CognitiveServices/accounts/projects', split(format('{0}/{1}', variables('savedTags')['azbrief.v2.foundry'], variables('savedTags')['azbrief.v2.project']), '/')[0], split(format('{0}/{1}', variables('savedTags')['azbrief.v2.foundry'], variables('savedTags')['azbrief.v2.project']), '/')[1]), '2025-06-01', 'full').identity.principalId), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.azureMcpEntraAppUniqueName, format('azbrief-v2-mcp-{0}', uniqueString(resourceGroup().id))), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.azureMcpServerUrl, variables('savedTags')['azbrief.v2.mcpUrl']), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.azureMcpProjectConnectionName, variables('savedTags')['azbrief.v2.mcpConnection']), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.azureMcpContainerAppName, variables('savedTags')['azbrief.v2.mcpApp']), equals(reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value.azureMcpIdentityName, variables('savedTags')['azbrief.v2.mcpIdentity']), equals(variables('options').manageAzureMcp, true()), or(empty(tryGet(variables('options'), 'mcpAutomation')), empty(filter(items(parameters('automation')), lambda('item', not(equals(toLower(string(coalesce(tryGet(variables('options').mcpAutomation, lambdaVariables('item').key), ''))), toLower(string(lambdaVariables('item').value))))))))), false()))]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "parameters": {
+            "approved": {
+              "type": "bool",
+              "allowedValues": [
+                true
+              ]
+            }
+          },
+          "resources": []
+        }
+      }
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "v2-mcp-authorized-portal-setup",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "infrastructure": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', variables('savedTags')['azbrief.v2.deployment']), '2025-04-01').outputs.infrastructure.value]"
+          },
+          "infrastructureOptions": {
+            "value": "[union(variables('options'), createObject('mcpAutomation', parameters('automation')))]"
+          },
+          "automation": {
+            "value": "[parameters('automation')]"
+          },
+          "mcpPrincipalId": {
+            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('savedTags')['azbrief.v2.mcpIdentity']), '2023-01-31').principalId]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.46.1.21595",
+              "templateHash": "13180775943349029923"
+            },
+            "description": "Explicit preauthorized deployment identity only. No Graph consent, RBAC, networking or runtime identity changes."
+          },
+          "parameters": {
+            "infrastructure": {
+              "type": "object"
+            },
+            "infrastructureOptions": {
+              "type": "object"
+            },
+            "automation": {
+              "type": "object"
+            },
+            "mcpPrincipalId": {
+              "type": "string"
+            },
+            "runId": {
+              "type": "string",
+              "defaultValue": "[utcNow()]"
+            }
+          },
+          "variables": {
+            "$fxv#0": "\"\"\"Configure one workload's MCP identity from an already-authorized deployment identity.\"\"\"\r\n\r\nfrom __future__ import annotations\r\n\r\nimport base64\r\nimport json\r\nimport os\r\nimport subprocess\r\nimport sys\r\nimport time\r\nfrom email.message import Message\r\nfrom pathlib import Path\r\nfrom typing import IO, Any, NoReturn\r\nfrom urllib.error import HTTPError, URLError\r\nfrom urllib.parse import urlencode\r\nfrom urllib.request import HTTPRedirectHandler, Request, build_opener\r\nfrom uuid import UUID\r\n\r\nGRAPH = \"https://graph.microsoft.com/v1.0/\"\r\nROLE_VALUE = \"Mcp.Tools.ReadWrite.All\"\r\nSCOPE_VALUE = \"Mcp.Tools.ReadWrite\"\r\nVSCODE_CLIENT_ID = \"aebc6443-996d-45c2-90f0-388ff96faa56\"\r\n\r\n\r\nclass McpIdentityError(RuntimeError):\r\n    \"\"\"Expose only a fixed operation/code, never Graph bodies or credential material.\"\"\"\r\n\r\n\r\nclass NoRedirects(HTTPRedirectHandler):\r\n    \"\"\"Keep bearer credentials on the fixed Microsoft Graph endpoint.\"\"\"\r\n\r\n    def redirect_request(\r\n        self, req: Request, fp: IO[bytes], code: int, msg: str, headers: Message, newurl: str\r\n    ) -> NoReturn:\r\n        raise McpIdentityError(\"Graph redirects are not permitted\")\r\n\r\n\r\ndef guid(value: object) -> str:\r\n    if not isinstance(value, str):\r\n        raise McpIdentityError(\"Invalid directory identity type\")\r\n    try:\r\n        result = UUID(value)\r\n    except ValueError as error:\r\n        raise McpIdentityError(\"Invalid directory identity\") from error\r\n    if not result.int:\r\n        raise McpIdentityError(\"Empty directory identity\")\r\n    return str(result)\r\n\r\n\r\nclass Graph:\r\n    \"\"\"Bounded Graph-only transport; authorization failures never become absence.\"\"\"\r\n\r\n    def __init__(self, token: str):\r\n        self.token = token\r\n        self.opener = build_opener(NoRedirects())\r\n        self.deadline = time.monotonic() + 600\r\n\r\n    def request(\r\n        self, method: str, path: str, payload: dict[str, Any] | None = None\r\n    ) -> dict[str, Any]:\r\n        if path.startswith(\"/\") or \"://\" in path or \"\\n\" in path:\r\n            raise McpIdentityError(\"Graph request escaped its fixed endpoint\")\r\n        body = json.dumps(payload).encode(\"utf-8\") if payload is not None else None\r\n        for attempt in range(4):\r\n            request = Request(\r\n                GRAPH + path,\r\n                data=body,\r\n                method=method,\r\n                headers={\r\n                    \"Authorization\": \"Bearer \" + self.token,\r\n                    \"Content-Type\": \"application/json\",\r\n                },\r\n            )\r\n            try:\r\n                with self.opener.open(request, timeout=45) as response:\r\n                    content = response.read()\r\n            except HTTPError as error:\r\n                if error.code in {429, 503} and attempt < 3:\r\n                    retry = error.headers.get(\"Retry-After\", \"\")\r\n                    delay = int(retry) if retry.isdigit() else 5 * (attempt + 1)\r\n                    if time.monotonic() + delay + 45 > self.deadline:\r\n                        raise McpIdentityError(\r\n                            \"Graph retry delay exceeds the setup budget\"\r\n                        ) from None\r\n                    time.sleep(delay)\r\n                    continue\r\n                raise McpIdentityError(f\"Graph {method} failed with HTTP {error.code}\") from None\r\n            except (URLError, TimeoutError):\r\n                raise McpIdentityError(\"Graph connection failed\") from None\r\n            if not content:\r\n                return {}\r\n            try:\r\n                result = json.loads(content)\r\n            except (ValueError, UnicodeError):\r\n                raise McpIdentityError(\"Graph returned an invalid JSON response\") from None\r\n            if not isinstance(result, dict) or result.get(\"@odata.nextLink\") or result.get(\"error\"):\r\n                raise McpIdentityError(\"Graph response is incomplete, paged or failed\")\r\n            return result\r\n        raise McpIdentityError(\"Graph retries exhausted\")\r\n\r\n\r\ndef rows(response: dict[str, Any]) -> list[dict[str, Any]]:\r\n    values = response.get(\"value\")\r\n    if (\r\n        response.get(\"@odata.nextLink\")\r\n        or response.get(\"error\")\r\n        or not isinstance(values, list)\r\n        or any(not isinstance(value, dict) for value in values)\r\n    ):\r\n        raise McpIdentityError(\"Directory inventory is incomplete or paged\")\r\n    return values\r\n\r\n\r\ndef manifest(config: dict[str, str], client_id: str = \"\") -> dict[str, Any]:\r\n    api: dict[str, Any] = {\r\n        \"requestedAccessTokenVersion\": 2,\r\n        \"oauth2PermissionScopes\": [\r\n            {\r\n                \"id\": guid(config[\"scopeId\"]),\r\n                \"value\": SCOPE_VALUE,\r\n                \"type\": \"User\",\r\n                \"adminConsentDisplayName\": \"Azure MCP Tools ReadWrite\",\r\n                \"adminConsentDescription\": \"Delegated permission for authenticated Azure MCP tool calls\",\r\n                \"userConsentDisplayName\": \"Azure MCP Tools ReadWrite\",\r\n                \"userConsentDescription\": \"Delegated permission for authenticated Azure MCP tool calls\",\r\n                \"isEnabled\": True,\r\n            }\r\n        ],\r\n    }\r\n    if client_id:\r\n        api[\"preAuthorizedApplications\"] = [\r\n            {\"appId\": VSCODE_CLIENT_ID, \"delegatedPermissionIds\": [guid(config[\"scopeId\"])]}\r\n        ]\r\n    result: dict[str, Any] = {\r\n        \"displayName\": \"AzBrief v2 Azure MCP API\",\r\n        \"uniqueName\": config[\"uniqueName\"],\r\n        \"signInAudience\": \"AzureADMyOrg\",\r\n        \"notes\": \"AzBrief v2 MCP setup for \" + config[\"workloadResourceGroupId\"].lower(),\r\n        \"appRoles\": [\r\n            {\r\n                \"id\": guid(config[\"appRoleId\"]),\r\n                \"displayName\": \"Azure MCP Tools ReadWrite All\",\r\n                \"description\": \"Application permission for authenticated Azure MCP tool calls\",\r\n                \"value\": ROLE_VALUE,\r\n                \"isEnabled\": True,\r\n                \"allowedMemberTypes\": [\"Application\"],\r\n            }\r\n        ],\r\n        \"api\": api,\r\n        \"requiredResourceAccess\": [],\r\n    }\r\n    if client_id:\r\n        result[\"identifierUris\"] = [\"api://\" + guid(client_id)]\r\n    return result\r\n\r\n\r\ndef check_application(document: dict[str, Any], expected: dict[str, Any], client_id: str) -> None:\r\n    guid(document.get(\"id\"))\r\n    if guid(document.get(\"appId\")) != client_id:\r\n        raise McpIdentityError(\"Application readback redirected its client ID\")\r\n    for field in (\"displayName\", \"uniqueName\", \"signInAudience\", \"notes\", \"requiredResourceAccess\"):\r\n        if document.get(field) != expected[field]:\r\n            raise McpIdentityError(\"Refusing a foreign or modified MCP application\")\r\n    role_fields = (\"id\", \"displayName\", \"description\", \"value\", \"isEnabled\", \"allowedMemberTypes\")\r\n    actual_roles = document.get(\"appRoles\")\r\n    if (\r\n        not isinstance(actual_roles, list)\r\n        or len(actual_roles) != 1\r\n        or not isinstance(actual_roles[0], dict)\r\n    ):\r\n        raise McpIdentityError(\"MCP application role inventory differs\")\r\n    if {field: actual_roles[0].get(field) for field in role_fields} != expected[\"appRoles\"][0]:\r\n        raise McpIdentityError(\"MCP application role differs\")\r\n    api = document.get(\"api\")\r\n    if not isinstance(api, dict):\r\n        raise McpIdentityError(\"MCP application API definition is missing\")\r\n    for field in (\"requestedAccessTokenVersion\", \"oauth2PermissionScopes\"):\r\n        if api.get(field) != expected[\"api\"][field]:\r\n            raise McpIdentityError(\"MCP application scope definition differs\")\r\n    if api.get(\"preAuthorizedApplications\", []) not in (\r\n        [],\r\n        expected[\"api\"].get(\"preAuthorizedApplications\", []),\r\n    ):\r\n        raise McpIdentityError(\"Refusing to replace unrelated preauthorized clients\")\r\n    if document.get(\"identifierUris\", []) not in ([], [\"api://\" + client_id]):\r\n        raise McpIdentityError(\"Refusing to replace an unrelated MCP audience\")\r\n    if document.get(\"passwordCredentials\") or document.get(\"keyCredentials\"):\r\n        raise McpIdentityError(\"Automatic MCP setup never adopts credential-bearing applications\")\r\n\r\n\r\ndef provision(graph: Graph, config: dict[str, str]) -> dict[str, str]:\r\n    \"\"\"Create/reuse only the owned MCP registration and its exact project app-role grant.\"\"\"\r\n    tenant = guid(config[\"tenantId\"])\r\n    installer = guid(config[\"installerPrincipalId\"])\r\n    project = guid(config[\"projectPrincipalId\"])\r\n    if installer == project or installer in {\r\n        guid(config[\"controlPlanePrincipalId\"]),\r\n        guid(config[\"mcpPrincipalId\"]),\r\n    }:\r\n        raise McpIdentityError(\"Use a distinct deployment-only identity\")\r\n    unique_name = config[\"uniqueName\"]\r\n    if not unique_name.startswith(\"azbrief-v2-mcp-\") or any(\r\n        value in unique_name for value in (\"'\", \"?\", \"/\", \"\\\\\")\r\n    ):\r\n        raise McpIdentityError(\"Invalid workload MCP unique name\")\r\n    query = urlencode({\"$filter\": f\"uniqueName eq '{unique_name}'\"})\r\n    applications = rows(graph.request(\"GET\", \"applications?\" + query))\r\n    if len(applications) > 1:\r\n        raise McpIdentityError(\"MCP application inventory is ambiguous\")\r\n    if not applications:\r\n        graph.request(\r\n            \"POST\",\r\n            \"applications\",\r\n            {\r\n                **manifest(config),\r\n                \"owners@odata.bind\": [GRAPH + \"directoryObjects/\" + installer],\r\n            },\r\n        )\r\n        applications = rows(graph.request(\"GET\", \"applications?\" + query))\r\n    if len(applications) != 1:\r\n        raise McpIdentityError(\"Created MCP application is not uniquely readable\")\r\n    application = applications[0]\r\n    object_id = guid(application.get(\"id\"))\r\n    client_id = guid(application.get(\"appId\"))\r\n    expected = manifest(config, client_id)\r\n    check_application(application, expected, client_id)\r\n    owners = rows(graph.request(\"GET\", f\"applications/{object_id}/owners?$select=id\"))\r\n    if installer not in {guid(owner.get(\"id\")) for owner in owners}:\r\n        raise McpIdentityError(\"The deployment identity does not own this MCP application\")\r\n    graph.request(\r\n        \"PATCH\",\r\n        \"applications/\" + object_id,\r\n        {name: value for name, value in expected.items() if name != \"uniqueName\"},\r\n    )\r\n    final_app = graph.request(\"GET\", \"applications/\" + object_id)\r\n    check_application(final_app, expected, client_id)\r\n    if (\r\n        final_app.get(\"identifierUris\") != expected[\"identifierUris\"]\r\n        or final_app[\"api\"].get(\"preAuthorizedApplications\")\r\n        != expected[\"api\"][\"preAuthorizedApplications\"]\r\n    ):\r\n        raise McpIdentityError(\"MCP audience/preauthorization write did not persist\")\r\n    principal_query = urlencode({\"$filter\": f\"appId eq '{client_id}'\"})\r\n    principals = rows(graph.request(\"GET\", \"servicePrincipals?\" + principal_query))\r\n    if not principals:\r\n        graph.request(\"POST\", \"servicePrincipals\", {\"appId\": client_id})\r\n        principals = rows(graph.request(\"GET\", \"servicePrincipals?\" + principal_query))\r\n    if len(principals) != 1:\r\n        raise McpIdentityError(\"MCP service principal inventory is ambiguous\")\r\n    principal = principals[0]\r\n    principal_id = guid(principal.get(\"id\"))\r\n    if (\r\n        guid(principal.get(\"appId\")) != client_id\r\n        or guid(principal.get(\"appOwnerOrganizationId\")) != tenant\r\n        or principal.get(\"servicePrincipalType\") != \"Application\"\r\n        or principal.get(\"accountEnabled\") is not True\r\n    ):\r\n        raise McpIdentityError(\"MCP service principal ownership/readiness differs\")\r\n    assignment = {\r\n        \"principalId\": project,\r\n        \"resourceId\": principal_id,\r\n        \"appRoleId\": guid(config[\"appRoleId\"]),\r\n    }\r\n    assignments_path = f\"servicePrincipals/{principal_id}/appRoleAssignedTo?\" + urlencode(\r\n        {\"$filter\": f\"principalId eq {project}\"}\r\n    )\r\n    assignments = rows(graph.request(\"GET\", assignments_path))\r\n    if not assignments:\r\n        graph.request(\"POST\", f\"servicePrincipals/{principal_id}/appRoleAssignedTo\", assignment)\r\n        assignments = rows(graph.request(\"GET\", assignments_path))\r\n    if len(assignments) != 1 or {key: assignments[0].get(key) for key in assignment} != assignment:\r\n        raise McpIdentityError(\"The exact Foundry-to-MCP app-role assignment is not confirmed\")\r\n    return {\r\n        \"clientId\": client_id,\r\n        \"servicePrincipalId\": principal_id,\r\n        \"appRoleId\": assignment[\"appRoleId\"],\r\n    }\r\n\r\n\r\ndef main() -> None:\r\n    config = json.loads(os.environ[\"AZBRIEF_MCP_SETUP\"])\r\n    if not isinstance(config, dict) or any(not isinstance(value, str) for value in config.values()):\r\n        raise McpIdentityError(\"Invalid MCP setup contract\")\r\n    result = subprocess.run(\r\n        [\r\n            \"az\",\r\n            \"account\",\r\n            \"get-access-token\",\r\n            \"--resource\",\r\n            \"https://graph.microsoft.com\",\r\n            \"--query\",\r\n            \"accessToken\",\r\n            \"--output\",\r\n            \"tsv\",\r\n            \"--only-show-errors\",\r\n        ],\r\n        capture_output=True,\r\n        text=True,\r\n        check=False,\r\n        timeout=60,\r\n    )\r\n    if result.returncode:\r\n        raise McpIdentityError(\"Deployment identity could not acquire a Graph token\")\r\n    token = result.stdout.strip()\r\n    segments = token.split(\".\")\r\n    if len(segments) != 3:\r\n        raise McpIdentityError(\"Deployment identity returned an invalid token\")\r\n    claims = json.loads(base64.urlsafe_b64decode(segments[1] + \"=\" * (-len(segments[1]) % 4)))\r\n    roles = set(claims.get(\"roles\", []))\r\n    if (\r\n        guid(claims.get(\"oid\")) != guid(config[\"installerPrincipalId\"])\r\n        or guid(claims.get(\"tid\")) != guid(config[\"tenantId\"])\r\n        or not roles.intersection({\"Application.ReadWrite.OwnedBy\", \"Application.ReadWrite.All\"})\r\n        or \"AppRoleAssignment.ReadWrite.All\" not in roles\r\n        or not roles.intersection({\"Application.Read.All\", \"Application.ReadWrite.All\"})\r\n    ):\r\n        raise McpIdentityError(\r\n            \"The selected deployment identity lacks preapproved Graph permissions\"\r\n        )\r\n    outputs = provision(Graph(token), config)\r\n    Path(os.environ[\"AZ_SCRIPTS_OUTPUT_PATH\"]).write_text(json.dumps(outputs), encoding=\"utf-8\")\r\n\r\n\r\nif __name__ == \"__main__\":\r\n    try:\r\n        main()\r\n    except McpIdentityError as error:\r\n        sys.stderr.write(\r\n            json.dumps({\"event\": \"mcp_identity_setup_failed\", \"error\": str(error)}) + \"\\n\"\r\n        )\r\n        raise SystemExit(1) from None\r\n",
+            "roleValue": "Mcp.Tools.ReadWrite.All",
+            "scopeValue": "Mcp.Tools.ReadWrite"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "v2-mcp-automation-prerequisites",
+              "properties": {
+                "mode": "Incremental",
+                "parameters": {
+                  "approved": {
+                    "value": "[not(contains(createArray(equals(length(parameters('automation')), 3), lessOrEquals(length(string(union(parameters('infrastructureOptions'), createObject('azureMcpClientId', '00000000-0000-0000-0000-000000000000', 'azureMcpServicePrincipalId', '00000000-0000-0000-0000-000000000000', 'azureMcpAppRoleId', '00000000-0000-0000-0000-000000000000')))), 2048), equals(toLower(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').identityResourceId, '/')[2], split(parameters('automation').identityResourceId, '/')[4]), 'Microsoft.ManagedIdentity/userAssignedIdentities', last(split(parameters('automation').identityResourceId, '/')))), toLower(parameters('automation').identityResourceId)), equals(toLower(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').identityResourceId, '/')[2], split(parameters('automation').identityResourceId, '/')[4]), 'Microsoft.ManagedIdentity/userAssignedIdentities', last(split(parameters('automation').identityResourceId, '/'))), '2023-01-31').tenantId), toLower(tenant().tenantId)), equals(toLower(split(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').identityResourceId, '/')[2], split(parameters('automation').identityResourceId, '/')[4]), 'Microsoft.ManagedIdentity/userAssignedIdentities', last(split(parameters('automation').identityResourceId, '/'))), '/')[2]), toLower(subscription().subscriptionId)), not(equals(toLower(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').identityResourceId, '/')[2], split(parameters('automation').identityResourceId, '/')[4]), 'Microsoft.ManagedIdentity/userAssignedIdentities', last(split(parameters('automation').identityResourceId, '/'))), '2023-01-31').principalId), toLower(parameters('infrastructure').foundryProjectPrincipalId))), not(equals(toLower(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').identityResourceId, '/')[2], split(parameters('automation').identityResourceId, '/')[4]), 'Microsoft.ManagedIdentity/userAssignedIdentities', last(split(parameters('automation').identityResourceId, '/'))), '2023-01-31').principalId), toLower(parameters('infrastructure').controlPlanePrincipalId))), not(equals(toLower(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').identityResourceId, '/')[2], split(parameters('automation').identityResourceId, '/')[4]), 'Microsoft.ManagedIdentity/userAssignedIdentities', last(split(parameters('automation').identityResourceId, '/'))), '2023-01-31').principalId), toLower(parameters('mcpPrincipalId')))), equals(toLower(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').subnetResourceId, '/')[2], split(parameters('automation').subnetResourceId, '/')[4]), 'Microsoft.Network/virtualNetworks/subnets', split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[0], split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[1])), toLower(parameters('automation').subnetResourceId)), equals(toLower(split(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').subnetResourceId, '/')[2], split(parameters('automation').subnetResourceId, '/')[4]), 'Microsoft.Network/virtualNetworks/subnets', split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[0], split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[1]), '/')[2]), toLower(subscription().subscriptionId)), equals(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').subnetResourceId, '/')[2], split(parameters('automation').subnetResourceId, '/')[4]), 'Microsoft.Network/virtualNetworks/subnets', split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[0], split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[1]), '2024-05-01').provisioningState, 'Succeeded'), equals(toLower(replace(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').subnetResourceId, '/')[2], split(parameters('automation').subnetResourceId, '/')[4]), 'Microsoft.Network/virtualNetworks', split(parameters('automation').subnetResourceId, '/')[8]), '2024-05-01', 'full').location, ' ', '')), toLower(replace(parameters('infrastructure').location, ' ', ''))), equals(length(coalesce(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').subnetResourceId, '/')[2], split(parameters('automation').subnetResourceId, '/')[4]), 'Microsoft.Network/virtualNetworks/subnets', split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[0], split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[1]), '2024-05-01').delegations, createArray())), 1), equals(tryGet(tryGet(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').subnetResourceId, '/')[2], split(parameters('automation').subnetResourceId, '/')[4]), 'Microsoft.Network/virtualNetworks/subnets', split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[0], split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[1]), '2024-05-01').delegations, 0), 'properties', 'serviceName'), 'Microsoft.ContainerInstance/containerGroups'), not(contains(createArray(parameters('infrastructure').foundrySubnetResourceId, parameters('infrastructure').infrastructureSubnetId, parameters('infrastructure').privateEndpointSubnetId), extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').subnetResourceId, '/')[2], split(parameters('automation').subnetResourceId, '/')[4]), 'Microsoft.Network/virtualNetworks/subnets', split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[0], split(format('{0}/{1}', split(parameters('automation').subnetResourceId, '/')[8], split(parameters('automation').subnetResourceId, '/')[10]), '/')[1]))), equals(toLower(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').storageAccountResourceId, '/')[2], split(parameters('automation').storageAccountResourceId, '/')[4]), 'Microsoft.Storage/storageAccounts', last(split(parameters('automation').storageAccountResourceId, '/')))), toLower(parameters('automation').storageAccountResourceId)), equals(toLower(split(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').storageAccountResourceId, '/')[2], split(parameters('automation').storageAccountResourceId, '/')[4]), 'Microsoft.Storage/storageAccounts', last(split(parameters('automation').storageAccountResourceId, '/'))), '/')[2]), toLower(subscription().subscriptionId)), not(equals(toLower(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').storageAccountResourceId, '/')[2], split(parameters('automation').storageAccountResourceId, '/')[4]), 'Microsoft.Storage/storageAccounts', last(split(parameters('automation').storageAccountResourceId, '/')))), toLower(parameters('infrastructure').storageAccountResourceId))), equals(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').storageAccountResourceId, '/')[2], split(parameters('automation').storageAccountResourceId, '/')[4]), 'Microsoft.Storage/storageAccounts', last(split(parameters('automation').storageAccountResourceId, '/'))), '2023-05-01').provisioningState, 'Succeeded'), contains(createArray('StorageV2', 'FileStorage'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').storageAccountResourceId, '/')[2], split(parameters('automation').storageAccountResourceId, '/')[4]), 'Microsoft.Storage/storageAccounts', last(split(parameters('automation').storageAccountResourceId, '/'))), '2023-05-01', 'full').kind), or(equals(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').storageAccountResourceId, '/')[2], split(parameters('automation').storageAccountResourceId, '/')[4]), 'Microsoft.Storage/storageAccounts', last(split(parameters('automation').storageAccountResourceId, '/'))), '2023-05-01').publicNetworkAccess, 'Disabled'), equals(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').storageAccountResourceId, '/')[2], split(parameters('automation').storageAccountResourceId, '/')[4]), 'Microsoft.Storage/storageAccounts', last(split(parameters('automation').storageAccountResourceId, '/'))), '2023-05-01').networkAcls.defaultAction, 'Deny')), equals(toLower(replace(reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').storageAccountResourceId, '/')[2], split(parameters('automation').storageAccountResourceId, '/')[4]), 'Microsoft.Storage/storageAccounts', last(split(parameters('automation').storageAccountResourceId, '/'))), '2023-05-01', 'full').location, ' ', '')), toLower(replace(parameters('infrastructure').location, ' ', '')))), false()))]"
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "parameters": {
+                    "approved": {
+                      "type": "bool",
+                      "allowedValues": [
+                        true
+                      ],
+                      "metadata": {
+                        "description": "MCP automation requires distinct preapproved setup identity, ACI subnet and private/restricted setup File Storage. Existing workload resources are never converted."
+                      }
+                    }
+                  },
+                  "resources": []
+                }
+              }
+            },
+            {
+              "type": "Microsoft.Resources/deploymentScripts",
+              "apiVersion": "2023-08-01",
+              "name": "azbrief-mcp-authentication",
+              "location": "[parameters('infrastructure').location]",
+              "tags": "[parameters('infrastructure').tags]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').identityResourceId, '/')[2], split(parameters('automation').identityResourceId, '/')[4]), 'Microsoft.ManagedIdentity/userAssignedIdentities', last(split(parameters('automation').identityResourceId, '/'))))]": {}
+                }
+              },
+              "kind": "AzureCLI",
+              "properties": {
+                "azCliVersion": "2.89.1",
+                "forceUpdateTag": "[parameters('runId')]",
+                "timeout": "PT15M",
+                "retentionInterval": "P1D",
+                "cleanupPreference": "Always",
+                "storageAccountSettings": {
+                  "storageAccountName": "[last(split(parameters('automation').storageAccountResourceId, '/'))]"
+                },
+                "containerSettings": {
+                  "subnetIds": [
+                    {
+                      "id": "[parameters('automation').subnetResourceId]"
+                    }
+                  ]
+                },
+                "environmentVariables": [
+                  {
+                    "name": "AZBRIEF_MCP_SETUP",
+                    "value": "[string(createObject('tenantId', tenant().tenantId, 'installerPrincipalId', reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(parameters('automation').identityResourceId, '/')[2], split(parameters('automation').identityResourceId, '/')[4]), 'Microsoft.ManagedIdentity/userAssignedIdentities', last(split(parameters('automation').identityResourceId, '/'))), '2023-01-31').principalId, 'projectPrincipalId', parameters('infrastructure').foundryProjectPrincipalId, 'controlPlanePrincipalId', parameters('infrastructure').controlPlanePrincipalId, 'mcpPrincipalId', parameters('mcpPrincipalId'), 'workloadResourceGroupId', resourceGroup().id, 'uniqueName', parameters('infrastructure').azureMcpEntraAppUniqueName, 'appRoleId', guid(subscription().id, parameters('infrastructure').azureMcpEntraAppUniqueName, variables('roleValue')), 'scopeId', guid(subscription().id, parameters('infrastructure').azureMcpEntraAppUniqueName, variables('scopeValue'))))]"
+                  }
+                ],
+                "scriptContent": "[format('set -euo pipefail\npython3 - <<''AZBRIEF_PY''\n{0}\nAZBRIEF_PY\n', variables('$fxv#0'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deployments', 'v2-mcp-automation-prerequisites')]"
+              ]
+            },
+            {
+              "type": "Microsoft.Resources/deployments",
+              "apiVersion": "2025-04-01",
+              "name": "v2-mcp-automatic-handoff",
+              "properties": {
+                "expressionEvaluationOptions": {
+                  "scope": "inner"
+                },
+                "mode": "Incremental",
+                "parameters": {
+                  "infrastructure": {
+                    "value": "[parameters('infrastructure')]"
+                  },
+                  "infrastructureOptions": {
+                    "value": "[parameters('infrastructureOptions')]"
+                  },
+                  "authentication": {
+                    "value": {
+                      "clientId": "[reference(resourceId('Microsoft.Resources/deploymentScripts', 'azbrief-mcp-authentication'), '2023-08-01').outputs.clientId]",
+                      "servicePrincipalId": "[reference(resourceId('Microsoft.Resources/deploymentScripts', 'azbrief-mcp-authentication'), '2023-08-01').outputs.servicePrincipalId]",
+                      "appRoleId": "[reference(resourceId('Microsoft.Resources/deploymentScripts', 'azbrief-mcp-authentication'), '2023-08-01').outputs.appRoleId]"
+                    }
+                  }
+                },
+                "template": {
+                  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                  "contentVersion": "1.0.0.0",
+                  "metadata": {
+                    "_generator": {
+                      "name": "bicep",
+                      "version": "0.46.1.21595",
+                      "templateHash": "9502906443495224412"
+                    }
+                  },
+                  "parameters": {
+                    "infrastructure": {
+                      "type": "object"
+                    },
+                    "infrastructureOptions": {
+                      "type": "object"
+                    },
+                    "authentication": {
+                      "type": "object"
+                    }
+                  },
+                  "variables": {
+                    "accountId": "[coalesce(tryGet(parameters('infrastructure'), 'foundryAccountResourceId'), resourceId('Microsoft.CognitiveServices/accounts', parameters('infrastructure').foundryAccountName))]"
+                  },
+                  "resources": [
+                    {
+                      "type": "Microsoft.Resources/deployments",
+                      "apiVersion": "2025-04-01",
+                      "name": "[format('v2-mcp-project-connection-{0}', uniqueString(variables('accountId'), parameters('infrastructure').projectName))]",
+                      "subscriptionId": "[split(variables('accountId'), '/')[2]]",
+                      "resourceGroup": "[split(variables('accountId'), '/')[4]]",
+                      "properties": {
+                        "expressionEvaluationOptions": {
+                          "scope": "inner"
+                        },
+                        "mode": "Incremental",
+                        "parameters": {
+                          "foundryAccountName": {
+                            "value": "[parameters('infrastructure').foundryAccountName]"
+                          },
+                          "projectName": {
+                            "value": "[parameters('infrastructure').projectName]"
+                          },
+                          "connectionName": {
+                            "value": "[parameters('infrastructure').azureMcpProjectConnectionName]"
+                          },
+                          "serverUrl": {
+                            "value": "[parameters('infrastructure').azureMcpServerUrl]"
+                          },
+                          "clientId": {
+                            "value": "[parameters('authentication').clientId]"
+                          }
+                        },
+                        "template": {
+                          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                          "contentVersion": "1.0.0.0",
+                          "metadata": {
+                            "_generator": {
+                              "name": "bicep",
+                              "version": "0.46.1.21595",
+                              "templateHash": "11542901153444844145"
+                            }
+                          },
+                          "parameters": {
+                            "foundryAccountName": {
+                              "type": "string"
+                            },
+                            "projectName": {
+                              "type": "string"
+                            },
+                            "connectionName": {
+                              "type": "string"
+                            },
+                            "serverUrl": {
+                              "type": "string"
+                            },
+                            "clientId": {
+                              "type": "string"
+                            }
+                          },
+                          "resources": [
+                            {
+                              "type": "Microsoft.CognitiveServices/accounts/projects/connections",
+                              "apiVersion": "2025-10-01-preview",
+                              "name": "[format('{0}/{1}/{2}', parameters('foundryAccountName'), parameters('projectName'), parameters('connectionName'))]",
+                              "properties": {
+                                "category": "RemoteTool",
+                                "authType": "ProjectManagedIdentity",
+                                "target": "[parameters('serverUrl')]",
+                                "audience": "[format('api://{0}', parameters('clientId'))]",
+                                "isSharedToAll": true
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    },
+                    {
+                      "type": "Microsoft.Resources/deployments",
+                      "apiVersion": "2025-04-01",
+                      "name": "v2-mcp-ready-tags",
+                      "properties": {
+                        "expressionEvaluationOptions": {
+                          "scope": "inner"
+                        },
+                        "mode": "Incremental",
+                        "parameters": {
+                          "infrastructure": {
+                            "value": "[parameters('infrastructure')]"
+                          },
+                          "infrastructureState": {
+                            "value": "ready"
+                          },
+                          "infrastructureOptions": {
+                            "value": "[union(parameters('infrastructureOptions'), createObject('azureMcpClientId', parameters('authentication').clientId, 'azureMcpServicePrincipalId', parameters('authentication').servicePrincipalId, 'azureMcpAppRoleId', parameters('authentication').appRoleId))]"
+                          }
+                        },
+                        "template": {
+                          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+                          "contentVersion": "1.0.0.0",
+                          "metadata": {
+                            "_generator": {
+                              "name": "bicep",
+                              "version": "0.46.1.21595",
+                              "templateHash": "8143397122899810251"
+                            },
+                            "description": "Non-secret AzBrief v2 infrastructure handoff. Preserve unrelated resource-group tags."
+                          },
+                          "parameters": {
+                            "infrastructure": {
+                              "type": "object",
+                              "metadata": {
+                                "description": "Workload resource-group contract, including exact IDs of shared parents in other RGs. Never include application secrets."
+                              }
+                            },
+                            "infrastructureState": {
+                              "type": "string",
+                              "defaultValue": "ready",
+                              "allowedValues": [
+                                "foundation",
+                                "mcp_pending",
+                                "ready"
+                              ]
+                            },
+                            "infrastructureOptions": {
+                              "type": "object",
+                              "defaultValue": {},
+                              "metadata": {
+                                "description": "Explicit allow-listed non-secret deployment options, serialized in bounded tag values."
+                              }
+                            },
+                            "optionsJson": {
+                              "type": "string",
+                              "defaultValue": "[string(parameters('infrastructureOptions'))]",
+                              "maxLength": 2048
+                            },
+                            "resourcesJson": {
+                              "type": "string",
+                              "defaultValue": "[string(createObject('foundryAccountResourceId', parameters('infrastructure').foundryAccountResourceId, 'storageAccountResourceId', parameters('infrastructure').storageAccountResourceId, 'containerAppsEnvironmentResourceId', parameters('infrastructure').containerAppsEnvironmentResourceId, 'communicationServicesResourceId', parameters('infrastructure').communicationServicesResourceId, 'logAnalyticsWorkspaceResourceId', parameters('infrastructure').logAnalyticsWorkspaceResourceId, 'emailDomainResourceId', parameters('infrastructure').emailDomainResourceId, 'stateContainerName', parameters('infrastructure').stateContainerName, 'archiveContainerName', parameters('infrastructure').archiveContainerName))]",
+                              "maxLength": 2048
+                            }
+                          },
+                          "variables": {
+                            "optionsTags": "[toObject(range(0, 8), lambda('index', format('azbrief.v2.options{0}', lambdaVariables('index'))), lambda('index', take(skip(parameters('optionsJson'), mul(lambdaVariables('index'), 256)), 256)))]",
+                            "resourceTags": "[toObject(range(0, div(add(length(parameters('resourcesJson')), 255), 256)), lambda('index', format('azbrief.v2.resources{0}', lambdaVariables('index'))), lambda('index', take(skip(parameters('resourcesJson'), mul(lambdaVariables('index'), 256)), 256)))]",
+                            "contractTags": "[union(createObject('azbrief.v2.schema', '2', 'azbrief.v2.profile', 'kt-private-v2', 'azbrief.v2.state', parameters('infrastructureState'), 'azbrief.v2.applicationState', coalesce(tryGet(coalesce(resourceGroup().tags, createObject()), 'azbrief.v2.applicationState'), 'not_deployed'), 'azbrief.v2.lastApplicationDeploymentAt', coalesce(tryGet(coalesce(resourceGroup().tags, createObject()), 'azbrief.v2.lastApplicationDeploymentAt'), ''), 'azbrief.v2.deployment', parameters('infrastructure').deploymentName, 'azbrief.v2.location', parameters('infrastructure').location, 'azbrief.v2.environment', parameters('infrastructure').containerAppsEnvironmentName, 'azbrief.v2.app', parameters('infrastructure').containerAppName, 'azbrief.v2.job', parameters('infrastructure').schedulerJobName, 'azbrief.v2.identity', last(split(parameters('infrastructure').controlPlaneIdentityResourceId, '/')), 'azbrief.v2.storage', parameters('infrastructure').storageAccountName, 'azbrief.v2.cosmos', parameters('infrastructure').cosmosAccountName, 'azbrief.v2.search', parameters('infrastructure').searchServiceName, 'azbrief.v2.workspace', parameters('infrastructure').logAnalyticsWorkspaceName, 'azbrief.v2.insights', parameters('infrastructure').applicationInsightsName, 'azbrief.v2.acs', parameters('infrastructure').communicationServicesName, 'azbrief.v2.email', parameters('infrastructure').emailServiceName, 'azbrief.v2.foundry', parameters('infrastructure').foundryAccountName, 'azbrief.v2.project', parameters('infrastructure').projectName, 'azbrief.v2.hosted', parameters('infrastructure').foundryHostedAgentName, 'azbrief.v2.coreModel', parameters('infrastructure').modelDeploymentName, 'azbrief.v2.simpleModel', parameters('infrastructure').simpleModelDeploymentName, 'azbrief.v2.vnetRg', split(parameters('infrastructure').virtualNetworkResourceId, '/')[4], 'azbrief.v2.vnet', last(split(parameters('infrastructure').virtualNetworkResourceId, '/')), 'azbrief.v2.peSubnet', last(split(parameters('infrastructure').privateEndpointSubnetId, '/')), 'azbrief.v2.foundrySubnet', last(split(parameters('infrastructure').foundrySubnetResourceId, '/')), 'azbrief.v2.appSubnet', last(split(parameters('infrastructure').infrastructureSubnetId, '/')), 'azbrief.v2.acaPeEnabled', toLower(string(parameters('infrastructure').deployContainerAppsPrivateEndpoint)), 'azbrief.v2.mcpUrl', parameters('infrastructure').azureMcpServerUrl, 'azbrief.v2.mcpConnection', parameters('infrastructure').azureMcpProjectConnectionName, 'azbrief.v2.mcpApp', parameters('infrastructure').azureMcpContainerAppName, 'azbrief.v2.mcpIdentity', parameters('infrastructure').azureMcpIdentityName), variables('optionsTags'), variables('resourceTags'))]"
+                          },
+                          "resources": [
+                            {
+                              "type": "Microsoft.Resources/tags",
+                              "apiVersion": "2025-04-01",
+                              "name": "default",
+                              "properties": {
+                                "tags": "[union(coalesce(resourceGroup().tags, createObject()), variables('contractTags'))]"
+                              }
+                            }
+                          ],
+                          "outputs": {
+                            "tagKeys": {
+                              "type": "array",
+                              "value": "[objectKeys(variables('contractTags'))]"
+                            }
+                          }
+                        }
+                      },
+                      "dependsOn": [
+                        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', split(variables('accountId'), '/')[2], split(variables('accountId'), '/')[4]), 'Microsoft.Resources/deployments', format('v2-mcp-project-connection-{0}', uniqueString(variables('accountId'), parameters('infrastructure').projectName)))]"
+                      ]
+                    }
+                  ],
+                  "outputs": {
+                    "authentication": {
+                      "type": "object",
+                      "value": "[union(parameters('authentication'), createObject('infrastructureState', 'ready', 'applicationReady', false()))]"
+                    }
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Resources/deploymentScripts', 'azbrief-mcp-authentication')]"
+              ]
+            }
+          ],
+          "outputs": {
+            "authentication": {
+              "type": "object",
+              "value": "[reference(resourceId('Microsoft.Resources/deployments', 'v2-mcp-automatic-handoff'), '2025-04-01').outputs.authentication.value]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'v2-mcp-exact-pending-core')]"
+      ]
+    }
+  ],
+  "outputs": {
+    "authentication": {
+      "type": "object",
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'v2-mcp-authorized-portal-setup'), '2025-04-01').outputs.authentication.value]"
+    }
+  }
+}

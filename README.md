@@ -20,6 +20,24 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [v2 deployment guide](infra/v2/README.md): complete infrastructure in the same resource group before installing or updating the application.
 
+**Restricted customer identity policy:** deployment must not require arbitrary Entra app
+registrations, SSO or an authentication gateway. The current MCP and automatic web setup
+do not meet that policy. The [target design](infra/v2/RESTRICTED_IDENTITY_DESIGN.md) retains
+Azure MCP with private network-only caller trust for the exact dedicated Foundry subnet,
+keeps web/API authentication separate, and manages settings through ARM environment/Secrets
+configuration. Subnet trust covers all eligible workloads, not one authenticated Agent.
+These changes are not implemented; do not remove authentication from the current deployment.
+The target initial Foundry publishing mode allows only approved inbound VNet/subnet and public
+IPv4/CIDR sources with default deny, while preserving outbound VNet Injection. Exact Hosted
+compatibility and policy acceptance remain unverified; Storage and MCP stay private. Close the
+temporary public publishing path after private runtime acceptance, not by an assumed ACL expiry.
+
+The [KT single-entry coordinator](scripts/deploy_kt_once.ps1) now provides an offline plan and
+fail-stop stage orchestration. Its default `Plan`/`-WhatIf` never calls Azure. Current restricted
+profile deployment is blocked before Azure access because the MCP trust mode, environment-only
+Admin settings and private acceptance/public-access closure are not implemented. Local initial
+Foundry ingress validation is implemented, but no live KT deployment success is claimed.
+
 Infrastructure independently offers **new or existing** Foundry, Communication Services,
 Container Apps Environment and Storage. Existing resources may be in other resource groups
 in the same subscription; their **full ARM IDs** are saved in the workload RG's tag handoff.
@@ -120,6 +138,15 @@ passes the zero-model/zero-project checks; it never moves the existing region.
 **Complete existing foundation** link for the same RG, finish authorized MCP preparation,
 and confirm `azbrief.v2.state=ready` before using the application button. An application
 Validation failure with `portalValidationPassed=false` is not permission to force that value.
+
+In the existing directory-enabled profile, MCP preparation need not be a customer-run CLI command. Foundation can explicitly select an
+already-authorized **deployment-only Managed Identity** and existing private ACI/File Storage
+execution resources; completion then configures MCP authentication and reaches `ready` automatically.
+Existing `mcp_pending` installations have a targeted automatic-setup link in the app form.
+The tenant's initial Graph authorization remains an administrator decision: the template never
+grants itself permissions, changes private networking or gives directory rights to runtime identities.
+This profile is not an alternative for customers prohibiting app registration, SSO or gateways.
+See [automatic MCP setup](infra/v2/README.md#automatic-mcp-authentication-without-customer-cli).
 
 Public control-plane image reference (registry `Anonymous` pull, port 8000, `/health`):
 `ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3`.

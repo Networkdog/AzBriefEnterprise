@@ -20,6 +20,24 @@ Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication S
 
 [v2 배포 가이드](infra/v2/README.md): 같은 리소스 그룹의 인프라 준비를 완료한 뒤 앱을 설치하거나 업데이트합니다.
 
+**고객 인증 정책 제약:** 배포 과정에서 임의의 Entra 앱 등록, SSO, 인증 게이트웨이를
+요구해서는 안 됩니다. 현재 MCP·웹 자동 구성은 이 정책을 충족하지 못합니다.
+[목표 설계](infra/v2/RESTRICTED_IDENTITY_DESIGN.md)는 Azure MCP를 유지하되, 정확한 Foundry
+전용 서브넷만 신뢰하는 사설 네트워크 경계에서 MCP 호출자 인증을 생략합니다. 이는 특정
+Agent의 신원이 아니라 해당 서브넷의 허용된 워크로드 전체를 신뢰한다는 뜻입니다.
+웹·API 인증은 별도로 유지하고 관리 설정은 ARM 환경변수·Secrets로 변경합니다.
+아직 구현되지 않았으므로 현재 배포의 인증을 해제하지 마십시오.
+초기 Foundry 게시에는 승인된 VNet·서브넷과 공인 IPv4/CIDR만 허용하고 나머지는 거부하는
+모드를 설계합니다. 아웃바운드 VNet Injection은 유지하며 정확한 Hosted 조합과 정책 허용은
+검증 전입니다. Storage·MCP는 계속 사설로 유지하고, 사설 실행 검증 후 임시 공용 게시 경로를
+닫습니다. ACL 규칙이 자동으로 만료된다고 가정하지 않습니다.
+
+[KT 단일 진입 스크립트](scripts/deploy_kt_once.ps1)는 오프라인 계획과 단계별 실행·실패 중단을
+제공합니다. 기본 `Plan`과 `-WhatIf`는 Azure를 호출하지 않습니다. 현재는 MCP 서브넷 신뢰
+모드·환경변수 전용 Admin 설정·사설 인수 및 공용 경로 폐쇄가 미구현이므로 실제 배포를
+Azure 접근 전에 차단합니다. 초기 Foundry 인바운드 입력 검증은 구현됐지만 실제 KT 배포
+성공을 뜻하지는 않습니다.
+
 인프라에서 Foundry, Communication Services, Container Apps Environment, Storage를 각각
 **신규 생성 또는 기존 사용**으로 선택합니다. 같은 구독의 다른 RG에 있는 리소스도 선택할 수
 있으며, **전체 ARM ID**를 워크로드 RG의 인계 태그에 저장합니다. 공유 부모 리소스는 다시
@@ -111,6 +129,15 @@ Portal 업데이트는 App·Job의 기존 값을 독립적인 서버 측 보안 
 링크에서 같은 RG를 선택하고 승인된 MCP 인증 준비까지 마친 뒤 `azbrief.v2.state=ready`를
 확인해야 앱 버튼을 사용할 수 있습니다. 앱 Validation의 `portalValidationPassed=false`는
 이 값을 강제로 바꾸라는 뜻이 아닙니다.
+
+기존 디렉터리 구성 허용 프로필에서는 MCP 인증 준비를 고객이 반드시 CLI로 실행할 필요는 없습니다. 기반 준비에서 **사전 승인된
+배포 전용 Managed Identity**와 기존 사설 ACI·실행 File Storage를 명시적으로 선택하면 기존
+기반 완성에서 인증·연결까지 자동 구성하고 `ready`로 전환합니다. 이미 `mcp_pending`인
+설치는 앱 폼의 자동 준비 링크로 인증만 이어서 구성할 수 있습니다. 최초 Graph 권한 승인은
+테넌트 관리자의 결정으로 남으며, 템플릿이 자기 권한을 확대하거나 사설 네트워크를 변경하거나
+런타임 Identity에 디렉터리 권한을 주지는 않습니다.
+이 프로필은 앱 등록·SSO·게이트웨이를 금지하는 고객 환경의 대안이 아닙니다.
+[자동 구성 안내](infra/v2/README.md#automatic-mcp-authentication-without-customer-cli)를 확인하십시오.
 
 공개 제어면 이미지 참조(레지스트리 `Anonymous` pull, 포트 8000, `/health`):
 `ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3`.

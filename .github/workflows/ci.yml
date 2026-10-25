@@ -101,7 +101,7 @@ jobs:
           fi
       - name: V2 compiled ARM templates match the Bicep sources
         run: |
-          for template in infrastructure application runtime-roles mcp-authentication; do
+          for template in infrastructure application runtime-roles mcp-authentication mcp-authentication-automatic mcp-authentication-portal; do
             az bicep build --file "infra/v2/${template}.bicep" --outfile "/tmp/v2-${template}.json"
             if ! diff -q "/tmp/v2-${template}.json" "infra/v2/${template}.json" >/dev/null; then
               echo "::error::infra/v2/${template}.json is stale. Rebuild from its Bicep source."

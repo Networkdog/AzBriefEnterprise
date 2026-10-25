@@ -1,5 +1,30 @@
 # Two-Stage Deployment v2
 
+**Customer identity restriction:** arbitrary Entra app registration, SSO and authentication
+gateways are prohibited. The current templates and automatic setup still depend on directory
+applications and do not satisfy this requirement. The [target design](RESTRICTED_IDENTITY_DESIGN.md)
+retains private Azure MCP with an explicitly accepted Foundry-subnet trust boundary and no MCP
+caller authentication after verified isolation. Web/API authentication remains required, and
+administrator configuration uses ARM environment/Secrets changes without operator Blob access.
+This is not implemented. The directory-enabled workflows below describe current behavior,
+not an approved workaround; do not run them in the restricted environment or disable current auth.
+
+The local Bicep/CLI `foundryPublishingAccess` guard now accepts an explicit initial inbound
+Foundry allow-list for new managed-data accounts. Empty input retains private-only access.
+The guard normalizes public IPv4/CIDRs, verifies existing client subnets read-only, retains
+default deny, injection and PEs, saves the policy, and refuses shared-account widening or
+changed completion inputs. The pinned compiler supports subnet reads through a dedicated
+validation child module. New Portal foundation inputs stay private-only; completion preserves
+an already saved publishing policy. This is not live Hosted/Policy acceptance or complete
+restricted-profile support. Storage/MCP stay private and public access still needs explicit
+closure after verified private-path acceptance.
+
+The [single-entry script](../../scripts/deploy_kt_once.ps1) defaults to offline `Plan` and reports
+unimplemented release dependencies before Azure access. Current `Preflight`/`Deploy` are blocked
+by directory-enabled MCP and Blob-managed Admin settings, not by a missing installer permission.
+Do not turn those blockers off. Synthetic orchestration tests establish step ordering and
+failure handling only, not actual tenant deployment, private connectivity or email acceptance.
+
 An opt-in private profile with new/existing VNet selection, derived from the existing
 [KT template](../kt/README.md) and [Enterprise template](../enterprise/main.bicep).
 It does not replace their Portal buttons or adopt an existing KT installation.
@@ -17,9 +42,12 @@ The infrastructure command internally creates the foundation, waits for the acco
 Capability Host, and then completes models/project/Host/RBAC. These are implementation
 steps inside one infrastructure operation, not another application stage. Do not
 precreate the project or replay the account's custom subdomain.
-The Portal ARM excludes all Microsoft Graph resources. For managed MCP, core completion
-stops at `mcp_pending` until the authorized CLI prepares directory authentication once.
-The full infrastructure CLI runs this automatically. App install always requires `ready`.
+The Portal ARM excludes direct Microsoft Graph extension resources. With explicit, preapproved
+MCP automation selected during foundation, completion runs the directory work under a separate
+setup identity and reaches `ready` without a customer CLI step. Otherwise core completion stops
+at `mcp_pending`. Existing pending installations can use the application's **MCP authentication
+automatic setup** continuation link; the legacy authorized CLI path remains supported.
+App install always requires `ready`; automation never substitutes a forced tag or disabled auth.
 
 The Hosted Agent identity is created by the platform only when its code is first
 published. Its project Foundry User, component Monitoring Metrics Publisher and
@@ -41,6 +69,10 @@ and separately approved evidence scopes remain operator-managed.
 | [mcp-connection.bicep](mcp-connection.bicep) | Exact project-RG RemoteTool connection after authorized Graph preparation |
 | [resource-group-tags.bicep](resource-group-tags.bicep) | Foundation, mcp_pending and ready handoff, including bounded saved options |
 | [mcp-authentication.bicep](mcp-authentication.bicep) | [mcp-authentication.json](mcp-authentication.json), CLI-only Graph app/project role/RemoteTool connection and ready promotion |
+| [mcp-authentication-automatic.bicep](mcp-authentication-automatic.bicep) | [mcp-authentication-automatic.json](mcp-authentication-automatic.json), bounded setup using an already-authorized deployment UAMI in an existing private execution environment |
+| [mcp-authentication-portal.bicep](mcp-authentication-portal.bicep) | [mcp-authentication-portal.json](mcp-authentication-portal.json) and generated [MCP setup form](mcp-authentication.createUiDefinition.json), exact-pending-core continuation without infrastructure replay |
+| [mcp-authentication-handoff.bicep](mcp-authentication-handoff.bicep) | Shared exact RemoteTool connection and success-only `ready` handoff for automatic and CLI setup |
+| [provision_mcp_identity.py](../../scripts/provision_mcp_identity.py) | Standalone setup code; owned-registration checks, no client secrets, no Graph permission grants, bounded Graph requests |
 | [application.bicep](application.bicep) | [application.json](application.json), repeatable App/Job installation and updates |
 | [runtime-roles.bicep](runtime-roles.bicep) | [runtime-roles.json](runtime-roles.json), late Hosted permissions |
 | [monitoring-role.bicep](monitoring-role.bicep), [subscription-reader.bicep](subscription-reader.bicep) | Scoped role modules, never application resources |
@@ -632,7 +664,64 @@ because the account/project do not exist yet. `deploy` runs fresh preflight, ARM
 and what-if immediately before **each** internal create operation. All deployments
 are Incremental; no Complete mode, resource deletion or automatic migration is used.
 
-For Portal deployments, complete the two core steps first, then prepare MCP authentication
+### Automatic MCP Authentication Without Customer CLI
+
+During foundation, select **사전 승인된 배포 Identity로 MCP 인증을 자동 구성합니다.**
+and select the already-approved setup identity, execution VNet/ACI subnet and separate setup
+File Storage. These three full resource IDs are saved as optional `mcpAutomation` options.
+Completion then creates/reuses the owned MCP registration/service principal, grants only the
+workload project's MCP app role, verifies the directory state, creates the project RemoteTool
+connection and writes `ready`. No application/Hosted identity receives directory permissions.
+
+The tenant administrator must first approve the setup identity's Graph application permissions:
+`Application.ReadWrite.OwnedBy`, `Application.Read.All` and
+`AppRoleAssignment.ReadWrite.All` (or the explicitly accepted `Application.ReadWrite.All`
+substitute for application read/owned-write). The role-assignment permission has tenant-wide
+reach: this is a material tenant-admin approval, **not** an Azure RG Owner/Reader permission
+and not a role that this template assigns to itself. Do not select an ordinary runtime identity.
+No client secret, admin consent, directory role or Graph API grant is created by automation.
+
+Private execution uses `Microsoft.Resources/deploymentScripts@2023-08-01` with its own UAMI,
+an **existing ACI-delegated subnet** and an **existing separate private/restricted File Storage**
+account in the workload region. The administrator must prepare required file-share data access
+(the documented Storage File Data Privileged Contributor grant), supported DNS/egress to Graph,
+Entra, deployment-script images/storage, and the caller's setup/identity-assignment permissions.
+The template never converts App/Foundry subnets, enables public access, changes the existing
+Storage's authentication, grants file access, or creates a public fallback storage account.
+Temporary execution containers are cleaned up; selected shared setup resources are retained.
+See [private deployment-script prerequisites](https://learn.microsoft.com/azure/azure-resource-manager/bicep/deployment-script-vnet)
+and [Graph Bicep authorization](https://learn.microsoft.com/graph/templates/bicep/concept-permissions-and-privileges).
+
+Equivalent protected infrastructure parameter input:
+
+```json
+"mcpAutomation": {
+  "value": {
+    "identityResourceId": "<approved deployment UAMI ARM ID>",
+    "subnetResourceId": "<approved ACI-only subnet ARM ID>",
+    "storageAccountResourceId": "<separate approved setup File Storage ARM ID>"
+  }
+}
+```
+
+An empty/omitted value preserves the legacy path; saved setup resources are immutable during
+normal foundation completion. The generated app warning links to a **pending-core-only Portal
+continuation** for older installations. Select the same RG and approved setup resources there;
+it reads the successful saved core deployment and live project identity, performs authentication
+only and never replays models, parents or App/Job. Existing nonempty automation choices cannot
+be redirected. Missing/denied/paged directory state, changed owners/audiences, missing consent or
+an incomplete setup environment fail closed and leave `mcp_pending`; `ready` is written only after
+the owned app, exact app-role assignment and project connection succeed.
+
+The deployment-script image runs standalone standard-library Python rather than importing the
+application or installing packages. It emits only a fixed error event/status and non-secret
+client/service-principal/role IDs. Bearer tokens, raw Graph errors and credentials are never logged.
+Local tests/compilation do not establish live admin consent, ACI policy, file-share access,
+private routing or successful deployment-script execution; those remain explicit acceptance gates.
+
+### Legacy Authorized CLI Preparation
+
+Without the automatic option, complete the two core steps first, then prepare MCP authentication
 once from an approved CLI identity with the required directory privileges:
 
 ```powershell

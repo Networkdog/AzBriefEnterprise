@@ -13,6 +13,13 @@ from scripts.portal_policy import build_policy, evidence_expression
 from scripts.ui_expressions import compile_expression
 
 ROOT = Path(__file__).resolve().parents[1]
+MCP_AUTOMATION_PORTAL_URL = (
+    "https://portal.azure.com/#create/Microsoft.Template/uri/"
+    "https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain"
+    "%2Finfra%2Fv2%2Fmcp-authentication-portal.json/createUIDefinitionUri/"
+    "https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain"
+    "%2Finfra%2Fv2%2Fmcp-authentication.createUiDefinition.json"
+)
 INFRASTRUCTURE_REGION = (
     "replace(if(equals(coalesce(steps('network').virtualNetworkMode, 'existing'), 'new'), "
     "toLower(coalesce(location(), '')), "
@@ -2475,6 +2482,233 @@ def _application_saved_setup(parameters: dict[str, Any]) -> None:
     )
 
 
+def _mcp_automation_controls(parameters: dict[str, Any]) -> None:
+    step = next((item for item in parameters["steps"] if item["name"] == "options"), None)
+    if step is None:
+        return
+    names = {
+        "mcpSetupEnabled",
+        "mcpSetupNotice",
+        "mcpSetupIdentity",
+        "mcpSetupStorage",
+        "mcpSetupNetwork",
+        "mcpSetupNetworkApi",
+        "mcpSetupSubnet",
+        "mcpSetupAccepted",
+    }
+    step["elements"] = [item for item in step["elements"] if item["name"] not in names]
+    foundation = "equals(basics('infrastructureStage'), 'foundation')"
+    enabled = "equals(steps('options').mcpSetupEnabled, true)"
+    visible = f"[and({foundation}, {enabled})]"
+    step["elements"].extend(
+        [
+            {
+                "name": "mcpSetupEnabled",
+                "type": "Microsoft.Common.CheckBox",
+                "label": "사전 승인된 배포 Identity로 MCP 인증을 자동 구성합니다.",
+                "defaultValue": False,
+                "visible": f"[{foundation}]",
+            },
+            {
+                "name": "mcpSetupNotice",
+                "type": "Microsoft.Common.InfoBox",
+                "visible": visible,
+                "options": {
+                    "icon": "Warning",
+                    "text": (
+                        "기존 기반 완성에서 MCP 앱·호출 역할·연결까지 자동 준비하므로 별도 CLI 명령이 "
+                        "필요 없습니다. 테넌트 관리자가 Graph 권한을 사전 승인한 배포 전용 Identity, "
+                        "ACI 전용 서브넷과 별도 File Storage를 선택하십시오. 템플릿은 관리자 동의·역할 "
+                        "권한·네트워크를 자동 확대하지 않습니다. App/Job/MCP 런타임 Identity나 "
+                        "애플리케이션 Storage는 사용할 수 없습니다. 권한·연결 실패 시 ready로 전환하지 않습니다."
+                    ),
+                },
+            },
+        ]
+    )
+    for name, label, resource_type in (
+        (
+            "mcpSetupIdentity",
+            "사전 승인된 배포 전용 Identity",
+            "Microsoft.ManagedIdentity/userAssignedIdentities",
+        ),
+        (
+            "mcpSetupStorage",
+            "사전 준비한 별도 실행 File Storage",
+            "Microsoft.Storage/storageAccounts",
+        ),
+        ("mcpSetupNetwork", "사전 준비한 ACI 실행 VNet", "Microsoft.Network/virtualNetworks"),
+    ):
+        step["elements"].append(
+            {
+                "name": name,
+                "type": "Microsoft.Solutions.ResourceSelector",
+                "label": label,
+                "resourceType": resource_type,
+                "visible": visible,
+                "options": {"filter": {"subscription": "onBasics", "location": "all"}},
+            }
+        )
+    step["elements"].append(
+        {
+            "name": "mcpSetupNetworkApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+                "method": "GET",
+                "path": "[concat(steps('options').mcpSetupNetwork.id, '?api-version=2024-05-01')]",
+            },
+        }
+    )
+    network_step = next(item for item in parameters["steps"] if item["name"] == "network")
+    source = next(item for item in network_step["elements"] if item["name"] == "foundrySubnetName")
+    step["elements"].append(
+        {
+            "name": "mcpSetupSubnet",
+            "type": "Microsoft.Common.DropDown",
+            "label": "ACI 전용 실행 서브넷",
+            "visible": visible,
+            "defaultValue": source["defaultValue"],
+            "constraints": {
+                "required": True,
+                "allowedValues": source["constraints"]["allowedValues"].replace(
+                    "steps('network').virtualNetworkApi", "steps('options').mcpSetupNetworkApi"
+                ),
+            },
+        }
+    )
+    step["elements"].append(
+        {
+            "name": "mcpSetupAccepted",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "배포 Identity의 Graph·실행 Storage 권한과 사설 실행 경로를 사전 승인했습니다.",
+            "visible": visible,
+            "defaultValue": False,
+            "constraints": {
+                "required": True,
+                "validationMessage": "자동 구성의 사전 승인 범위를 확인하십시오.",
+            },
+        }
+    )
+    identity = "coalesce(steps('options').mcpSetupIdentity.id, '')"
+    storage = "coalesce(steps('options').mcpSetupStorage.id, '')"
+    network = "coalesce(steps('options').mcpSetupNetwork.id, '')"
+    subnet_name = "coalesce(steps('options').mcpSetupSubnet, '')"
+    subnet = f"concat({network}, '/subnets/', {subnet_name})"
+    automation = (
+        """parse(concat('{"identityResourceId":"', """
+        + identity
+        + """, '","storageAccountResourceId":"', """
+        + storage
+        + """, '","subnetResourceId":"', """
+        + subnet
+        + """, '"}'))"""
+    )
+    options, _, _ = _saved_chunks("contract", "options")
+    saved = f"coalesce({options}.mcpAutomation, parse('{{}}'))"
+    parameters["outputs"][
+        "mcpAutomation"
+    ] = f"[if({foundation}, if({enabled}, {automation}, parse('{{}}')), {saved})]"
+    parameters["outputs"]["foundryPublishingAccess"] = (
+        f"[if({foundation}, parse('{{}}'), "
+        f"coalesce({options}.foundryPublishingAccess, parse('{{}}')))]"
+    )
+    valid = _all(
+        "equals(steps('options').mcpSetupAccepted, true)",
+        _valid_resource_id(identity, "Microsoft.ManagedIdentity/userAssignedIdentities"),
+        _valid_resource_id(storage, "Microsoft.Storage/storageAccounts"),
+        _valid_resource_id(
+            network, "Microsoft.Network/virtualNetworks", "steps('options').mcpSetupNetworkApi"
+        ),
+        f"not(empty({subnet_name}))",
+        f"equals(length(filter(coalesce(steps('options').mcpSetupNetworkApi.properties.subnets, parse('[]')), "
+        f"(subnet) => and(equals(coalesce(subnet.name, ''), {subnet_name}), "
+        "equals(length(coalesce(subnet.properties.delegations, parse('[]'))), 1), "
+        "equals(coalesce(first(if(empty(coalesce(subnet.properties.delegations, parse('[]'))), "
+        "parse('[{\"properties\":{}}]'), subnet.properties.delegations)).properties.serviceName, ''), "
+        "'Microsoft.ContainerInstance/containerGroups')))), 1)",
+    )
+    _extend_guard(
+        parameters,
+        "mcpSetupEnabled",
+        f"if(and({foundation}, {enabled}), {valid}, true)",
+    )
+
+
+def mcp_authentication_ui(canonical: dict[str, Any]) -> dict[str, Any]:
+    """Build a pending-core-only continuation; it never replays infrastructure."""
+    parameters = canonical["parameters"]
+    contract = next(step for step in parameters["steps"] if step["name"] == "contract")
+    options = next(step for step in parameters["steps"] if step["name"] == "options")
+    selected = []
+    for element in options["elements"]:
+        if element["name"].startswith("mcpSetup") and element["name"] != "mcpSetupEnabled":
+            value = copy.deepcopy(element)
+            if value["type"] != "Microsoft.Solutions.ArmApiControl":
+                value["visible"] = True
+            selected.append(value)
+    subnet = next(value for value in selected if value["name"] == "mcpSetupSubnet")
+    subnet["constraints"]["validations"] = [
+        {
+            "isValid": "[and(equals(resourceGroup().mode, 'Existing'), equals(coalesce(steps('contract').resourceGroupApi.tags['azbrief.v2.state'], ''), 'mcp_pending'))]",
+            "message": "코어를 완료한 같은 mcp_pending RG만 선택하십시오. ready인 설치나 기반 준비를 다시 설정하지 않습니다.",
+        }
+    ]
+    source = parameters["outputs"]["mcpAutomation"].replace(
+        "steps('options').mcpSetupEnabled", "true"
+    )
+    result = {
+        "$schema": canonical["$schema"],
+        "handler": canonical["handler"],
+        "version": canonical["version"],
+        "parameters": {
+            "config": copy.deepcopy(parameters["config"]),
+            "basics": [],
+            "steps": [
+                {
+                    "name": "contract",
+                    "label": "배포 범위",
+                    "bladeTitle": "기존 MCP 인증 준비",
+                    "elements": [
+                        {
+                            "name": "pendingCoreNotice",
+                            "type": "Microsoft.Common.InfoBox",
+                            "options": {
+                                "icon": "Info",
+                                "text": "코어를 완료한 같은 기존 RG를 선택하십시오. 이 화면은 mcp_pending의 인증만 준비하며 모델·인프라·앱을 다시 배포하지 않습니다.",
+                            },
+                        },
+                        copy.deepcopy(
+                            next(
+                                item
+                                for item in contract["elements"]
+                                if item["name"] == "resourceGroupApi"
+                            )
+                        ),
+                    ],
+                },
+                {
+                    "name": "options",
+                    "label": "MCP 인증 자동 준비",
+                    "bladeTitle": "승인된 실행 환경",
+                    "elements": selected,
+                },
+            ],
+            "outputs": {
+                "automation": compile_expression(source, "foundation"),
+                "portalValidationPassed": "[equals(steps('options').mcpSetupAccepted, true)]",
+            },
+        },
+    }
+    result["parameters"]["config"]["basics"]["description"] = (
+        "기존 코어의 MCP 인증만 자동 준비합니다. 사전 승인된 배포 Identity와 실행 환경을 선택하면 "
+        "Graph 앱·프로젝트 호출 역할·연결을 확인한 뒤 ready로 전환합니다. "
+        "모델·인프라·앱을 다시 배포하거나 테넌트 권한을 자동 부여하지 않습니다."
+    )
+    result["parameters"]["config"]["basics"].setdefault("location", {})["visible"] = False
+    result["parameters"]["config"]["basics"]["resourceGroup"]["allowNew"] = False
+    return cast(dict[str, Any], _portable_tag_access(result))
+
+
 def _validate_control_names(parameters: dict[str, Any]) -> None:
     scopes = [("basics", parameters["basics"])]
     step_names: set[str] = set()
@@ -2498,6 +2732,7 @@ def specialize_ui(document: dict[str, Any], stage: str) -> dict[str, Any]:
     unavailable: set[tuple[str, str]] = set()
     if stage == "complete":
         unavailable.add(("network", "virtualNetworkApi"))
+        unavailable.add(("options", "mcpSetupNetworkApi"))
     for step in document["parameters"]["steps"]:
         for element in step["elements"]:
             visible = element.get("visible", True)
@@ -2552,7 +2787,7 @@ def specialize_ui(document: dict[str, Any], stage: str) -> dict[str, Any]:
     )
     _server_verified_inputs(parameters, document["parameters"])
     _validate_control_names(parameters)
-    return result
+    return cast(dict[str, Any], result)
 
 
 def _server_verified_inputs(parameters: dict[str, Any], canonical: dict[str, Any]) -> None:
@@ -2670,15 +2905,18 @@ def normalize_ui(
     _network_mode_controls(parameters, network_validations)
     _model_selection_controls(parameters)
     _shared_resource_controls(parameters)
+    _mcp_automation_controls(parameters)
     _application_deployment_tag_guard(parameters)
     for step in parameters["steps"]:
         for element in step["elements"]:
             if element["name"] == "stageNotice":
                 element["options"]["text"] = (
                     "인프라 내부 단계는 기반 준비 → 계정 host 준비 확인 → 기존 기반 완성입니다. "
-                    "Portal은 Microsoft Graph를 호출하지 않습니다. 코어 완성 후 mcp_pending 상태에서 "
-                    "권한이 확인된 CLI의 --prepare-mcp-authentication을 1회 실행하면 MCP 인증·연결을 "
-                    "자동 준비하고 ready로 전환합니다. 내부 ID를 수동 입력하거나 인증을 해제하지 않습니다."
+                    "사전 승인된 배포 Identity와 실행 환경으로 MCP 자동 구성을 선택하면 완료 단계에서 "
+                    "인증·연결까지 준비합니다. Portal 사용자 토큰으로 Graph를 직접 호출하지 않습니다. "
+                    "자동 구성을 선택하지 않은 mcp_pending 설치는 앱 안내의 자동 준비 링크 또는 "
+                    "승인된 CLI의 --prepare-mcp-authentication을 사용할 수 있습니다. "
+                    "권한을 자동 확대하거나 인증을 해제하지 않습니다."
                 )
         if step["name"] == "application":
             for element in step["elements"]:
@@ -2690,7 +2928,7 @@ def normalize_ui(
                         },
                         {
                             "isValid": "[not(equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.state'], ''), 'mcp_pending'))]",
-                            "message": "코어는 완료됐지만 MCP 인증 준비가 남았습니다. 같은 RG에서 승인된 CLI의 --prepare-mcp-authentication --mode deploy를 완료한 뒤 앱 배포를 다시 여십시오.",
+                            "message": "MCP 인증 준비가 남았습니다. 아래 'MCP 인증 자동 준비' 링크에서 사전 승인된 배포 Identity로 같은 RG의 인증을 완료하거나 기존 승인된 CLI 준비를 실행하십시오.",
                         },
                         {
                             "isValid": "[equals(coalesce(steps('application').resourceGroupApi.tags['azbrief.v2.state'], ''), 'ready')]",
@@ -2713,7 +2951,7 @@ def normalize_ui(
                         "text": (
                             "이 RG는 기반 준비만 완료됐습니다. 인프라 배포 화면에서 '기존 기반 완성'을 "
                             "같은 RG에 실행해 모델·프로젝트·BYO·권한을 먼저 완성하십시오. 모델 quota가 "
-                            "없으면 이 단계가 완료되지 않습니다. 이후 CLI MCP 인증 준비로 ready가 된 뒤 "
+                            "없으면 이 단계가 완료되지 않습니다. 이후 MCP 자동 구성 또는 승인된 CLI로 ready가 된 뒤 "
                             "앱을 배포합니다. portalValidationPassed나 상태 태그를 수동 변경하지 마십시오."
                         ),
                     },
@@ -2727,11 +2965,14 @@ def normalize_ui(
                     "options": {
                         "icon": "Warning",
                         "text": (
-                            "코어 인프라는 완료됐지만 MCP 인증 준비가 필요합니다. 같은 RG에서 "
+                            "MCP 인증 자동 준비: 이 안내의 링크에서 같은 RG와 사전 승인된 배포 Identity·"
+                            "ACI 서브넷·별도 실행 Storage를 선택하면 CLI 없이 인증을 완성할 수 있습니다. "
+                            "최초 테넌트 승인은 별도이며 권한을 자동 확대하지 않습니다. 기존 방식은 같은 RG에서 "
                             "python -m scripts.deploy_v2 infrastructure --prepare-mcp-authentication "
                             "--subscription <구독> --tenant <테넌트> --resource-group <RG> --mode deploy를 "
                             "권한이 확인된 CLI로 실행하십시오. ready가 되기 전에는 앱 설치를 차단합니다."
                         ),
+                        "uri": MCP_AUTOMATION_PORTAL_URL,
                     },
                 }
             )
@@ -2756,7 +2997,7 @@ def normalize_ui(
     _application_shared_binding_guard(parameters)
     if any(step["name"] == "contract" for step in parameters["steps"]):
         parameters["config"]["basics"]["description"] = (
-            "AzBrief v2 인프라입니다. 기반 준비 → 기존 기반 완성 → 승인된 MCP 인증 준비를 "
+            "AzBrief v2 인프라입니다. 기반 준비 → 기존 기반 완성에서 선택한 MCP 자동 구성 또는 승인된 인증 준비를 "
             "마친 뒤 같은 RG의 별도 앱 템플릿으로 설치·업데이트합니다. 인프라만으로 앱이나 "
             "Agent 코드가 설치되지는 않습니다."
         )
@@ -2804,6 +3045,15 @@ def main() -> int:
                 raise ValueError(f"Normalize {path.name} with python -m scripts.build_v2_ui")
         else:
             path.write_text(content, encoding="utf-8", newline="")
+        if name == "infrastructure":
+            continuation = mcp_authentication_ui(normalized)
+            path = ROOT / "infra/v2/mcp-authentication.createUiDefinition.json"
+            content = json.dumps(continuation, ensure_ascii=False, indent=2) + "\n"
+            if args.check:
+                if not path.is_file() or path.read_text(encoding="utf-8") != content:
+                    raise ValueError("Regenerate the MCP authentication continuation form.")
+            else:
+                path.write_text(content, encoding="utf-8", newline="")
         policy = build_policy(normalized["parameters"], PORTAL_TAG_KEYS)
         policy_path = ROOT / "infra/v2" / f"{name}.portal-policy.json"
         policy_content = json.dumps(policy, ensure_ascii=False, indent=2) + "\n"

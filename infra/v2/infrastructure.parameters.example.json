@@ -7,6 +7,8 @@
     "storageAccountMode": { "value": "new" },
     "containerAppsEnvironmentMode": { "value": "new" },
     "communicationServicesMode": { "value": "new" },
+    "mcpAutomation": { "value": {} },
+    "foundryPublishingAccess": { "value": {} },
     "virtualNetworkMode": { "value": "existing" },
     "virtualNetworkResourceGroupName": { "value": "<existing-network-resource-group>" },
     "virtualNetworkName": { "value": "<approved-existing-vnet>" },

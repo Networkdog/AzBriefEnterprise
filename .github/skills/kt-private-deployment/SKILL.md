@@ -9,6 +9,36 @@ This is a GitHub Copilot developer skill, not a Foundry Agent runtime instructio
 Use it for AzBrief and for other agents that deploy Microsoft Foundry, Container Apps,
 Private Endpoints, or supporting data services into the KT environment.
 
+Customer identity policy prohibits arbitrary app registration, SSO and authentication gateways,
+including reuse of existing SSO/gateways. Automatic Graph setup and the historical temporary
+anonymous exception below are not solutions for this customer. The
+[restricted-identity target design](../../../infra/v2/RESTRICTED_IDENTITY_DESIGN.md) is not
+implemented: retain private Azure MCP with explicitly accepted exact Foundry-subnet trust and
+no MCP caller auth only after verified isolation. This supersedes native-tool replacement, not
+web/API authentication. Shared Admin/MCP Environment NSGs alone do not isolate the MCP endpoint;
+use a separate private boundary or prove equivalent per-app enforcement, disclosing added resources.
+Preserve required platform rules, outgoing MCP MI/read-only RBAC and six specialist roles. Do not
+disable auth in current deployments or force readiness. Administrator settings use control-plane
+environment/Secrets updates on App and Job, not operator Blob access or a configuration Job.
+Do not create applications/credentials, consent or directory grants through another installer.
+Confirm policy for platform-created managed identities and Hosted Agent IDs separately.
+
+The requested Foundry bootstrap exception is inbound selected VNet/subnet plus approved public
+IPv4/CIDR only, with default deny and bounded closure after publication/private-path acceptance.
+Retain outbound injection and PEs, and private-only Storage/MCP. This is not implemented or live
+accepted: validate exact API/Hosted/managed-data compatibility and Policy before changing the
+private-only checks. Service-endpoint client subnets are not injection subnets; do not mutate
+existing subnet endpoints or shared Foundry networking implicitly. Never assume ACLs expire.
+
+The guarded [single-entry coordinator](../../../scripts/deploy_kt_once.ps1) is offline by default
+and currently blocks actual KT deployment on unsupported restricted-profile components. Keep
+that fail-closed check: a Graph-enabled compatibility template is not a permitted fallback.
+The local publishing-policy guard now compiles with a per-client-subnet validation module;
+initial selected access is explicit and immutable on completion. Synthetic stage tests and
+compiler success are not actual Azure/KT acceptance. Keep compiler/import/full tests before
+writes, exact Hosted identity after publication, caller environment restoration, Manual Jobs
+and explicit operational acceptance. Use UTF-8 for both Python and PowerShell test subprocesses.
+
 ## When to Use
 
 - Creating or reviewing a KT-specific ARM/Bicep deployment
@@ -69,10 +99,22 @@ security/lifecycle knowledge but does not replace the KT Portal button or adopt 
 Its one-time infrastructure command internally sequences foundation, account-host readiness
 and model/project/Host/RBAC completion without an App image. New foundation saves 41 base
 `azbrief.v2.*` RG tags plus bounded ID chunks, all non-secret. Managed MCP core completion records
-mcp_pending. Portal infrastructure contains zero Microsoft.Graph resources; authorized CLI-only
-mcp-authentication prepares app/project app-role/RemoteTool then promotes ready. Full CLI deploy
-runs it automatically; Portal operators use --prepare-mcp-authentication once without internal ID
-inputs. Keep same-core-output/private/BYO/uniqueName/budget checks and ready-only App acceptance.
+mcp_pending unless explicit preauthorized MCP automation is selected. Portal infrastructure
+contains zero direct Microsoft.Graph extension resources; the authorized CLI path remains valid.
+Optional `mcpAutomation` binds exactly an existing setup-only UAMI, an ACI-delegated execution
+subnet and separate private/restricted setup File Storage. A tenant administrator preapproves
+Graph app creation/owned-write/read and app-role-assignment permissions plus setup file access;
+the templates never consent or grant these permissions, enable public networking, use runtime
+identities for setup, or create an implicit public storage fallback. New foundation saves this
+bounded profile; completion runs the idempotent bounded Graph script and shared RemoteTool/ready
+handoff. Missing rights, owned-app drift, failed/paged inventories and setup failures stay pending.
+An older pending installation can follow the generated Portal continuation linked in the app
+warning: verify the exact successful saved core, current scope/names/IDs/project principal and
+non-redirected setup profile, then perform MCP authentication only without core/model/App replay.
+Keep all same-core-output/private/BYO/uniqueName/budget checks and ready-only App acceptance.
+The deployment script exposes only non-secret directory IDs and fixed safe errors, never tokens,
+raw Graph responses or credentials. Verify actual tenant approval, ACI/file/DNS/egress policy and
+live script execution separately; local tests/compilation cannot establish those prerequisites.
 New v2 uses the documented Basic VNet Microsoft-managed agent data mode: keep injection,
 PNA Disabled and project Host but omit the three BYO connection properties. Create no default
 Cosmos/Search/BYO data roles or their PE/DNS; retain app-owned private Blob state/Archive.

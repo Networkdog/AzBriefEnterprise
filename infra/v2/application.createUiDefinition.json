@@ -61,7 +61,7 @@
                 },
                 {
                   "isValid": "[not(equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.state\":', '\"azbrief_v2_state\":')).azbrief_v2_state, ''), 'mcp_pending'))]",
-                  "message": "코어는 완료됐지만 MCP 인증 준비가 남았습니다. 같은 RG에서 승인된 CLI의 --prepare-mcp-authentication --mode deploy를 완료한 뒤 앱 배포를 다시 여십시오."
+                  "message": "MCP 인증 준비가 남았습니다. 아래 'MCP 인증 자동 준비' 링크에서 사전 승인된 배포 Identity로 같은 RG의 인증을 완료하거나 기존 승인된 CLI 준비를 실행하십시오."
                 },
                 {
                   "isValid": "[equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.state\":', '\"azbrief_v2_state\":')).azbrief_v2_state, ''), 'ready')]",
@@ -99,7 +99,7 @@
             "visible": "[equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.state\":', '\"azbrief_v2_state\":')).azbrief_v2_state, ''), 'foundation')]",
             "options": {
               "icon": "Warning",
-              "text": "이 RG는 기반 준비만 완료됐습니다. 인프라 배포 화면에서 '기존 기반 완성'을 같은 RG에 실행해 모델·프로젝트·BYO·권한을 먼저 완성하십시오. 모델 quota가 없으면 이 단계가 완료되지 않습니다. 이후 CLI MCP 인증 준비로 ready가 된 뒤 앱을 배포합니다. portalValidationPassed나 상태 태그를 수동 변경하지 마십시오."
+              "text": "이 RG는 기반 준비만 완료됐습니다. 인프라 배포 화면에서 '기존 기반 완성'을 같은 RG에 실행해 모델·프로젝트·BYO·권한을 먼저 완성하십시오. 모델 quota가 없으면 이 단계가 완료되지 않습니다. 이후 MCP 자동 구성 또는 승인된 CLI로 ready가 된 뒤 앱을 배포합니다. portalValidationPassed나 상태 태그를 수동 변경하지 마십시오."
             }
           },
           {
@@ -108,7 +108,8 @@
             "visible": "[equals(coalesce(parse(replace(string(coalesce(steps('application').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.state\":', '\"azbrief_v2_state\":')).azbrief_v2_state, ''), 'mcp_pending')]",
             "options": {
               "icon": "Warning",
-              "text": "코어 인프라는 완료됐지만 MCP 인증 준비가 필요합니다. 같은 RG에서 python -m scripts.deploy_v2 infrastructure --prepare-mcp-authentication --subscription <구독> --tenant <테넌트> --resource-group <RG> --mode deploy를 권한이 확인된 CLI로 실행하십시오. ready가 되기 전에는 앱 설치를 차단합니다."
+              "text": "MCP 인증 자동 준비: 이 안내의 링크에서 같은 RG와 사전 승인된 배포 Identity·ACI 서브넷·별도 실행 Storage를 선택하면 CLI 없이 인증을 완성할 수 있습니다. 최초 테넌트 승인은 별도이며 권한을 자동 확대하지 않습니다. 기존 방식은 같은 RG에서 python -m scripts.deploy_v2 infrastructure --prepare-mcp-authentication --subscription <구독> --tenant <테넌트> --resource-group <RG> --mode deploy를 권한이 확인된 CLI로 실행하십시오. ready가 되기 전에는 앱 설치를 차단합니다.",
+              "uri": "https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fmcp-authentication-portal.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fmcp-authentication.createUiDefinition.json"
             }
           },
           {

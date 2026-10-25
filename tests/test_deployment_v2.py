@@ -85,7 +85,17 @@ def test_default_basic_vnet_host_omits_byo_and_keeps_private_injection() -> None
         )
     assert "useMicrosoftManagedAgentData" in module(document, "v2-agent-bindings")["condition"]
     account = module(foundation, "v2-foundry")["properties"]["parameters"]
-    assert account["publicNetworkAccess"]["value"] == "Disabled"
+    assert (
+        foundation["parameters"]["foundryPublishingPublicNetworkAccess"]["defaultValue"]
+        == "Disabled"
+    )
+    assert (
+        account["publicNetworkAccess"]["value"]
+        == "[parameters('foundryPublishingPublicNetworkAccess')]"
+    )
+    policy = module(document, "v2-foundry-publishing-policy")["properties"]["template"]
+    assert policy["parameters"]["access"]["defaultValue"] == {}
+    assert "'Enabled', 'Disabled'" in policy["outputs"]["publicNetworkAccess"]["value"]
     assert account["networkInjections"]["value"]["scenario"] == "agent"
     assert account["networkInjections"]["value"]["useMicrosoftManagedNetwork"] is False
     endpoint = next(
@@ -113,6 +123,147 @@ def test_managed_default_keeps_app_storage_and_roundtrips_mode(tmp_path: Path) -
     assert saved[deploy_v2.PREFIX + "cosmos"] == saved[deploy_v2.PREFIX + "search"] == ""
     assert deploy_v2.decode_tag_options(saved)["useMicrosoftManagedAgentData"] is True
     assert deploy_v2.parse_tag_contract(saved, require_ready=False)
+
+
+def test_foundry_publishing_policy_normalizes_small_ranges_and_exact_subnets() -> None:
+    subnet = (
+        f"/subscriptions/{SUBSCRIPTION}/resourceGroups/rg-client"
+        "/providers/Microsoft.Network/virtualNetworks/vnet-client/subnets/publisher"
+    )
+    assert deploy_v2.normalize_foundry_publishing_access({}, SUBSCRIPTION) == {}
+    assert deploy_v2.normalize_foundry_publishing_access(
+        {"publicIpRanges": ["8.8.8.8/31", "1.1.1.1/32"], "subnetResourceIds": [subnet]},
+        SUBSCRIPTION,
+    ) == {
+        "publicIpRanges": ["1.1.1.1", "8.8.8.8", "8.8.8.9"],
+        "subnetResourceIds": [subnet.lower()],
+    }
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        None,
+        {"publicIpRanges": ["8.8.8.8"]},
+        {"publicIpRanges": [], "subnetResourceIds": []},
+        {"publicIpRanges": "8.8.8.8", "subnetResourceIds": []},
+        *(
+            {"publicIpRanges": [address], "subnetResourceIds": []}
+            for address in (
+                "0.0.0.0/0",
+                "10.0.0.0/8",
+                "172.0.0.0/8",
+                "100.0.0.0/8",
+                "203.0.113.4",
+                "224.1.1.1",
+                "::1",
+                "8.8.8.8/24",
+                " 8.8.8.8",
+            )
+        ),
+        {"publicIpRanges": ["8.8.8.8", "8.8.8.0/24"], "subnetResourceIds": []},
+        {"publicIpRanges": [], "subnetResourceIds": ["/subscriptions/foreign"]},
+    ],
+)
+def test_foundry_publishing_policy_rejects_unknown_or_unrestricted_sources(value: object) -> None:
+    with pytest.raises(ValueError):
+        deploy_v2.normalize_foundry_publishing_access(value, SUBSCRIPTION)
+
+
+def test_foundry_publishing_policy_roundtrips_without_changing_legacy_options() -> None:
+    cli = FakeV2Azure()
+    assert "foundryPublishingAccess" not in deploy_v2.decode_tag_options(cli.tags)
+    cli.use_managed_agent_data()
+    values = {
+        **cli.values,
+        "foundryPublishingAccess": {
+            "publicIpRanges": ["8.8.8.8/32"],
+            "subnetResourceIds": [],
+        },
+    }
+    saved = deploy_v2.make_tag_contract(values, "publishing", "foundation")
+    assert deploy_v2.infrastructure_values(cli, saved)["foundryPublishingAccess"] == {
+        "publicIpRanges": ["8.8.8.8"],
+        "subnetResourceIds": [],
+    }
+
+
+def test_foundry_publishing_policy_completion_form_preserves_saved_access() -> None:
+    cli = FakeV2Azure()
+    cli.use_managed_agent_data()
+    policy = {"publicIpRanges": ["8.8.8.8"], "subnetResourceIds": []}
+    saved = deploy_v2.make_tag_contract(
+        {**cli.values, "foundryPublishingAccess": policy}, "publishing", "foundation"
+    )
+    expression = ui_definition("infrastructure")["outputs"]["foundryPublishingAccess"]
+    assert (
+        _evaluate_ui_expression(
+            expression,
+            {"contract": {"resourceGroupApi": {"tags": saved}}},
+            basics={"infrastructureStage": "complete"},
+        )
+        == policy
+    )
+    assert (
+        _evaluate_ui_expression(
+            expression,
+            {"contract": {"resourceGroupApi": None}},
+            basics={"infrastructureStage": "foundation"},
+        )
+        == {}
+    )
+
+
+@pytest.mark.parametrize("state", ["Enabled", "Disabled"])
+def test_foundry_publishing_readback_accepts_only_exact_or_closed_policy(state: str) -> None:
+    cli = FakeV2Azure()
+    cli.use_managed_agent_data()
+    values = {
+        **cli.values,
+        "foundryPublishingAccess": {
+            "publicIpRanges": ["8.8.8.8"],
+            "subnetResourceIds": [],
+        },
+    }
+    account = cli.documents[cli.account_id]
+    account["properties"].update(
+        publicNetworkAccess=state,
+        disableLocalAuth=True,
+        networkAcls={"defaultAction": "Deny", "ipRules": [{"value": "8.8.8.8"}]},
+        networkInjections=[
+            {
+                "subnetArmId": f"/subscriptions/{SUBSCRIPTION}/resourceGroups/{values['virtualNetworkResourceGroupName']}/providers/Microsoft.Network/virtualNetworks/{values['virtualNetworkName']}/subnets/{values['foundrySubnetName']}",
+                "useMicrosoftManagedNetwork": False,
+            }
+        ],
+    )
+    assert deploy_v2._verify_foundry_publishing_access(cli, values, account)
+    for action, access in (("Allow", state), ("Deny", "Enabled")):
+        account["properties"]["publicNetworkAccess"] = access
+        account["properties"]["networkAcls"] = {
+            "defaultAction": action,
+            "ipRules": [{"value": "1.1.1.1"}],
+        }
+        with pytest.raises(ValueError, match="Foundry publishing"):
+            deploy_v2._verify_foundry_publishing_access(cli, values, account)
+    assert not cli.operations
+
+
+def test_foundry_publishing_preflight_rejects_shared_accounts_and_changed_saved_policy(
+    tmp_path: Path,
+) -> None:
+    cli, values = infrastructure_cli(tmp_path)
+    values["foundryPublishingAccess"] = {"publicIpRanges": ["8.8.8.8"], "subnetResourceIds": []}
+    prepared = deploy_v2.prepare_infrastructure(cli, values, "foundation", "publishing")
+    assert prepared["foundryPublishingAccess"] == values["foundryPublishingAccess"]
+    cli.tags = deploy_v2.make_tag_contract(values, "publishing-foundation", "foundation")
+    values["foundryPublishingAccess"]["publicIpRanges"] = ["1.1.1.1"]
+    with pytest.raises(ValueError, match="publishing access is immutable"):
+        deploy_v2.prepare_infrastructure(cli, values, "complete", "changed")
+    values["foundryAccountMode"] = "existing"
+    with pytest.raises(ValueError, match="only for new"):
+        deploy_v2.prepare_infrastructure(cli, values, "foundation", "shared")
+    assert not cli.operations
 
 
 @pytest.mark.parametrize("reuse", [False, True])
@@ -956,9 +1107,13 @@ def test_managed_mcp_is_split_between_identity_and_application_without_auth_bypa
     assert audience.startswith("[format('api://{0}', ")
     assert "parameters('clientId')" in audience
     connection_module = module(authentication, "v2-mcp-project-connection")
-    assert (
-        "v2-mcp-authentication"
-        in connection_module["properties"]["parameters"]["clientId"]["value"]
+    handoff = module(authentication, "v2-mcp-authentication-handoff")
+    assert "v2-mcp-authentication" in (
+        handoff["properties"]["parameters"]["authentication"]["value"]["clientId"]
+    )
+    assert "v2-mcp-project-permission" in json.dumps(handoff["dependsOn"])
+    assert connection_module["properties"]["parameters"]["clientId"]["value"] == (
+        "[parameters('authentication').clientId]"
     )
     assert connection["properties"]["target"] == "[parameters('serverUrl')]"
     assert (
@@ -2139,7 +2294,10 @@ def test_application_form_blocks_incomplete_infrastructure_before_arm_validation
     if state == "foundation":
         assert "기존 기반 완성" in validations[0]["message"]
     if state == "mcp_pending":
-        assert "--prepare-mcp-authentication" in validations[1]["message"]
+        assert "MCP 인증 자동 준비" in validations[1]["message"]
+        assert "--prepare-mcp-authentication" in (
+            ui_controls("application")["mcpPendingNotice"]["options"]["text"]
+        )
     assert template("application")["parameters"]["portalValidationPassed"]["allowedValues"] == [
         True
     ]

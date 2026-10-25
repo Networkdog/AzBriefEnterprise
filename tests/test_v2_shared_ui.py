@@ -1844,12 +1844,15 @@ def test_empty_controls_and_initial_responses_evaluate_safely(eager: bool) -> No
             ):
                 if isinstance(expression, str) and expression.startswith("["):
                     if (
-                        element["name"] == "virtualNetworkApi"
+                        element["name"] in {"virtualNetworkApi", "mcpSetupNetworkApi"}
                         and expression == element["request"]["path"]
                     ):
-                        assert "steps('network').virtualNetwork.id" in expression
-                        assert "existingFoundryAccountApi" in expression
-                        assert "existingContainerAppsEnvironmentApi" in expression
+                        if element["name"] == "virtualNetworkApi":
+                            assert "steps('network').virtualNetwork.id" in expression
+                            assert "existingFoundryAccountApi" in expression
+                            assert "existingContainerAppsEnvironmentApi" in expression
+                        else:
+                            assert "steps('options').mcpSetupNetwork.id" in expression
                         with pytest.raises(AssertionError, match="concat must use strings"):
                             evaluate(expression, state, eager)
                     else:

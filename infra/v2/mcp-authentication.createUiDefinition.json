@@ -1,0 +1,146 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/0.1.2-preview/CreateUIDefinition.MultiVm.json#",
+  "handler": "Microsoft.Azure.CreateUIDef",
+  "version": "0.1.2-preview",
+  "parameters": {
+    "config": {
+      "basics": {
+        "description": "기존 코어의 MCP 인증만 자동 준비합니다. 사전 승인된 배포 Identity와 실행 환경을 선택하면 Graph 앱·프로젝트 호출 역할·연결을 확인한 뒤 ready로 전환합니다. 모델·인프라·앱을 다시 배포하거나 테넌트 권한을 자동 부여하지 않습니다.",
+        "location": {
+          "label": "신규 인프라 배포 리전",
+          "resourceTypes": [
+            "Microsoft.CognitiveServices/accounts",
+            "Microsoft.App/managedEnvironments"
+          ],
+          "visible": false
+        },
+        "resourceGroup": {
+          "allowExisting": true,
+          "allowNew": false
+        }
+      },
+      "isWizard": true
+    },
+    "basics": [],
+    "steps": [
+      {
+        "name": "contract",
+        "label": "배포 범위",
+        "bladeTitle": "기존 MCP 인증 준비",
+        "elements": [
+          {
+            "name": "pendingCoreNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "options": {
+              "icon": "Info",
+              "text": "코어를 완료한 같은 기존 RG를 선택하십시오. 이 화면은 mcp_pending의 인증만 준비하며 모델·인프라·앱을 다시 배포하지 않습니다."
+            }
+          },
+          {
+            "name": "resourceGroupApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[if(equals(resourceGroup().mode, 'Existing'), concat('/subscriptions/', subscription().subscriptionId, '/resourceGroups/', resourceGroup().name, '?api-version=2025-04-01'), concat('/subscriptions/', subscription().subscriptionId, '?api-version=2022-12-01'))]"
+            }
+          }
+        ]
+      },
+      {
+        "name": "options",
+        "label": "MCP 인증 자동 준비",
+        "bladeTitle": "승인된 실행 환경",
+        "elements": [
+          {
+            "name": "mcpSetupNotice",
+            "type": "Microsoft.Common.InfoBox",
+            "visible": true,
+            "options": {
+              "icon": "Warning",
+              "text": "기존 기반 완성에서 MCP 앱·호출 역할·연결까지 자동 준비하므로 별도 CLI 명령이 필요 없습니다. 테넌트 관리자가 Graph 권한을 사전 승인한 배포 전용 Identity, ACI 전용 서브넷과 별도 File Storage를 선택하십시오. 템플릿은 관리자 동의·역할 권한·네트워크를 자동 확대하지 않습니다. App/Job/MCP 런타임 Identity나 애플리케이션 Storage는 사용할 수 없습니다. 권한·연결 실패 시 ready로 전환하지 않습니다."
+            }
+          },
+          {
+            "name": "mcpSetupIdentity",
+            "type": "Microsoft.Solutions.ResourceSelector",
+            "label": "사전 승인된 배포 전용 Identity",
+            "resourceType": "Microsoft.ManagedIdentity/userAssignedIdentities",
+            "visible": true,
+            "options": {
+              "filter": {
+                "subscription": "onBasics",
+                "location": "all"
+              }
+            }
+          },
+          {
+            "name": "mcpSetupStorage",
+            "type": "Microsoft.Solutions.ResourceSelector",
+            "label": "사전 준비한 별도 실행 File Storage",
+            "resourceType": "Microsoft.Storage/storageAccounts",
+            "visible": true,
+            "options": {
+              "filter": {
+                "subscription": "onBasics",
+                "location": "all"
+              }
+            }
+          },
+          {
+            "name": "mcpSetupNetwork",
+            "type": "Microsoft.Solutions.ResourceSelector",
+            "label": "사전 준비한 ACI 실행 VNet",
+            "resourceType": "Microsoft.Network/virtualNetworks",
+            "visible": true,
+            "options": {
+              "filter": {
+                "subscription": "onBasics",
+                "location": "all"
+              }
+            }
+          },
+          {
+            "name": "mcpSetupNetworkApi",
+            "type": "Microsoft.Solutions.ArmApiControl",
+            "request": {
+              "method": "GET",
+              "path": "[concat(steps('options').mcpSetupNetwork.id, '?api-version=2024-05-01')]"
+            }
+          },
+          {
+            "name": "mcpSetupSubnet",
+            "type": "Microsoft.Common.DropDown",
+            "label": "ACI 전용 실행 서브넷",
+            "visible": true,
+            "defaultValue": "서브넷을 선택하십시오.",
+            "constraints": {
+              "required": true,
+              "allowedValues": "[parse(concat('[{\"label\":\"서브넷을 선택하십시오.\",\"value\":\"\"}', replace(replace(replace(string(map(filter(coalesce(steps('options').mcpSetupNetworkApi.properties.subnets, parse('[]')), (s) => not(empty(s.name))), (s) => parse(concat('{\"label\":\"', s.name, '\",\"value\":\"', s.name, '\"}')))), '[]', ''), '[', ','), ']', ''), ']'))]",
+              "validations": [
+                {
+                  "isValid": "[and(equals(resourceGroup().mode, 'Existing'), equals(coalesce(parse(replace(string(coalesce(steps('contract').resourceGroupApi.tags, parse('{}'))), '\"azbrief.v2.state\":', '\"azbrief_v2_state\":')).azbrief_v2_state, ''), 'mcp_pending'))]",
+                  "message": "코어를 완료한 같은 mcp_pending RG만 선택하십시오. ready인 설치나 기반 준비를 다시 설정하지 않습니다."
+                }
+              ]
+            }
+          },
+          {
+            "name": "mcpSetupAccepted",
+            "type": "Microsoft.Common.CheckBox",
+            "label": "배포 Identity의 Graph·실행 Storage 권한과 사설 실행 경로를 사전 승인했습니다.",
+            "visible": true,
+            "defaultValue": false,
+            "constraints": {
+              "required": true,
+              "validationMessage": "자동 구성의 사전 승인 범위를 확인하십시오."
+            }
+          }
+        ]
+      }
+    ],
+    "outputs": {
+      "automation": "[parse(concat('{\"identityResourceId\":\"', first(map(parse(concat('[{\"object\":', string(coalesce(steps('options').mcpSetupIdentity, parse('{}'))), '}]')), (member) => first(if(contains(member.object, 'id'), parse(concat('[', replace(string(member.object), '\"id\":null', '\"id\":\"\"'), ']')), parse('[{\"id\":\"\"}]'))))).id, '\",\"storageAccountResourceId\":\"', first(map(parse(concat('[{\"object\":', string(coalesce(steps('options').mcpSetupStorage, parse('{}'))), '}]')), (member) => first(if(contains(member.object, 'id'), parse(concat('[', replace(string(member.object), '\"id\":null', '\"id\":\"\"'), ']')), parse('[{\"id\":\"\"}]'))))).id, '\",\"subnetResourceId\":\"', concat(first(map(parse(concat('[{\"object\":', string(coalesce(steps('options').mcpSetupNetwork, parse('{}'))), '}]')), (member) => first(if(contains(member.object, 'id'), parse(concat('[', replace(string(member.object), '\"id\":null', '\"id\":\"\"'), ']')), parse('[{\"id\":\"\"}]'))))).id, '/subnets/', coalesce(steps('options').mcpSetupSubnet, '')), '\"}'))]",
+      "portalValidationPassed": "[equals(steps('options').mcpSetupAccepted, true)]"
+    }
+  }
+}

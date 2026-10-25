@@ -9,6 +9,16 @@ This is a GitHub Copilot developer skill. Model-facing guidance belongs to
 [`src/agent/foundry_instructions.py`](../../../src/agent/foundry_instructions.py)
 and application prompts, not this developer document.
 
+Customer deployment may not require arbitrary app registration, SSO or authentication gateways.
+The [restricted-identity target design](../../../infra/v2/RESTRICTED_IDENTITY_DESIGN.md) now retains
+Azure MCP under customer-approved private Foundry-subnet trust without MCP caller authentication.
+This supersedes native-tool replacement, not the six-role ownership or outgoing MI/RBAC. It is
+not implemented: verify Data Proxy paths and exact subnet enforcement, including denied sources
+and shared ingress, before activating a versioned connection mode. Do not disable current auth,
+drop roles, cross-fallback tools, or extend this exception to web/API authentication. Administrator
+settings use ARM environment/Secrets changes rather than Blob access or a config Job. Verify
+the customer's policy for platform-created Agent IDs separately.
+
 ## When to Use
 
 - Auditing whether AzBrief uses Prompt Agent or Hosted Agent capabilities correctly

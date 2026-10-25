@@ -70,6 +70,8 @@ param emailDataLocation string = 'Asia Pacific'
 param searchSku string = 'basic'
 param existingPrivateDnsZoneIds object = {}
 param deployContainerAppsPrivateEndpoint bool = false
+@description('Explicit initial Foundry inbound allow-list: publicIpRanges and existing subnetResourceIds. Empty retains private-only access. New managed-data accounts only; outbound injection and private Storage/MCP remain unchanged.')
+param foundryPublishingAccess object = {}
 param modelDeploymentName string = 'gpt-5-terra'
 param simpleModelDeploymentName string = 'gpt-5-luna'
 param coreModelName string = 'gpt-5.2'
@@ -93,6 +95,8 @@ param azureMcpServerUrl string = ''
 param azureMcpProjectConnectionName string = 'azure-mcp-read-only'
 param azureMcpContainerAppName string = 'ca-azbrief-mcp-v2'
 param azureMcpIdentityName string = 'id-azbrief-mcp-v2'
+@description('Optional preapproved setup-only identity/subnet/file-storage ARM IDs. Empty retains the legacy authorized CLI step. No directory permissions or setup networking are created.')
+param mcpAutomation object = {}
 param tags object = {
   application: 'AzBrief'
   customer: 'KT'
@@ -159,6 +163,7 @@ module portalVerification 'infrastructure.portal-policy.json' = if (portalVerifi
       existingCommunicationServicesResourceId: existingCommunicationServicesResourceId
       existingLogAnalyticsWorkspaceResourceId: existingLogAnalyticsWorkspaceResourceId
       existingEmailDomainResourceId: existingEmailDomainResourceId
+      mcpAutomation: mcpAutomation
     }
   }
 }
@@ -201,7 +206,7 @@ var savedOptions = complete ? json(concat(
 var mcpClientId = manageAzureMcp && complete ? (savedOptions.?azureMcpClientId ?? '') : ''
 var mcpServicePrincipalId = manageAzureMcp && complete ? (savedOptions.?azureMcpServicePrincipalId ?? '') : ''
 var mcpAppRoleId = manageAzureMcp && complete ? (savedOptions.?azureMcpAppRoleId ?? '') : ''
-var deploymentOptions = {
+var deploymentOptions = union({
   foundryAccountMode: foundryAccountMode
   storageAccountMode: storageAccountMode
   containerAppsEnvironmentMode: containerAppsEnvironmentMode
@@ -228,7 +233,7 @@ var deploymentOptions = {
   azureMcpClientId: mcpClientId
   azureMcpServicePrincipalId: mcpServicePrincipalId
   azureMcpAppRoleId: mcpAppRoleId
-}
+}, empty(mcpAutomation) ? {} : { mcpAutomation: mcpAutomation }, empty(foundryPublishingAccess) ? {} : { foundryPublishingAccess: publishingPolicy.outputs.normalizedAccess })
 var promptAgentNames = {
   coordinator: '${take(projectName, 47)}-coordinator'
   resource_graph: '${take(projectName, 47)}-resource-graph'
@@ -238,9 +243,21 @@ var promptAgentNames = {
   quality_reviewer: '${take(projectName, 47)}-quality-reviewer'
 }
 
+module publishingPolicy 'foundry-publishing-access.bicep' = {
+  name: 'v2-foundry-publishing-policy'
+  params: {
+    access: foundryPublishingAccess
+    savedAccess: savedOptions.?foundryPublishingAccess ?? {}
+    completing: complete
+    newAccount: foundryAccountMode == 'new'
+    managedAgentData: useMicrosoftManagedAgentData
+  }
+  dependsOn: [portalVerification]
+}
+
 resource networkBindingValidation 'Microsoft.Resources/deployments@2025-04-01' = {
   name: 'v2-network-binding-validation'
-  dependsOn: [portalVerification]
+  dependsOn: [portalVerification, publishingPolicy]
   properties: {
     mode: 'Incremental'
     expressionEvaluationOptions: { scope: 'inner' }
@@ -307,6 +324,8 @@ module foundation 'foundation.bicep' = if (!complete) {
     foundrySubnetName: resolvedFoundrySubnetName
     containerAppsSubnetName: resolvedEnvironmentSubnetName
     foundryAccountName: foundryAccountName
+    foundryPublishingPublicNetworkAccess: publishingPolicy.outputs.publicNetworkAccess
+    foundryPublishingNetworkAcls: publishingPolicy.outputs.networkAcls
     storageAccountName: storageAccountName
     cosmosAccountName: cosmosAccountName
     searchServiceName: searchServiceName
@@ -480,7 +499,7 @@ var infrastructureContract = {
   schemaVersion: 2
   profile: 'kt-private-v2'
   infrastructureComplete: complete
-  mcpAuthenticationPending: complete && manageAzureMcp
+  mcpAuthenticationPending: complete && manageAzureMcp && empty(mcpAutomation)
   portalValidationPassed: portalValidationPassed
   applicationReady: false
   hostedRuntimeRolesPending: true
@@ -563,6 +582,21 @@ module handoff 'resource-group-tags.bicep' = if (complete) {
     infrastructureOptions: deploymentOptions
   }
   dependsOn: [controlPlaneRoles, projectTelemetryRole, project, sharedStorage, sharedStorageReader, sharedEnvironmentReader, sharedCommunicationAccess]
+}
+
+module automaticMcp 'mcp-authentication-automatic.bicep' = if (complete && manageAzureMcp && !empty(mcpAutomation)) {
+  name: 'v2-mcp-automatic-authentication'
+  params: {
+    infrastructure: infrastructureContract
+    infrastructureOptions: deploymentOptions
+    automation: mcpAutomation
+    mcpPrincipalId: mcpRuntimeIdentity!.properties.principalId
+  }
+  dependsOn: [handoff]
+}
+
+resource mcpRuntimeIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = if (complete && manageAzureMcp && !empty(mcpAutomation)) {
+  name: azureMcpIdentityName
 }
 
 output infrastructure object = infrastructureContract

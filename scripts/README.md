@@ -10,6 +10,7 @@ entry point입니다.
 
 | Module | 용도 | 부작용 |
 |---|---|---|
+| [deploy_kt_once.ps1](deploy_kt_once.ps1) | KT 단일 진입 계획·사전검사·단계 조정 | 기본 `Plan`/`-WhatIf`는 Azure 호출 없음. 현재 릴리스는 MCP 디렉터리·Admin Blob 의존성과 미지원 서브넷 신뢰 모드로 `Preflight`/`Deploy`를 Azure 접근 전에 차단. 실제 KT 설치 지원 완료가 아님 |
 | [setup_customer.ps1](setup_customer.ps1) | ARM 출력 기반 고객 환경 구성, MCP/Agent 게시, 초기 이미지 전환, 준비 검사·스케줄 활성화 | 단계별 로컬/원격 변경. 일반 `-WhatIf`도 ARM은 조회하며 완전 오프라인은 `-SetupFile ... -WhatIf`만 해당. `Verify`는 읽기 전용이며 모델·이메일 호출 없음 |
 | [deploy_dev.ps1](deploy_dev.ps1) | 이미 기동한 App/Job의 동일 digest 업그레이드와 실패 시 되돌림 | ACR 빌드와 두 리소스 이미지 갱신. 새 설치의 포트 전환에는 사용하지 않음 |
 | [deploy_hosted_agent.ps1](deploy_hosted_agent.ps1) | 검토된 Hosted 패키지의 검사·게시·smoke | Foundry 버전 생성 및 명시적 모델 smoke 호출 |
@@ -57,6 +58,14 @@ MCP는 콘솔 로그를 공유하고 직접 Application Insights 추적·메트�
 Environment에 있는 기존 MCP를 자동 삭제하지 않으며 [통합 절차](../infra/CUSTOMER_DEPLOYMENT.md#consolidating-existing-installations)를 따릅니다.
 
 ## 자주 쓰는 예시
+
+KT 단일 진입점은 먼저 `deploy_kt_once.ps1 -Mode Plan`으로 실행 계획과 차단 사유를 확인합니다.
+명시적 구독·테넌트·RG·파라미터 파일·불변 이미지·azd 환경 이름이 필요합니다. 현재는
+고객 정책을 충족하는 MCP 연결·관리 설정·공용 게시 경로 폐쇄가 구현되지 않았으므로 실제
+배포를 시작하지 않습니다. 스크립트는 이를 건너뛰는 옵션을 제공하지 않습니다.
+`-ReportPath`에는 원본 JSON이나 비밀값 대신 입력 파일 해시와 단계 상태를 기록하며,
+기존 파일은 덮어쓰지 않습니다. 완전한 운영 인수와 스케줄 활성화도 자동 성공으로 처리하지
+않습니다. PowerShell/Python 출력은 실행 중 UTF-8로 맞추고 호출자의 환경을 복원합니다.
 
 새 고객 설치는 [고객 가이드](../infra/CUSTOMER_DEPLOYMENT.md)를 따릅니다. 루트 `.env`가 없는
 별도 clone과 명시적 `-SubscriptionId`, `-ResourceGroup`, `-DeploymentName`, `-Environment`가

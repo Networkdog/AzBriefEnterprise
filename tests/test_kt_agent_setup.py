@@ -10,6 +10,203 @@ import pytest
 from scripts import deploy_kt as kt
 
 
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not available")
+@pytest.mark.parametrize("mode", ["Plan", "Preflight", "Deploy"])
+def test_kt_once_blocks_current_directory_and_blob_dependencies_without_azure_access(
+    tmp_path: Path, mode: str
+) -> None:
+    root = tmp_path / "customer"
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    target = scripts / "deploy_kt_once.ps1"
+    shutil.copy2(kt.ROOT / "scripts" / target.name, target)
+    activation = root / ".venv" / "Scripts"
+    activation.mkdir(parents=True)
+    (activation / "Activate.ps1").write_text(
+        "$env:AZBRIEF_ONCE_TEST = 'temporary'\n", encoding="utf-8"
+    )
+    infrastructure = root / "infra" / "v2"
+    infrastructure.mkdir(parents=True)
+    shutil.copy2(kt.ROOT / "infra/v2/infrastructure.json", infrastructure)
+    shutil.copy2(kt.ROOT / "infra/v2/application.json", infrastructure)
+    parameters = tmp_path / "parameters.json"
+    parameters.write_text(json.dumps({"parameters": {}}), encoding="utf-8")
+    report = tmp_path / "report.json"
+    wrapper = tmp_path / "run-once.ps1"
+    wrapper.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\n"
+        "function az { throw 'Azure access is forbidden in this test' }\n"
+        "function azd { throw 'Agent publication is forbidden in this test' }\n"
+        "function python { throw 'Python/cloud execution is forbidden before policy checks' }\n"
+        "$env:AZBRIEF_ONCE_TEST = 'original'\n"
+        "try {\n"
+        f"& '{target}' -SubscriptionId '11111111-1111-1111-1111-111111111111' "
+        "-TenantId '22222222-2222-2222-2222-222222222222' -ResourceGroup 'rg-kt' "
+        f"-ParametersFile '{parameters}' -Environment 'kt-customer' "
+        f"-Image 'example.azurecr.io/azbrief@sha256:{'a' * 64}' "
+        f"-Mode '{mode}' -ReportPath '{report}'\n"
+        "} finally {\n"
+        "if ($env:AZBRIEF_ONCE_TEST -cne 'original') { throw 'Caller environment was not restored' }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["pwsh", "-NoLogo", "-NoProfile", "-File", str(wrapper)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+    assert report.exists(), result.stderr
+    assert result.stderr is not None
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    assert payload["status"] == "blocked"
+    assert payload["azureWritesStarted"] is False
+    assert payload["operationallyReady"] is False
+    assert payload["scheduleEnabled"] is False
+    assert any("MCP_DIRECTORY_DEPENDENCY" in entry for entry in payload["blockers"])
+    assert any("BLOB_ADMIN_SETTINGS_DEPENDENCY" in entry for entry in payload["blockers"])
+    assert all(stage["status"] == "not_started" for stage in payload["stages"])
+    assert result.returncode == (0 if mode == "Plan" else 1), result.stderr
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not available")
+@pytest.mark.parametrize(
+    ("mode", "failure", "status", "failed_stage"),
+    [
+        ("Preflight", "none", "preflight_passed_not_deployed", ""),
+        ("Deploy", "none", "deployed_pending_operational_acceptance", ""),
+        ("Deploy", "dirty", "failed", "LocalGates"),
+        ("Deploy", "infrastructure", "failed", "Infrastructure"),
+        ("Deploy", "identity", "failed", "HostedIdentity"),
+    ],
+)
+def test_kt_once_stage_order_and_failure_stop_with_synthetic_supported_artifacts(
+    tmp_path: Path, mode: str, failure: str, status: str, failed_stage: str
+) -> None:
+    root = tmp_path / "customer"
+    scripts = root / "scripts"
+    scripts.mkdir(parents=True)
+    target = scripts / "deploy_kt_once.ps1"
+    shutil.copy2(kt.ROOT / "scripts" / target.name, target)
+    activation = root / ".venv" / "Scripts"
+    activation.mkdir(parents=True)
+    (activation / "Activate.ps1").write_text("$env:KT_ONCE_SCOPE = 'temporary'\n", encoding="utf-8")
+    (scripts / "setup_kt_agents.ps1").write_text(
+        "param($SubscriptionId,$ResourceGroup,$DeploymentName,$Environment,$Stage)\n"
+        "$global:calls.Add('agents-' + $Stage)\n",
+        encoding="utf-8",
+    )
+    infrastructure = root / "infra" / "v2"
+    infrastructure.mkdir(parents=True)
+    documents = {
+        "infrastructure": {
+            "parameters": {
+                "mcpAuthenticationMode": {
+                    "defaultValue": "foundrySubnetTrust",
+                    "allowedValues": ["foundrySubnetTrust"],
+                },
+                "foundryHostedAgentName": {"defaultValue": "azbrief-analysis-hosted"},
+            }
+        },
+        "application": {},
+        "runtime-roles": {},
+    }
+    for name, document in documents.items():
+        (infrastructure / f"{name}.json").write_text(json.dumps(document), encoding="utf-8")
+        (infrastructure / f"{name}.bicep").write_text("", encoding="utf-8")
+    parameters = tmp_path / "parameters.json"
+    parameters.write_text(json.dumps({"parameters": {}}), encoding="utf-8")
+    report = tmp_path / "report.json"
+    calls = tmp_path / "calls.json"
+    agent = {
+        "name": "foreign-agent" if failure == "identity" else "azbrief-analysis-hosted",
+        "status": "active",
+        "version": "1",
+        "instance_identity": {"principal_id": "33333333-3333-3333-3333-333333333333"},
+    }
+    wrapper = tmp_path / "run.ps1"
+    wrapper.write_text(
+        "$ErrorActionPreference = 'Stop'\n"
+        "[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)\n"
+        "$global:calls = [Collections.Generic.List[string]]::new()\n"
+        f"$global:fixtureRoot = '{root}'\n"
+        f"$global:failure = '{failure}'\n"
+        "function git { $global:LASTEXITCODE = 0; if ($global:failure -eq 'dirty') { ' M src/config.py' } }\n"
+        "function bicep {\n"
+        "  $global:LASTEXITCODE = 0\n"
+        "  if ($args[0] -eq '--version') { 'Bicep CLI version 0.46.1'; return }\n"
+        "  $name = [IO.Path]::GetFileNameWithoutExtension($args[1])\n"
+        "  [IO.File]::WriteAllText($args[3], [IO.File]::ReadAllText((Join-Path $global:fixtureRoot ('infra/v2/' + $name + '.json'))), [Text.UTF8Encoding]::new($false))\n"
+        "}\n"
+        "function python {\n"
+        "  if ($env:PYTHONUTF8 -cne '1') { throw 'Python must use UTF-8 during deployment checks' }\n"
+        "  $text = $args -join ' '\n"
+        "  $global:calls.Add($text)\n"
+        "  $global:LASTEXITCODE = if ($global:failure -eq 'infrastructure' -and $text.Contains('infrastructure') -and $text.Contains('--mode deploy')) { 13 } else { 0 }\n"
+        "}\n"
+        "function az { throw 'Unexpected Azure CLI access' }\n"
+        "function azd {\n"
+        "  $global:calls.Add('hosted-identity')\n"
+        "  $global:LASTEXITCODE = 0\n"
+        f"  '{json.dumps(agent)}'\n"
+        "}\n"
+        "$env:KT_ONCE_SCOPE = 'original'\n"
+        "$env:PYTHONUTF8 = '0'\n"
+        "try {\n"
+        f"& '{target}' -SubscriptionId '11111111-1111-1111-1111-111111111111' "
+        "-TenantId '22222222-2222-2222-2222-222222222222' -ResourceGroup 'rg-kt' "
+        f"-ParametersFile '{parameters}' -Environment 'kt-customer' "
+        f"-Image 'example.azurecr.io/azbrief@sha256:{'a' * 64}' -Mode '{mode}' -ReportPath '{report}'\n"
+        "} finally {\n"
+        f"[IO.File]::WriteAllText('{calls}', (ConvertTo-Json -InputObject @($global:calls)), [Text.UTF8Encoding]::new($false))\n"
+        "if ($env:KT_ONCE_SCOPE -cne 'original') { throw 'Environment restoration failed' }\n"
+        "if ($env:PYTHONUTF8 -cne '0') { throw 'Python UTF-8 setting was not restored' }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["pwsh", "-NoLogo", "-NoProfile", "-File", str(wrapper)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+    assert report.exists(), result.stderr
+    assert result.stderr is not None
+    payload = json.loads(report.read_text(encoding="utf-8"))
+    observed = json.loads(calls.read_text(encoding="utf-8"))
+    assert payload["status"] == status, result.stderr
+    assert payload["operationallyReady"] is False
+    assert payload["scheduleEnabled"] is False
+    assert result.returncode == (1 if failed_stage else 0), result.stderr
+    if failed_stage:
+        failed = next(
+            index for index, stage in enumerate(payload["stages"]) if stage["name"] == failed_stage
+        )
+        assert payload["stages"][failed]["status"] == "failed"
+        assert all(stage["status"] == "not_started" for stage in payload["stages"][failed + 1 :])
+    if mode == "Preflight" or failure == "dirty":
+        assert payload["azureWritesStarted"] is False
+        assert not any("--mode deploy" in command for command in observed)
+    if mode == "Deploy" and failure == "none":
+        assert observed.index("agents-Configure") < observed.index("agents-Publish")
+        assert observed.index("agents-Publish") < observed.index("hosted-identity")
+        assert any(
+            "--hosted-principal-id 33333333-3333-3333-3333-333333333333" in command
+            for command in observed
+        )
+        assert all(
+            "--no-automatic-setup" in command
+            for command in observed
+            if "scripts.deploy_v2 application" in command
+        )
+        assert payload["stages"][-1]["status"] == "not_started"
+
+
 def _setup() -> dict:
     subscription = "11111111-1111-1111-1111-111111111111"
     return {

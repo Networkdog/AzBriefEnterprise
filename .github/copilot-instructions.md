@@ -4,6 +4,36 @@ description: "Copilot instructions for AzBrief — Azure Update Intelligence Age
 
 # AzBrief — Copilot Instructions
 
+**Customer identity boundary (2026-10-25):** customer deployment must not require arbitrary
+Entra app registration, SSO or authentication gateways, including existing SSO/gateway reuse.
+Do not propose a Graph-enabled setup identity as a workaround. The current automatic MCP/web
+registration workflows below describe existing implementation, not permission to use them in
+this environment. Follow [the target design](../infra/v2/RESTRICTED_IDENTITY_DESIGN.md), which
+is not yet implemented. The customer explicitly accepts private tenant MCP without caller auth
+only behind verified exact Foundry-subnet isolation; this supersedes the native-tool replacement
+proposal, not web/API authentication or the six specialist roles. Shared Admin/MCP ingress plus
+NSG alone is insufficient. Preserve MCP MI/read-only RBAC, and never disable current auth or force
+readiness before the new network/connection mode passes live positive and negative checks.
+Manage administrator settings through ARM environment/Secrets configuration, not Blob access
+or a config Job. Do not silently change the Hosted architecture; platform-created MI service
+principals and Agent IDs require separate policy acceptance. Keep unsupported deployment blocked
+and distinguish design documentation from working deployment support.
+
+The requested initial Foundry publishing policy permits only selected inbound VNet/subnet and
+approved public IPv4/CIDR sources with default deny, preserving outbound VNet Injection and PEs.
+This is design-only until the exact Hosted/API/data-mode combination and Azure Policy pass.
+Do not loosen existing preflight, change live/shared accounts, expose Storage/MCP, assume ACL
+expiry or open All networks. After publication/private-path acceptance, explicitly close and
+verify the temporary public path; authentication/RBAC and Agent identity gates remain required.
+
+`scripts/deploy_kt_once.ps1` is a guarded single-entry coordinator, not proof of current KT
+deployment support. Default Plan/WhatIf is offline; actual modes block current Graph MCP,
+missing subnet-trust mode, Blob-managed Admin settings and unimplemented publishing closure
+before Azure access. Never remove those blockers to obtain a green run. Source/compiler/import/
+test gates, exact Hosted principal, Manual Job and pending operational acceptance remain required.
+Its temporary Python UTF-8/test OTel settings and caller environment must be restored.
+Local foundryPublishingAccess Bicep/CLI validation exists; actual profile acceptance is separate.
+
 **MANDATORY: Always activate the virtual environment before running ANY terminal command.**
 Before executing `python`, `pytest`, `pip`, or any project script, you MUST run:
 - Windows: `& .\.venv\Scripts\Activate.ps1`
@@ -60,6 +90,17 @@ portalValidationPassed true-only guard; image-field native validations must name
 MCP-pending or missing-ready prerequisites before ARM submission. Confirm the actual RG and
 public artifact version. A separate CLI/snapshot App smoke is not customer Portal acceptance;
 never force tags, broaden permissions or silently swap models to suppress this failure.
+
+MCP setup can run automatically only with explicit preapproved `mcpAutomation` setup identity,
+ACI-only subnet and separate private/restricted File Storage IDs. Never grant Graph consent,
+directory roles or file permissions from the template, and never use App/Job/MCP/project
+identities as the installer. Preserve legacy empty/omitted configuration. New foundation saves
+the bounded setup profile and completion runs it before success-only ready handoff. Older
+mcp_pending installs use the generated exact-pending-core Portal continuation; it verifies
+the successful saved core/current scope and bindings, performs authentication only and cannot
+replay infrastructure or redirect existing setup resources. Tokens/raw Graph failures stay out
+of outputs/logs; unauthorized, foreign, paged or incomplete evidence stays pending. Private
+deployment-script execution and initial tenant consent require separate live acceptance.
 
 V2 Portal uses dedicated foundation/completion/application input views. Keep the original
 combined forms as canonical policy/compatibility sources. Generate the pre-write ARM policy

@@ -7,6 +7,8 @@ param peSubnetName string
 param foundrySubnetName string
 param containerAppsSubnetName string
 param foundryAccountName string
+param foundryPublishingPublicNetworkAccess string = 'Disabled'
+param foundryPublishingNetworkAcls object = { defaultAction: 'Deny' }
 param storageAccountName string
 param cosmosAccountName string
 param searchServiceName string
@@ -93,9 +95,9 @@ module foundry 'br/public:avm/res/cognitive-services/account:0.19.1' = if (found
     customSubDomainName: foundryAccountName
     allowProjectManagement: true
     managedIdentities: { systemAssigned: true }
-    publicNetworkAccess: 'Disabled'
+    publicNetworkAccess: foundryPublishingPublicNetworkAccess
     disableLocalAuth: true
-    networkAcls: { defaultAction: 'Deny' }
+    networkAcls: foundryPublishingNetworkAcls
     networkInjections: {
       scenario: 'agent'
       subnetResourceId: '${vnetId}/subnets/${foundrySubnetName}'
