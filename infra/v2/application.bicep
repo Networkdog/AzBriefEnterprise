@@ -123,6 +123,8 @@ var suppliedAppEnvironmentNames = map(appEnvironment, item => item.name)
 var suppliedJobEnvironmentNames = map(jobEnvironment, item => item.name)
 var resolvedAppEnvironment = concat(filter(liveUpdate ? (existingSettings.outputs.snapshot.appTemplate.containers[0].?env ?? []) : [], item => !contains(suppliedAppEnvironmentNames, item.name)), appEnvironment)
 var resolvedJobEnvironment = concat(filter(liveUpdate ? (existingSettings.outputs.snapshot.jobTemplate.containers[0].?env ?? []) : [], item => !contains(suppliedJobEnvironmentNames, item.name)), jobEnvironment)
+var appEnvironmentOnly = (filter(resolvedAppEnvironment, item => item.name == 'ADMIN_CONFIGURATION_SOURCE')[?0].?value ?? 'managed') == 'environment'
+var jobEnvironmentOnly = (filter(resolvedJobEnvironment, item => item.name == 'ADMIN_CONFIGURATION_SOURCE')[?0].?value ?? 'managed') == 'environment'
 
 resource containerEnvironment 'Microsoft.App/managedEnvironments@2026-01-01' existing = {
   scope: resourceGroup(split(environmentId, '/')[2], split(environmentId, '/')[4])
@@ -173,7 +175,6 @@ var runtimeEnvironment = [
   { name: 'API_KEY', secretRef: 'orchestrator-api-key' }
   { name: 'CHECKPOINT_BLOB_URL', value: '${stateContainerUrl}/checkpoint.json' }
   { name: 'ARCHIVE_BLOB_CONTAINER_URL', value: 'https://${infrastructureTags['azbrief.v2.storage']}.blob.${environment().suffixes.storage}/${archiveName}' }
-  { name: 'ADMIN_CONFIG_BLOB_URL', value: '${stateContainerUrl}/admin-config.json' }
   { name: 'ARCHIVE_BASE_URL', value: applicationUrl }
   { name: 'FEEDBACK_BASE_URL', value: applicationUrl }
   { name: 'COMMUNICATION_SERVICES_ENDPOINT', value: 'https://${communication.properties.hostName}' }
@@ -187,7 +188,10 @@ var supportResources = filter([
   { id: 'cosmos', label: 'Cosmos DB', name: infrastructureTags['azbrief.v2.cosmos'], resource_type: 'Microsoft.DocumentDB/databaseAccounts', api_version: '2024-11-15' }
   { id: 'search', label: 'Azure AI Search', name: infrastructureTags['azbrief.v2.search'], resource_type: 'Microsoft.Search/searchServices', api_version: '2023-11-01' }
 ], resource => !empty(resource.name))
-var appDefaults = concat(runtimeEnvironment, [
+var legacyAdminEnvironment = [
+  { name: 'ADMIN_CONFIG_BLOB_URL', value: '${stateContainerUrl}/admin-config.json' }
+]
+var appDefaults = concat(runtimeEnvironment, appEnvironmentOnly ? [] : legacyAdminEnvironment, [
   { name: 'MAX_CONCURRENT_ANALYSES', value: '1' }
   { name: 'ADMIN_UI_ENABLED', value: 'false' }
   { name: 'ADMIN_REQUIRE_AUTH', value: 'true' }
@@ -205,7 +209,7 @@ var appDefaults = concat(runtimeEnvironment, [
   { name: 'ADMIN_READINESS_CONTAINER_JOBS', value: base64(string([infrastructureTags['azbrief.v2.job']])) }
   { name: 'ADMIN_READINESS_SUPPORT_RESOURCES', value: base64(string(supportResources)) }
 ])
-var jobDefaults = concat(runtimeEnvironment, [
+var jobDefaults = concat(runtimeEnvironment, jobEnvironmentOnly ? [] : legacyAdminEnvironment, [
   { name: 'MAX_CONCURRENT_ANALYSES', value: '1' }
   { name: 'SCHEDULE_DISPATCH_ENABLED', value: 'true' }
   { name: 'RUN_TIME_BUDGET_S', value: '39600' }
@@ -214,11 +218,11 @@ var appEnvironmentNames = map(resolvedAppEnvironment, item => item.name)
 var jobEnvironmentNames = map(resolvedJobEnvironment, item => item.name)
 var mergedAppEnvironment = concat(
   filter(appDefaults, item => !contains(appEnvironmentNames, item.name)),
-  resolvedAppEnvironment
+  filter(resolvedAppEnvironment, item => !appEnvironmentOnly || item.name != 'ADMIN_CONFIG_BLOB_URL')
 )
 var mergedJobEnvironment = concat(
   filter(jobDefaults, item => !contains(jobEnvironmentNames, item.name)),
-  resolvedJobEnvironment
+  filter(resolvedJobEnvironment, item => !jobEnvironmentOnly || item.name != 'ADMIN_CONFIG_BLOB_URL')
 )
 var appContainer = union({
   name: 'azbrief'

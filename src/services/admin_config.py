@@ -1,8 +1,7 @@
-"""Durable storage for mutable Admin console configuration.
+"""Durable legacy settings or runtime-only scheduler state beside the checkpoint.
 
-The bootstrap configuration remains in Container Apps environment variables. Admin-managed
-subscribers and principals live in one small JSON blob beside the digest checkpoint so the App
-and scheduled Job share updates without mutating their own Azure resource definitions.
+Managed mode retains the shared Admin configuration document. Environment-only mode ignores
+that document and selects a separate execution-state document without administrator settings.
 """
 
 from __future__ import annotations
@@ -19,6 +18,7 @@ import httpx
 BLOB_API_VERSION = "2023-11-03"
 STORAGE_SCOPE = "https://storage.azure.com/.default"
 ADMIN_CONFIG_BLOB_NAME = "admin-config.json"
+AUTOMATIC_RUN_STATE_BLOB_NAME = "automatic-run-state.json"
 
 _REQUEST_TIMEOUT_S = 30
 _MAX_DOCUMENT_BYTES = 256_000
@@ -47,7 +47,7 @@ def _serialize(payload: dict[str, Any]) -> bytes:
     return content
 
 
-def _blob_url_from_checkpoint(checkpoint_url: str) -> str:
+def _blob_url_from_checkpoint(checkpoint_url: str, blob_name: str = ADMIN_CONFIG_BLOB_NAME) -> str:
     parsed = urlparse(checkpoint_url.strip())
     parts = [part for part in parsed.path.split("/") if part]
     hostname = (parsed.hostname or "").lower()
@@ -62,7 +62,7 @@ def _blob_url_from_checkpoint(checkpoint_url: str) -> str:
         or parsed.fragment
     ):
         raise ValueError("checkpoint_blob_url must identify an Azure Blob over HTTPS")
-    return f"https://{hostname}/{parts[0]}/{ADMIN_CONFIG_BLOB_NAME}"
+    return f"https://{hostname}/{parts[0]}/{blob_name}"
 
 
 def _validate_blob_url(blob_url: str) -> str:
@@ -187,19 +187,21 @@ class BlobAdminConfigStore(AdminConfigStore):
 
 
 def build_admin_config_store() -> AdminConfigStore:
-    """Place mutable configuration beside the configured digest checkpoint."""
+    """Select legacy settings or runtime-only storage beside the digest checkpoint."""
     from src.config import get_settings
 
     settings = get_settings()
+    environment_only = settings.admin_configuration_source == "environment"
+    blob_name = AUTOMATIC_RUN_STATE_BLOB_NAME if environment_only else ADMIN_CONFIG_BLOB_NAME
     configured_url = (settings.admin_config_blob_url or "").strip()
-    if configured_url:
+    if configured_url and not environment_only:
         return BlobAdminConfigStore(_validate_blob_url(configured_url))
     checkpoint_url = (settings.checkpoint_blob_url or "").strip()
     if checkpoint_url:
-        return BlobAdminConfigStore(_blob_url_from_checkpoint(checkpoint_url))
+        return BlobAdminConfigStore(_blob_url_from_checkpoint(checkpoint_url, blob_name))
     checkpoint_path = (settings.checkpoint_file_path or "").strip()
     if checkpoint_path:
-        return FileAdminConfigStore(str(Path(checkpoint_path).with_name(ADMIN_CONFIG_BLOB_NAME)))
+        return FileAdminConfigStore(str(Path(checkpoint_path).with_name(blob_name)))
     return AdminConfigStore()
 
 

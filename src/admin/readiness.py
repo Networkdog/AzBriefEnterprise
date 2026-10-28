@@ -216,10 +216,12 @@ class AdminReadinessCollector:
             return {"success": False, "data": {}, "error": type(exc).__name__}
 
     async def _load_admin_configuration(self) -> tuple[bool, int, str]:
-        if not self.configuration.configured:
+        if not self.configuration.configured and not self.configuration.environment_only:
             return False, 0, "Durable state storage is not configured."
         try:
             subscribers = await self.configuration.get_subscribers()
+            if self.configuration.environment_only:
+                return True, len(subscribers), f"Environment-only · {len(subscribers)} subscribers"
             return True, len(subscribers), f"Readable · {len(subscribers)} subscribers"
         except Exception as exc:
             return False, 0, f"Read failed ({type(exc).__name__})"
@@ -667,7 +669,11 @@ class AdminReadinessCollector:
                     "Admin configuration store",
                     admin_config_ok,
                     admin_config_detail,
-                    "Check ADMIN_CONFIG_BLOB_URL and Storage Blob permissions.",
+                    (
+                        "Check App and Job environment/Secrets settings."
+                        if self.configuration.environment_only
+                        else "Check ADMIN_CONFIG_BLOB_URL and Storage Blob permissions."
+                    ),
                 ),
                 _check(
                     "archive_store",

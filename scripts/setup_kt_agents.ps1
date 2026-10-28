@@ -201,8 +201,11 @@ $previousProcessEnvironment = @{}
 foreach ($entry in Get-ChildItem Env:) { $previousProcessEnvironment[$entry.Name] = $entry.Value }
 try {
     $env:AZURE_DEV_USER_AGENT = 'microsoft_foundry_skill'
-    $activate = Join-Path $repoRoot '.venv\Scripts\Activate.ps1'
-    if (-not (Test-Path -LiteralPath $activate)) { throw 'Prepare the customer virtual environment first.' }
+    $activate = @(
+        (Join-Path $repoRoot '.venv/Scripts/Activate.ps1')
+        (Join-Path $repoRoot '.venv/bin/Activate.ps1')
+    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $activate) { throw 'Prepare the customer virtual environment first (.venv/Scripts on Windows or .venv/bin in Cloud Shell/Linux).' }
     & $activate
     $insightsName = if ($setup.ContainsKey('applicationInsightsName')) { $setup.applicationInsightsName } else { '' }
     if ($insightsName) {
@@ -220,7 +223,7 @@ try {
         }
         $bindings.APPLICATIONINSIGHTS_CONNECTION_STRING = $insights.ConnectionString
     }
-    $environmentPath = Join-Path $repoRoot ".azure\$Environment"
+    $environmentPath = Join-Path $repoRoot ".azure/$Environment"
     if (Test-Path -LiteralPath $environmentPath) {
         $existing = Invoke-Checked 'azd' @(
             'env', 'get-values', '--cwd', $repoRoot, '--environment', $Environment, '--output', 'json'
@@ -233,7 +236,7 @@ try {
     }
     elseif ($Stage -ne 'Configure') { throw 'Run Configure for this explicit KT environment first.' }
     if ($Stage -eq 'Configure') {
-        $configPath = Join-Path $repoRoot '.azure\config.json'
+        $configPath = Join-Path $repoRoot '.azure/config.json'
         $previousDefault = ''
         if (Test-Path -LiteralPath $configPath) {
             $config = Get-Content -LiteralPath $configPath -Raw -Encoding utf8 |
@@ -286,7 +289,7 @@ try {
             $previousOtel = $env:OTEL_SDK_DISABLED
             try {
                 $env:OTEL_SDK_DISABLED = 'true'
-                Invoke-Checked 'python' @('-m', 'pytest', 'tests\', '-o', 'addopts=', '-x')
+                Invoke-Checked 'python' @('-m', 'pytest', 'tests/', '-o', 'addopts=', '-x')
             }
             finally { $env:OTEL_SDK_DISABLED = $previousOtel }
             Invoke-Checked 'python' @('-m', 'scripts.provision_foundry_agents')

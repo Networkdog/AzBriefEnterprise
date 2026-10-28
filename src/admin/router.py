@@ -12,9 +12,9 @@ import secrets
 from datetime import date, datetime, time, timezone
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from structlog import get_logger
 
 from src.admin.auth import AdminPrincipal, extract_principal, require_admin
@@ -24,16 +24,18 @@ from src.admin.configuration import (
     AdminConfigurationProtectedEntryError,
     get_admin_configuration,
 )
-from src.admin.errors import AdminErrorEvent, AdminErrorHistory
 from src.admin.page import render_admin_page
 from src.admin.readiness import collect_admin_readiness
-from src.agent.scope import AnalysisScope
 from src.archive.models import ArchiveSource
 from src.config import Subscriber, get_settings
-from src.orchestrator import RunSelection, get_run_store, parse_iso_utc, start_run
+from src.orchestrator import (
+    MAX_MANUAL_TARGETS,
+    RunSelection,
+    get_run_store,
+    parse_iso_utc,
+    start_run,
+)
 from src.services.admin_config import AdminConfigConflictError, AdminConfigNotConfiguredError
-from src.services.log_analytics import FAILURE_RUN_ID_PATTERN, LogAnalyticsService
-from src.web_fonts import WEB_FONT_CSP_SOURCE
 
 logger = get_logger()
 
@@ -56,7 +58,7 @@ class StartRunRequest(BaseModel):
     )
     start_date: Optional[date] = None
     end_date: Optional[date] = None
-    recent_count: Optional[int] = Field(default=None, ge=1)
+    recent_count: Optional[int] = Field(default=None, ge=1, le=MAX_MANUAL_TARGETS)
     update_id: str = Field(default="", max_length=32)
     update_url: str = Field(default="", max_length=2048)
     send_email: bool = Field(
@@ -123,7 +125,6 @@ class SubscriberRequest(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     role: str = Field(default="", max_length=500)
     language: str = Field(default="ko", min_length=2, max_length=35)
-    management_groups: list[str] = Field(default_factory=list, max_length=100)
     subscriptions: list[str] = Field(default_factory=list, max_length=100)
     resource_groups: list[str] = Field(default_factory=list, max_length=100)
     focus_services: list[str] = Field(default_factory=list, max_length=100)
@@ -140,7 +141,7 @@ class SubscriberRequest(BaseModel):
             or normalized.endswith("@")
             or "." not in normalized.rsplit("@", 1)[1]
         ):
-            raise ValueError("Enter a valid email address.")
+            raise ValueError("유효한 이메일 주소를 입력하세요.")
         return normalized
 
     @field_validator("name", "language")
@@ -148,7 +149,7 @@ class SubscriberRequest(BaseModel):
     def strip_required_text(cls, value: str) -> str:
         normalized = value.strip()
         if not normalized:
-            raise ValueError("Enter a required value.")
+            raise ValueError("필수 값을 입력하세요.")
         return normalized
 
     @field_validator("role")
@@ -156,22 +157,9 @@ class SubscriberRequest(BaseModel):
     def strip_optional_text(cls, value: str) -> str:
         return value.strip()
 
-    @field_validator(
-        "management_groups",
-        "subscriptions",
-        "resource_groups",
-        mode="before",
-    )
+    @field_validator("subscriptions", "resource_groups", "focus_services", mode="before")
     @classmethod
-    def normalize_hierarchy_scopes(cls, value, info) -> list[str]:
-        scope = AnalysisScope(**{info.field_name: value})
-        return list(getattr(scope, info.field_name))
-
-    @field_validator("focus_services", mode="before")
-    @classmethod
-    def normalize_focus_services(cls, value) -> list[str]:
-        if isinstance(value, (str, bytes)):
-            raise ValueError("focus_services must be an array")
+    def normalize_scopes(cls, value) -> list[str]:
         seen: set[str] = set()
         normalized: list[str] = []
         for item in value or []:
@@ -180,18 +168,6 @@ class SubscriberRequest(BaseModel):
                 seen.add(text.lower())
                 normalized.append(text)
         return normalized
-
-    @model_validator(mode="after")
-    def validate_hierarchy_scope(self) -> "SubscriberRequest":
-        scope = AnalysisScope(
-            management_groups=self.management_groups,
-            subscriptions=self.subscriptions,
-            resource_groups=self.resource_groups,
-        )
-        self.management_groups = list(scope.management_groups)
-        self.subscriptions = list(scope.subscriptions)
-        self.resource_groups = list(scope.resource_groups)
-        return self
 
     def to_subscriber(self) -> Subscriber:
         return Subscriber.model_validate(self.model_dump())
@@ -213,7 +189,7 @@ class AdministratorRequest(BaseModel):
             or any(character in normalized for character in ",/\\")
             or any(ord(character) < 32 for character in normalized)
         ):
-            raise ValueError("Provide one administrator object ID, UPN, or group ID.")
+            raise ValueError("관리자 식별자는 하나의 object ID, UPN 또는 group ID여야 합니다.")
         return normalized
 
 
@@ -231,7 +207,7 @@ class AutomaticRunTimeRequest(BaseModel):
         try:
             parsed = datetime.strptime(normalized, "%H:%M")
         except ValueError as exc:
-            raise ValueError("UTC run time must use HH:MM format.") from exc
+            raise ValueError("UTC 실행 시각은 HH:MM 형식이어야 합니다.") from exc
         return parsed.strftime("%H:%M")
 
 
@@ -254,7 +230,7 @@ def _raise_configuration_error(exc: Exception) -> None:
     if isinstance(exc, AdminConfigNotConfiguredError):
         raise HTTPException(status_code=503, detail=str(exc))
     logger.error("admin_configuration_operation_failed", error=type(exc).__name__)
-    raise HTTPException(status_code=503, detail="Could not save Admin configuration.")
+    raise HTTPException(status_code=503, detail="관리 구성을 저장하지 못했습니다.")
 
 
 def _parse_since(value: Optional[str]) -> Optional[datetime]:
@@ -268,7 +244,7 @@ def _parse_since(value: Optional[str]) -> Optional[datetime]:
 def _backend_label(settings) -> str:
     """Header badge naming the configured Hosted Agent profile."""
     if not settings.use_hosted_agent:
-        return "Hosted Agent configuration error"
+        return "Hosted Agent 구성 오류"
     return "Microsoft Foundry Hosted Agent"
 
 
@@ -294,14 +270,12 @@ async def admin_page(request: Request):
         profile=_backend_label(settings),
         user=principal.display,
         archive_enabled=settings.archive_ui_enabled,
-        feedback_enabled=settings.feedback_ui_enabled,
     )
     csp = (
         "default-src 'none'; "
         f"style-src 'nonce-{nonce}'; "
         f"script-src 'nonce-{nonce}'; "
         "connect-src 'self'; "
-        f"font-src 'self' {WEB_FONT_CSP_SOURCE}; "
         "img-src 'self' data:; "
         "form-action 'none'; "
         "frame-ancestors 'none'; "
@@ -428,10 +402,7 @@ async def admin_remove_administrator(
     """Remove one console-managed administrator without allowing self-lockout."""
     normalized = administrator.strip().lower()
     if normalized in principal.identifiers:
-        raise HTTPException(
-            status_code=409,
-            detail="The currently signed-in administrator cannot be deleted.",
-        )
+        raise HTTPException(status_code=409, detail="현재 로그인한 관리자는 삭제할 수 없습니다.")
     try:
         await get_admin_configuration().remove_admin(normalized)
     except Exception as exc:
@@ -496,7 +467,7 @@ async def admin_updates(
         updates = await AzureUpdateParser().get_updates()
     except Exception as exc:
         logger.warning("admin_updates_failed", error=str(exc))
-        raise HTTPException(status_code=502, detail="Could not read the Azure Update feed.")
+        raise HTTPException(status_code=502, detail="Azure Update 피드를 읽지 못했습니다.")
 
     ordered = sorted(
         updates,
@@ -517,53 +488,6 @@ async def admin_updates(
     }
 
 
-@router.get("/api/admin/errors", response_model=AdminErrorHistory)
-async def admin_errors(
-    response: Response,
-    _: AdminPrincipal = Depends(require_admin),
-    hours: int = Query(default=24, ge=1, le=720),
-    limit: int = Query(default=50, ge=1, le=100),
-    run_id: str = Query(default="", pattern=FAILURE_RUN_ID_PATTERN),
-) -> AdminErrorHistory:
-    """Read durable failure history independently of the process-local run registry."""
-    response.headers["Cache-Control"] = "no-store"
-    if not get_settings().log_analytics_workspace_id:
-        raise HTTPException(
-            status_code=503,
-            detail="Error history requires LOG_ANALYTICS_WORKSPACE_ID for the shared workspace.",
-            headers={"Cache-Control": "no-store"},
-        )
-    service = LogAnalyticsService()
-    try:
-        result = await service.get_failure_events(hours=hours, limit=limit, run_id=run_id)
-    finally:
-        await service.close()
-    if not result["success"]:
-        logger.warning("admin_failure_history_query_failed")
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                "Could not read error history. Check workspace access, the AzBriefFailures_CL "
-                "table and network connectivity, then retry."
-            ),
-            headers={"Cache-Control": "no-store"},
-        )
-    try:
-        events = [AdminErrorEvent.model_validate(item) for item in result["data"][:limit]]
-    except ValidationError as exc:
-        logger.error("admin_failure_history_invalid", error=type(exc).__name__)
-        raise HTTPException(
-            status_code=502,
-            detail="Error history returned invalid records. Check the failure-table schema.",
-            headers={"Cache-Control": "no-store"},
-        ) from exc
-    return AdminErrorHistory(
-        events=events,
-        period_hours=hours,
-        has_more=len(result["data"]) > limit,
-    )
-
-
 @router.get("/api/admin/runs")
 async def admin_runs(
     _: AdminPrincipal = Depends(require_admin),
@@ -581,7 +505,7 @@ async def admin_run_detail(
     """Return one run record."""
     record = get_run_store().get(run_id)
     if record is None:
-        raise HTTPException(status_code=404, detail="Run record not found.")
+        raise HTTPException(status_code=404, detail="실행 기록을 찾을 수 없습니다.")
     return record.to_dict()
 
 
@@ -593,7 +517,7 @@ async def admin_start_run(
     """Start an orchestrated analysis run."""
     store = get_run_store()
     if store.active_count:
-        raise HTTPException(status_code=409, detail="A run is already in progress.")
+        raise HTTPException(status_code=409, detail="이미 실행 중인 작업이 있습니다.")
 
     try:
         record = start_run(

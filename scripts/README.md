@@ -10,7 +10,6 @@ entry point입니다.
 
 | Module | 용도 | 부작용 |
 |---|---|---|
-| [deploy_kt_once.ps1](deploy_kt_once.ps1) | KT 단일 진입 계획·사전검사·단계 조정 | 기본 `Plan`/`-WhatIf`는 Azure 호출 없음. 현재 릴리스는 MCP 디렉터리·Admin Blob 의존성과 미지원 서브넷 신뢰 모드로 `Preflight`/`Deploy`를 Azure 접근 전에 차단. 실제 KT 설치 지원 완료가 아님 |
 | [setup_customer.ps1](setup_customer.ps1) | ARM 출력 기반 고객 환경 구성, MCP/Agent 게시, 초기 이미지 전환, 준비 검사·스케줄 활성화 | 단계별 로컬/원격 변경. 일반 `-WhatIf`도 ARM은 조회하며 완전 오프라인은 `-SetupFile ... -WhatIf`만 해당. `Verify`는 읽기 전용이며 모델·이메일 호출 없음 |
 | [deploy_dev.ps1](deploy_dev.ps1) | 이미 기동한 App/Job의 동일 digest 업그레이드와 실패 시 되돌림 | ACR 빌드와 두 리소스 이미지 갱신. 새 설치의 포트 전환에는 사용하지 않음 |
 | [deploy_hosted_agent.ps1](deploy_hosted_agent.ps1) | 검토된 Hosted 패키지의 검사·게시·smoke | Foundry 버전 생성 및 명시적 모델 smoke 호출 |
@@ -18,7 +17,7 @@ entry point입니다.
 | [smoke_hosted_agent.py](smoke_hosted_agent.py) | 배포된 Hosted 계약으로 단건 분석·trace 요약 확인 | 모델 비용 발생. 이메일·제어면 archive 저장 없음 |
 | [preview_email.py](preview_email.py) | SYNTHETIC ko/en/ja 단건·digest 디자인 미리보기 | 로컬 HTML만 저장; Azure 호출·이메일 발송·전송 client 초기화 없음 |
 | [preview_web.py](preview_web.py) | SYNTHETIC Admin/Archive/Feedback 브라우저 미리보기 | 루프백 서버, 메모리 내 관리 변경, 모의 저장·알림 상태; 실분석·이메일 발송·영구 저장 없음 |
-| [`crawl_azure_updates.py`](crawl_azure_updates.py) | 반복 가능하거나 오프라인인 기간 조회용 선택적 history archive 갱신 | Git 제외 `data/`에 파일 기록 |
+| [`crawl_azure_updates.py`](crawl_azure_updates.py) | rolling RSS 밖의 update history archive 갱신 | Git 제외 `data/`에 파일 기록 |
 | [`provision_foundry_agents.py`](provision_foundry_agents.py) | 여섯 specialist Prompt Agent 생성·검사·삭제 | 기본/`--delete`는 원격 변경; `--dry-run`, `--check`는 비변경 |
 | [`evaluate_report.py`](evaluate_report.py) | 단건 rule-based + G-Eval 평가와 반복 rewrite | Azure/Foundry 호출, `eval_runs/` 기록 |
 | [`evaluate_batch.py`](evaluate_batch.py) | category 층화 fleet/holdout 평가 | Azure/Foundry 호출, `eval_runs/` 기록 |
@@ -28,44 +27,7 @@ entry point입니다.
 | [`run_quality_loop.py`](run_quality_loop.py) | mock 결과의 빠른 deterministic 품질 loop | 로컬 artifact 가능 |
 | [`optimize_prompt.py`](optimize_prompt.py) | 고정 sample로 한국어 prompt A/B 최적화 | prompt source를 수정할 수 있음 |
 
-`deploy_dev.ps1`은 테스트와 ACR 빌드 직후 Docker 입력 지문을 다시 비교합니다. 검증 중 소스가
-바뀌면 원격 빌드 전, 빌드 중 바뀌면 App/Job 갱신 전에 중단합니다. 검토가 끝난 안정된 소스로
-재실행하며 테스트·검증을 건너뛰어 배포하지 않습니다.
-명시적으로 선택한 `.dockerignore`는 `Get-Item -Force`로 읽어 Linux의 숨김 파일 처리에도
-같은 지문 입력을 유지합니다. 공유 `AzureCli`는 Windows MSI 설치에 동봉된 Python으로 호출해
-Graph URL의 `&`와 인코딩된 쿼리를 인자 하나로 보존하며 batch shell로 해석하지 않습니다.
-로컬 pytest 실행 구간에만 `OTEL_SDK_DISABLED=true`를 설정하고 성공·실패 후 기존 프로세스
-환경값을 복원합니다. 닫힌 pytest 출력 스트림에 exporter가 쓰는 오류를 방지하며, Azure
-리소스의 계측 설정이나 `.env`는 변경하지 않습니다.
-Archive 평가 fixture는 운영 v1 투영과 같이 `job_relevance`, `visual_assets`, `resource_queries`를
-제외합니다. 전달 전용 필드를 수용하려고 불변 Archive 스키마를 완화하지 않습니다.
-단위 테스트는 통제된 시간으로 P95 임계값의 양쪽을 검사하고, 독립 평가 CLI는 실제 시간을
-측정해 기존 1,000ms 미만 기준을 적용합니다.
-
-프로비저닝 기본값은 코어 5개 역할에 `gpt-5-terra`와 `medium` 추론, Azure MCP에
-`gpt-5-luna`와 추론 옵션 생략입니다. 보고서 작성과 구독자 맞춤화는 코어에 유지합니다.
-`FOUNDRY_CORE_MODEL_DEPLOYMENT`, `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT`,
-`FOUNDRY_CORE_REASONING_EFFORT`로 정책을 지정하며, `--model` 또는 레거시
-`FOUNDRY_MODEL_DEPLOYMENT`가 있으면 선택한 모든 역할에 해당 모델을 적용합니다.
-`--dry-run`은 역할별 설정을 출력하고 `--check`는 모델·추론·샘플링 정책도 검사합니다.
-모델 변경 시 이전 생성 옵션은 제거합니다. 고객 설정 v2/v3는 두 모델을 전달하고 v1은 기존
-단일 모델을 유지합니다. 모델 가용성·호환성과 실제 품질·지연·비용 검증은 별도입니다.
-
-고객 설정 v3는 공용 Environment·workload profile·Application Insights를 MCP 배포에 전달합니다.
-`Mcp`는 v3를 요구하며 App/Job의 Environment와 Application Insights, 같은 Log Analytics 목적지를
-확인합니다. 배포 후와 `Verify`·`EnableSchedule`에서도 MCP 연결과 로그 설정을 다시 확인합니다.
-MCP는 콘솔 로그를 공유하고 직접 Application Insights 추적·메트릭은 비활성화합니다. 다른
-Environment에 있는 기존 MCP를 자동 삭제하지 않으며 [통합 절차](../infra/CUSTOMER_DEPLOYMENT.md#consolidating-existing-installations)를 따릅니다.
-
 ## 자주 쓰는 예시
-
-KT 단일 진입점은 먼저 `deploy_kt_once.ps1 -Mode Plan`으로 실행 계획과 차단 사유를 확인합니다.
-명시적 구독·테넌트·RG·파라미터 파일·불변 이미지·azd 환경 이름이 필요합니다. 현재는
-고객 정책을 충족하는 MCP 연결·관리 설정·공용 게시 경로 폐쇄가 구현되지 않았으므로 실제
-배포를 시작하지 않습니다. 스크립트는 이를 건너뛰는 옵션을 제공하지 않습니다.
-`-ReportPath`에는 원본 JSON이나 비밀값 대신 입력 파일 해시와 단계 상태를 기록하며,
-기존 파일은 덮어쓰지 않습니다. 완전한 운영 인수와 스케줄 활성화도 자동 성공으로 처리하지
-않습니다. PowerShell/Python 출력은 실행 중 UTF-8로 맞추고 호출자의 환경을 복원합니다.
 
 새 고객 설치는 [고객 가이드](../infra/CUSTOMER_DEPLOYMENT.md)를 따릅니다. 루트 `.env`가 없는
 별도 clone과 명시적 `-SubscriptionId`, `-ResourceGroup`, `-DeploymentName`, `-Environment`가
@@ -99,8 +61,6 @@ python -m scripts.preview_email --output-dir out/email-editorial-preview --langu
 ```
 
 `--language`는 `ko`, `en`, `ja`도 받습니다. 출력 디렉터리를 생략하면 임시 디렉터리를 만듭니다.
-`--resource-count 327`을 추가하면 대량 리소스의 두 사유 그룹과 검증된 조회 메타데이터를 포함한
-합성 미리보기를 만듭니다. 기본 미리보기와 다른 `out/` 폴더를 사용해 소규모/대량 결과를 보존합니다.
 합성 미리보기는 전송 성공, 전체 suite 또는 브라우저·이메일 client 검증의 근거가 아닙니다.
 
 웹 화면은 같은 합성 예제를 재사용하는 루프백 전용 서버에서 확인합니다.

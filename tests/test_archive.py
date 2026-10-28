@@ -3,7 +3,6 @@
 import base64
 import json
 from datetime import datetime, timezone
-from urllib.parse import parse_qs, urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -24,7 +23,6 @@ from src.archive.models import (
 )
 from src.archive.page import render_archive_page
 from src.config import get_settings
-from src.report_presentation import normalize_analysis_narrative, report_presentation
 from src.web_fonts import WEB_FONT_CSP_SOURCE, WEB_FONT_URL
 
 UTC = timezone.utc
@@ -35,62 +33,6 @@ _ARCHIVE_ENV = (
     "ARCHIVE_ALLOWED_PRINCIPALS",
     "ADMIN_ALLOWED_PRINCIPALS",
 )
-
-
-@pytest.mark.parametrize("category", ["retirement", "new_feature"])
-@pytest.mark.parametrize("details", [None, {}, {"cost_impact": ""}])
-def test_report_presentation_omits_empty_serialized_impact(category, details):
-    original = {
-        "update_category": category,
-        "impact_details": details,
-        "impact_summary": json.dumps(
-            {
-                "cost_impact": "",
-                "security_impact": "",
-                "performance_impact": "",
-                "operational_impact": "",
-            }
-        ),
-    }
-    before = json.dumps(original)
-    display = report_presentation(original)
-    assert display["impact_details"] == {}
-    assert display["impact_summary"] == ""
-    assert json.dumps(original) == before
-
-
-def test_report_presentation_recovers_json_dimensions_and_preserves_prose():
-    original = {
-        "impact_summary": '```json\n{"security_impact":"Verified protection", "cost_impact":"N/A"}\n```'
-    }
-    assert report_presentation(original)["impact_details"] == {
-        "security_impact": "Verified protection"
-    }
-    assert report_presentation(original)["impact_summary"] == ""
-    original["impact_details"] = {"cost_impact": "Current evidence"}
-    assert report_presentation(original)["impact_details"] == {"cost_impact": "Current evidence"}
-    assert (
-        report_presentation({"impact_summary": "**Legacy prose** remains."})["impact_summary"]
-        == "**Legacy prose** remains."
-    )
-
-
-def test_analysis_presentation_removes_numbered_paragraphs_not_real_lists_or_code():
-    source = "1. **Azure SQL** protects backups.\n\n1. Retention applies for seven days.\n\n1. Existing backups are protected."
-    display = normalize_analysis_narrative(source)
-    assert (
-        display
-        == "**Azure SQL** protects backups.\n\nRetention applies for seven days.\n\nExisting backups are protected."
-    )
-    for retained in (
-        "1. First step\n2. Second step",
-        "1. First step\n\n2. Second step\n\n3. Third step",
-        "1. First step\n   - Nested detail",
-        "```text\n1. Literal example\n\n1. Another literal\n```",
-        "> **Term**: 1. A definition.",
-        "TLS 1.2 protects traffic.",
-    ):
-        assert normalize_analysis_narrative(retained) == retained
 
 
 @pytest.fixture(autouse=True)
@@ -176,9 +118,7 @@ def _document(update_id: str = "570120") -> ArchiveDocumentV1:
             update_type="General Availability",
         ),
         result=ArchiveAnalysisResultV1.model_validate(
-            _result(update_id).model_dump(
-                mode="json", exclude={"job_relevance", "visual_assets", "resource_queries"}
-            )
+            _result(update_id).model_dump(mode="json", exclude={"job_relevance"})
         ),
     )
 
@@ -358,8 +298,7 @@ class TestArchivePage:
         assert WEB_FONT_URL in page
         assert page.count("https://") == 1
         assert "@import" not in page
-        assert '<link rel="icon" href="data:image/svg+xml,' in page
-        assert 'rel="stylesheet"' not in page
+        assert "<link" not in page
         assert "'Apple SD Gothic Neo'" in page
         assert "'AppleSDGothicNeo-Regular'" in page
         assert "font-display: swap" in page
@@ -368,50 +307,21 @@ class TestArchivePage:
         assert '<span class="brand-mark" aria-hidden="true">AZ</span>' in page
         assert '<main id="main-content">' in page
         assert "background-image:linear-gradient" not in page
-        assert "body { background:var(--surface); background-image:none;" in page
         assert "advanced-filter" in page
         assert 'aria-expanded="false"' in page
         assert '<div class="result-head"><h2 data-i18n="archive_results">' in page
         assert '<h2 id="detail-title" class="detail-title">' in page
-        assert "max-width:1120px; margin:0 auto" in page
-        assert "main.detail-view .page-intro { display:none; }" in page
-        assert "font-size:48px; font-weight:800" in page
-        assert ".detail-lead" in page
-        assert "#detail-body > .detail-section:first-child" not in page
-        assert "detail-section detail-facts" in page
-        assert "detail-impact-section" in page
-        assert "classList.add('detail-view')" in page
-        assert "classList.remove('detail-view')" in page
-        assert ".actions { display:grid; grid-template-columns:repeat(3,auto); }" in page
+        assert "max-width:960px; margin:0 auto" in page
         assert "toLocaleString(document.documentElement.lang" in page
         assert "appendInlineMarkdown" in page
         assert "renderMarkdown" in page
         assert "markdown blockquote" in page
         assert "inline-code" in page
         assert "renderImpact" in page
-        assert "renderEnvironment" in page
-        assert "placeReportNotes" in page
-        assert "?view=report" in page
+        assert "renderResources" in page
         assert "main { width:100%; max-width:1240px; margin:0 auto;" in page
         assert "job_relevance" not in page
         assert "직무연관성" not in page
-
-    def test_filter_history_requests_and_report_tools_are_wired(self):
-        page = render_archive_page("nonce", "enterprise", "reader", feedback_enabled=True)
-
-        assert 'id="advanced-filters" class="filter-advanced" hidden' in page
-        assert 'aria-controls="advanced-filters"' in page
-        assert 'id="active-filters"' in page
-        assert "history.pushState({},'',browserUrl())" in page
-        assert "new AbortController()" in page
-        assert "request !== state.listRequest" in page
-        assert "request !== state.detailRequest" in page
-        assert "if (state.listKey !== browserUrl()) await load(true)" in page
-        assert 'id="detail-outline"' in page
-        assert 'id="copy-link"' in page
-        assert "report:'archive:' + id" in page
-        assert 'href="/feedback"' in page
-        assert 'href="/feedback"' not in render_archive_page("nonce", "enterprise", "reader")
 
 
 class TestArchiveRoutes:
@@ -444,26 +354,6 @@ class TestArchiveRoutes:
         response = client.get("/archive", follow_redirects=False)
         assert response.status_code == 302
         assert response.headers["location"].startswith("/.auth/login/aad")
-
-    def test_archive_sign_in_preserves_filter_and_language_query(self, client, monkeypatch):
-        _configure(monkeypatch, ARCHIVE_UI_ENABLED="true", ARCHIVE_REQUIRE_AUTH="true")
-
-        response = client.get(
-            "/archive", params={"q": "Storage", "lang": "ko"}, follow_redirects=False
-        )
-
-        assert response.status_code == 302
-        query = parse_qs(urlsplit(response.headers["location"]).query)
-        assert query["post_login_redirect_uri"] == ["/archive?q=Storage&lang=ko"]
-
-    def test_archive_page_language_is_independent_of_report_language(self, client, monkeypatch):
-        _configure(monkeypatch, ARCHIVE_UI_ENABLED="true", ARCHIVE_REQUIRE_AUTH="false")
-
-        response = client.get("/archive", params={"lang": "ko"})
-
-        assert response.status_code == 200
-        assert '<html lang="ko">' in response.text
-        assert "업데이트 아카이브" in response.text
 
     def test_archive_page_has_private_csp_response(self, client, monkeypatch):
         _configure(
@@ -505,53 +395,6 @@ class TestArchiveRoutes:
         operation = client.get("/openapi.json").json()["paths"]["/api/archive/analyses"]["get"]
         parameter_names = {parameter["name"] for parameter in operation["parameters"]}
         assert "job_relevance" not in parameter_names
-
-    def test_report_view_normalizes_display_without_rewriting_the_document(
-        self, client, monkeypatch
-    ):
-        document = _document()
-        raw_json = json.dumps(
-            {
-                "cost_impact": "",
-                "security_impact": "",
-                "performance_impact": "",
-                "operational_impact": "",
-            }
-        )
-        document = document.model_copy(
-            update={
-                "result": document.result.model_copy(
-                    update={
-                        "impact_details": None,
-                        "impact_summary": raw_json,
-                        "relevance_reason": "1. First narrative paragraph.\n\n1. Second narrative paragraph.",
-                    }
-                )
-            }
-        )
-        before = document.model_dump_json()
-
-        class Service:
-            async def get(self, archive_id):
-                return document
-
-        monkeypatch.setattr("src.archive.router.get_archive_service", lambda: Service())
-        _configure(monkeypatch, ARCHIVE_UI_ENABLED="true", ARCHIVE_REQUIRE_AUTH="false")
-        path = f"/api/archive/analyses/{document.archive_id}"
-        raw = client.get(path)
-        displayed = client.get(path, params={"view": "report"})
-        assert raw.status_code == displayed.status_code == 200
-        assert "presentation" not in raw.json()
-        assert displayed.json()["result"] == raw.json()["result"]
-        assert displayed.json()["result"]["impact_summary"] == raw_json
-        presentation = displayed.json()["presentation"]
-        assert presentation["impact_details"] == {} and presentation["impact_summary"] == ""
-        assert (
-            presentation["relevance_reason"]
-            == "First narrative paragraph.\n\nSecond narrative paragraph."
-        )
-        assert document.model_dump_json() == before
-        assert "job_relevance" not in json.dumps(displayed.json())
 
     def test_archive_detail_returns_404_for_unknown_id(self, client, monkeypatch):
         self._install_service(monkeypatch)

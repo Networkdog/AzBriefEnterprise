@@ -31,7 +31,10 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$activateScript = Join-Path $repoRoot ".venv\Scripts\Activate.ps1"
+$activateScript = @(
+    (Join-Path $repoRoot '.venv/Scripts/Activate.ps1')
+    (Join-Path $repoRoot '.venv/bin/Activate.ps1')
+) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
 $runtimePathPattern = '^(src/|hosted_agent_main\.py$|requirements\.txt$|pyproject\.toml$)'
 
 function Invoke-NativeChecked {
@@ -136,7 +139,7 @@ function New-DeploymentStagingDirectory {
     if ($hostedName -cnotmatch '^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$') {
         throw "FOUNDRY_HOSTED_AGENT_NAME must identify the exact 1-63 character deployment target."
     }
-    $sourceEnvironmentPath = Join-Path $repoRoot ".azure\$Environment"
+    $sourceEnvironmentPath = Join-Path $repoRoot ".azure/$Environment"
     if (-not (Test-Path -LiteralPath $sourceEnvironmentPath -PathType Container)) {
         throw "Configure the explicit named azd environment before creating a deployment workspace."
     }
@@ -224,8 +227,8 @@ function Sync-AzdEnvironmentFromStaging {
         [string]$StagingPath
     )
 
-    $sourceEnvironmentPath = Join-Path $StagingPath ".azure\$Environment"
-    $targetEnvironmentPath = Join-Path $repoRoot ".azure\$Environment"
+    $sourceEnvironmentPath = Join-Path $StagingPath ".azure/$Environment"
+    $targetEnvironmentPath = Join-Path $repoRoot ".azure/$Environment"
     foreach ($name in @(".env", "config.json")) {
         $source = Join-Path $sourceEnvironmentPath $name
         if (Test-Path -LiteralPath $source -PathType Leaf) {
@@ -270,8 +273,8 @@ function Invoke-Doctor {
     Invoke-NativeChecked -FilePath "azd" -ArgumentList $arguments
 }
 
-if (-not (Test-Path -LiteralPath $activateScript -PathType Leaf)) {
-    throw "Virtual environment activation script not found: $activateScript"
+if (-not $activateScript) {
+    throw "Virtual environment activation script not found (.venv/Scripts on Windows or .venv/bin in Cloud Shell/Linux)."
 }
 
 if ($PackageOnly -and $FromPackage) {

@@ -4,36 +4,6 @@ description: "Copilot instructions for AzBrief — Azure Update Intelligence Age
 
 # AzBrief — Copilot Instructions
 
-**Customer identity boundary (2026-10-25):** customer deployment must not require arbitrary
-Entra app registration, SSO or authentication gateways, including existing SSO/gateway reuse.
-Do not propose a Graph-enabled setup identity as a workaround. The current automatic MCP/web
-registration workflows below describe existing implementation, not permission to use them in
-this environment. Follow [the target design](../infra/v2/RESTRICTED_IDENTITY_DESIGN.md), which
-is not yet implemented. The customer explicitly accepts private tenant MCP without caller auth
-only behind verified exact Foundry-subnet isolation; this supersedes the native-tool replacement
-proposal, not web/API authentication or the six specialist roles. Shared Admin/MCP ingress plus
-NSG alone is insufficient. Preserve MCP MI/read-only RBAC, and never disable current auth or force
-readiness before the new network/connection mode passes live positive and negative checks.
-Manage administrator settings through ARM environment/Secrets configuration, not Blob access
-or a config Job. Do not silently change the Hosted architecture; platform-created MI service
-principals and Agent IDs require separate policy acceptance. Keep unsupported deployment blocked
-and distinguish design documentation from working deployment support.
-
-The requested initial Foundry publishing policy permits only selected inbound VNet/subnet and
-approved public IPv4/CIDR sources with default deny, preserving outbound VNet Injection and PEs.
-This is design-only until the exact Hosted/API/data-mode combination and Azure Policy pass.
-Do not loosen existing preflight, change live/shared accounts, expose Storage/MCP, assume ACL
-expiry or open All networks. After publication/private-path acceptance, explicitly close and
-verify the temporary public path; authentication/RBAC and Agent identity gates remain required.
-
-`scripts/deploy_kt_once.ps1` is a guarded single-entry coordinator, not proof of current KT
-deployment support. Default Plan/WhatIf is offline; actual modes block current Graph MCP,
-missing subnet-trust mode, Blob-managed Admin settings and unimplemented publishing closure
-before Azure access. Never remove those blockers to obtain a green run. Source/compiler/import/
-test gates, exact Hosted principal, Manual Job and pending operational acceptance remain required.
-Its temporary Python UTF-8/test OTel settings and caller environment must be restored.
-Local foundryPublishingAccess Bicep/CLI validation exists; actual profile acceptance is separate.
-
 **MANDATORY: Always activate the virtual environment before running ANY terminal command.**
 Before executing `python`, `pytest`, `pip`, or any project script, you MUST run:
 - Windows: `& .\.venv\Scripts\Activate.ps1`
@@ -47,7 +17,7 @@ Do not claim success — it is only success if you actually verified it.
 ## Project Overview
 
 AzBrief Enterprise is the enterprise edition of AzBrief and shares the same product identity, analysis core, and mission. It is an **Azure Update Intelligence Agent** for Azure administrators. One Microsoft Foundry **Hosted Agent** owns the complete custom LangGraph harness, tool execution, report-quality loop, and subscriber customization. Six distinct persisted Prompt Agents provide coordination, Resource Graph, Azure MCP, Azure API, report-writing, and quality-review expertise. Container Apps is the control plane: FastAPI/Admin/Archive/MCP, RSS selection, canonical analysis archiving, digest checkpointing, scheduling, and email delivery. It invokes the Hosted Agent through a strict versioned Responses contract and never constructs the analyzer locally.
-It analyzes Azure Update RSS feeds, queries the administrator's actual Azure resources via Resource Graph to assess relevance, evaluates each update on three independent axes — importance (update's inherent significance), impact (effect on the admin's resource environment), and job relevance (fit to the subscriber's role) — generates impact analysis and action items via AI Agent (LangChain/LangGraph), and delivers digests grouped by publication week. All updates are analyzed without pre-filtering — the email summary displays a compact table with columns for 중요성, 영향도, and 직무연관성 (높음/보통/낮음 shaded cells), and each title links to its detailed analysis below. It aims to provide practical help to Azure administrators who manage diverse roles.
+It analyzes Azure Update RSS feeds, queries the administrator's actual Azure resources via Resource Graph to assess relevance, evaluates each update on three independent axes — importance (update's inherent significance), impact (effect on the admin's resource environment), and job relevance (fit to the subscriber's role) — generates impact analysis and action items via AI Agent (LangChain/LangGraph), and delivers a consolidated daily digest email. All updates are analyzed without pre-filtering — the email summary displays a compact table with columns for 중요성, 영향도, and 직무연관성 (높음/보통/낮음 badges), and each title links to its detailed analysis below. It aims to provide practical help to Azure administrators who manage diverse roles.
 
 ### Product Identity and Direction
 
@@ -55,20 +25,7 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 - **Vision**: Make Azure change intelligence a routine operational capability so every Azure team knows what changed, where and why it matters, and what comes next for its own environment.
 - **Evidence before inference**: Ground conclusions in actual tenant resources, configuration, health, policy, cost, and regional availability. AzBrief is environment-aware decision intelligence, not a generic update summarizer.
 - **Action over notification**: Turn findings into safe, specific procedures, commands, deadlines, and risk warnings instead of merely restating announcements.
-- **Decision brief over feature education**: Write as the assigned CSA would advise. Name the
-  decision hinge, give a grounded recommendation and the condition for choosing the alternative or
-  retaining the current state, expose supported trade-offs and hidden failure modes, identify the
-  operational responsibility, and define the evidence that closes the decision. Never leak Microsoft
-  sales motions or invent customer goals, budgets, schedules, owners, or plans.
 - **Coverage without silent filtering**: Analyze every collected update before deciding its importance, impact, or job relevance so risks and opportunities are not discarded prematurely.
-- **Category-aware environment relevance**: `relevance_evidence` means applicability/value within
-  the analysis-time scope, never a selection or delivery justification. Changes/retirements explain
-  confirmed applicability, necessary action, and real deadlines; new capabilities explain documented
-  value for known workloads or supplied requirements and adoption trade-offs, with at most one
-  optional non-mutating evaluation. Resource ownership is not a relevance gate; material evidence
-  gaps remain unknown, and public use cases never become invented tenant plans. Preserve independent
-  role/focus assessment even with no resource rows. Archive/email/judge share the localized
-  Environment Relevance label without renaming the field or rewriting immutable historical content.
 - **One investigation, role-specific delivery**: Reuse the same evidence while adapting the briefing to each subscriber's responsibility and language.
 - **Enterprise extension, not product divergence**: A Foundry Hosted Agent, governed Prompt Agents, Entra-only access, Container Apps control surfaces, private networking, observability, and durable state extend the original AzBrief mission into regulated environments; they do not replace or redefine it.
 - **Trust before autonomy**: Keep evidence traceable, validate executable actions, and fail closed when identity, permissions, or model capabilities are unclear.
@@ -84,43 +41,6 @@ It analyzes Azure Update RSS feeds, queries the administrator's actual Azure res
 ---
 
 ## Agentic AI Design Principles
-
-For v2 Portal failures, distinguish foundation success from core/MCP ready. Keep the
-portalValidationPassed true-only guard; image-field native validations must name foundation,
-MCP-pending or missing-ready prerequisites before ARM submission. Confirm the actual RG and
-public artifact version. A separate CLI/snapshot App smoke is not customer Portal acceptance;
-never force tags, broaden permissions or silently swap models to suppress this failure.
-
-MCP setup can run automatically only with explicit preapproved `mcpAutomation` setup identity,
-ACI-only subnet and separate private/restricted File Storage IDs. Never grant Graph consent,
-directory roles or file permissions from the template, and never use App/Job/MCP/project
-identities as the installer. Preserve legacy empty/omitted configuration. New foundation saves
-the bounded setup profile and completion runs it before success-only ready handoff. Older
-mcp_pending installs use the generated exact-pending-core Portal continuation; it verifies
-the successful saved core/current scope and bindings, performs authentication only and cannot
-replay infrastructure or redirect existing setup resources. Tokens/raw Graph failures stay out
-of outputs/logs; unauthorized, foreign, paged or incomplete evidence stays pending. Private
-deployment-script execution and initial tenant consent require separate live acceptance.
-
-V2 Portal uses dedicated foundation/completion/application input views. Keep the original
-combined forms as canonical policy/compatibility sources. Generate the pre-write ARM policy
-modules with `scripts/build_v2_ui.py`, then compile both Bicep parents. Preserve every canonical
-field predicate and parameter binding, policy fingerprints, actual scope/current-tag checks and
-the true-only consent guard. Every Portal resource write must wait for server verification.
-Inner ARM scope can omit `resourceGroup().tags` on an untagged RG; use `tryGet` before coalescing.
-Keep input evidence separate from ARM-resource evidence so ordinary selections do not re-encode
-all observations. Copy only allow-listed non-secret fields; preserve types/missing inventories,
-reduce errors/continuation URLs to presence, and never include secrets. Native required/format
-and App foundation/MCP readiness messages remain. `steps('name')` is a control namespace, not
-a serializable JSON object; read individual controls. Measure native P95 and error/request counts,
-not just generated size or Python replay. Local routing is not publication or live deployment.
-Remove dangling references when phase inputs are pruned; keep removed input values unknown and
-do not mount the foundation-only unresolved VNet read in completion. Native scalar `first`
-collapses false/empty values to null: use object member projection and preserve known one-row
-boolean/string binding results. Keep optional saved metadata missing-safe without inventing readiness.
-Native Basics can perform provider/Policy RPCs; record their time separately, never bypass them.
-ARM fetches `templateLink` server-side, regardless of a browser route. Unpublished source acceptance
-must use the exact candidate body without changing parameters/authorization or mocking responses.
 
 AzBrief follows advanced Agentic AI design principles for reliability, resilience, and quality.
 
@@ -149,16 +69,10 @@ Plan → Execute → Evaluate → (sufficient → Report | partial → Revise �
 ### Resilience & Error Recovery
 
 - **Differential retry strategy**: Foreground (user-facing) calls retry with exponential backoff + jitter; background tasks (subscriber customization) fail immediately on overload to prevent gateway amplification
-- **429 delay contract**: Planning, evaluation, reporting and Cost Management honor the longest
-  valid server retry hint (seconds, milliseconds, HTTP date or cost-specific retry-after), falling
-  back to 10/20/40 seconds plus jitter within their retry limits. Planning retries do not consume
-  tool turns. Cost queries disable nested SDK retries, allow three application retries, and never
-  sleep after exhaustion. Hosted HTTP retries also honor server hints; customization stays
-  fail-fast. An explicit non-retryable HTTP status wins over digits in an error message.
 - **Circuit breaker**: Track consecutive failures; after 3 consecutive failures, fall back to alternative model or abort gracefully. Auto-reset after timeout (half-open state)
 - **Model fallback**: After `MAX_CONSECUTIVE_OVERLOAD_ERRORS` (3) consecutive 529 errors, raise `ModelFallbackError` to trigger model switch. Cleanly separates retry exhaustion from model switching logic
 - **Stale connection detection**: Detect ECONNRESET/EPIPE for targeted recovery (disable keep-alive pooling + reconnect) instead of generic retry
-- **LLM-assisted tool repair**: On tool failure, the Resource Graph specialist repairs KQL and the coordinator repairs other tool arguments, with bounded retries and a circuit breaker. Never fall back across specialist roles; use meaning-preserving lexical repair or preserve a gap, never replace a failed question with a generic builder/count
+- **LLM-assisted tool repair**: On tool failure, the Resource Graph specialist repairs KQL and the coordinator repairs other tool arguments, with bounded retries and a circuit breaker. Never fall back across specialist roles; use deterministic builder/rule recovery or preserve a gap instead
 - **Multi-turn output recovery**: If LLM hits output token limit, inject meta-message ("Resume directly — no apology, no recap") and retry up to 3 times
 - **Error withholding**: Recoverable errors (prompt-too-long, max-output-tokens) are not surfaced to callers until recovery is attempted. Surface only if recovery fails
 - **Graceful degradation**: If Resource Graph, Azure MCP, or Azure API evidence fails, preserve an explicit `partial` gap and reduce confidence. Missing specialist evidence never becomes confirmed absence and never falls back to a general-purpose Prompt Agent
@@ -206,43 +120,11 @@ Tools follow a self-contained module pattern:
 
 `Settings.foundry_agent_for_role()` accepts only explicit specialist names. Production Hosted execution requires all six specialist roles to resolve to **distinct** Agent names (`has_complete_specialist_roster`); unknown former settings are ignored and do not satisfy readiness. Agent definitions use `AIProjectClient.agents`; runtime invocation uses the project-scoped Responses API. The app never constructs a direct Azure OpenAI/OpenAI chat-completions client.
 
-Material financial implications in any update category require a scoped recent ActualCost baseline
-or an explicit cost-evidence gap. Cost enrichment checks title/body, not only the pricing category.
-Keep cost calls under Azure API ownership, filter before aggregation, parse response columns by name,
-and preserve period, currency, and subscription. Sort all rows and total before applying display
-limits; reject mixed currencies and incomplete pages. Never assume USD, choose the first visible
-subscription, or broaden a bounded subscriber analysis. Cost-tool failures must remain failed tasks,
-not successful strings. Report observed spending separately from supported estimates in the existing
-cost-impact field; do not apply advertised savings to unrelated spending. Hosted cost-read permission,
-updated Prompt Agent definitions, and Hosted deployment are separate from local verification.
-
-### Resource Graph Investigation
-
-- Start with the update's decision question. Builders are optional baselines, never query-shape
-  ceilings. Supported project expressions, typed predicates, distributions, join/union and array/bag
-  expansion are available within documented SDK limits. No let/render/datatable/externaldata/toscalar.
-- Keep scope and applicability thresholds. App-injected Resource Group or intersected MG/subscription
-  predicates still prohibit join/union; use separate scoped ID-based queries there.
-- Schema exploration samples five live resources, traverses nested objects/arrays with disclosed
-  bounds, and matches focus keywords. Cached paths are historical hints, not complete/current evidence.
-- Custom KQL carries purpose and expected_columns. The loop handles syntax, wrong/off-topic results,
-  empty filtered queries and missing required values with up to eight attempts and two result rewrites.
-  Stop cycles, 401/403 and cancellation. False/zero are valid; null/missing stays unknown. A diagnostic
-  sample must never become the affected-resource result or justify relaxing a security threshold.
-- Preserve project expressions, strings/comments and downstream aliases during sanitization. The
-  live service rejects kind=tostring(kind), but direct kind or resourceKind=tostring(kind) works.
-  Never restore regex project-to-extend rewriting, blanket join/array stripping or builder substitution.
-- Follow up to ten 1000-row SDK pages with objectArray output and explicit incompleteness. Keep every
-  received service-detail row, including nulls. Local refs cannot recover uncollected Azure pages.
-- Evaluate query_intent, not only tool success; false coverage requests revision before existing
-  termination limits, and exhausted gaps remain explicit. Updated tools/runtime guidance require
-  new Prompt Agent versions and a Hosted deployment, not just a control-plane image update.
-
 ### Memory & Caching
 
 - **Session memoization**: `get_settings()` via `@lru_cache`, `get_resource_summary()` with 5-min TTL thread-safe cache
-- **KQL knowledge persistence**: `src/agent/kql_knowledge_base.json` is a tenant-neutral seed only. Runtime schemas, successful queries, and failures are loaded lazily and written under `AZBRIEF_DATA_DIR`; never commit request errors, correlation IDs, or tenant evidence into the seed
-- **Hosted writable state**: The code package under `/app` is read-only. `src/hosted_agent.py` sets `AZBRIEF_DATA_DIR=$HOME/.azbrief` before loading history, pattern, and KQL runtime stores; those optimization writes are best-effort and must never discard a completed analysis
+- **KQL knowledge persistence**: Discovered schemas and successful queries stored in `kql_knowledge_base.json` and loaded lazily
+- **Hosted writable state**: The code package under `/app` is read-only. `src/hosted_agent.py` sets `AZBRIEF_DATA_DIR=$HOME/.azbrief` before loading history/pattern stores; those optimization writes are best-effort and must never discard a completed analysis
 - **Lazy module loading**: Heavy imports (`langchain`, `openai`, Azure SDKs) deferred via `__getattr__` in `__init__.py`
 
 ---
@@ -269,11 +151,11 @@ updated Prompt Agent definitions, and Hosted deployment are separate from local 
 ## Project Structure
 
 ```
-AzBriefEnterprise/
+AzBrief/
 ├── src/                          # Main application package
 │   ├── __init__.py               # Version
 │   ├── config.py                 # pydantic-settings (env → Settings)
-│   ├── main.py                   # Container Apps control plane (API/Admin/Archive/Feedback/MCP)
+│   ├── main.py                   # Container Apps control plane (API + /admin + /mcp)
 │   ├── mcp_server.py             # Authenticated MCP Streamable HTTP tools
 │   ├── hosted_agent.py           # Foundry Hosted Agent entry point; full analysis runtime
 │   ├── scheduler.py              # Container Apps Job control-plane entry point
@@ -305,23 +187,14 @@ AzBriefEnterprise/
 │   │   ├── page.py               # Server-rendered console HTML (nonce CSP)
 │   │   └── router.py             # /admin + /api/admin/* routes
 │   ├── archive/                  # Immutable analysis contract + reader auth/API/browser
-│   ├── feedback/                 # Public submission form + private storage/notification
-│   ├── web_design.py             # Shared tokens and Admin/Archive navigation primitives
-│   ├── web_fonts.py              # Browser font and CSP policy
 │   ├── orchestrator.py           # Orchestrated digest runs
 │   ├── services/                 # Azure SDK service classes (data access only)
 │   │   └── checkpoint.py         # Durable digest checkpoint (blob / file / inert)
 │   │   └── archive.py            # Immutable archive backends (blob / file / inert)
-├── scripts/                      # Customer deployment, local CLI and Foundry provisioning
-│   ├── setup_customer.ps1        # Explicit customer stages from ARM setup outputs
-│   ├── deploy_hosted_agent.ps1   # Guarded Hosted deployment and smoke
-│   ├── deploy_dev.ps1            # Guarded App/Job image upgrades after bootstrap
+├── scripts/                      # Local test CLI + Foundry agent provisioning
 │   ├── quality_campaign.py       # Frozen period, A/A, holdout, layered release gates
 ├── infra/                        # IaC
 │   ├── azbrief-enterprise-deploy.json # ARM template (Deploy button) — compiled output
-│   ├── createUiDefinition.json       # Paired Portal input form
-│   ├── CUSTOMER_DEPLOYMENT.md        # Customer prerequisites, setup and acceptance
-│   ├── azure-mcp-server/            # Separate read-only MCP deployment unit
 │   ├── enterprise/main.bicep          # Source of truth — edit here, then compile
 │   └── enterprise/modules/            # Bicep modules inlined into the compiled template
 ├── .github/
@@ -345,169 +218,6 @@ AzBriefEnterprise/
 ---
 
 ## Deployment Topology
-
-Top-level README files expose only the v2 infrastructure/application Portal links with their
-paired CreateUiDefinition files. Never restore image Deploy buttons or legacy Enterprise/KT
-template links there. The model-region menu belongs to v2 foundation/network, not completion/App;
-check the exact public ARM/UI pair before claiming the customer's visible menu is fixed.
-The preserved legacy Enterprise profile follows `infra/CUSTOMER_DEPLOYMENT.md`.
-Bootstrap hello-world uses port 80 and `/`; real AzBrief uses
-8000 and `/health`. Jobs default to Manual (`enableScheduledRuns=false`), bootstrap images can
-never enable scheduling, and `maxConcurrentAnalyses=1` is the initial customer default.
-`scripts/setup_customer.ps1` reads only the versioned non-secret `customerSetup` output, requires
-explicit customer targets and a matching default CLI account, rejects a root developer `.env`,
-and isolates named azd environments. Keep `FOUNDRY_HOSTED_AGENT_NAME` aligned with `azure.yaml`.
-The initial Application stage updates both images and bootstrap probes; normal guarded image
-upgrades still use `scripts/deploy_dev.ps1`. Its local pytest gate temporarily sets
-`OTEL_SDK_DISABLED=true` and restores the caller's value in `finally`, including failed tests;
-never persist this test-only setting to Azure or `.env`. Archive unit tests control the clock
-and cover the P95 gate's pass/fail boundary; the standalone evaluator retains real timing and
-the unchanged 1,000 ms limit. Only after analysis/archive/auth/email acceptance
-may EnableSchedule recheck readiness and PATCH the Job while preserving configuration and
-Key Vault references. Never grant Hosted evidence permissions to the Container Apps or project
-identity. Local/mocked checks are not customer ARM validation or proof of delivery. Pin the CI
-Bicep compiler to the version that generated the checked-in ARM, and test setup on Windows.
-The guided VNet profile must bind Foundry and the VNet to the same deployment region.
-V2 subnet discovery keeps ArmApiControl nonvisual with no visible gate and exactly the working
-KT direct request dependency on virtualNetwork.id. Do not mask an unresolved selector with
-coalesce/subscription fallback or wrap the request in stage/mode conditions. Preserve name-only
-dropdown choices, blank defaults and separate CIDR/identity/delegation guards. Missing/different
-response IDs, denied/missing-data and truly empty subnets need distinct safe status; show only
-safe IDs/error codes, not bodies. Test the serialized dependency and VNet changes, not just a
-prefilled response. V2 explicitly sets isWizard=true so Basics is the initial available tab and
-Next validates each step; retain legacy KT navigation unchanged. Reject duplicate control/step
-names in every native scope, including Sections. Never collapse controls into a dict before
-testing uniqueness: that hid duplicate savedNetworkNotice rows. Actual first-render acceptance
-still requires an authenticated Portal; live ARM replay is not a substitute.
-Foundation writes all service modes to options chunks, typed resource IDs to resource chunks,
-and exact VNet/subnet names to the existing tags. Completion and application reuse those values
-without infrastructure questions; App shows only a read-only summary. Gate every foundation
-input, not just resource selectors, on Foundation plus a New RG or exact successful unbound RG
-read. Saved, loading, denied, paged or stale Existing-RG responses never reopen fresh inputs.
-If the selected stage is still Foundation for a saved RG, show a stage-specific warning without
-silently changing the stage or weakening the guard. Hide the location picker for completion/App.
-Real CreateUI does not resolve enclosing lambda parameters from nested map/filter lambdas.
-The browser reproduced invalid split(saved.resources...) and blank tabs/missing subnet outputs
-despite a successful live VNet GET. Bind source tags before deriving saved options/resources,
-pass values explicitly between independent lambda scopes, and expand remaining shared references
-in nested lambda bodies; never rely on Python lexical closures in the offline evaluator.
-Project only referenced tag keys, validate the saved binding directly, and bind each model
-candidate with its expected options instead of expanding the saved JSON in every predicate.
-Foundation-only subnet/owner checks use only foundation inputs. Tag budgeting binds the source
-tags once and uses integer ceiling division for 256-character chunks; keep the 2,048-character
-and 50-tag limits. Both forms have regression budgets of 900,000 unindented UTF-8 bytes and
-200,000 guard characters. These are expression-growth guards, not Portal latency guarantees.
-Do not use editable hidden caches or remove safety checks to meet them. Browser conditional-access
-failure is an acceptance blocker, not permission to inject CLI credentials into the browser.
-Native Portal also treats empty split-array elements differently from Python equality.
-Use startsWith/endsWith for saved-JSON boundaries, ARM roots, container/ACS suffixes and UTC
-timestamp suffixes, not equals(last(split(...)), ''). Preserve exact chunk, ID, owner and
-eight-field checks; a valid saved binding must not degrade to {}. Inactive parent/subnet/email
-branches must coalesce native null split segments before concat/toLower. Combine native-empty
-semantics with eager evaluation for unloaded, new-VNet and empty App states; testing those
-properties separately hid a first-load failure. Preserve empty/invalid outputs and the failed
-guard, never substitute a real parent. Include native-boundary regressions and actual
-completion/App acceptance before claiming the fix is deployed.
-Portal model predicates must normalize each nullable metadata parent before reading its child;
-`coalesce(deployment.properties.provisioningState, ...)` cannot protect an absent properties
-object. An unloaded model candidate uses an explicit empty/zero failure schema, never Succeeded,
-GlobalStandard or a positive capacity. Keep exact live inventory cardinality and model/version/
-SKU/capacity predicates. Native bisection isolated reuse outputs stopping initial Basics, so test
-strict missing-member semantics as well as eager/native-empty cases. A local-artifact route in
-the real Portal verifies the engine, not publication of the public ARM/UI pair.
-Keep all shared-ID/ownership/model/readiness/tag-budget checks, and test both forms in the
-authenticated Portal with actual read-only data. Local static UI substitution is not publication
-or successful ARM/runtime installation; never synthesize a ready contract to claim acceptance.
-Keep CI `contents: read` permissions at the workflow root, never inside an event. Include the CI
-file itself in both push/PR path filters and retain its deployment-contract regression assertions.
-
-Customer setup v3 binds one shared Container Apps environment, workload profile, Application
-Insights component and its Log Analytics workspace. MCP remains a separate app/system identity,
-not a separate environment. Its deployment requires the existing environment ID and Insights name;
-never create a second component/workspace as an empty-input fallback. Mcp preflight/readback and
-v3 Verify/EnableSchedule check shared targets. Legacy v1/v2 remain valid for non-MCP stages only.
-The pinned MCP exporter does not configure TokenCredential. Disable its direct Application Insights
-traces/metrics and Microsoft telemetry, retain stdout/stderr in the environment's shared workspace,
-and preserve Entra-only Insights; do not add ineffective auth environment variables or unused roles.
-Do not auto-delete or move a legacy MCP app. Follow the customer consolidation procedure, update
-the changed MCP URL/project connection and Agent definitions, and retain historical logs until
-approved retirement. Internal environments require verified Foundry-to-MCP routing and DNS.
-The shared MCP app module accepts an optional infrastructure-owned UAMI for v2 and injects its
-outgoing AZURE_CLIENT_ID. Empty input retains the legacy SystemAssigned identity; application
-deployment never recreates the UAMI or its Reader assignment.
-V2 core outputs must include every saved network/identity name. Older missing names can be
-resolved only from exact saved ARM IDs; present mismatches and redirected IDs still fail closed.
-On Windows MSI installations, AzureCli uses the bundled Python entry point with explicit -X utf8
-to preserve Graph query URLs as single arguments and decode Korean ARM/policy JSON reliably.
-Docker fingerprint reads use Get-Item -Force only for explicitly
-selected inputs, so Linux hidden-file semantics cannot omit .dockerignore.
-
-V2 new-foundation inputs select GPT-5 Core/Simple models, independent versions and capacities;
-new defaults are East US, gpt-5.2/2025-12-11 and gpt-5-mini/2025-08-07, GlobalStandard
-200 units each. Never use PTU SKUs, reservations or automatic PTU fallback. Logical aliases
-and role reasoning stay unchanged. Explicitly empty Simple version or a missing old saved
-version falls back to Core; new omitted parameters use the independent default. Preserve old
-profiles and KT defaults. Read-only --list-model-options combines regional Responses/Agents
-catalog, exact SKU quota and provider capacity, not a reservation or runtime/quality acceptance.
-Strict v2 completion never substitutes models and compares reused model/version/SKU exactly.
-Combine shared quota without conflating distinct versions' provider capacity. Model choices and
-read-only --model-regions discovery must never set VNet/Environment location. Remove the combined
-modelDeploymentRegion control: existing VNet supplies its actual known region, and new VNet uses
-the supported native Basics infrastructure location, not a model-region menu. Never add unsupported
-Basics defaultValue configuration. Keep subscription scope and location=all on the VNet selector.
-Display actual parent Foundry model/quota region separately. Same-account model deployments have
-no independent location property; GlobalStandard inference is globally routed, not region-pinned.
-A separate regional model resource/connected-model configuration is a distinct architecture change;
-never silently add remote accounts, keys, gateway connections or alter private networking.
-Completion retains saved location, including older Korea Central installs.
-Completion UI must display the actual saved Core/Simple model versions and region instead of
-advertising new defaults as current values; explain the bounded explicit zero-model/project
-reselection path without changing choices or weakening readiness guards.
-Explicit --stage complete --reselect-models allows only six model fields to change on saved
-foundation with zero model deployments and zero projects. All other choices stay immutable;
-existing/partial model or project state requires diagnosis, never overwrite, tag forcing or reset.
-For an explicitly shared Foundry account, the zero-state check applies to the selected model
-aliases and workload project; unrelated projects/models are retained, never adopted or replaced.
-
-V2 independently selects new/existing Foundry, ACS, Environment and application Storage.
-The initial immutable ACR image uses the saved workload UAMI in both App/Job registry entries.
-Explicit registry configuration wins; updates preserve existing settings. Prerequisite pull
-permissions remain infrastructure-owned: use an exact-repository ABAC Reader condition when
-required, never AcrPull on an ABAC registry, registry admin credentials, public image exposure,
-or new registry roles inside the application template.
-Initial App-only recovery is explicit (`--recover-initial-install`), requires the never-deployed
-tag pair and an existing readable App key, and preserves settings/authentication while creating
-the missing Job with the same key. Never reinterpret denied/unreadable secrets, an in-flight
-resource or a completed installation as permission to reset it. Registry-only merge patches
-omit secrets entirely; verify Succeeded before reading/preserving the original key.
-Native Portal updates snapshot App/Job values in a separate nested deployment with a secureObject
-output. Never directly reference/listSecrets a resource from its own PUT, or pass that resource's
-symbol to the snapshot and reintroduce a dependency cycle. Keep the direct module symbol for
-secure output access; an unconditional module with a guarded read avoids nullable secure-output
-indirection. Initial installs perform no reads of missing App/Job resources. Success tags still
-depend on all requested App/Job/auth/MCP work.
-The infrastructure UI orders services before networking and workload names. Derive reused
-Foundry/Environment subnet names, VNet and canonical region from exact typed live readbacks;
-hide their manual subnet and incompatible new-VNet inputs. Ask only for new-resource subnets.
-Allow an empty PE role/ID only with managed agent data and no requested new PE; never fabricate
-a subnet ID. CLI-supplied conflicts still fail closed. Shared-service errors belong beside the
-service, model conflicts beside model inputs, and only project-name conflicts beside the prefix.
-Keep public/uninjected services incompatible, resolve a unique Environment workspace without
-another picker, and neutralize hidden new-Environment PE inputs. Repeat live Portal acceptance
-after conditional-layout changes; prior lambda-fix screenshots are not acceptance of a new flow.
-Existing references are exact typed same-subscription ARM IDs, including other RGs. Never PUT
-shared parents, their networking/diagnostics or unrelated workloads. Add only the workload
-project/Host, apps, private workload Blob containers and scoped permissions. Shared Foundry
-projects carry azbriefWorkloadResourceGroup ownership; allow unrelated projects but refuse a
-same-name foreign project. Shared model aliases still require exact model/version/GlobalStandard;
-no PTU, replacements or silent fallback. Shared Foundry/Environment retain the exact same-region
-existing VNet/subnets, approved PEs/DNS and PNA Disabled. Reuse the Environment's actual log
-workspace and the ACS's already linked/verified sender domain; no empty-input replacement.
-Persist full IDs and container names in contiguous resources0..resources7 RG tag chunks
-(2048 characters max), modes in existing options, and count actual chunks against 50 tags.
-Legacy no-ID contracts stay same-RG; completion cannot change modes/IDs. App/Job/MCP,
-CLI-only Graph connection, late Hosted roles, Agent handoff and readiness must all follow those
-IDs. Shared Storage data roles stay on new workload containers. Keep Runtime Guidance unchanged.
 
 This repository ships **one** topology. There is no Automation Account, no Function App and
 no fat wheel. Analysis runs in a Foundry Hosted Agent; Container Apps hosts only control-plane
@@ -549,20 +259,9 @@ The Job cron is a lightweight dispatcher (`scheduleDispatcherCronExpression`, fi
 default), not the digest schedule itself. It merges the protected deployment cron from
 `SCHEDULE_CRON_EXPRESSION` with Admin-managed daily UTC times in `admin-config.json`, then claims
 one due occurrence with an ETag-protected lease before constructing the analysis runtime. Admin
-manual runs use a validated `RunSelection` (checkpoint/date range/recent count/Update ID/Update URL)
-with no fixed target-count cap and never advance the scheduled digest checkpoint. Recent count
-must remain a positive integer and selects only available live RSS entries; date ranges include
-the local history archive. Preserve the existing run-time budget and concurrency limits. Admin manual runs
+manual runs use a bounded `RunSelection` (checkpoint/date range/recent count/Update ID/Update URL),
+allow at most 100 targets, and never advance the scheduled digest checkpoint. Admin manual runs
 default to `send_email=false`; delivery is explicit, and `dry_run=true` cannot request email.
-Digest delivery groups completed analyses by UTC `published_date` into Monday-Sunday calendar
-weeks, oldest week first, with one email per week and recipient within the run. The range includes
-both week bounds; undated targets use a separate `N/A` group. Preserve every result and subscriber
-scope/language. This does not change schedules or deduplicate separate runs. `email_sent` requires every requested weekly delivery to
-report success. Failed/pending/deferred analyses or failed requested delivery make a real run
-`partial`, not `completed`; this does not add a retry outbox or resume Manual Runs automatically.
-Weekly delivery events carry `run_id`, `week_range`, count and outcome. Hosted failures preserve
-the request trace ID through the proxy into run logs and expose only the exception type, never
-the private message or traceback. Verify log access separately from application health.
 Run diagnostics expose only the safe `RunRecord` projection. Console-managed subscribers may be
 updated with ETag protection, while deployment subscribers remain immutable and cannot be shadowed.
 
@@ -591,10 +290,6 @@ is planning memory, not the browser archive source of truth.
 The Archive detail renderer must preserve the email narrative's restricted Markdown structure,
 including `> **Term**:` concept boxes, while constructing DOM nodes without `innerHTML`. A Markdown
 feature added to email requires the matching safe Archive rendering path and behavior coverage.
-Archive detail uses a pure white editorial canvas with a 48px/32px title, 25px/21px section headings,
-16px/14px prose, a numbered sticky/horizontal outline, one emphasized lead, and flat rule-separated
-facts and lists. Hide the duplicate list-page introduction only while detail is open; preserve the
-responsive toolbar, visible focus, and all report content.
 The Admin and Archive shells keep explicit `width: 100%`, bounded `max-width`, and `margin: 0 auto`
 on their main content so operational panels stay centered on wide viewports without mobile overflow.
 Admin mutation controls keep each command button inside the same bordered action surface as its
@@ -603,31 +298,12 @@ sequence of headings, controls, and tables with ambiguous ownership.
 Keep management-table action columns first so mobile operators can reach commands without first
 scrolling horizontally through secondary data.
 
-Admin and Archive share a sticky responsive navigation header and local Lucide icons
-(license in `src/THIRD_PARTY_NOTICES.md`). Feedback reuses `src/web_design.py` tokens and
-`src/web_fonts.py` font policy in a standalone form with its own header, not management navigation.
-Keep enabled-surface navigation separate from authorization. Admin uses one hash-addressed
-section at a time, local table search, pinned action columns, explicit refresh failures, and
-native run-form validation; inactive target inputs must be disabled, not merely hidden.
-Archive preserves URL filters across sign-in/reload/detail return, labels loaded counts accurately,
-guards list/detail request races independently, and retains safe Markdown, report outline, and
-Archive-ID-only feedback links. Feedback language is selected by URL query; its current page has
-no language switcher, character counters, unsaved-input warning, or separate receipt screen.
-Native form validation and the in-flight submit lock remain. Failed requests retain input;
-successful storage resets the form and restores its original report reference. Status messages
-distinguish notification failure from failed storage, while receipt IDs remain in API responses.
-Use `python -m scripts.preview_web --port 8765` for loopback-only synthetic checks, never a live
-tenant for styling tests. `tests/browser/control_surfaces.cjs` is a standalone Playwright page
-function covering workflows and 1440/768/390/320px layouts, but its Feedback section still targets
-retired controls and must be updated before claiming current browser coverage. Keep generated
-screenshots in `out/` and do not substitute Python renderer tests for browser interaction checks.
-
 #### Network isolation (`networkIsolationMode`)
 
 | Mode | What it does |
 |------|--------------|
-| `vnetInjection` (**default**) | Foundry `networkInjections` (`scenario: 'agent'`) into a `/24` subnet delegated to `Microsoft.App/environments`, Container Apps workload-profile environment on a second delegated subnet, and four private endpoints with private DNS for Foundry, Key Vault, state/archive storage and evaluation storage. Their public network access is disabled by default; Foundry and the VNet share a region |
-| `perimeter` | Five associations for the Foundry account, Key Vault, Log Analytics, state/archive storage and evaluation storage, plus an `NSPAccessLogs` diagnostic setting. Defaults to `Learning` (Transition), which logs without blocking |
+| `vnetInjection` (**default**) | Foundry `networkInjections` (`scenario: 'agent'`) into a `/24` subnet delegated to `Microsoft.App/environments`, Container Apps workload-profile environment on a second delegated subnet, private endpoints + private DNS for Foundry, Key Vault and the state storage account, all switched to `publicNetworkAccess: 'Disabled'` |
+| `perimeter` | Network Security Perimeter around the Foundry account, Key Vault, Log Analytics and the state storage account, plus an `NSPAccessLogs` diagnostic setting. Defaults to `Learning` (Transition) mode |
 | `public` | Public endpoints; Entra auth, the API key and `allowedIpRanges` are the only boundary. Evaluation use only |
 
 Constraints that are easy to get wrong:
@@ -679,7 +355,7 @@ state. The Azure API specialist owns read-only ARM, Policy, Health, Advisor, Act
 Cost Management, and Billing calls. Failures remain explicit gaps and never cross-fallback to
 another specialist.
 
-The Azure MCP Server is a separate Container App in the shared environment, defined under `infra/azure-mcp-server`.
+The Azure MCP Server is a separate Container App defined under `infra/azure-mcp-server`.
 It pins the verified official `3.0.0-beta.38` image through the `azureMcpImage` Bicep
 parameter; never use `latest` in the production template. Upgrade that parameter only after
 validating direct tool schemas and a live read-only inventory call. It runs in `all` mode
@@ -697,9 +373,7 @@ the MCP Entra application role needed to call it.
 Hosted Agent source deploys separately through `azure.yaml` with `codeConfiguration` and
 `azd deploy azbrief-analysis-hosted --no-prompt`; Foundry performs the remote build and creates
 an immutable version. ARM/Bicep creates the account, project, model, and Container Apps control
-plane but cannot create these data-plane versions. `azure.yaml` resolves the project through
-`${AZURE_AI_PROJECT_ENDPOINT}` and never embeds a tenant-specific Foundry hostname. The Hosted
-Agent has its own Entra identity;
+plane but cannot create these data-plane versions. The Hosted Agent has its own Entra identity;
 grant tenant/subscription evidence permissions to that principal, not the Container Apps UAMI.
 Subscription Reader does not grant Azure Billing hierarchy access. Assign Billing Reader (or an
 equivalent read-only billing role) to the Hosted Agent identity at the relevant billing account
@@ -744,118 +418,9 @@ MCP validates `X-API-Key` before parsing requests and returns 503 when `API_KEY`
 - Access via `get_settings()` (cached with `@lru_cache`)
 - Optional services degrade gracefully
 
-### Email Rendering
-
-- Keep `HTML_EMAIL_TEMPLATE` and `HTML_DIGEST_TEMPLATE` on the shared `_EMAIL_DOCUMENT_START` /
-  `_EMAIL_DOCUMENT_END` shell and masthead/header/section/footer/intro formatters. `EMAIL_COLORS`
-  defines white paper, graphite `#202124`, editorial red `#a92336`, and blue `#365b8c` links.
-  Use a research-report hierarchy, never colored cover panels or rounded, shadowed cards.
-- Korean resource sections use the shared `affected_resources` label `연관 리소스` in email,
-  Archive, and judge Markdown; the empty label is `연관 리소스가 없습니다.`. Keep field names,
-  resource selection, and immutable archived content unchanged.
-- Single/digest HTML and plain text use the combined environment/resource helper under the
-  Environment Relevance heading. Apply existing annotation helpers to the detailed body, not
-  metadata: matched glossary/source notes follow their paragraph; unmatched sources follow
-  additional checks or the overview when checks are absent. Preserve every source and original
-  record, normalize plain summaries like HTML, and show zero-padded D-days with actual or
-  localized unconfirmed dates rather than migration badges. Do not weaken release tests.
-- Keep the request-local resource evidence chain connected: `format_rg_result()` registers
-  executed results, `analyze_update()` isolates the catalog, and the report parser resolves
-  `resource_queries` into every collected identity. Serialize the delivery metadata, preserve
-  references during customization, and drop broader query metadata when narrowing scope.
-  Archive v1 excludes that metadata, not the resource projection. Preserve legacy Korean
-  resource-key parsing without overriding a present canonical `affected_resources` value.
-- Keep the 14px `FONT_SIZE_PX["body"]` for prose, a 28px bold wordmark, 40px main titles, 32px digest-detail titles, and 24px/20px
-  section headings at weight 700. Mobile titles use 28px. Plain leads use 18px/16px at weight 400.
-  Contents and action titles use 17px; their 24px numbers and 32px chapter numbers are bold tabular
-  figures. Digest count labels and values use compact 14px text, including large counts. Prose retains
-  1.8-1.85 line height. Keep zero letter spacing, prefer whole-word title wrapping, and retain an
-  anywhere fallback for unbroken identifiers. `text-wrap: balance` is progressive enhancement only.
-- `format_email_section_html()` puts complete headings above full-width content at every width.
-  `count_text` stays at 11px; retain the `full_width` API without a side-heading rail.
-  Report headers keep the summary full-width without the `importance_section` subtitle and place
-  compact independent assessment labels below it. Keep the summary, source links and all axes;
-  never restore a separate assessment column or fixed heights. The masthead stacks by default and uses 35%/65% columns
-  only with desktop media queries.
-- Keep the shared email `FONT_STACK_SANS` exactly as
-  `'Noto Sans KR', 'AppleSDGothicR00', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif`.
-  Use the next installed font when a family is unavailable; `Malgun Gothic` is 맑은 고딕.
-  `FONT_STACK_DISPLAY` aliases it for wordmarks and numbers. Never embed a proprietary reference
-  font or load webfonts; preserve the monospace stack for commands and code blocks.
-- Use `SEMANTIC_ACCENT_WIDTH_PX = 2` for verification, concept notes, and additional checks.
-  Concept notes use the neutral `wash` background. Fill the entire `azb-level-cell` with the
-  level's light red/amber/green background, including inline `bgcolor`; the 12px/600 level text
-  has no border, own fill, padding or hidden duplicate. Contents cell padding is 8px. Header
-  label/value pairs use 11px/12px text and 4px/8px padding in auto-width tables that wrap together
-  on narrow screens, including inline-only output. Preserve status semantics and text contrast **>=4.5:1**.
-- Omit the analysis-basis footer tagline in every language; retain disclaimer, feedback,
-  generation metadata and actual evidence/reference links.
-- Keep the 640px inline/MSO baseline, 760px at 800px and 840px at 1100px. `azb-pad` gutters are 20px
-  by default, 24px at >=1100px, 16px at <=640px, and 12px at <=400px; inline-only stays 20px. Impact
-  labels retain HTML/CSS width and min-width 96px with nowrap/keep-all, never a desktop 2×2 split.
-- Single reports and digest details share the summary/assessment brief and a white two-column
-  operational ledger. Digest counts are a compact 14px line of three labels and exact counts,
-  without charts. `digest_analyzed` names the `high + medium + low` total; skipped items stay separate.
-  Keep zero and large counts, accessible labels, every supplied item and full numbered titles
-  with detail/back anchors. Digest chapters use a 32px number and return link on white paper.
-  Inline-only/MSO contents
-  put full-width titles above three labeled metrics;
-  media queries at >=800px use 70% title / 10% per metric. Below 800px retain the stacked layout.
-  Contents metric cells fill the whole row height with centered headers/values; titles stay left-aligned.
-  Keep vertical padding on the title cell, not the spanning entry, and preserve the MSO fallback.
-  Resource grids and mobile labels use Resource / Type / Resource Group / Subscription order;
-  keep Portal links attached to resource, group and subscription values, not column positions.
-  Mobile metrics and resource cells retain labels, complete reasons, grouping, and Portal identity.
-- Number action sheets from `01`; preserve context, procedure, dark monospaced commands, schedule,
-  guardrails, verification, and safe links. Additional checks precede numbered references; countdowns
-  use two-column D-day/item lists and localized status text, not emoji.
-- Optional email visuals come only from descriptive PNG/JPEG/GIF images extracted from fetched
-  Microsoft Learn article bodies; the LLM never invents their URLs. Require HTTPS, an explicit
-  Microsoft host allow-list, non-empty alt text, a caption fallback, and a source-document link.
-  Single reports show at most two; digests show at most one per update and four total. Preserve the
-  complete text report when images are absent or blocked. `visual_assets` is delivery-only and must
-  be excluded explicitly from immutable Archive v1 projections.
-  Single/digest callers use `include_heading=False` in both visual helpers. Embed image HTML
-  after the analysis text inside its section; preserve captions/source URLs in plain text without
-  a separate visual heading. An unused template argument must never discard accepted images.
-  Capability-family HTML embeds its opportunity dimensions in the same analysis section using
-  `format_impact_section_html(..., include_heading=False)`; Change-family impact sections remain
-  independent. Preserve meaningful dimension text and the existing empty/placeholder filtering.
-- Styling-only changes add no Markdown vocabulary, analysis behavior, transport, or Archive schema.
-  Leave application-owned Foundry runtime guidance byte-identical for styling-only documentation work.
-  See [src/email/README.md](../src/email/README.md) and the [email template skill](skills/email-template/SKILL.md).
-
 ---
 
 ## Testing
-
-The shared test fixture blanks project/Hosted/six-role Foundry bindings and Hosted prompt aliases
-per test, clearing cached settings before/afterward. Tests must explicitly set any roster they
-need. This keeps a configured private deployment environment from satisfying an omitted test
-roster or making a unit test contact a real project; no deployment setting is changed outside
-the pytest child process. Verify the full suite with a non-empty external roster as well.
-Keep `mcp==2.0.0` synchronized in both manifests until a later SDK passes tool-error transport
-and private-host publication checks. During azd environment import, remove only empty optional
-credential placeholders through the Env provider. PowerShell can convert a null string argument
-to an empty environment value; do not let that select an invalid ClientSecretCredential. Preserve
-nonempty explicit credentials and tenant values, and never modify `.env` or machine settings.
-
-### Offline Email Preview
-
-After activating the virtual environment, run
-`python -m scripts.preview_email --output-dir out/email-editorial-preview --language all`.
-It writes 12 **SYNTHETIC** ko/en/ja single/digest full-style and inline-only HTML files, with mocked
-transport settings/history and no Azure calls or email delivery. Pair the existing email tests with
-[tests/test_email_editorial.py](../tests/test_email_editorial.py) for structure, anchors, counts,
-identity, verification display, contrast ≥4.5:1, and offline preview coverage. Focused checks are not
-full-suite, browser, or real email-client validation; report only completed verification.
-Use `tests/browser/email_reports.cjs` against these local previews to repeat the 72-layout
-matrix (ko/en/ja, single/digest, full/inline-only, 1440/768/640/390/320/844px). Require `passed=true`,
-inspect screenshots in `out/`, repair observed defects, and repeat before accepting a design.
-Check actual text bounds for the wordmark, figures, chapter/contents numbers and badges, plus
-full-width summaries, compact assessment wrapping and labeled counts. Passing geometry checks do not establish aesthetic improvement:
-compare same-size before/after images and explain which reference elements changed the composition.
-Do not infer actual reading-speed or Outlook/Gmail-client improvements from synthetic checks.
 
 ### Local Test CLI
 ```bash
@@ -874,11 +439,10 @@ python -m scripts.test_local resources               # View resource summary
 
 > **Historical date ranges** (`--from`/`--to`): the live RSS feed only returns a rolling
 > window of the most recent ~200 items, so older months age out of it.
-> `AzureUpdateParser.get_updates_by_date_range()` uses the locally crawled history archive when
-> present and otherwise pages the public Release Communications API with a bounded `created`
-> filter. Both sources are de-duplicated against the live feed by canonical id. Refresh the
-> optional archive with `python -m scripts.crawl_azure_updates` for repeatable/offline runs.
-> Pass `include_history=False` to keep the live-feed-only behavior.
+> `AzureUpdateParser.get_updates_by_date_range()` automatically merges the locally crawled
+> history archive (`data/azure_updates_history.jsonl`, de-duplicated against the live feed by
+> canonical id) so historical periods are covered. Refresh the archive with
+> `python -m scripts.crawl_azure_updates`. Pass `include_history=False` to disable the merge.
 
 ### Foundry agent provisioning
 
@@ -892,22 +456,9 @@ roster check.
 python -m scripts.provision_foundry_agents --dry-run   # print instructions, no project needed
 python -m scripts.provision_foundry_agents             # create/update all six specialists
 python -m scripts.provision_foundry_agents --roles resource_graph azure_api
-python -m scripts.provision_foundry_agents --check      # model policy + names + instructions + tools
+python -m scripts.provision_foundry_agents --check      # names + instructions + required tools
 python -m scripts.provision_foundry_agents --delete    # tear the roster down
 ```
-
-Provisioning defaults to `gpt-5-terra` with `medium` reasoning for coordinator, Resource Graph,
-Azure API, report writer (including subscriber customization), and quality reviewer; Azure MCP
-uses `gpt-5-luna` with reasoning omitted. Tier aliases use `FOUNDRY_CORE_MODEL_DEPLOYMENT` and
-`FOUNDRY_SIMPLE_MODEL_DEPLOYMENT`; core effort uses `FOUNDRY_CORE_REASONING_EFFORT` (low/medium/high).
-`--model` overrides `FOUNDRY_MODEL_DEPLOYMENT`, which overrides both tiers. Legacy overrides
-preserve same-model options; model changes discard old sampling/reasoning. Managed profiles omit
-temperature/top_p and `--check` rejects model, reasoning, and sampling drift. Customer setup v2/v3
-binds both deployments and effort, while v1 keeps the explicit single-model behavior. Bicep deploys
-core then simple before the private endpoint/project; Admin readiness checks both configured
-deployments. These are requested defaults, not verified catalog capabilities: verify actual model
-IDs/versions, Responses/tools/strict JSON/reasoning, region, quota, cost and paired live quality
-before production promotion. Do not change developer `.env` or a live deployment implicitly.
 
 Foundry normalizes persisted MCP definitions by adding a trailing slash to the
 server URL and serializing `allowed_tools` as `{"tool_names": [...]}`. Roster
@@ -915,24 +466,17 @@ drift checks canonicalize those service representations before comparing them;
 do not replace that semantic comparison with raw payload equality.
 
 Base runtime instructions live in `RUNTIME_AGENT_INSTRUCTIONS`; evidence-specialist instructions
-are derived from `SPECIALIST_PROMPTS` by cutting at the runtime context marker. Role-scoped
-domain guidance belongs to `src/agent/foundry_instructions.py`.
-`scripts/provision_foundry_agents.py` compiles that application-owned guidance into immutable
-Prompt Agent definitions; `.github/skills/*/SKILL.md` files are developer workflows, never runtime
-inputs. Changing application runtime guidance is instruction drift and requires a new Agent
-version. Developer-document cleanup alone does not change those instructions.
-Resource Graph and Azure API FunctionTools are generated
+are derived from `SPECIALIST_PROMPTS` by cutting at the runtime context marker. Every domain document
+under `.github/skills/*/SKILL.md` that contributes runtime behavior has one bounded
+`Foundry Runtime Guidance` section. `scripts/provision_foundry_agents.py` loads only those
+sections and appends a role-scoped set to each immutable Prompt Agent definition; never inject
+the full developer-oriented Skill body. A runtime-section change is instruction drift and must
+be published as a new Agent version. Resource Graph and Azure API FunctionTools are generated
 from live LangChain Pydantic schemas and executed through a bounded Responses function-call
 loop; the Azure MCP specialist receives only the managed MCP server tool. Strict JSON evidence
 schemas are stored on the three evidence-specialist versions. `--check` verifies unique names,
 exact functions, managed server tools, instructions, and schemas. Non-app-owned Foundry tools
 are preserved only when they do not violate the app-owned role boundary.
-
-The application architecture guidance supplies Foundry-only documentation traversal policy to
-Coordinator, Azure MCP and Azure API: relevant first-hop documents are read, a second hop requires
-an unresolved decision question, and depth never exceeds two. Coordinator owns document fetching;
-specialists preserve public links/questions as gaps without expanding their tools or permissions.
-This describes compiled product behavior, not a Copilot browsing instruction.
 
 
 ### Required Environment Variables
@@ -945,9 +489,7 @@ Copy `.env.example` to `.env` and fill in:
 - `FOUNDRY_AZURE_API_AGENT_NAME` (required)
 - `FOUNDRY_REPORT_WRITER_AGENT_NAME` (required)
 - `FOUNDRY_QUALITY_REVIEWER_AGENT_NAME` (required)
-- `FOUNDRY_MODEL_DEPLOYMENT` (optional legacy single-model provisioning override)
-- `FOUNDRY_CORE_MODEL_DEPLOYMENT` / `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT` (optional provisioning aliases; default Terra/Luna)
-- `FOUNDRY_CORE_REASONING_EFFORT` (optional provisioning effort; default `medium`)
+- `FOUNDRY_MODEL_DEPLOYMENT` (provisioning only)
 - `AZURE_SUBSCRIPTION_ID` (optional — omit for tenant-wide query)
 
 ---
@@ -983,9 +525,9 @@ Common error patterns in AzBrief logs and their root causes:
 
 | Log Pattern | Root Cause | Fix Location |
 |-------------|-----------|--------------|
-| `kql_query_failed` + `ParserFailure` | Specific syntax, alias, field or dialect error; join/array use alone is not invalid | Inspect the error and preserve query intent in `src/agent/tools.py` |
+| `kql_query_failed` + `ParserFailure` | LLM generated invalid KQL (join, let, unsupported syntax) | `src/agent/prompts/tools.py` KQL tips, `src/agent/tools.py` rule-based fix |
 | `kql_fix_llm_failed` repeated N times | Resource Graph specialist is unavailable but the error is not cached | `src/agent/tools.py` `_llm_unavailable` conditions and deterministic fallback |
-| `task_failed` after max retries | Tool execution failure not recoverable | Check the original question/args; preserve a gap instead of an unrelated fallback |
+| `task_failed` after max retries | Tool execution failure not recoverable | Check tool args in plan, add fallback in `_rule_based_fix` |
 | `llm_circuit_breaker_open` | 3+ consecutive LLM failures | Check model deployment, API key, rate limits |
 | `output_recovery_attempt` | Report hit output token limit | Consider reducing prompt size or raising `max_output_tokens` |
 | `429` / `529` errors | Rate limiting / model overload | Backoff is automatic; check if request volume is too high |
@@ -1028,8 +570,7 @@ After achieving clean logs, run `python -c "import src"` and `python -m pytest t
 | `kql_query_failed` | WARNING | KQL query failed (check `attempt`, `error`, `query`) |
 | `kql_fix_by_llm` | INFO | LLM successfully fixed a KQL query |
 | `kql_fix_llm_failed` | WARNING | LLM-based KQL fix failed |
-| `kql_repair_stalled` | WARNING | Correction was empty or repeated a prior query; loop stopped |
-| `kql_result_improved` | INFO | Result evidence triggered a new query; inspect issue and actual rows |
+| `kql_fix_removed_join` | INFO | Rule-based fix removed join clause |
 | `evaluation_phase_done` | INFO | Evaluation verdict (sufficient/partial/insufficient) |
 | `report_phase_done` | INFO | Report generated (check `report_chars`, token usage) |
 | `analysis_complete` | INFO | Full analysis summary (relevance, urgency, elapsed) |
@@ -1105,10 +646,6 @@ Do **NOT** modify these files unless explicitly asked:
   an exhausted final error stays blocking. Freeze the period and
   holdout before edits, establish A/A noise, compare paired cases, and finish with a full-period
   deployed Hosted run. `5` remains a theoretical ideal, not an automated stop condition.
-16. **Keep the repository root publishable** — reserve it for standard project metadata and required
-  deployment entry points. Reusable utilities belong in `scripts/`; never commit one-off log parsers,
-  session/deployment logs, test screenshots, browser dumps, local agent packs, or scratch validation
-  scripts. Keep generated artifacts covered by `.gitignore`, `.dockerignore`, and `.agentignore`.
 
 ---
 
@@ -1152,7 +689,7 @@ These issues compile fine but cause subtle runtime bugs.
 | Email labels | New key added only to a non-`ko` bundle | Key is invisible to `label_keys()` and untested | Add it to `src/i18n/labels/ko.py` first |
 | HTML template | Literal `{` in template | `KeyError` in `str.format()` | Use `_escape_braces()` |
 | Tool definition | `args_schema` mismatch | Agent silently passes wrong args | Match Pydantic schema to tool signature |
-| KQL query | Destructive repair, missing properties, or incomplete pages | Wrong question appears to succeed or missing evidence becomes absence | Preserve intent; use supported KQL, required columns and explicit completeness |
+| KQL query | Using `join`, `let`, or `mv-expand` | `ParserFailure` from Resource Graph | Stick to single-table queries with `where`/`project`/`summarize` |
 | Settings | New env var not in `Settings` class | Value silently `None` | Add to `src/config.py` with default |
 | Settings | Env var present but **empty** checked with `is not None` | The template always defines it, so unconfigured reads as configured | Check truthiness, not `is not None` |
 | Email | Debug artefact written before delivery | An unwritable `out/` suppressed the whole digest | Keep pre-delivery side effects best-effort |
@@ -1181,10 +718,6 @@ When implementing a feature or fixing a bug:
 
 ## Learnings
 
-KQL-specific entries dated before 2026-09 describe historical implementations. The former
-project-expression rewriting, join/array stripping, builder/count fallback and assumption that type
-existence proves a bad filter are superseded by Resource Graph Investigation above. Do not restore them.
-
 - **An analysis archive is a control-plane durability boundary, not Hosted Agent memory (2026-08).** The Hosted Agent runs under a separate identity/filesystem and its `$HOME/.azbrief` JSONL is bounded best-effort planning memory, so the Container App cannot use it as a browser source of truth. The canonical archive therefore lives in a private Blob container owned by the App/Job UAMI. One immutable JSON document and its metadata projection commit in the same create-only PUT; `ArchiveService` runs after the Hosted response but before digest/email/checkpoint. A configured archive failure fails the run before delivery or watermark advancement, while subscriber customization, job relevance, and PII stay out of storage. The deterministic 10,000-version evaluator observed 10,000/10,000 records, zero duplicate/order/filter errors, 100% schema integrity, zero personalized keys, PII keys, or email-like values, 762.322 ms local listing P95, and a 28,140-byte maximum page. Browser checks at 1440×900 and 390×844 found zero horizontal overflow; mobile collapses advanced filters so results remain in the first viewport.
 - **Foundry roster cleanup must use the deployed Hosted definition, not stale azd aliases (2026-08).** The live Hosted v10 definition referenced only coordinator, Resource Graph, Azure MCP, Azure API, report writer, and quality reviewer. Eight superseded Prompt Agents (`action`, `evaluator`, `impact`, `planner`, `primary`, `reporter`, `research`, `review`) had no source/IaC/manifest or live definition reference and were removed with all 28 versions. Old local `AZBRIEF_PROMPT_{CODEX,EVALUATOR,FAST,PLANNER,PRIMARY,REPORTER}_AGENT_NAME` values were then emptied. Always list the project, inspect the active Hosted version's environment variables, pass the six-role `--check`, and guard both required and unexpected names before a destructive cleanup.
 
@@ -1207,9 +740,7 @@ Past mistakes and workarounds discovered during development.
 - **Committing the newest finished item is the wrong checkpoint under concurrency.** `max_concurrent_analyses` lets update #5 finish before #2; saving #5's timestamp would make the next run start after #5 and silently skip #2 forever. `_CheckpointCursor` only advances across the **contiguous prefix** of finished updates. Failures count as finished (otherwise one permanently broken update pins the checkpoint forever), but deadline-deferred and circuit-breaker-aborted updates do not.
 - **A documented, configurable setting that no code reads is invisible until you check the wiring** (found 2026-08). `azure_openai_fast_*` (endpoint/key/api-version/deployment) existed in `src/config.py`, `.env.example` and `README.md`, and was set to a mini deployment in a real `.env` — but `_create_llm()` hard-coded `azure_openai_deployment_name`, so `llm_fast` had always run on the **primary** model. Subscriber customization and task revision were silently paying full-model prices, and the only visible symptom was the bill. Fixed by routing every role through `Settings.llm_profile(role)`. Lesson: when a setting exists to change behaviour, assert the *resolved* value end-to-end (instantiate the client and read back its deployment), not just that the field parses.
 - `html.parser` is the only allowed HTML parser. Adding `lxml` breaks the fat wheel build on Azure Automation (Linux sandbox has no system `libxml2`).
-- **Corrected by live validation (2026-09-12):** Resource Graph supports joins/unions, nested project
-  expressions, array and bag expansion. Its reserved kind assignment is a specific exception, not
-  a reason to ban computed projections. Apply SDK limits and the app's explicit scope restrictions.
+- KQL `join` is not supported in Azure Resource Graph. All queries must be single-table. The agent generates `join` frequently — `_rule_based_fix()` strips it.
 - `f-string` with `["key"]` inside `py -3 -c "..."` causes `SyntaxError` on Windows PowerShell. Always write to a `.py` file for complex inline scripts.
 - UI labels live in `src/i18n/labels/<code>.py`, not in `src/email/templates.py`. `ko.py` defines the canonical key set; other languages may be partial because `get_labels()` backfills through the registry fallback chain, so a missing key can no longer raise `KeyError` at render time.
 - `str.format()` on HTML templates fails on any literal `{` or `}` — every brace in the template HTML must be doubled or escaped via `_escape_braces()`.
@@ -1224,7 +755,7 @@ Past mistakes and workarounds discovered during development.
 - Report quality is scored by a two-layer system: a fast **rule-based** mechanical evaluator (`scripts/evaluate_report.py` `ReportQualityEvaluator`, regex heuristics, 100-pt) as a pre-filter, plus a **G-Eval LLM-as-a-Judge** (`src/agent/geval.py` `GEvalJudge`) that scores five orthogonal 1-5 dimensions (actionability, faithfulness, job_relevance, structure, architectural_depth). The judge uses Chain-of-Thought form-filling (reasoning before score) and refines integer scores into continuous values via token log-probabilities (weighted sum over score tokens {1..5}). 5.0 is defined as an *unreachable* ideal and 4.0 as production-excellent to prevent score saturation. Dimensions run in parallel (`asyncio.gather`) with per-dimension error isolation; logprob normalization auto-disables for o-series reasoning models and degrades gracefully. `GEvalJudge.build_feedback_prompt()` produces weakest-first rewrite instructions that the `--iterate` loop injects into `settings.custom_system_prompt` to regenerate. Config knobs: `geval_enabled`, `geval_target_score` (default 4.5), `geval_logprob_normalization`, `geval_max_iterations`. `geval_runtime_enabled` (default **False**) additionally runs the judge inside `analyze_update` (`_critic_pass`): score → if below target or any critical flaw, inject `build_feedback_prompt()` and regenerate **once**, keeping the rewrite only when the score improves. Rewrite instructions travel through the `report_feedback` **state** key, never `settings.custom_system_prompt` — the settings object is a process-wide singleton and concurrent analyses would cross-contaminate each other's feedback. The judge is fed `build_evidence_context()`, which uses the analyzer's own `TOOL_RESULT_BUDGET_CHARS`. See the `report-evaluation` skill for the full methodology.
 - Report delivery filtering is gated by the `report_filtering_enabled` setting (default **False** = no filtering, every analyzed update is delivered). When True, `not_relevant` updates (`should_notify=False`) are suppressed from the single-update email paths (`EmailService.send_analysis_report`, `send_to_subscribers`, `main.py`, `test_local.py`) to reduce noise. The **digest** email (`send_digest_report` / `build_digest_content`) never omits — it always shows every analyzed update, classified into high/medium/low importance tiers. The `should_notify` value itself (derived from `relevance != not_relevant`) is unchanged and still drives digest counters, badges, and logging; only the email-omission checks are gated on the flag. Per-subscriber `alert_level` (critical_only / important_and_above) is a separate, opt-in preference (default `all`) and is NOT affected by this flag.
 - The affected-resources display (`format_affected_resources_html` in `src/email/templates.py`, and the judge's `render_report_markdown`) groups resources that share the **same non-empty impact reason** into a single row (resource names stacked with a dashed divider + a group-size badge; reason shown once). Resources with empty reasons are never merged. This is a display-layer grouping, complementary to the prompt-level rule that forbids duplicate `affected_resources` data entries.
-- The live Azure Update RSS feed (`.../releasecommunications/api/v2/azure/rss`) is a **rolling window capped at ~200 items**, ordered by modification recency, so older months age out entirely. This is not a date-filter bug. `AzureUpdateParser.get_updates_by_date_range()` prefers the optional local archive (`data/azure_updates_history.jsonl`) for repeatable/offline runs and otherwise queries only the requested `created` range from the public Release Communications API with 100-row pagination. It merges that source with live RSS and de-duplicates by canonical id (`_canonical_id()` extracts numeric/slug id from guid/link/URL). API/archive records are converted through `_history_record_to_update()` (HTML cleanup, products → `azure_services`, status → `update_type`, and seven-digit fractional timestamps → UTC). `include_history=False` and non-date selectors remain live-feed-only. Do not package ignored development `data/` into the production image to make Admin ranges work; the bounded API path is the deployed source.
+- The live Azure Update RSS feed (`.../releasecommunications/api/v2/azure/rss`) is a **rolling window capped at ~200 items**, ordered by modification recency, so older months age out entirely (e.g., on 2026-07-18 the feed only spanned ~June–July with a few stray re-surfaced items — March and May returned zero). This is *not* a date-filter bug. `AzureUpdateParser.get_updates_by_date_range()` therefore **merges the locally crawled history archive** (`data/azure_updates_history.jsonl`, produced by `scripts/crawl_azure_updates.py`, ~9,755 records back to 2013) with the live feed, de-duplicated by canonical id (`_canonical_id()` extracts numeric/slug id from guid/link/URL). History records are converted via `_history_record_to_update()` (products → `azure_services`, `status` → `update_type` fallback, `created` → `published_date` via `_parse_iso_date()` which handles the API's 7-digit fractional seconds + trailing `Z` that Python 3.10's `fromisoformat` rejects). Only the date-range path merges history; `get_updates()` (used by the runbook/digest/`--latest` paths) stays live-feed-only. The full-history API is *not* newest-first, so early-stopping pagination is impossible — the pre-crawled local archive is the pragmatic source. Refresh it with `python -m scripts.crawl_azure_updates` when historical months are missing.
 - **Report-quality hardening (3-month report audit, 2026-07).** A review of `results_2026-0{3,4,6}.jsonl` surfaced recurring commercial-grade defects that were fixed at the prompt/code layer:
   - **"CSA 사전 검토가 필요합니다" hedge crutch** appeared in ~90% of `additional_checks` — circular when the reader IS a CSA. `core.py` accuracy principle 2 and `writing.py` principle 5 now require **self-serviceable** checks (name WHAT/WHERE/WHY) and forbid the generic hand-off; `base.py` bans it in the output-format description + self-check.
   - **Opportunities were dead-ends**: `opportunity`-relevance updates that trigger a notification (e.g. user delegation SAS with 9 candidate accounts) shipped with `action_items: []`. `base.py` now mandates **exactly one scoped evaluation action** (named candidates, real go/no-go criteria, empty `deadline` — never fabricated), reconciled in `categories.py` `new_feature`.
@@ -1305,13 +836,10 @@ Past mistakes and workarounds discovered during development.
 
 - **The 개요 opened with the environment's verdict because the prompt told it to (2026-08).** A reader flagged reports whose `detailed_analysis` began with "현재 환경에는 이 기능을 적용할 **ExpressRoute virtual network gateway**가 없습니다." — the reader learns the conclusion of an analysis whose subject has not been named yet. This was **not** model drift: `base.py`'s self-check literally prescribed it ("Applies to the `not_relevant` case too: *현재 환경에는 이 기능을 적용할 리소스가 없습니다*"), `ko.py` §3 sanctioned it ("영향받는 리소스가 없을 때만 … 로 열어도 됩니다"), and `REPORT_BEFORE`'s Capability rule supplied the ExpressRoute wording. All three contradicted the `CRITICAL ORDERING RULE` ("Never present … before explaining the update itself") sitting 100 lines away — the same contradictory-instruction failure mode as the earlier ko anti-hedge bug. Measured before fixing: **27/332 corpus docs (8.1%)** open with an environment verdict, of which 13 are `not_relevant` and 14 `opportunity` (where "즉시 조치할 항목이 없습니다" is also the already-banned Capability tautology). Fix: deleted the three sanctioning passages, stated the positive rule once in the ordering block, and pinned the Capability precondition sentence to the environment paragraph. Layer-2 net added to `translation_avoidance` next to the existing announcement-frame check — the regex requires **both** an environment-scope subject *and* an absence predicate, calibrated both ways: it flags all 28 corpus instances (including the "기준으로는" variant the first draft missed) and the reader's live sentence, with 0 hits on the recommended rewrites. A broader "any 환경-subject opening" variant was rejected: +1 real catch but it false-positives on the legitimate "현재 환경의 Storage Account 22개 중 3개가 TLS 1.0을 허용합니다". 649 tests pass. Honest limit: prompt-text changes are verified by assembly + unit tests only; no quality claim without a live scored run.
 
-- **Email responsiveness requires fallback and rendered checks (2026-08).** CSS assertions prove
-  that rules shipped, not that clients apply them. Preserve inline defaults, matching `azb-*`
-  selectors, and balanced MSO wrappers; inspect both full-style and inline-only output at several
-  widths. Current sizes and gutters are defined in [Email Rendering](#email-rendering), not by
-  measurements or test totals from the previous design.
-  - Stack all cells of a responsive resource/action row together: making only one `<td>` a block
-    can collapse its width. Impact label/value rows remain tabular with the 96px label safeguards.
+- **The email report is now responsive — hybrid layout, not media queries alone (2026-08).** The card was a hardcoded `width="640"` table, so on a phone the whole report scaled down (unreadable 6-7px text) or scrolled sideways. Fixed with the three-layer hybrid that email HTML requires, because no single mechanism works everywhere: (1) **fluid card** `width="100%"` + `max-width: 640px` — the only layer that survives clients which strip `<head><style>` (Gmail app with a non-Gmail account), (2) **`_RESPONSIVE_STYLE`** `@media` blocks at 640px/400px in `<head>` for the layout changes fluid width cannot express, and (3) an **MSO ghost table** (`<!--[if mso]><table width="640">`) around the card, because Windows Outlook's Word engine ignores *both* `@media` and `max-width` and would otherwise stretch the card across a maximized window. Media queries must key off **classes** (`azb-pad`, `azb-stack`/`azb-stack-tail`, `azb-col-metric`, `azb-col-reason`, `azb-qd`, `azb-outer`) — `!important` cannot override an inline `style=""` attribute without a selector, and every section `<td>` in this codebase carries its padding inline. The digest also gained `_CLIENT_COMPAT_STYLE`, which it had never included despite embedding the same section formatters (so `.azb-cli` long commands had no `word-break` there). **Live-verified in a real browser** at 375px (card 348px, `scrollWidth` 360 < 375 → no horizontal scroll, gutters 12px, quick-decision cells `display:block`, summary badge stacked) and 1200px (card exactly 640px, gutters back to 32px, quick-decision back to `table-cell` → no desktop regression). Lesson: for email, verify the *rendered* box metrics at several widths — asserting the CSS text is present only proves the rule shipped, not that the layout reflows.
+  - `tests/test_email.py` is still uncollectable at HEAD (it imports `_split_procedure`, which does not exist — pre-existing TDD work), so the new responsive tests were validated by running identical bodies against the real `conftest` fixtures in a throwaway test file (3 passed) before being written into `test_email.py`; the rest of the suite is green (649 passed with `--ignore=tests/test_email.py`).
+  - **Sending a real test email found a defect the box-metric assertions missed.** Below 400px the impact-dimension label rendered as a vertical strip (보/안) because `.azb-impact-label { display: block }` on a single `<td>` triggers CSS anonymous-table-cell fixup: the sibling stays `table-cell`, so the block cell shrinks to zero-width and the Korean label wraps per character. Never make one `<td>` in a row `display: block` — stack **all** cells in the row (as `.azb-qd` does) or keep the row a table and just let the column shrink (`width: 1%` + `white-space: nowrap`, which is what shipped). Only a rendered screenshot caught it; every numeric assertion still passed.
+  - **Responsive is not only about shrinking.** `min-width` queries grow the card (640 → 760 @800px → 900 @1100px) so desktop width goes to content instead of the gray backdrop, and at 1100px the `azb-impact` rows pair up 2×2 (`display: inline-table` on `<tr>` — safe here because it is progressive enhancement: clients that ignore it keep the stacked rows). Measured on the digest: document height 3828px @640 → 3597px @1280. The **900px cap is a readability limit, not a technical one** — Korean glyphs are full-width, so 640px ≈ 44 chars/line and 900px ≈ 62; past that the line length costs more than the recovered space is worth.
 
 - **"Before this existed you had to X" is now a mandatory part of a Capability-family report (2026-08).** A reader asked that reports introducing a new feature or service say what an administrator had to do to get the same outcome while the capability did not exist, and what replaces it now. The rule was already in `report/base.py` section 1 as one soft bullet ("If this is a new capability, explain what was impossible before") — soft enough that reports routinely skipped it. Promoted to MANDATORY, scoped to `new_feature` / `new_service` / `preview`, with the "before" enumerated concretely (a self-operated component, a manual procedure, a third-party product, an accepted limitation), a no-fabrication clause (take it from the docs or update text; when the prior workaround is genuinely unknown, name the limitation the capability removes instead of guessing), and an explicit **anti-template** clause — position and wording must vary, because a fixed "previously X, now Y" sentence in every report is the same monotony defect the ko style guide already fights. Mirrored as the problem statement in `report/categories.py` (`new_feature`/`new_service` item 1, `preview` item 2) and as a phrasing rule with worked GOOD/BAD examples in `languages/{ko,en,ja}.py` — one place per file, not repeated, given the measured dilution cost (~+1.1 defects/1k Korean chars per ~1.6K prompt chars). Honest limit: this is a prompt-text change, verified only by assembly (`build_system_prompt` per language + `build_report_prompt(category=...)`) and 649 passing tests; no quality claim without a live scored run.
 
@@ -1357,7 +885,7 @@ Past mistakes and workarounds discovered during development.
 - **A strict evidence Prompt Agent response is not raw KQL (2026-08).** The Resource Graph Agent's
   immutable output schema returned `{status, claims, gaps}`, but the old fixer treated the whole JSON
   as a query and retried `Resources\n{...}`. Repair calls now set `tool_choice=none` and extract only an
-  executable table query from a claim; a gap now permits only meaning-preserving lexical repair.
+  executable table query from a claim; a gap falls through to deterministic builder/rule recovery.
   The same smoke caught two task-contract errors: `find_related_resources` received `query` instead
   of `keyword`, and a revision put English prose in `query_azure_resources.query`. Exact prompt
   examples plus pre-execution normalization now map the former and replace the latter from
@@ -1370,7 +898,7 @@ Past mistakes and workarounds discovered during development.
 | `SyntaxError` in PowerShell inline Python | f-string with `["key"]` in `-c` | Write to a `.py` file instead of inline |
 | Tests pass locally, fail in the container | Missing dependency in the image | Add it to `requirements.txt` and rebuild |
 | `KeyError` rendering email | Label key missing from `src/i18n/labels/ko.py` | Add it to `ko.py` (canonical set); other languages backfill automatically |
-| KQL `ParserFailure` | Specific invalid syntax/alias/path or exceeded SDK limits | Repair from actual error/schema evidence; do not remove required query structure |
+| KQL `ParserFailure` | Agent used `join`/`let`/`mv-expand` | Add pattern to `_rule_based_fix()` in `tools.py` |
 | `429` / `529` overload | Too many concurrent LLM calls | Automatic backoff handles this; reduce batch size if persistent |
 | `ECONNRESET` on Azure OpenAI | Stale keep-alive connection | Automatic reconnect; disable connection pooling if persistent |
 | Email not delivered | No `COMMUNICATION_SERVICES_CONNECTION_STRING` | Expected — falls back to console output |

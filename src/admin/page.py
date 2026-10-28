@@ -9,12 +9,7 @@ from __future__ import annotations
 
 from html import escape
 
-from src.web_design import (
-    CONTROL_SURFACE_BASE_CSS,
-    CONTROL_SURFACE_FAVICON,
-    CONTROL_SURFACE_ICONS,
-    CONTROL_SURFACE_SCRIPT,
-)
+from src.web_design import CONTROL_SURFACE_BASE_CSS
 from src.web_fonts import WEB_FONT_FACE_CSS, WEB_FONT_STACK
 
 # `__NONCE__` is substituted per request. Placeholders use double underscores
@@ -26,7 +21,6 @@ _PAGE = """<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title>AzBrief Admin Console</title>
-__WEB_FAVICON__
 <style nonce="__NONCE__">
 __WEB_FONT_FACE__
 __CONTROL_SURFACE_BASE__
@@ -166,18 +160,6 @@ input[type=datetime-local], input[type=time], select { background: var(--surface
 .run-error { margin-top: 8px; padding: 9px 11px; border-left: 3px solid var(--bad);
   background: var(--danger-soft); color: var(--danger); font-size: 12px; overflow-wrap: anywhere; }
 .run-error[hidden] { display: none; }
-.panel-errors { --section-accent: var(--danger); }
-.error-list { list-style: none; margin: 12px 0 0; padding: 0; }
-.error-event { padding: 14px 0; border-bottom: 1px solid var(--line); min-width: 0; }
-.error-event:first-child { border-top: 1px solid var(--line); }
-.error-event-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 14px; }
-.error-event time { font-variant-numeric: tabular-nums; font-size: 13px; }
-.error-event h3 { margin: 8px 0; font-size: 14px; overflow-wrap: anywhere; }
-.error-message { margin: 8px 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
-.error-event summary { cursor: pointer; color: var(--link); margin: 10px 0; }
-.error-event summary:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-#errors-status { display: block; margin: 12px 0; }
-#errors-form .time-basis { margin-top: 12px; }
 .source { color: var(--muted); font-size: 12px; }
 .msg { margin-left: 4px; font-size: 13px; color: var(--muted); }
 .s-completed { color: var(--ok); } .s-running, .s-queued { color: var(--warn); }
@@ -224,22 +206,12 @@ body { background: var(--canvas); color: var(--ink); color-scheme: light; }
 .app-header { padding: 0; border-top: 3px solid var(--primary);
   border-bottom: 1px solid var(--line); background: var(--surface); }
 main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 28px 24px 56px; }
-.workspace-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 28px; }
-.section-nav { position: sticky; top: 92px; align-self: start; display: grid; gap: 4px; }
-.section-nav a { display: flex; align-items: center; gap: 10px; min-height: 42px;
-  padding: 10px 12px; border-radius: var(--radius-sm); color: var(--muted);
-  text-decoration: none; font-size: 13px; font-weight: 650; }
-.section-nav a:hover { color: var(--ink); background: var(--surface-strong); }
-.section-nav a[aria-current="location"] { background: var(--primary-soft);
-  color: var(--primary); box-shadow: inset 3px 0 var(--primary); }
-.section-nav .nav-index { color: inherit; font-size: 10px; font-variant-numeric: tabular-nums; }
-.workspace-content { min-width: 0; }
-.panel { --section-accent: var(--primary); margin: 0 0 24px; overflow: visible;
-  border: 0; border-radius: 0; background: transparent; box-shadow: none; }
-.panel-header { min-height: 50px; padding: 0 0 12px; border-bottom: 1px solid var(--line);
+.panel { --section-accent: var(--primary); margin: 0 0 12px; overflow: hidden;
+  border: 1px solid var(--line); border-top: 1px solid var(--line);
+  border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm); }
+.panel-header { min-height: 50px; padding: 0 14px; border-bottom: 1px solid var(--line);
   justify-content: flex-start; background: var(--surface); }
-.panel-header { background: transparent; }
-.panel-header h2 { color: var(--ink); font-size: 17px; font-weight: 750; }
+.panel-header h2 { color: var(--ink); font-size: 14px; font-weight: 800; }
 .panel-caption { flex: 1; margin-right: 0; color: var(--muted); }
 .panel-toggle { position: relative; width: 34px; min-height: 34px; flex-basis: 34px;
   margin-left: auto; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-sm);
@@ -247,14 +219,16 @@ main { width: 100%; max-width: 1280px; margin: 0 auto; padding: 28px 24px 56px; 
 .panel-header > button:not(.panel-toggle) { margin-left: auto; }
 .panel-header > button:not(.panel-toggle) + .panel-toggle { margin-left: 0; }
 .panel-toggle:hover { border-color: var(--line-strong); background: var(--surface-subtle); }
-.panel-toggle .ui-icon { transition: transform .16s ease; }
-.panel-toggle[aria-expanded="false"] .ui-icon { transform: rotate(-90deg); }
-.panel-body { padding: 16px 0; }
+.panel-toggle::before { content: ""; position: absolute; top: 11px; left: 12px;
+  width: 7px; height: 7px; border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor; transform: rotate(45deg); }
+.panel-toggle[aria-expanded="false"]::before { top: 13px; transform: rotate(-45deg); }
+.panel-body { padding: 16px; }
 .action-surface { margin: 0 0 16px; padding: 14px; border: 1px solid var(--line);
   border-radius: var(--radius-sm); background: var(--surface-subtle); }
 .action-row { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
 .subsection-heading { min-height: 28px; margin-bottom: 7px; }
-.subsection-heading h3 { color: var(--muted); font-size: 11px; letter-spacing: 0;
+.subsection-heading h3 { color: var(--muted); font-size: 11px; letter-spacing: .04em;
   text-transform: uppercase; }
 .readiness-summary { padding: 11px 12px; border: 1px solid var(--line);
   border-left: 3px solid var(--line-strong); background: var(--surface-subtle); }
@@ -303,7 +277,7 @@ input[type=checkbox], input[type=radio] { accent-color: var(--primary); }
 .segmented input:focus-visible + span { outline-color: var(--focus); }
 .source, .msg { color: var(--muted); }
 .s-completed { color: var(--success); }
-.s-running, .s-queued, .s-partial { color: var(--warning); }
+.s-running, .s-queued { color: var(--warning); }
 .s-failed { color: var(--danger); }
 .run-detail { border-top: 1px solid var(--line); }
 .run-detail-head h3 { color: var(--ink); }
@@ -314,50 +288,17 @@ input[type=checkbox], input[type=radio] { accent-color: var(--primary); }
 .run-error { border-left-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
 .empty { color: var(--muted); }
 td.empty { padding: 16px 11px; text-align: left; }
-.table-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
-  padding: 10px 0; }
-.table-search { position: relative; width: 280px; max-width: 100%; }
-.table-search .ui-icon { position: absolute; left: 10px; top: 11px; color: var(--muted); }
-.table-search input[type="search"] { padding-left: 35px; font-weight: 400; }
-.table-toolbar select { width: 150px; }
-.table-count { margin-left: auto; color: var(--muted); font-size: 12px;
-  font-variant-numeric: tabular-nums; }
-.table-wrap { border: 1px solid var(--line); border-radius: var(--radius-sm); }
-.table-wrap table { border: 0; }
-.action-table th:first-child, .action-table td:first-child { position: sticky; left: 0;
-  z-index: 1; background: var(--surface); box-shadow: 1px 0 var(--line); }
-.action-table th:first-child { background: var(--surface-subtle); }
-.table-wrap:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.page-actions .source { font-variant-numeric: tabular-nums; }
-@media (max-width: 1100px) {
-  .workspace-layout { grid-template-columns: 154px minmax(0, 1fr); gap: 20px; }
-  #status-sections { grid-template-columns: 1fr; }
-  .manage-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
-@media (max-width: 820px) {
-  .workspace-layout { grid-template-columns: 1fr; gap: 16px; }
-  .section-nav { position: static; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
-    padding-bottom: 6px; border-bottom: 1px solid var(--line); }
-  .section-nav a { min-width: 0; justify-content: center; padding: 8px 6px;
-    white-space: normal; font-size: 12px; }
-  .section-nav .nav-index { display: none; }
-}
 @media (max-width: 640px) {
   main { padding: 20px 14px 40px; }
   .page-intro h1 { font-size: 21px; }
-  .panel-header { padding: 0 0 12px; flex-wrap: wrap; }
-  .panel-body { padding: 12px 0; }
+  .panel-header { padding: 0 11px; }
+  .panel-body { padding: 12px; }
   .action-surface { padding: 12px; }
   .panel-caption { max-width: 160px; }
-  .page-actions { width: 100%; justify-content: space-between; }
-  .table-search { width: 100%; }
-  .manage-form { grid-template-columns: 1fr; }
-  .manage-form .wide { grid-column: auto; }
 }
 </style>
 </head>
 <body>
-__WEB_ICONS__
 <a class="skip-link" href="#main-content">Skip to main content</a>
 <header class="app-header">
   <div class="app-bar">
@@ -368,7 +309,6 @@ __WEB_ICONS__
     <nav class="primary-nav" aria-label="Primary views">
       <a class="nav-link" href="/admin" aria-current="page">Admin</a>
       __ARCHIVE_LINK__
-      __FEEDBACK_LINK__
     </nav>
     <div class="shell-identity"><span class="shell-profile">__PROFILE__</span><span class="shell-user">__USER__</span></div>
   </div>
@@ -376,19 +316,7 @@ __WEB_ICONS__
 <main id="main-content">
   <div class="page-intro">
     <div><p class="page-kicker">Control plane</p><h1>Admin console</h1></div>
-    <div class="page-actions"><span id="refresh-status" class="source" role="status"></span><button id="refresh-all" class="secondary" type="button" data-icon="refresh-cw">Refresh all</button></div>
   </div>
-  <div class="workspace-layout">
-  <nav id="section-nav" class="section-nav" aria-label="Console sections">
-    <a href="#status" data-section="status" aria-current="location"><span class="nav-index">01</span>Overview</a>
-    <a href="#run" data-section="run"><span class="nav-index">02</span>Manual runs</a>
-    <a href="#schedule" data-section="schedule"><span class="nav-index">03</span>Schedules</a>
-    <a href="#subscriber" data-section="subscriber"><span class="nav-index">04</span>Subscribers</a>
-    <a href="#administrator" data-section="administrator"><span class="nav-index">05</span>Access</a>
-    <a href="#updates" data-section="updates"><span class="nav-index">06</span>Azure updates</a>
-    <a href="#errors" data-section="errors"><span class="nav-index">07</span>Error history</a>
-  </nav>
-  <div class="workspace-content">
   <section class="panel panel-status" aria-labelledby="status-title">
     <div class="panel-header">
       <h2 id="status-title">Configuration status</h2>
@@ -485,7 +413,7 @@ __WEB_ICONS__
   <section class="panel panel-run" aria-labelledby="run-title">
     <div class="panel-header"><h2 id="run-title">Manual run</h2></div>
     <div class="panel-body">
-      <form id="run-form" class="action-surface" aria-label="Manual run settings">
+      <div class="action-surface" aria-label="Manual run settings">
         <div class="controls">
           <label><span class="field-heading"><span>Target</span><span class="field-requirement required">Required</span></span><select id="run-mode" required aria-required="true">
             <option value="checkpoint">After checkpoint</option>
@@ -511,7 +439,7 @@ __WEB_ICONS__
             <label><span class="field-heading"><span>End date</span><span class="field-requirement required">Required</span></span><input type="date" id="end-date" placeholder="Required • end date" title="Required • end date"></label>
           </div>
           <label class="run-field" data-run-mode="recent" hidden><span class="field-heading"><span>Recent count</span><span class="field-requirement required">Required</span></span>
-            <input type="number" id="recent-count" min="1" value="10" placeholder="Required • 1 or more">
+            <input type="number" id="recent-count" min="1" max="100" value="10" placeholder="Required • 1–100">
           </label>
           <label class="run-field" data-run-mode="update_id" hidden><span class="field-heading"><span>Update ID</span><span class="field-requirement required">Required</span></span>
             <input type="text" id="update-id" inputmode="numeric" maxlength="32" placeholder="Required • numeric update ID">
@@ -522,11 +450,11 @@ __WEB_ICONS__
         </div>
         <div class="action-row">
           <span class="msg" id="msg" role="status"></span>
-          <label class="inline-check"><input type="checkbox" id="send-email"> Send weekly digest emails</label>
+          <label class="inline-check"><input type="checkbox" id="send-email"> Send digest email</label>
           <label class="inline-check"><input type="checkbox" id="dry"> Dry run</label>
-          <button id="run" type="submit">Start run</button>
+          <button id="run">Start run</button>
         </div>
-      </form>
+      </div>
       <div class="subsection-heading"><h3>Run history</h3><span id="run-summary" class="source"></span></div>
       <div class="table-wrap"><table class="action-table">
         <thead><tr><th>Details</th><th>Run ID</th><th>Status</th><th>Selection</th><th>Targets</th><th>Analyzed</th>
@@ -536,63 +464,19 @@ __WEB_ICONS__
       <div id="run-detail" class="run-detail" hidden>
         <div class="run-detail-head">
           <h3 id="run-detail-title">Run details</h3>
-          <div class="button-group">
-            <button id="run-detail-logs" class="secondary" type="button">View error history</button>
-            <button id="run-detail-close" class="secondary" type="button">Close</button>
-          </div>
+          <button id="run-detail-close" class="secondary" type="button">Close</button>
         </div>
         <dl id="run-detail-facts" class="run-facts"></dl>
         <div id="run-detail-error" class="run-error" role="alert" hidden></div>
       </div>
     </div>
   </section>
-  <section class="panel panel-errors" aria-labelledby="errors-title">
-    <div class="panel-header"><h2 id="errors-title">Error history</h2></div>
-    <div class="panel-body">
-      <p class="source">Recorded failures from the shared Log Analytics workspace, including scheduled
-        and Hosted Agent runs. Logs may take several minutes to arrive. Retried or recovered errors
-        do not necessarily mean that the run failed.</p>
-      <form id="errors-form" class="action-surface">
-        <div class="controls">
-          <label>Period<select id="errors-hours">
-            <option value="24">Last 24 hours</option>
-            <option value="168">Last 7 days</option>
-            <option value="720">Last 30 days</option>
-          </select></label>
-          <label>Run ID (optional)<input id="errors-run-id" type="text" maxlength="32"
-            pattern="[a-fA-F0-9]{32}" placeholder="All runs" spellcheck="false"
-            title="32-character hexadecimal run ID"></label>
-        </div>
-        <fieldset class="time-basis"><legend>Display times</legend>
-          <div class="segmented">
-            <label><input type="radio" name="errors-basis" value="local" checked><span>Local</span></label>
-            <label><input type="radio" name="errors-basis" value="utc"><span>UTC</span></label>
-          </div>
-        </fieldset>
-        <div class="action-row">
-          <button id="errors-clear" class="secondary" type="button">Clear run filter</button>
-          <button id="errors-refresh" type="submit">Load error history</button>
-        </div>
-      </form>
-      <span id="errors-status" class="source" role="status">Open this section to load recorded errors.</span>
-      <div id="errors-load-error" class="run-error" role="alert" hidden></div>
-      <ol id="errors-list" class="error-list" aria-label="Recorded errors" aria-busy="false"></ol>
-    </div>
-  </section>
-  </div>
-  </div>
 </main>
 <script nonce="__NONCE__">
-__WEB_SCRIPT__
 const $ = (id) => document.getElementById(id);
 const text = (v) => (v === null || v === undefined || v === '') ? '—' : String(v);
 let timeBasis = 'local';
 let activeRunDetail = null;
-let errorHistory = null;
-let errorHistoryQuery = '';
-let errorHistoryRequested = false;
-let errorHistoryLoading = false;
-let errorHistoryRequest = 0;
 
 async function api(path, options) {
   const res = await fetch(path, Object.assign({credentials: 'same-origin'}, options || {}));
@@ -625,69 +509,7 @@ function fill(tbody, rows, colspan, emptyText) {
     td.colSpan = colspan; td.className = 'empty'; td.textContent = emptyText;
     tr.appendChild(td); tbody.appendChild(tr); return;
   }
-  rows.forEach((tableRow) => { tableRow.dataset.tableRow = 'true'; tbody.appendChild(tableRow); });
-  filterTable(tbody.id);
-}
-
-function activateSection(key, focusHeading = false) {
-  const target = document.querySelector('[data-panel-key="' + key + '"]');
-  if (!target) return;
-  document.querySelectorAll('section.panel').forEach(panel => { panel.hidden = panel !== target; });
-  document.querySelectorAll('[data-section]').forEach(link => {
-    if (link.dataset.section === key) {
-      link.setAttribute('aria-current', 'location');
-      link.scrollIntoView({block: 'nearest', inline: 'nearest'});
-    }
-    else link.removeAttribute('aria-current');
-  });
-  if (target.classList.contains('collapsed')) target.querySelector('.panel-toggle').click();
-  if (focusHeading) { const heading = target.querySelector('h2'); heading.tabIndex = -1; heading.focus(); }
-  if (key === 'errors' && !errorHistoryRequested) loadErrorHistory();
-}
-
-function filterTable(id) {
-  const search = $(id + '-search');
-  if (!search) return;
-  const query = search.value.trim().toLocaleLowerCase();
-  const rows = Array.from($(id).querySelectorAll('[data-table-row]'));
-  const status = id === 'runs' ? $('runs-filter').value : '';
-  let visible = 0;
-  rows.forEach(tableRow => {
-    tableRow.hidden = !tableRow.textContent.toLocaleLowerCase().includes(query)
-      || Boolean(status && tableRow.dataset.status !== status);
-    if (!tableRow.hidden) visible += 1;
-  });
-  $(id + '-count').textContent = visible + ' / ' + rows.length;
-  $(id).querySelector('[data-search-empty]')?.remove();
-  if (rows.length && !visible) {
-    const tableRow = document.createElement('tr'); tableRow.dataset.searchEmpty = 'true';
-    const cell = document.createElement('td'); cell.colSpan = rows[0].cells.length;
-    cell.className = 'empty'; cell.textContent = 'No matches.';
-    tableRow.append(cell); $(id).append(tableRow);
-  }
-}
-
-function initializeTableFilters() {
-  [['runs', 'Search runs'], ['subs', 'Search subscribers'], ['admins', 'Search access list'],
-    ['updates', 'Search updates']].forEach(([id, title]) => {
-    const wrapper = $(id).closest('.table-wrap'); wrapper.tabIndex = 0;
-    wrapper.setAttribute('role', 'region'); wrapper.setAttribute('aria-label', title.replace('Search ', ''));
-    const toolbar = document.createElement('div'); toolbar.className = 'table-toolbar';
-    const field = document.createElement('label'); field.className = 'table-search';
-    const input = document.createElement('input'); input.type = 'search'; input.id = id + '-search';
-    input.placeholder = title; input.setAttribute('aria-label', title);
-    input.addEventListener('input', () => filterTable(id));
-    field.append(uiIcon('search'), input); toolbar.append(field);
-    if (id === 'runs') {
-      const select = document.createElement('select'); select.id = 'runs-filter';
-      select.setAttribute('aria-label', 'Run status');
-      [['', 'All statuses'], ['queued', 'Queued'], ['running', 'Running'], ['completed', 'Completed'],
-        ['partial', 'Partial'], ['failed', 'Failed']].forEach(([value, title]) => { select.add(new Option(title, value)); });
-      select.addEventListener('change', () => filterTable(id)); toolbar.append(select);
-    }
-    const count = document.createElement('span'); count.id = id + '-count'; count.className = 'table-count';
-    count.setAttribute('role', 'status'); toolbar.append(count); wrapper.before(toolbar);
-  });
+  rows.forEach((r) => tbody.appendChild(r));
 }
 
 function setPanelCaption(panelKey, value) {
@@ -711,10 +533,11 @@ function initializeCollapsiblePanels() {
 
     const button = document.createElement('button');
     button.type = 'button'; button.className = 'panel-toggle secondary';
-    button.append(uiIcon('chevron-down')); button.setAttribute('aria-expanded', 'true');
+    button.textContent = '−'; button.setAttribute('aria-expanded', 'true');
     button.setAttribute('aria-controls', body.id);
     const updateButton = (collapsed) => {
       const action = collapsed ? 'expand' : 'collapse';
+      button.textContent = collapsed ? '+' : '−';
       button.setAttribute('aria-expanded', String(!collapsed));
       button.setAttribute('aria-label', heading.textContent + ' ' + action);
       button.title = heading.textContent + ' ' + action;
@@ -742,7 +565,7 @@ function selectorText(selection) {
 }
 
 function runStatusText(status) {
-  return ({queued: 'Queued', running: 'Running', completed: 'Completed', partial: 'Partial', failed: 'Failed'})[status] || status;
+  return ({queued: 'Queued', running: 'Running', completed: 'Completed', failed: 'Failed'})[status] || status;
 }
 
 function dateTimeTextForBasis(value, basis) {
@@ -899,7 +722,6 @@ function setTimeBasis(value, reload) {
   updateSinceConversion(); updateScheduleConversion();
   if (reload === false) return;
   if (activeRunDetail && !$('run-detail').hidden) renderRunDetail(activeRunDetail);
-  if (errorHistory) renderErrorHistory();
   Promise.allSettled([loadRuns(), loadSchedules(), loadUpdates()]);
 }
 
@@ -938,7 +760,6 @@ function updateRunFields() {
     field.hidden = !active;
     field.querySelectorAll('input, select').forEach((control) => {
       const required = active && mode !== 'checkpoint';
-      control.disabled = !active;
       control.required = required;
       control.setAttribute('aria-required', String(required));
     });
@@ -968,7 +789,6 @@ function resetSubscriberEditor(message) {
 }
 
 function editSubscriber(subscriber) {
-  activateSection('subscriber');
   $('sub-form').dataset.editingEmail = subscriber.email;
   $('sub-email').value = subscriber.email; $('sub-name').value = subscriber.name;
   $('sub-role').value = subscriber.role || ''; $('sub-language').value = subscriber.language;
@@ -1002,7 +822,6 @@ function addRunFact(parent, label, value) {
 function renderRunDetail(run) {
   const detail = $('run-detail'); const facts = $('run-detail-facts');
   activeRunDetail = run;
-  $('run-detail-logs').disabled = false;
   $('run-detail-title').textContent = 'Run details · ' + run.run_id.slice(0, 8);
   facts.replaceChildren();
   [
@@ -1022,102 +841,14 @@ function renderRunDetail(run) {
 
 async function showRunDetail(runId, button) {
   button.disabled = true;
-  try {
-    renderRunDetail(await api('/api/admin/runs/' + encodeURIComponent(runId)));
-    $('run-detail-title').tabIndex = -1; $('run-detail-title').focus();
-    $('run-detail-close').onclick = () => { $('run-detail').hidden = true; button.focus(); };
-  }
+  try { renderRunDetail(await api('/api/admin/runs/' + encodeURIComponent(runId))); }
   catch (e) {
-    activeRunDetail = null; $('run-detail-logs').disabled = true;
     $('run-detail').hidden = false; $('run-detail-error').hidden = false;
     $('run-detail-error').textContent = 'Could not load run details: ' + e.message;
   } finally { button.disabled = false; }
 }
 
 $('run-detail-close').addEventListener('click', () => { $('run-detail').hidden = true; });
-
-function renderErrorHistory() {
-  const list = $('errors-list'); list.replaceChildren();
-  if (!errorHistory) return;
-  errorHistory.events.forEach(event => {
-    const item = document.createElement('li'); item.className = 'error-event';
-    const header = document.createElement('div'); header.className = 'error-event-head';
-    const time = document.createElement('time'); time.dateTime = event.occurred_at;
-    time.textContent = displayedDateTime(event.occurred_at);
-    const level = document.createElement('span'); level.className = 'source';
-    level.textContent = [event.level, event.runtime, event.status].filter(Boolean).join(' · ');
-    header.append(time, level);
-    const title = document.createElement('h3');
-    title.textContent = [event.error_type, event.event].filter(Boolean).join(' · ');
-    const message = document.createElement('p'); message.className = 'error-message';
-    message.textContent = event.message || 'No error message was recorded for this event.';
-    item.append(header, title, message);
-    const counts = [['Failed', event.failed], ['Archive failed', event.archive_failed],
-      ['Pending', event.pending], ['Deferred', event.deferred]].filter(([, value]) => value > 0);
-    if (counts.length) {
-      const summary = document.createElement('p'); summary.className = 'source';
-      summary.textContent = counts.map(([label, value]) => label + ': ' + value).join(' · ');
-      item.appendChild(summary);
-    }
-    const details = document.createElement('details');
-    const summary = document.createElement('summary'); summary.textContent = 'Run and trace context';
-    const facts = document.createElement('dl'); facts.className = 'run-facts';
-    [['Run ID', event.run_id], ['Trace ID', event.trace_id], ['Update ID', event.update_id],
-      ['Task ID', event.task_id], ['Phase', event.phase], ['Operation', event.operation],
-      ['Agent role', event.agent_role]].filter(([, value]) => value)
-      .forEach(([label, value]) => addRunFact(facts, label, value));
-    if (facts.children.length) { details.append(summary, facts); item.appendChild(details); }
-    list.appendChild(item);
-  });
-}
-
-async function loadErrorHistory() {
-  if (!$('errors-form').reportValidity()) return false;
-  const query = new URLSearchParams({hours: $('errors-hours').value, limit: '50'});
-  const runId = $('errors-run-id').value.trim().toLowerCase();
-  if (runId) query.set('run_id', runId);
-  const key = query.toString(); const request = ++errorHistoryRequest;
-  errorHistoryRequested = true; errorHistoryLoading = true;
-  if (key !== errorHistoryQuery) {
-    errorHistory = null; $('errors-list').replaceChildren(); errorHistoryQuery = key;
-  }
-  $('errors-refresh').disabled = true; $('errors-list').setAttribute('aria-busy', 'true');
-  $('errors-load-error').hidden = true; $('errors-status').textContent = 'Loading recorded errors…';
-  try {
-    const data = await api('/api/admin/errors?' + key);
-    if (request !== errorHistoryRequest) return false;
-    errorHistory = data; renderErrorHistory();
-    $('errors-status').textContent = data.events.length
-      ? (data.has_more ? 'Newest ' : '') + data.events.length + ' recorded events · Last '
-        + data.period_hours + ' hours' + (data.has_more ? ' · More events exist; narrow the filters.' : '')
-      : 'No recorded errors match these filters. Recent events may still be arriving.';
-    setPanelCaption('errors', data.events.length + ' recorded events');
-    return true;
-  } catch (error) {
-    if (request !== errorHistoryRequest) return false;
-    $('errors-load-error').hidden = false;
-    $('errors-load-error').textContent = 'Could not load error history: ' + error.message;
-    $('errors-status').textContent = errorHistory
-      ? 'Refresh failed. Previously loaded events are retained.' : 'Error history is unavailable.';
-    setPanelCaption('errors', 'Unavailable');
-    return false;
-  } finally {
-    if (request === errorHistoryRequest) {
-      errorHistoryLoading = false; $('errors-refresh').disabled = false;
-      $('errors-list').setAttribute('aria-busy', 'false');
-    }
-  }
-}
-
-$('errors-form').addEventListener('submit', event => { event.preventDefault(); loadErrorHistory(); });
-$('errors-clear').addEventListener('click', () => { $('errors-run-id').value = ''; loadErrorHistory(); });
-$('run-detail-logs').addEventListener('click', () => {
-  if (!activeRunDetail) return;
-  $('errors-run-id').value = activeRunDetail.run_id;
-  $('errors-hours').value = '720';
-  errorHistoryRequested = true; location.hash = 'errors'; activateSection('errors', true);
-  loadErrorHistory();
-});
 
 async function loadStatus() {
   const button = $('status-refresh'); button.disabled = true;
@@ -1182,7 +913,6 @@ async function loadRuns() {
     );
     const action = document.createElement('td');
     const button = tableButton('View', () => showRunDetail(r.run_id, button));
-    tr.dataset.status = r.status;
     action.appendChild(button); tr.prepend(action); return tr;
   }), 10, 'No runs found.');
 }
@@ -1268,7 +998,6 @@ async function loadUpdates() {
     const tr = row([displayedDateTime(u.published_date), u.title, u.update_type]);
     const action = document.createElement('td');
     action.appendChild(tableButton('Select', () => {
-      activateSection('run'); history.replaceState(null, '', '#run');
       const runPanel = document.querySelector('.panel-run');
       if (runPanel.classList.contains('collapsed')) runPanel.querySelector('.panel-toggle').click();
       $('run-mode').value = 'update_url'; updateRunFields(); $('update-url').value = u.link;
@@ -1285,12 +1014,7 @@ $('dry').addEventListener('change', () => {
   if ($('dry').checked) $('send-email').checked = false;
 });
 
-$('run-form').addEventListener('submit', async (event) => {
-  event.preventDefault();
-  if (!$('run-form').reportValidity()) return;
-  if ($('run-mode').value === 'date_range' && $('start-date').value > $('end-date').value) {
-    $('msg').textContent = 'Start date must be on or before the end date.'; $('end-date').focus(); return;
-  }
+$('run').addEventListener('click', async () => {
   const btn = $('run'); btn.disabled = true; $('msg').textContent = 'Starting run…';
   try {
     const mode = $('run-mode').value;
@@ -1381,45 +1105,14 @@ $('admin-form').addEventListener('submit', async (event) => {
 });
 
 async function refresh() {
-  if (document.hidden || document.querySelector('.panel-run').hidden) return;
-  try { await loadRuns(); }
-  catch (error) { $('run-summary').textContent = 'Refresh failed. Last results retained.'; }
-}
-
-async function refreshAll() {
-  $('refresh-all').disabled = true; $('refresh-status').textContent = 'Refreshing...';
-  const jobs = [[loadStatus, 'status', null, 0], [loadRuns, 'run', 'runs', 10],
-    [loadSchedules, 'schedule', 'schedules', 5], [loadSubs, 'subscriber', 'subs', 6],
-    [loadAdmins, 'administrator', 'admins', 3], [loadUpdates, 'updates', 'updates', 4]];
-  if (errorHistoryRequested && !errorHistoryLoading) jobs.push([loadErrorHistory, 'errors', null, 0]);
-  const results = await Promise.all(jobs.map(async ([load, key, table, columns]) => {
-    try { return (await load()) !== false; }
-    catch (error) {
-      const message = 'Could not load data. Refresh to retry.';
-      const caption = document.querySelector('[data-panel-key="' + key + '"] .panel-caption');
-      if (caption) caption.textContent = 'Unavailable';
-      if (table && !$(table).querySelector('[data-table-row]')) fill($(table), [], columns, message);
-      if (!table) { $('status-summary').className = 'readiness-summary bad'; $('status-summary').textContent = message; }
-      return false;
-    }
-  }));
-  const failures = results.filter(result => !result).length;
-  $('refresh-status').textContent = failures ? failures + ' sections unavailable'
-    : 'Updated ' + new Date().toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
-  $('refresh-all').disabled = false;
+  try { await loadRuns(); } catch (e) { /* transient */ }
 }
 
 (async function init() {
   initializeCollapsiblePanels(); updateRunFields(); setTimeBasis('local', false);
-  initializeTableFilters(); decorateIcons();
-  document.querySelectorAll('[data-section]').forEach(link => link.addEventListener('click', () => {
-    activateSection(link.dataset.section, true);
-  }));
-  window.addEventListener('hashchange', () => activateSection(location.hash.slice(1), true));
-  const initial = location.hash.slice(1);
-  activateSection(['status', 'run', 'schedule', 'subscriber', 'administrator', 'updates', 'errors'].includes(initial) ? initial : 'status');
-  $('refresh-all').addEventListener('click', refreshAll);
-  await refreshAll();
+  await Promise.allSettled([
+    loadStatus(), loadRuns(), loadSchedules(), loadSubs(), loadAdmins(), loadUpdates()
+  ]);
   setInterval(refresh, 10000);
 })();
 </script>
@@ -1433,7 +1126,6 @@ def render_admin_page(
     profile: str,
     user: str,
     archive_enabled: bool = False,
-    feedback_enabled: bool = False,
 ) -> str:
     """Render the admin console HTML for one request.
 
@@ -1446,17 +1138,12 @@ def render_admin_page(
         A complete HTML document.
     """
     archive_link = '<a class="nav-link" href="/archive">Archive</a>' if archive_enabled else ""
-    feedback_link = '<a class="nav-link" href="/feedback">Feedback</a>' if feedback_enabled else ""
     return (
         _PAGE.replace("__NONCE__", escape(nonce, quote=True))
         .replace("__WEB_FONT_FACE__", WEB_FONT_FACE_CSS)
         .replace("__CONTROL_SURFACE_BASE__", CONTROL_SURFACE_BASE_CSS)
-        .replace("__WEB_ICONS__", CONTROL_SURFACE_ICONS)
-        .replace("__WEB_FAVICON__", CONTROL_SURFACE_FAVICON)
-        .replace("__WEB_SCRIPT__", CONTROL_SURFACE_SCRIPT)
         .replace("__WEB_FONT_STACK__", WEB_FONT_STACK)
         .replace("__PROFILE__", escape(profile))
         .replace("__ARCHIVE_LINK__", archive_link)
-        .replace("__FEEDBACK_LINK__", feedback_link)
         .replace("__USER__", escape(user))
     )

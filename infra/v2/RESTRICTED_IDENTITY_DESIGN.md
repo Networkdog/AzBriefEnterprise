@@ -1,9 +1,12 @@
 # Deployment Without App Registration, SSO, or Authentication Gateways
 
 Status: target architecture not accepted in a customer tenant. Local initial-ingress
-validation and a guarded single-entry coordinator are implemented; restricted MCP,
-environment-only Admin settings and automated private acceptance/closure are not.
+validation, a guarded single-entry coordinator and environment-only Admin settings are
+implemented locally; restricted MCP, local web auth and private acceptance/closure are not.
 Decision date: 2026-10-25.
+Customer clarification (2026-10-26): Managed Identity creation is permitted. All
+subnets must be created by administrators; deployment selects and validates them
+without adding or changing subnets. Publishing public IPs are explicit runtime inputs.
 Updated decision: the customer explicitly trusts traffic from the dedicated Foundry
 subnet for the tenant Azure MCP endpoint. This supersedes the earlier proposal to
 remove that server and replace its specialist with native tools.
@@ -130,13 +133,16 @@ Container Apps platform, health-probe and same-environment infrastructure traffi
 do not confuse those infrastructure allowances with additional client trust.
 
 The current shared Admin/MCP Environment is not an NSG-isolated per-app boundary.
-Use a dedicated internal MCP Environment/subnet, or a separately proven per-app
+Use a dedicated internal MCP Environment with an administrator-prepared existing subnet,
+or a separately proven per-app
 enforcement mechanism that also blocks shared-environment and alternate ingress
 paths. NSGs cannot distinguish hostnames or URLs on a shared ingress. An external
 Environment's public ingress is not controlled by its subnet NSG. If dedicated
-isolation is required, disclose its additional Environment, subnet, DNS and network
-resources; share existing logs/Insights where supported instead of claiming zero
-resource growth. Do not add a public route or an authentication gateway as a shortcut.
+isolation is required, disclose its Environment, DNS and network requirements and
+select the exact dedicated subnet the administrator has already prepared. Never create,
+resize or delegate a subnet, add service endpoints or silently select another subnet.
+Missing or incompatible subnet isolation blocks deployment. Share existing logs/Insights
+where supported. Do not add a public route or an authentication gateway as a shortcut.
 
 Retain the MCP server's MI, scoped read-only Azure permissions, `--read-only`, and the
 existing `group`, `resourcehealth`, `advisor` namespace allow-list. Resource Graph and
@@ -166,6 +172,16 @@ Blob remains private runtime storage for checkpoints, archives and execution lea
 not the administrator configuration source. Preserve existing saved configuration
 through an explicit migration; never silently merge old Blob overrides into this mode.
 
+Local implementation now supports explicit `ADMIN_CONFIGURATION_SOURCE=environment`
+on both App and Job, with `AUTOMATIC_RUN_TIMES_UTC` for protected daily UTC times.
+Settings reads never load the Admin Blob, all console mutations are disabled, and
+runtime claims retain ETag protection in separate `automatic-run-state.json` storage.
+V2 application preparation requires identical shared values and removes the legacy
+Admin URL while retaining checkpoint/Archive/authentication. Legacy `managed` stays
+default; matching new images, authoritative ARM settings and quiesced migration are
+required. See the [configuration guide](README.md#environment-only-administrator-settings).
+This local implementation is not live customer acceptance or an installer readiness override.
+
 Local web authentication must use a maintained authentication/password-hashing
 library, not custom cryptography. Require Argon2id password hashes, individual
 accounts, server-side authorization, durable revocable sessions across replicas,
@@ -182,10 +198,11 @@ Keep the web surfaces disabled until local authentication is implemented and tes
 
 ## Platform Identity Gate
 
-An Azure managed identity has a backing service principal. Foundry Hosted Agent
-deployment also creates a platform-managed agent identity. Neither fact establishes
-that the customer's directory policy permits those objects. Confirm their treatment
-separately without requesting permission to create arbitrary application registrations.
+An Azure managed identity has a backing service principal; the customer explicitly
+permits Managed Identity creation as of 2026-10-26. This is not permission for arbitrary
+application registrations, directory grants or SSO. Foundry Hosted Agent deployment
+also creates a platform-managed agent identity; its policy acceptance remains separate.
+Do not infer that acceptance from the Managed Identity approval.
 
 Retain the Hosted Agent/control-plane separation unless an explicit architecture
 change is approved. If policy prohibits the Hosted Agent's required identity, block

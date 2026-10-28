@@ -58,6 +58,52 @@ def module(document: dict[str, Any], name: str) -> dict[str, Any]:
     raise StopIteration(name)
 
 
+def test_environment_only_application_configuration_is_symmetric_and_drops_legacy_blob() -> None:
+    environment = [
+        {"name": "ADMIN_CONFIGURATION_SOURCE", "value": "environment"},
+        {"name": "SUBSCRIBERS", "secretRef": "subscribers"},
+        {"name": "REPORT_LANGUAGE", "value": "ko"},
+        {"name": "SCHEDULE_CRON_EXPRESSION", "value": "0 2 * * *"},
+        {"name": "AUTOMATIC_RUN_TIMES_UTC", "value": '["14:30"]'},
+        {"name": "ADMIN_CONFIG_BLOB_URL", "value": "https://legacy.example/admin-config.json"},
+        {"name": "CHECKPOINT_BLOB_URL", "value": "https://state.example/checkpoint.json"},
+    ]
+    parameters = {"appEnvironment": copy.deepcopy(environment), "jobEnvironment": environment}
+
+    deploy_v2._validate_admin_configuration(parameters)
+
+    for label in ("app", "job"):
+        entries = {entry["name"]: entry for entry in parameters[f"{label}Environment"]}
+        assert "ADMIN_CONFIG_BLOB_URL" not in entries
+        assert entries["SUBSCRIBERS"]["secretRef"] == "subscribers"
+        assert entries["CHECKPOINT_BLOB_URL"]["value"] == "https://state.example/checkpoint.json"
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "ADMIN_CONFIGURATION_SOURCE",
+        "SUBSCRIBERS",
+        "EMAIL_RECIPIENT_ADDRESS",
+        "REPORT_LANGUAGE",
+        "SCHEDULE_CRON_EXPRESSION",
+        "AUTOMATIC_RUN_TIMES_UTC",
+    ],
+)
+def test_environment_only_configuration_rejects_app_job_mismatches(name: str) -> None:
+    parameters = {
+        "appEnvironment": [{"name": "ADMIN_CONFIGURATION_SOURCE", "value": "environment"}],
+        "jobEnvironment": [{"name": "ADMIN_CONFIGURATION_SOURCE", "value": "environment"}],
+    }
+    if name == "ADMIN_CONFIGURATION_SOURCE":
+        parameters["jobEnvironment"] = []
+    else:
+        parameters["jobEnvironment"].append({"name": name, "value": "different"})
+
+    with pytest.raises(ValueError, match="App and Job"):
+        deploy_v2._validate_admin_configuration(parameters)
+
+
 def test_default_basic_vnet_host_omits_byo_and_keeps_private_injection() -> None:
     document = template("infrastructure")
     assert document["parameters"]["useMicrosoftManagedAgentData"]["defaultValue"] is True
@@ -3079,6 +3125,70 @@ def test_cli_can_resolve_all_customer_resource_names_from_one_pair(tmp_path: Pat
     assert values["foundryAccountName"] == "ai-kt-prd"
     assert values["storageAccountName"] == "stktprd"
     assert values["azureMcpContainerAppName"] == "ca-kt-mcp-prd"
+
+
+def test_environment_only_update_preserves_keys_auth_schedule_and_custom_settings() -> None:
+    cli = FakeV2Azure(installed=True)
+    storage = cli.values["storageAccountName"]
+    state = cli.values.get("stateContainerName", "azbrief-state")
+    legacy_url = f"https://{storage}.blob.core.windows.net/{state}/admin-config.json"
+    for resource_id in (cli.app_id, cli.job_id):
+        environment = cli.documents[resource_id]["properties"]["template"]["containers"][0]["env"]
+        environment.append({"name": "ADMIN_CONFIG_BLOB_URL", "value": legacy_url})
+    shared = [
+        {"name": "ADMIN_CONFIGURATION_SOURCE", "value": "environment"},
+        {"name": "SUBSCRIBERS", "value": "[]"},
+        {"name": "REPORT_LANGUAGE", "value": "ko"},
+        {"name": "SCHEDULE_CRON_EXPRESSION", "value": "0 2 * * *"},
+        {"name": "AUTOMATIC_RUN_TIMES_UTC", "value": '["14:30"]'},
+    ]
+
+    parameters = deploy_v2.prepare_application(
+        cli, IMAGE, {"appEnvironment": shared, "jobEnvironment": copy.deepcopy(shared)}
+    )
+
+    for label in ("app", "job"):
+        entries = {entry["name"]: entry for entry in parameters[f"{label}Environment"]}
+        assert "ADMIN_CONFIG_BLOB_URL" not in entries
+        assert entries["ADMIN_CONFIGURATION_SOURCE"]["value"] == "environment"
+        assert entries["AUTOMATIC_RUN_TIMES_UTC"]["value"] == '["14:30"]'
+    app_entries = {entry["name"]: entry for entry in parameters["appEnvironment"]}
+    assert app_entries["CUSTOM_SETTING"]["value"] == "keep"
+    assert parameters["existingSecrets"]["app"] == cli.secret_values[cli.app_id]
+    assert parameters["existingSecrets"]["job"] == cli.secret_values[cli.job_id]
+    assert parameters["webAuthConfiguration"]["platform"]["enabled"] is True
+    assert parameters["jobConfiguration"]["triggerType"] == "Schedule"
+    assert not cli.operations
+
+
+def test_environment_only_initial_install_rejects_unpaired_app_job_settings() -> None:
+    cli = FakeV2Azure()
+    with pytest.raises(ValueError, match="same administrator configuration source"):
+        deploy_v2.prepare_application(
+            cli,
+            IMAGE,
+            {"appEnvironment": [{"name": "ADMIN_CONFIGURATION_SOURCE", "value": "environment"}]},
+        )
+    assert not cli.operations
+
+
+def test_application_arm_conditionally_omits_admin_blob_but_keeps_runtime_state() -> None:
+    document = template("application")
+    variables = document["variables"]
+    assert variables["legacyAdminEnvironment"][0]["name"] == "ADMIN_CONFIG_BLOB_URL"
+    for kind, label in (("containerApps", "app"), ("jobs", "job")):
+        resource = next(
+            item
+            for item in resources(document)
+            if item["type"] == f"Microsoft.App/{kind}" and f"azbrief.v2.{label}" in item["name"]
+        )
+        binding = json.dumps(resource["properties"]["template"])
+        assert f"parameters('{label}Environment')" in binding
+        assert "ADMIN_CONFIGURATION_SOURCE" in binding
+        assert "'environment'), createArray(), variables('legacyAdminEnvironment')" in binding
+        assert "ADMIN_CONFIG_BLOB_URL" in binding
+        assert "CHECKPOINT_BLOB_URL" in binding
+        assert "ARCHIVE_BLOB_CONTAINER_URL" in binding
 
 
 def test_application_update_retains_keys_auth_environment_and_schedule() -> None:

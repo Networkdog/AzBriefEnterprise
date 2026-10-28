@@ -15,12 +15,12 @@
 | State | Entra-only Storage account의 checkpoint container, private immutable archive container, Key Vault secret reference |
 | Evaluation | 별도 Entra-only Storage account, Foundry project AAD connection, project identity 전용 Blob Data Owner |
 | Delivery | Communication Services와 Email Services managed domain |
-| Observability | 각각 하나의 공용 Log Analytics와 Entra 전용 Application Insights |
+| Observability | Log Analytics와 Application Insights |
 | Identity | App/Job용 user-assigned identity, Foundry project system identity와 resource별 최소 범위 role assignment |
 | Network | `vnetInjection`, `perimeter`, `public` 중 하나의 경계; evaluation storage도 같은 profile 적용 |
 
 App과 Job에는 `ADMIN_READINESS_*` expected inventory가 동일하게 주입됩니다. 이 값은 Foundry
-계정/Project/model, specialist Agent 이름, 공용 Container Apps Environment 하나와 App 두 개, Scheduler Job과
+계정/Project/model, specialist Agent 이름, 두 Container Apps Environment/App, Scheduler Job과
 기반 Azure resource 목록만 담습니다. Agent definition이나 secret은 담지 않으며 `/admin`의 live
 readiness checklist가 실제 ARM/Foundry 상태와 비교할 때 사용합니다.
 List/map 형태의 값은 `base64(string(...))`으로 전달합니다. `az containerapp update`가 JSON quote를
@@ -31,9 +31,6 @@ Prompt Agent version과 Hosted Agent version은 data-plane 객체이므로 이 B
 루트 [`azure.yaml`](../../azure.yaml)이 각각 별도 lifecycle을 담당합니다. Bicep output은
 coordinator, Resource Graph, Azure MCP, Azure API, report writer, quality reviewer의 고유 이름과
 대상 tenant/subscription/project를 담은 비밀 값 없는 `customerSetup` 계약을 제공합니다.
-v3는 Environment ID, workload profile과 Application Insights 이름도 포함합니다. 후속 MCP
-배포는 이를 재사용하며 별도 Environment나 관측 리소스를 만들지 않습니다. MCP 콘솔 로그는
-같은 Workspace로 수집하지만 현재 image의 직접 Application Insights 추적·메트릭은 끕니다.
 [setup_customer.ps1](../../scripts/setup_customer.ps1)이 이 값을 읽어 고객별 azd 환경을 구성하며,
 `configureHostedAgentCommand`는 이 도구의 `Configure` 단계를 가리킵니다. Hosted 이름은
 `FOUNDRY_HOSTED_AGENT_NAME`으로 manifest에 전달하고 여섯 전문가 이름은 각각 개별 설정으로

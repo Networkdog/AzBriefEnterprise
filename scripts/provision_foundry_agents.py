@@ -8,9 +8,10 @@ and cannot be created by ARM.
 Base instructions are derived from
 :data:`src.agent.foundry_backend.RUNTIME_AGENT_INSTRUCTIONS` and
 :data:`src.agent.foundry_backend.SPECIALIST_PROMPTS`. Role-scoped operational rules
-come from :mod:`src.agent.foundry_instructions`, never from GitHub Copilot skills.
-The developer customizations under ``.github`` are not runtime inputs.
-``--check`` detects changes to the compiled Foundry instructions as Agent drift.
+are compiled from the bounded ``Foundry Runtime Guidance`` section in each
+``.github/skills/*/SKILL.md``. The detailed developer workflow is never sent to
+the model, while ``--check`` detects any change to the runtime section as Agent
+instruction drift.
 
 The script derives app-owned FunctionTool definitions from the live LangChain
 Pydantic schemas, publishes strict specialist JSON response formats, and preserves
@@ -30,7 +31,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
@@ -49,7 +49,6 @@ from src.agent.foundry_backend import (  # noqa: E402
     build_specialist_text_options,
     select_specialist_tools,
 )
-from src.agent.foundry_instructions import runtime_guidance_instructions  # noqa: E402
 from src.config import (  # noqa: E402
     SPECIALIST_AGENT_ROLES,
     get_azure_credential,
@@ -59,6 +58,34 @@ from src.config import (  # noqa: E402
 # The runtime prompt ends with the update context; an agent's standing
 # instructions are everything before that.
 _CONTEXT_MARKER = "\n\nAzure Update under analysis:"
+_RUNTIME_GUIDANCE_HEADING = "## Foundry Runtime Guidance"
+_RUNTIME_GUIDANCE_END = "<!-- End Foundry Runtime Guidance -->"
+_SKILL_ROOT = Path(__file__).resolve().parent.parent / ".github" / "skills"
+_RUNTIME_SKILLS_BY_PURPOSE: dict[str, tuple[str, ...]] = {
+    "coordinator": ("foundry-agent-architecture",),
+    "resource_graph": (
+        "kql-resource-graph",
+        "azure-service-integration",
+    ),
+    "azure_mcp": (
+        "foundry-agent-architecture",
+        "azure-service-integration",
+    ),
+    "azure_api": (
+        "azure-service-integration",
+        "foundry-agent-architecture",
+    ),
+    "report_writer": (
+        "report-quality",
+        "language-naturalness",
+        "email-template",
+    ),
+    "quality_reviewer": (
+        "report-evaluation",
+        "report-quality",
+        "language-naturalness",
+    ),
+}
 _RETIRED_APP_FUNCTION_NAMES = frozenset(
     {
         "search_update_related_docs",
@@ -72,54 +99,6 @@ _APP_OWNED_FUNCTION_NAMES = (
 _PRESERVE_DEFINITION_VALUE = object()
 
 
-@dataclass(frozen=True)
-class ModelProfile:
-    """Resolved provisioning policy for one specialist's model deployment."""
-
-    model: str
-    reasoning_effort: Optional[str] = None
-    manage_reasoning: bool = True
-
-
-def resolve_model_profile(role: str, model: Optional[str] = None) -> ModelProfile:
-    """Resolve CLI, legacy environment, then role-tier model configuration."""
-    if role not in SPECIALIST_AGENT_ROLES:
-        raise ValueError(f"Unknown specialist role: {role}")
-    settings = get_settings()
-    override = (model or "").strip() or (settings.foundry_model_deployment or "").strip()
-    if override:
-        return ModelProfile(override, manage_reasoning=False)
-    if role == "azure_mcp":
-        deployment = (settings.foundry_simple_model_deployment or "").strip() or "gpt-5-luna"
-        return ModelProfile(deployment)
-    deployment = (settings.foundry_core_model_deployment or "").strip() or "gpt-5-terra"
-    return ModelProfile(deployment, settings.foundry_core_reasoning_effort)
-
-
-def _model_profile_drift(version: Any, profile: ModelProfile) -> list[str]:
-    """Return model and managed generation options that differ from policy."""
-    definition = getattr(version, "definition", None)
-    issues = []
-    if getattr(definition, "model", None) != profile.model:
-        issues.append(f"model must be {profile.model}")
-    if profile.manage_reasoning:
-        reasoning = getattr(definition, "reasoning", None)
-        effort = (
-            reasoning.get("effort")
-            if isinstance(reasoning, dict)
-            else getattr(reasoning, "effort", None)
-        )
-        if effort != profile.reasoning_effort or (
-            profile.reasoning_effort is None and reasoning is not None
-        ):
-            issues.append(f"reasoning effort must be {profile.reasoning_effort or 'omitted'}")
-        if any(
-            getattr(definition, option, None) is not None for option in ("temperature", "top_p")
-        ):
-            issues.append("temperature and top_p must be omitted")
-    return issues
-
-
 def specialist_instructions(role: str) -> str:
     """Return standing instructions derived from the runtime specialist contract."""
     if role in SPECIALIST_PROMPTS:
@@ -127,29 +106,42 @@ def specialist_instructions(role: str) -> str:
     return RUNTIME_AGENT_INSTRUCTIONS[role]
 
 
+@lru_cache(maxsize=None)
+def _load_runtime_skill_guidance(skill_name: str) -> str:
+    """Load the bounded runtime section from one repository Skill."""
+    path = _SKILL_ROOT / skill_name / "SKILL.md"
+    text = path.read_text(encoding="utf-8")
+    if text.count(_RUNTIME_GUIDANCE_HEADING) != 1 or text.count(_RUNTIME_GUIDANCE_END) != 1:
+        raise RuntimeError(f"{path} must contain one bounded {_RUNTIME_GUIDANCE_HEADING!r} section")
+    section = text.split(_RUNTIME_GUIDANCE_HEADING, 1)[1]
+    section = section.split(_RUNTIME_GUIDANCE_END, 1)[0]
+    guidance = section.strip()
+    if not guidance:
+        raise RuntimeError(f"{path} has an empty Foundry runtime guidance section")
+    return guidance
+
+
+def runtime_skill_names(purpose: str) -> tuple[str, ...]:
+    """Return repository Skills assigned to one Foundry Agent purpose."""
+    return _RUNTIME_SKILLS_BY_PURPOSE.get(purpose, ())
+
+
+def runtime_skill_instructions(purpose: str) -> str:
+    """Compile role-scoped Skill guidance for one Foundry Agent definition."""
+    blocks = [
+        f"### Skill: {name}\n{_load_runtime_skill_guidance(name)}"
+        for name in runtime_skill_names(purpose)
+    ]
+    if not blocks:
+        return ""
+    return "## AzBrief Runtime Skills\n\n" + "\n\n".join(blocks)
+
+
 def agent_instructions(purpose: str) -> str:
     """Return standing instructions for one specialist Prompt Agent."""
     base = specialist_instructions(purpose)
-    guidance = runtime_guidance_instructions(purpose)
-    instructions = f"{base}\n\n{guidance}" if guidance else base
-    if purpose == "coordinator" and get_settings().foundry_coordinator_learn_transport == "hosted":
-        instructions += (
-            "\n\n## Documentation transport for this Agent version\n"
-            "Microsoft Learn remains the first source. Use the supplied runtime local-tool "
-            "catalog for documentation: search_update_related_docs, search_azure_docs, "
-            "get_service_documentation, fetch_documentation_link and query_tool_result. "
-            "This version has no managed Microsoft Learn MCP attachment; where the general "
-            "guidance mentions microsoft_docs_search or microsoft_docs_fetch, use the "
-            "available runtime documentation tools instead. During planning, request needed "
-            'evidence as {"local_tool_calls":[{"name":"search_azure_docs","args":{"query":'
-            '"public Azure feature question","include_content":true}}]}; the application '
-            "executes it and supplies the result before you complete the plan. Use only "
-            "public service/feature terms in searches, never tenant identifiers or secrets. "
-            "Do not claim a lookup ran without a tool result. Retain source URLs, scope, "
-            "traversal limits and explicit evidence gaps; do not invent facts or fall back "
-            "to another specialist. Web Search, if available, remains supplementary only."
-        )
-    return instructions
+    skill_guidance = runtime_skill_instructions(purpose)
+    return f"{base}\n\n{skill_guidance}" if skill_guidance else base
 
 
 def resolve_specialist_roster(roles: list[str] | None) -> list[tuple[str, str]]:
@@ -211,19 +203,17 @@ def _managed_server_tools(purpose: str) -> tuple[Any, ...]:
 
     settings = get_settings()
     if purpose == "coordinator":
-        tools: list[Any] = []
-        if settings.foundry_coordinator_learn_transport == "managed_mcp":
-            tools.append(
-                MCPTool(
-                    server_label="microsoft_learn",
-                    server_url="https://learn.microsoft.com/api/mcp",
-                    require_approval="never",
-                    server_description=(
-                        "Primary source for official Microsoft Learn documentation. "
-                        "Use this before Web Search."
-                    ),
-                )
+        tools: list[Any] = [
+            MCPTool(
+                server_label="microsoft_learn",
+                server_url="https://learn.microsoft.com/api/mcp",
+                require_approval="never",
+                server_description=(
+                    "Primary source for official Microsoft Learn documentation. "
+                    "Use this before Web Search."
+                ),
             )
+        ]
         if settings.foundry_coordinator_web_search_enabled:
             tools.append(WebSearchTool(search_context_size="medium"))
         return tuple(tools)
@@ -272,7 +262,6 @@ class _FoundryAdminClient:
         previous_definition: Any = None,
         managed_tools: Optional[list[Any]] = None,
         managed_text: Any = _PRESERVE_DEFINITION_VALUE,
-        managed_reasoning: Any = _PRESERVE_DEFINITION_VALUE,
     ):
         """Create an immutable Prompt Agent version, preserving prior configuration."""
         from azure.ai.projects.models import PromptAgentDefinition
@@ -289,20 +278,12 @@ class _FoundryAdminClient:
             and _server_tool_key(tool) not in _APP_OWNED_SERVER_TOOL_KEYS
             and _server_tool_key(tool) not in managed_server_keys
         ]
-        same_model = getattr(previous_definition, "model", None) == model
-        preserve_sampling = same_model and managed_reasoning is _PRESERVE_DEFINITION_VALUE
         definition = PromptAgentDefinition(
             model=model,
             instructions=instructions,
-            temperature=(
-                getattr(previous_definition, "temperature", None) if preserve_sampling else None
-            ),
-            top_p=getattr(previous_definition, "top_p", None) if preserve_sampling else None,
-            reasoning=(
-                managed_reasoning
-                if managed_reasoning is not _PRESERVE_DEFINITION_VALUE
-                else getattr(previous_definition, "reasoning", None) if same_model else None
-            ),
+            temperature=getattr(previous_definition, "temperature", None),
+            top_p=getattr(previous_definition, "top_p", None),
+            reasoning=getattr(previous_definition, "reasoning", None),
             tools=[*(managed_tools or []), *preserved_tools],
             tool_choice=getattr(previous_definition, "tool_choice", None),
             text=(
@@ -453,9 +434,7 @@ def _roster_conflicts(roster: list[tuple[str, str]]) -> dict[str, set[str]]:
     }
 
 
-def provision(
-    roster: list[tuple[str, str]], model: Optional[str], dry_run: bool, delete: bool
-) -> int:
+def provision(roster: list[tuple[str, str]], model: str, dry_run: bool, delete: bool) -> int:
     """Create, update or delete the roster. Returns a process exit code."""
     conflicts = _roster_conflicts(roster)
     if conflicts:
@@ -472,15 +451,8 @@ def provision(
     # Output goes to a Windows console too, where the default code page cannot
     # encode em dashes or box drawing.
     print(f"Project : {endpoint or '(not set)'}")
+    print(f"Model   : {model}")
     print(f"Agents  : {', '.join(f'{n} ({s})' for n, s in roster)}\n")
-    profiles = {role: resolve_model_profile(role, model) for _, role in roster}
-    for role, profile in profiles.items():
-        reasoning = (
-            profile.reasoning_effort or "omitted"
-            if profile.manage_reasoning
-            else "unmanaged (single-model override)"
-        )
-        print(f"Model   : {role} -> {profile.model} (reasoning={reasoning})")
 
     if dry_run:
         for name, role in roster:
@@ -521,26 +493,18 @@ def provision(
                     *_managed_function_tools().get(role, ()),
                 ]
                 managed_text = build_specialist_text_options(role)
-                profile = profiles[role]
-                managed_reasoning = _PRESERVE_DEFINITION_VALUE
-                if profile.manage_reasoning:
-                    managed_reasoning = (
-                        {"effort": profile.reasoning_effort} if profile.reasoning_effort else None
-                    )
                 latest = _latest_version(existing) if existing is not None else None
                 if existing is None:
                     created = client.create_version(
                         name,
-                        profile.model,
+                        model,
                         instructions,
                         managed_tools=managed_tools,
                         managed_text=managed_text,
-                        managed_reasoning=managed_reasoning,
                     )
                     print(f"created {name} (version {created.version})")
                 elif (
-                    _definition_matches(latest, profile.model, instructions)
-                    and not _model_profile_drift(latest, profile)
+                    _definition_matches(latest, model, instructions)
                     and _has_managed_tools(latest, role)
                     and not _server_tool_drift(latest, role)
                     and _has_managed_text(latest, role)
@@ -549,12 +513,11 @@ def provision(
                 else:
                     created = client.create_version(
                         name,
-                        profile.model,
+                        model,
                         instructions,
                         previous_definition=getattr(latest, "definition", None),
                         managed_tools=managed_tools,
                         managed_text=managed_text,
-                        managed_reasoning=managed_reasoning,
                     )
                     print(f"updated {name} (version {created.version})")
             except Exception as exc:  # one bad role must not abort the rest
@@ -568,7 +531,7 @@ def provision(
     return 1 if failures else 0
 
 
-def validate_roster(roster: list[tuple[str, str]], model: Optional[str] = None) -> int:
+def validate_roster(roster: list[tuple[str, str]]) -> int:
     """Validate the deployed roster without changing Foundry data-plane objects."""
     conflicts = _roster_conflicts(roster)
     if conflicts:
@@ -600,11 +563,6 @@ def validate_roster(roster: list[tuple[str, str]], model: Optional[str] = None) 
                 print(f"NO-VERSION {name} ({purpose})")
                 continue
             definition = getattr(latest, "definition", None)
-            profile = resolve_model_profile(purpose, model)
-            model_issues = _model_profile_drift(latest, profile)
-            if model_issues:
-                failures += 1
-                print(f"MODEL-POLICY {name} ({purpose}) {'; '.join(model_issues)}")
             configuration_error = _server_tool_configuration_error(purpose)
             if configuration_error:
                 failures += 1
@@ -664,7 +622,7 @@ def main() -> None:
     parser.add_argument(
         "--model",
         default=None,
-        help="Override all selected roles with one deployment (or FOUNDRY_MODEL_DEPLOYMENT)",
+        help="Model deployment name (default: FOUNDRY_MODEL_DEPLOYMENT)",
     )
     parser.add_argument(
         "--roles",
@@ -680,10 +638,14 @@ def main() -> None:
     operation.add_argument("--delete", action="store_true", help="Delete the roster instead")
     args = parser.parse_args()
 
+    settings = get_settings()
+    model = args.model or settings.foundry_model_deployment
+    if not model and not args.delete and not args.check:
+        parser.error("--model or FOUNDRY_MODEL_DEPLOYMENT is required")
     roster = resolve_specialist_roster(args.roles)
     if args.check:
-        sys.exit(validate_roster(roster, args.model))
-    sys.exit(provision(roster, args.model, args.dry_run, args.delete))
+        sys.exit(validate_roster(roster))
+    sys.exit(provision(roster, model or "(not used)", args.dry_run, args.delete))
 
 
 if __name__ == "__main__":

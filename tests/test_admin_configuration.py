@@ -3,6 +3,7 @@
 import json
 from copy import deepcopy
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -15,10 +16,13 @@ from src.admin.configuration import (
 from src.config import Subscriber, get_settings
 from src.services.admin_config import (
     AdminConfigConflictError,
+    AdminConfigNotConfiguredError,
     AdminConfigSnapshot,
     AdminConfigStore,
     BlobAdminConfigStore,
+    FileAdminConfigStore,
     _blob_url_from_checkpoint,
+    build_admin_config_store,
 )
 
 
@@ -86,6 +90,8 @@ class HttpClient:
 def _isolated_settings(monkeypatch):
     monkeypatch.delenv("SUBSCRIBERS", raising=False)
     monkeypatch.delenv("ADMIN_ALLOWED_PRINCIPALS", raising=False)
+    monkeypatch.delenv("ADMIN_CONFIGURATION_SOURCE", raising=False)
+    monkeypatch.delenv("AUTOMATIC_RUN_TIMES_UTC", raising=False)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -95,6 +101,169 @@ def _configure(monkeypatch, **values):
     for key, value in values.items():
         monkeypatch.setenv(key, value)
     get_settings.cache_clear()
+
+
+@pytest.mark.asyncio
+async def test_environment_configuration_never_reads_managed_settings(monkeypatch):
+    _configure(
+        monkeypatch,
+        ADMIN_CONFIGURATION_SOURCE="environment",
+        SUBSCRIBERS='[{"email":"arm@example.com","name":"ARM"}]',
+        ADMIN_ALLOWED_PRINCIPALS="arm-oid",
+        AUTOMATIC_RUN_TIMES_UTC='["14:30", "02:00", "14:30"]',
+        SCHEDULE_CRON_EXPRESSION="0 2 * * *",
+    )
+    store = MemoryStore()
+    monkeypatch.setattr(store, "read", AsyncMock(side_effect=AssertionError("settings read")))
+    manager = AdminConfigurationManager(store, cache_ttl_s=0)
+
+    assert [item.email for item in await manager.get_subscribers()] == ["arm@example.com"]
+    assert await manager.get_admin_principals() == {"arm-oid"}
+    assert await manager.get_managed_subscriber_emails() == set()
+    assert await manager.get_managed_admin_principals() == set()
+    assert manager.configured is False
+    schedules = await manager.get_automatic_run_schedules(
+        datetime(2026, 10, 26, tzinfo=timezone.utc)
+    )
+    assert [item.time_utc for item in schedules] == ["02:00", "14:30"]
+    assert all(not item.managed for item in schedules)
+    store.read.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "arguments"),
+    [
+        ("add_subscriber", (Subscriber(email="new@example.com", name="New"),)),
+        ("update_subscriber", ("old@example.com", Subscriber(email="new@example.com", name="New"))),
+        ("remove_subscriber", ("old@example.com",)),
+        ("add_admin", ("new-oid",)),
+        ("remove_admin", ("old-oid",)),
+        ("add_automatic_run_time", ("14:30",)),
+        ("remove_automatic_run_time", ("14:30",)),
+    ],
+)
+async def test_environment_configuration_rejects_settings_writes(monkeypatch, method, arguments):
+    _configure(monkeypatch, ADMIN_CONFIGURATION_SOURCE="environment")
+    store = MemoryStore()
+    monkeypatch.setattr(store, "read", AsyncMock(side_effect=AssertionError("settings read")))
+    manager = AdminConfigurationManager(store, cache_ttl_s=0)
+
+    with pytest.raises(AdminConfigNotConfiguredError, match="read-only"):
+        await getattr(manager, method)(*arguments)
+
+    store.read.assert_not_awaited()
+    assert store.write_count == 0
+
+
+@pytest.mark.asyncio
+async def test_environment_leases_remain_durable_without_persisting_settings(monkeypatch):
+    _configure(
+        monkeypatch,
+        ADMIN_CONFIGURATION_SOURCE="environment",
+        AUTOMATIC_RUN_TIMES_UTC='["14:30"]',
+        SCHEDULE_CRON_EXPRESSION="0 2 * * *",
+    )
+    store = MemoryStore()
+    store.payload = {
+        "schema_version": "1",
+        "subscribers": [{"not": "a subscriber"}],
+        "admin_principals": ["foreign-oid"],
+        "automatic_run_times_utc": ["14:33"],
+    }
+    store.conflict_once = True
+    first = AdminConfigurationManager(store, cache_ttl_s=0)
+    second = AdminConfigurationManager(store, cache_ttl_s=0)
+    now = datetime(2026, 10, 26, 14, 33, tzinfo=timezone.utc)
+
+    lease = await first.claim_due_automatic_run(now=now)
+
+    assert lease is not None
+    assert lease.schedule_key.startswith("deployment:")
+    assert lease.scheduled_for == now.replace(minute=30)
+    assert await second.claim_due_automatic_run(now=now) is None
+    assert "subscribers" not in store.payload
+    assert "admin_principals" not in store.payload
+    assert "automatic_run_times_utc" not in store.payload
+    assert store.payload["automatic_run_active"] is not None
+    await second.release_automatic_run(lease)
+    assert store.payload["automatic_run_active"] is None
+    assert await first.claim_due_automatic_run(now=now) is None
+
+
+@pytest.mark.asyncio
+async def test_environment_scheduling_fails_without_durable_runtime_state(monkeypatch):
+    _configure(
+        monkeypatch,
+        ADMIN_CONFIGURATION_SOURCE="environment",
+        SCHEDULE_CRON_EXPRESSION="0 2 * * *",
+    )
+    manager = AdminConfigurationManager(AdminConfigStore(), cache_ttl_s=0)
+
+    with pytest.raises(AdminConfigNotConfiguredError):
+        await manager.claim_due_automatic_run(now=datetime(2026, 10, 26, 2, 3, tzinfo=timezone.utc))
+
+
+@pytest.mark.parametrize("source", ["managed", "environment"])
+def test_configuration_store_selection_preserves_legacy_and_isolates_runtime(monkeypatch, source):
+    _configure(
+        monkeypatch,
+        ADMIN_CONFIGURATION_SOURCE=source,
+        ADMIN_CONFIG_BLOB_URL="https://stlegacy.blob.core.windows.net/state/admin-config.json",
+        CHECKPOINT_BLOB_URL="https://stcurrent.blob.core.windows.net/state/checkpoint.json",
+    )
+
+    store = build_admin_config_store()
+
+    assert isinstance(store, BlobAdminConfigStore)
+    if source == "managed":
+        assert store._url == "https://stlegacy.blob.core.windows.net/state/admin-config.json"
+    else:
+        assert (
+            store._url == "https://stcurrent.blob.core.windows.net/state/automatic-run-state.json"
+        )
+
+
+def test_environment_local_runtime_state_ignores_legacy_admin_url(monkeypatch, tmp_path):
+    _configure(
+        monkeypatch,
+        ADMIN_CONFIGURATION_SOURCE="environment",
+        ADMIN_CONFIG_BLOB_URL="invalid-legacy-url",
+        CHECKPOINT_BLOB_URL="",
+        CHECKPOINT_FILE_PATH=str(tmp_path / "checkpoint.json"),
+    )
+
+    store = build_admin_config_store()
+
+    assert isinstance(store, FileAdminConfigStore)
+    assert store._path == tmp_path / "automatic-run-state.json"
+
+
+@pytest.mark.parametrize("run_time", ["", "24:00", "12:60", "14:30Z", "noon"])
+def test_environment_schedule_times_are_validated_at_settings_load(monkeypatch, run_time):
+    _configure(
+        monkeypatch,
+        ADMIN_CONFIGURATION_SOURCE="environment",
+        AUTOMATIC_RUN_TIMES_UTC=json.dumps([run_time]),
+    )
+
+    with pytest.raises(ValueError, match="automatic run time"):
+        get_settings()
+
+
+def test_unknown_configuration_source_fails_closed(monkeypatch):
+    _configure(monkeypatch, ADMIN_CONFIGURATION_SOURCE="unsupported")
+
+    with pytest.raises(ValueError, match="admin_configuration_source"):
+        get_settings()
+
+
+@pytest.mark.parametrize("subscribers", ["invalid-json", "{}", '[{"email":"missing-name"}]'])
+def test_environment_subscriber_errors_are_not_silently_empty(monkeypatch, subscribers):
+    _configure(monkeypatch, ADMIN_CONFIGURATION_SOURCE="environment", SUBSCRIBERS=subscribers)
+
+    with pytest.raises(ValueError, match="environment-only SUBSCRIBERS"):
+        get_settings()
 
 
 @pytest.mark.asyncio

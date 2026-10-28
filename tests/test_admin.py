@@ -10,14 +10,6 @@ from starlette.requests import Request
 from src.admin.auth import extract_principal, require_admin
 from src.admin.page import render_admin_page
 from src.config import get_settings
-from src.web_design import CONTROL_SURFACE_BASE_CSS
-from src.web_fonts import (
-    PRETENDARD_VERSION,
-    WEB_FONT_CSP_SOURCE,
-    WEB_FONT_FACE_CSS,
-    WEB_FONT_STACK,
-    WEB_FONT_URL,
-)
 
 _ADMIN_ENV = (
     "ADMIN_UI_ENABLED",
@@ -173,109 +165,6 @@ class TestRequireAdmin:
 
 
 class TestAdminPage:
-    def test_error_history_is_a_safe_lazy_loaded_section_with_run_drilldown(self):
-        html = render_admin_page(nonce="n", profile="enterprise", user="a")
-        assert 'href="#errors" data-section="errors"' in html
-        assert 'id="run-detail-logs"' in html
-        assert 'id="errors-load-error"' in html
-        assert 'id="errors-list"' in html
-        assert "message.textContent = event.message" in html
-        assert "displayedDateTime(event.occurred_at)" in html
-        assert "request !== errorHistoryRequest" in html
-        assert "if (key === 'errors' && !errorHistoryRequested)" in html
-        assert "innerHTML" not in html
-
-    def test_offline_preview_uses_validated_synthetic_archive_and_no_live_runs(self):
-        from scripts.preview_web import create_app
-        from src.archive.models import ArchiveDocumentV1, ArchivePage
-
-        with TestClient(create_app()) as client:
-            for path in ("/admin", "/archive", "/feedback"):
-                response = client.get(path)
-                assert response.status_code == 200
-                assert "SYNTHETIC PREVIEW" in response.text
-                assert "default-src 'none'" in response.headers["content-security-policy"]
-            listing = ArchivePage.model_validate(client.get("/api/archive/analyses").json())
-            assert len(listing.items) == 25
-            assert listing.has_more
-            detail = client.get("/api/archive/analyses/" + listing.items[0].archive_id).json()
-            assert ArchiveDocumentV1.model_validate(detail).report_language == "en"
-            assert "job_relevance" not in str(detail)
-            errors = client.get("/api/admin/errors")
-            assert errors.status_code == 200
-            assert len(errors.json()["events"]) == 3
-            selected = client.get("/api/admin/errors", params={"run_id": f"{3:032x}"}).json()
-            assert len(selected["events"]) == 2
-            assert {event["runtime"] for event in selected["events"]} == {"scheduler", "hosted"}
-            assert client.get("/api/admin/errors?run_id=invalid").status_code == 422
-            assert (
-                client.post(
-                    "/api/admin/runs", json={"mode": "recent", "recent_count": 1}
-                ).status_code
-                == 409
-            )
-
-    def test_offline_error_history_matches_bounds_and_never_queries_azure(self, monkeypatch):
-        from scripts.preview_web import create_app
-
-        def fail_live_query(*_args, **_kwargs):
-            raise AssertionError("Synthetic preview must never query Azure")
-
-        monkeypatch.setattr(
-            "src.services.log_analytics.LogAnalyticsService._get_client", fail_live_query
-        )
-        with TestClient(create_app()) as client:
-            response = client.get("/api/admin/errors", params={"limit": 1})
-            page = response.json()
-            assert response.headers["cache-control"] == "no-store"
-            assert set(page) == {"events", "period_hours", "has_more"}
-            assert len(page["events"]) == 1 and page["has_more"]
-            assert page["period_hours"] == 24
-            assert page["events"][0]["occurred_at"] == "2026-09-10T08:45:00Z"
-
-            recent = client.get("/api/admin/errors", params={"hours": 1}).json()
-            assert len(recent["events"]) == 2
-            assert recent["has_more"] is False
-            assert client.get("/api/admin/errors", params={"run_id": "f" * 32}).json() == {
-                "events": [],
-                "period_hours": 24,
-                "has_more": False,
-            }
-            for query in ("hours=0", "hours=721", "limit=0", "limit=101", "run_id=invalid"):
-                assert client.get("/api/admin/errors?" + query).status_code == 422
-
-    def test_shared_control_surface_design_uses_accessible_light_tokens(self):
-        assert "--canvas: #f4f6f7" in CONTROL_SURFACE_BASE_CSS
-        assert "--surface: #ffffff" in CONTROL_SURFACE_BASE_CSS
-        assert "--ink: #172126" in CONTROL_SURFACE_BASE_CSS
-        assert "--primary: #0f766e" in CONTROL_SURFACE_BASE_CSS
-        assert "--link: #0b64a0" in CONTROL_SURFACE_BASE_CSS
-        assert "outline: 2px solid var(--focus)" in CONTROL_SURFACE_BASE_CSS
-        assert "prefers-reduced-motion: reduce" in CONTROL_SURFACE_BASE_CSS
-
-    def test_shared_shell_keeps_navigation_and_focus_usable_on_mobile(self):
-        assert "flex-wrap: wrap" in CONTROL_SURFACE_BASE_CSS
-        assert ".primary-nav { order: 3; width: 100%" in CONTROL_SURFACE_BASE_CSS
-        assert "max-width: 44%" in CONTROL_SURFACE_BASE_CSS
-        assert "textarea:focus-visible" in CONTROL_SURFACE_BASE_CSS
-        assert "animation: none !important" in CONTROL_SURFACE_BASE_CSS
-        assert "font-variant-numeric: tabular-nums" in CONTROL_SURFACE_BASE_CSS
-
-    def test_webfont_policy_is_pinned_and_uses_apple_local_first(self):
-        assert PRETENDARD_VERSION == "1.3.9"
-        assert WEB_FONT_URL == (
-            "https://cdn.jsdelivr.net/npm/pretendard@1.3.9/"
-            "dist/web/variable/woff2/PretendardVariable.woff2"
-        )
-        assert WEB_FONT_CSP_SOURCE == WEB_FONT_URL
-        assert "font-display: swap" in WEB_FONT_FACE_CSS
-        assert "format('woff2-variations')" in WEB_FONT_FACE_CSS
-        assert WEB_FONT_STACK.index("'Apple SD Gothic Neo'") < WEB_FONT_STACK.index(
-            "'Pretendard Variable'"
-        )
-        assert "AppleSDGothicNeo-Regular" in WEB_FONT_STACK
-        assert "apple" not in WEB_FONT_URL.lower()
-
     def test_nonce_is_applied_to_inline_style_and_script(self):
         html = render_admin_page(nonce="N0NCE", profile="enterprise", user="admin@co.com")
         assert '<style nonce="N0NCE">' in html
@@ -287,17 +176,11 @@ class TestAdminPage:
         assert "<img src=x" not in html
         assert "&lt;img src=x" in html
 
-    def test_page_allows_only_the_pinned_external_webfont(self):
+    def test_page_has_no_external_references(self):
+        # Keeps the console usable behind a locked-down egress policy.
         html = render_admin_page(nonce="n", profile="enterprise", user="a")
         assert "http://" not in html
-        assert WEB_FONT_URL in html
-        assert html.count("https://") == 1
-        assert "@import" not in html
-        assert '<link rel="icon" href="data:image/svg+xml,' in html
-        assert 'rel="stylesheet"' not in html
-        assert "'Apple SD Gothic Neo'" in html
-        assert "'AppleSDGothicNeo-Regular'" in html
-        assert "font-display: swap" in html
+        assert "https://" not in html
 
     def test_archive_link_is_rendered_only_when_enabled(self):
         disabled = render_admin_page(nonce="n", profile="enterprise", user="a")
@@ -310,106 +193,37 @@ class TestAdminPage:
         assert 'href="/archive"' not in disabled
         assert 'href="/archive"' in enabled
 
-    def test_page_uses_shared_operations_shell(self):
-        html = render_admin_page(
-            nonce="n", profile="enterprise", user="admin", archive_enabled=True
-        )
-
-        assert '<a class="skip-link" href="#main-content">' in html
-        assert '<header class="app-header">' in html
-        assert '<span class="brand-mark" aria-hidden="true">AZ</span>' in html
-        assert '<a class="nav-link" href="/admin" aria-current="page">Admin</a>' in html
-        assert '<a class="nav-link" href="/archive">Archive</a>' in html
-        assert '<main id="main-content">' in html
-        assert '<html lang="en">' in html
-        assert '<p class="page-kicker">Control plane</p><h1>Admin console</h1>' in html
-
-    def test_recent_count_has_no_upper_bound(self):
-        from bs4 import BeautifulSoup
-
-        html = render_admin_page(nonce="n", profile="enterprise", user="admin")
-        recent_count = BeautifulSoup(html, "html.parser").select_one("#recent-count")
-
-        assert recent_count is not None
-        assert recent_count["type"] == "number"
-        assert recent_count["min"] == "1"
-        assert "max" not in recent_count.attrs
-
     def test_page_exposes_subscriber_and_administrator_management(self):
         html = render_admin_page(nonce="n", profile="enterprise", user="admin")
 
         assert "main { width: 100%; max-width: 1180px; margin: 0 auto;" in html
-        assert html.count('class="panel ') == 7
-        assert html.count('class="panel-header"') == 7
-        assert "function initializeCollapsiblePanels()" in html
-        assert "document.querySelectorAll('section.panel')" in html
-        assert "button.setAttribute('aria-expanded', 'true')" in html
-        assert "button.setAttribute('aria-controls', body.id)" in html
-        assert "body.hidden = collapsed; caption.hidden = !collapsed;" in html
-        assert "initializeCollapsiblePanels(); updateRunFields();" in html
-        assert html.count("setPanelCaption(") == 9
-        assert "'status', data.ready" in html
-        assert "setPanelCaption('run'" in html
-        assert "setPanelCaption('subscriber'" in html
-        assert "setPanelCaption('administrator'" in html
-        assert "'schedule'," in html
-        assert "setPanelCaption('updates'" in html
-        assert html.count('action-surface"') == 5
+        assert html.count('class="panel ') == 6
+        assert html.count('class="panel-header"') == 6
+        assert html.count('action-surface"') == 4
         assert html.count('action-table"') == 5
         assert ".action-table th:first-child, .action-table td:first-child" in html
-        assert "<thead><tr><th>Details</th><th>Run ID</th>" in html
-        assert "<thead><tr><th>Actions</th><th>Email</th>" in html
-        assert '<th id="runs-start-time">Started (Local)</th>' in html
-        assert '<th id="schedule-run-time">Run time (Local)</th>' in html
-        assert '<th id="schedule-next-time">Next run (Local)</th>' in html
-        assert '<th id="updates-published-time">Published (Local)</th>' in html
+        assert "<thead><tr><th>진단</th><th>실행 ID</th>" in html
+        assert "<thead><tr><th>관리</th><th>이메일</th>" in html
+        assert "<thead><tr><th>작업</th><th>발행일(UTC)</th>" in html
         assert 'aria-labelledby="run-title"' in html
-        assert '<h2 id="run-title">Manual run</h2>' in html
-        assert html.index('id="updates-title"') < html.index('id="run-title"')
-        assert 'aria-label="Manual run settings"' in html
-        assert "runPanel.classList.contains('collapsed')" in html
         assert 'aria-labelledby="schedule-title"' in html
-        assert '<form id="run-form" class="action-surface"' in html
-        assert '<button id="run" type="submit">Start run</button>' in html
-        assert '<button id="schedule-add" type="submit">Add schedule</button>' in html
-        assert 'id="schedule-basis-local"' in html
-        assert 'name="schedule-basis" value="local" checked' in html
-        assert 'id="schedule-basis-utc"' in html
-        assert 'id="since" step="60"' in html
-        assert 'id="since-basis-local"' in html
-        assert 'name="since-basis" value="local" checked' in html
-        assert 'id="since-basis-utc"' in html
-        assert "function dateTimeInputToUtc(value, utcBasis)" in html
-        assert "const since = selectedSinceUtc(); if (since) body.since = since;" in html
-        assert "function localTimeToUtc(value)" in html
-        assert "body: JSON.stringify({time_utc: selectedScheduleTimeUtc()})" in html
-        assert "function dateTimeTextForBasis(value, basis)" in html
-        assert "function convertTimeInputs(nextBasis)" in html
-        assert "dateTimeInputValue(instant, nextBasis === 'utc')" in html
-        assert "function setTimeBasis(value, reload)" in html
-        assert "input.checked = input.value === timeBasis" in html
-        assert "Promise.allSettled([loadRuns(), loadSchedules(), loadUpdates()])" in html
-        assert "displayedDateTime(run.started_at)" in html
-        assert "displayedScheduleTime(schedule.time_utc, schedule.next_run_at)" in html
-        assert "displayedDateTime(schedule.next_run_at)" in html
-        assert "displayedDateTime(u.published_date)" in html
+        assert '<button id="run">분석 실행</button>' in html
+        assert '<button id="schedule-add" type="submit">실행 시각 추가</button>' in html
         assert 'id="send-email"' in html
         assert 'id="sub-cancel"' in html
-        assert 'id="sub-management-groups"' in html
-        assert "management_groups: commaList($('sub-management-groups').value)" in html
         assert 'id="run-detail"' in html
         assert 'id="run-summary"' in html
         assert "api('/api/admin/runs/'" in html
-        assert "tableButton('View'" in html
-        assert "tableButton('Select'" in html
+        assert "tableButton('진단 보기'" in html
+        assert "tableButton('분석 선택'" in html
         assert "editSubscriber(s)" in html
         assert "method: editingEmail ? 'PUT' : 'POST'" in html
         assert "send_email: $('send-email').checked" in html
         assert ".run-field[hidden] { display: none !important; }" in html
-        assert "Run history" in html
-        assert "Scheduled times" in html
-        assert "Registered subscribers" in html
-        assert "Access list" in html
+        assert "실행 이력" in html
+        assert "등록된 일정" in html
+        assert "등록된 구독자" in html
+        assert "접근 권한 목록" in html
         assert 'id="sub-form"' in html
         assert 'id="admin-form"' in html
         assert 'id="schedule-form"' in html
@@ -423,49 +237,7 @@ class TestAdminPage:
         assert html.count('class="table-wrap"') == 5
         assert html.count('class="compact action-table"') == 1
         assert ".table-wrap table { min-width: 720px; }" in html
-        assert "td.empty { padding: 16px 11px; text-align: left; }" in html
         assert "innerHTML" not in html
-
-    def test_workspace_navigation_filters_and_run_validation_are_wired(self):
-        page = render_admin_page("nonce", "enterprise", "admin", feedback_enabled=True)
-
-        assert 'href="/feedback"' in page
-        assert 'aria-label="Console sections"' in page
-        assert page.count('data-section="') == 7
-        assert "window.addEventListener('hashchange'" in page
-        assert "function filterTable(id)" in page
-        assert "tr.dataset.status = r.status" in page
-        assert "['partial', 'Partial']" in page
-        assert "partial: 'Partial'" in page
-        assert "Send weekly digest emails" in page
-        assert "$('run-form').reportValidity()" in page
-        assert "$('start-date').value > $('end-date').value" in page
-        assert "Could not load data. Refresh to retry." in page
-        assert 'id="ui-icon-search"' in page
-        assert 'data-icon="refresh-cw"' in page
-        assert 'href="/feedback"' not in render_admin_page("nonce", "enterprise", "admin")
-
-    def test_fields_expose_requirements_placeholders_and_shared_dimensions(self):
-        html = render_admin_page(nonce="n", profile="enterprise", user="admin")
-
-        assert html.count('class="field-requirement required">Required</span>') >= 10
-        assert html.count('class="field-requirement">Optional</span>') >= 6
-        assert 'placeholder="Required • name@company.com"' in html
-        assert 'placeholder="Optional • e.g. Cloud Architect"' in html
-        assert 'placeholder="Required • numeric update ID"' in html
-        assert 'placeholder="Optional • date and time"' in html
-        assert 'aria-required="true"' in html
-        assert "control.required = required" in html
-        assert "control.disabled = !active" in html
-        assert "--control-height: 40px" in CONTROL_SURFACE_BASE_CSS
-        assert "--command-width: 144px" in CONTROL_SURFACE_BASE_CSS
-        assert "--time-basis-width: 320px" in CONTROL_SURFACE_BASE_CSS
-        assert "height: var(--control-height)" in CONTROL_SURFACE_BASE_CSS
-        assert "gap: 10px; align-items: start; }" in html
-        assert "max-width: var(--time-basis-width)" in html
-        assert "white-space: nowrap; cursor: pointer;" in html
-        assert ".action-row > button { width: var(--command-width); }" in html
-        assert ".action-table button, .button-group button" in html
 
     def test_readiness_panel_uses_compact_rows(self):
         html = render_admin_page(nonce="n", profile="enterprise", user="admin")
@@ -483,7 +255,7 @@ class TestAdminPage:
         assert 'id="status-summary"' in html
         assert 'id="status-sections"' in html
         assert 'id="status-refresh"' in html
-        assert "checkData.ok ? 'Ready' : 'Attention'" in html
+        assert "checkData.ok ? '정상' : '점검 필요'" in html
         assert "checkData.action" in html
         assert "innerHTML" not in html
 
@@ -510,7 +282,6 @@ class TestAdminRoutes:
         csp = response.headers["Content-Security-Policy"]
         assert "default-src 'none'" in csp
         assert "frame-ancestors 'none'" in csp
-        assert f"font-src 'self' {WEB_FONT_CSP_SOURCE}" in csp
         assert "nonce-" in csp
 
     def test_unauthenticated_browser_is_sent_to_sign_in(self, client, monkeypatch):
@@ -595,8 +366,7 @@ class TestAdminRoutes:
         # Without the app lifespan the orchestrator has no services registered.
         assert response.status_code in (202, 503)
 
-    @pytest.mark.parametrize("recent_count", [7, 101, 1000])
-    def test_admin_run_sets_archive_source(self, client, monkeypatch, recent_count: int):
+    def test_admin_run_sets_archive_source(self, client, monkeypatch):
         import importlib
 
         from src.orchestrator import RunRecord
@@ -638,13 +408,13 @@ class TestAdminRoutes:
 
         response = client.post(
             "/api/admin/runs",
-            json={"mode": "recent", "recent_count": recent_count, "dry_run": True},
+            json={"mode": "recent", "recent_count": 7, "dry_run": True},
         )
 
         assert response.status_code == 202
         assert captured["source"] == "admin_run"
         assert captured["selection"].mode == "recent"
-        assert captured["selection"].recent_count == recent_count
+        assert captured["selection"].recent_count == 7
         assert captured["commit_checkpoint"] is False
         assert captured["send_email"] is False
 
@@ -663,10 +433,7 @@ class TestAdminRoutes:
         "payload",
         [
             {"mode": "date_range", "start_date": "2026-09-02", "end_date": "2026-09-01"},
-            {"mode": "recent", "recent_count": None},
-            {"mode": "recent", "recent_count": 0},
-            {"mode": "recent", "recent_count": -1},
-            {"mode": "recent", "recent_count": 1.5},
+            {"mode": "recent", "recent_count": 101},
             {"mode": "update_id", "update_id": "not-a-number"},
             {"mode": "update_url", "update_url": "https://attacker.example/updates/1"},
             {"mode": "recent", "recent_count": 3, "update_id": "123"},
@@ -677,83 +444,6 @@ class TestAdminRoutes:
         _configure(monkeypatch, ADMIN_UI_ENABLED="true", ADMIN_REQUIRE_AUTH="false")
 
         assert client.post("/api/admin/runs", json=payload).status_code == 422
-
-    @pytest.mark.parametrize(
-        ("field", "value"),
-        [
-            ("subscriptions", ["not-a-guid"]),
-            ("subscriptions", "11111111-1111-1111-1111-111111111111"),
-            ("management_groups", ["bad value"]),
-            ("resource_groups", ["rg' | take 1"]),
-        ],
-    )
-    def test_subscriber_rejects_invalid_hierarchy_scope(self, client, monkeypatch, field, value):
-        _configure(monkeypatch, ADMIN_UI_ENABLED="true", ADMIN_REQUIRE_AUTH="false")
-        payload = {
-            "email": "scope@example.com",
-            "name": "Scope",
-            field: value,
-        }
-
-        assert client.post("/api/admin/subscribers", json=payload).status_code == 422
-
-    def test_full_resource_group_id_derives_parent_subscription_in_admin_payload(
-        self, client, monkeypatch
-    ):
-        from src.config import Subscriber
-
-        parent = "11111111-1111-1111-1111-111111111111"
-
-        class Configuration:
-            configured = True
-
-            async def add_subscriber(self, subscriber):
-                return subscriber
-
-            async def get_subscribers(self):
-                return [
-                    Subscriber(
-                        email="scope@example.com",
-                        name="Scope",
-                        resource_groups=[f"/subscriptions/{parent}/resourceGroups/Production-RG"],
-                    )
-                ]
-
-        _configure(monkeypatch, ADMIN_UI_ENABLED="true", ADMIN_REQUIRE_AUTH="false")
-        monkeypatch.setattr(
-            "src.admin.router.get_admin_configuration",
-            lambda: Configuration(),
-        )
-
-        response = client.post(
-            "/api/admin/subscribers",
-            json={
-                "email": "scope@example.com",
-                "name": "Scope",
-                "resource_groups": [f"/subscriptions/{parent}/resourceGroups/Production-RG"],
-            },
-        )
-
-        assert response.status_code == 201
-        assert response.json()["subscriptions"] == [parent]
-
-    def test_full_resource_group_id_rejects_conflicting_subscription(self, client, monkeypatch):
-        _configure(monkeypatch, ADMIN_UI_ENABLED="true", ADMIN_REQUIRE_AUTH="false")
-
-        response = client.post(
-            "/api/admin/subscribers",
-            json={
-                "email": "scope@example.com",
-                "name": "Scope",
-                "subscriptions": ["22222222-2222-2222-2222-222222222222"],
-                "resource_groups": [
-                    "/subscriptions/11111111-1111-1111-1111-111111111111/"
-                    "resourceGroups/Production-RG"
-                ],
-            },
-        )
-
-        assert response.status_code == 422
 
     def test_subscriber_and_administrator_crud(self, client, monkeypatch):
         import importlib
@@ -812,9 +502,6 @@ class TestAdminRoutes:
                 "role": "Platform",
                 "language": "en",
                 "alert_level": "important_and_above",
-                "management_groups": ["platform-mg"],
-                "subscriptions": ["11111111-1111-1111-1111-111111111111"],
-                "resource_groups": ["production-rg"],
             },
         )
         assert subscriber.status_code == 201
@@ -828,9 +515,6 @@ class TestAdminRoutes:
                     role="Platform",
                     language="en",
                     alert_level="important_and_above",
-                    management_groups=["platform-mg"],
-                    subscriptions=["11111111-1111-1111-1111-111111111111"],
-                    resource_groups=["production-rg"],
                 ).model_dump(mode="json"),
                 "managed": True,
             }

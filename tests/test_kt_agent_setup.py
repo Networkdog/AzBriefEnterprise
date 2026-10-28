@@ -12,15 +12,17 @@ from scripts import deploy_kt as kt
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not available")
 @pytest.mark.parametrize("mode", ["Plan", "Preflight", "Deploy"])
+@pytest.mark.parametrize("network_mode", ["existing", "new"])
+@pytest.mark.parametrize("venv_layout", ["Scripts", "bin"])
 def test_kt_once_blocks_current_directory_and_blob_dependencies_without_azure_access(
-    tmp_path: Path, mode: str
+    tmp_path: Path, mode: str, network_mode: str, venv_layout: str
 ) -> None:
     root = tmp_path / "customer"
     scripts = root / "scripts"
     scripts.mkdir(parents=True)
     target = scripts / "deploy_kt_once.ps1"
     shutil.copy2(kt.ROOT / "scripts" / target.name, target)
-    activation = root / ".venv" / "Scripts"
+    activation = root / ".venv" / venv_layout
     activation.mkdir(parents=True)
     (activation / "Activate.ps1").write_text(
         "$env:AZBRIEF_ONCE_TEST = 'temporary'\n", encoding="utf-8"
@@ -30,7 +32,10 @@ def test_kt_once_blocks_current_directory_and_blob_dependencies_without_azure_ac
     shutil.copy2(kt.ROOT / "infra/v2/infrastructure.json", infrastructure)
     shutil.copy2(kt.ROOT / "infra/v2/application.json", infrastructure)
     parameters = tmp_path / "parameters.json"
-    parameters.write_text(json.dumps({"parameters": {}}), encoding="utf-8")
+    parameters.write_text(
+        json.dumps({"parameters": {"virtualNetworkMode": {"value": network_mode}}}),
+        encoding="utf-8",
+    )
     report = tmp_path / "report.json"
     wrapper = tmp_path / "run-once.ps1"
     wrapper.write_text(
@@ -68,6 +73,9 @@ def test_kt_once_blocks_current_directory_and_blob_dependencies_without_azure_ac
     assert payload["scheduleEnabled"] is False
     assert any("MCP_DIRECTORY_DEPENDENCY" in entry for entry in payload["blockers"])
     assert any("BLOB_ADMIN_SETTINGS_DEPENDENCY" in entry for entry in payload["blockers"])
+    assert any("EXISTING_NETWORK_REQUIRED" in entry for entry in payload["blockers"]) is (
+        network_mode == "new"
+    )
     assert all(stage["status"] == "not_started" for stage in payload["stages"])
     assert result.returncode == (0 if mode == "Plan" else 1), result.stderr
 
@@ -83,15 +91,16 @@ def test_kt_once_blocks_current_directory_and_blob_dependencies_without_azure_ac
         ("Deploy", "identity", "failed", "HostedIdentity"),
     ],
 )
+@pytest.mark.parametrize("venv_layout", ["Scripts", "bin"])
 def test_kt_once_stage_order_and_failure_stop_with_synthetic_supported_artifacts(
-    tmp_path: Path, mode: str, failure: str, status: str, failed_stage: str
+    tmp_path: Path, mode: str, failure: str, status: str, failed_stage: str, venv_layout: str
 ) -> None:
     root = tmp_path / "customer"
     scripts = root / "scripts"
     scripts.mkdir(parents=True)
     target = scripts / "deploy_kt_once.ps1"
     shutil.copy2(kt.ROOT / "scripts" / target.name, target)
-    activation = root / ".venv" / "Scripts"
+    activation = root / ".venv" / venv_layout
     activation.mkdir(parents=True)
     (activation / "Activate.ps1").write_text("$env:KT_ONCE_SCOPE = 'temporary'\n", encoding="utf-8")
     (scripts / "setup_kt_agents.ps1").write_text(
@@ -104,6 +113,7 @@ def test_kt_once_stage_order_and_failure_stop_with_synthetic_supported_artifacts
     documents = {
         "infrastructure": {
             "parameters": {
+                "virtualNetworkMode": {"defaultValue": "existing"},
                 "mcpAuthenticationMode": {
                     "defaultValue": "foundrySubnetTrust",
                     "allowedValues": ["foundrySubnetTrust"],
@@ -205,6 +215,42 @@ def test_kt_once_stage_order_and_failure_stop_with_synthetic_supported_artifacts
             if "scripts.deploy_v2 application" in command
         )
         assert payload["stages"][-1]["status"] == "not_started"
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not available")
+@pytest.mark.parametrize("windows", [True, False])
+@pytest.mark.parametrize("custom_config", [True, False])
+def test_kt_compiler_fallback_respects_platform_and_azure_config_directory(
+    tmp_path: Path, windows: bool, custom_config: bool
+) -> None:
+    source = (kt.ROOT / "scripts" / "deploy_kt_once.ps1").read_text(encoding="utf-8")
+    start = source.index("    $compiler = Get-Command bicep")
+    end = source.index("    if (-not $compiler -and", start)
+    fragment = source[start:end].replace("$IsWindows", "$fixtureIsWindows")
+    config_root = tmp_path / "azure config" if custom_config else Path.home() / ".azure"
+    expected = config_root / "bin" / ("bicep.exe" if windows else "bicep")
+    wrapper = tmp_path / "compiler-path.ps1"
+    wrapper.write_text(
+        "function Get-Command { return $null }\n"
+        f"$fixtureIsWindows = ${str(windows).lower()}\n"
+        + (
+            f"$env:AZURE_CONFIG_DIR = '{config_root}'\n"
+            if custom_config
+            else "$env:AZURE_CONFIG_DIR = ''\n"
+        )
+        + fragment
+        + f"\nif ($executable -ne '{expected}') {{ throw 'Wrong compiler path' }}\n",
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["pwsh", "-NoLogo", "-NoProfile", "-File", str(wrapper)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def _setup() -> dict:
@@ -378,15 +424,16 @@ def test_kt_agent_setup_what_if_does_not_mutate_or_publish(
         ("Publish", "tests", "exit code 13"),
     ],
 )
+@pytest.mark.parametrize("venv_layout", ["Scripts", "bin"])
 def test_kt_setup_checks_targets_and_restores_the_callers_environment(
-    tmp_path: Path, stage: str, change: str, error: str
+    tmp_path: Path, stage: str, change: str, error: str, venv_layout: str
 ):
     setup = _setup()
     root = tmp_path / "customer"
     scripts = root / "scripts"
     scripts.mkdir(parents=True)
     shutil.copy2(kt.ROOT / "scripts" / "setup_kt_agents.ps1", scripts / "setup_kt_agents.ps1")
-    activation = root / ".venv" / "Scripts"
+    activation = root / ".venv" / venv_layout
     activation.mkdir(parents=True)
     (activation / "Activate.ps1").write_text(
         "$env:AZBRIEF_SETUP_ACTIVATED = 'temporary'\n", encoding="utf-8"
@@ -449,6 +496,7 @@ def test_kt_setup_checks_targets_and_restores_the_callers_environment(
         "  $global:LASTEXITCODE = 0\n"
         "  $global:calls.Add(('python ' + ($args -join ' ')))\n"
         "  if ($args[1] -eq 'pytest') {\n"
+        "    if ($args[2] -cne 'tests/') { throw 'Pytest must use a cross-platform path' }\n"
         "    if ($env:OTEL_SDK_DISABLED -cne 'true') { throw 'Tests must disable SDK export locally' }\n"
         + ("    $global:LASTEXITCODE = 13\n" if change == "tests" else "")
         + "  }\n"
@@ -505,6 +553,38 @@ def test_kt_setup_checks_targets_and_restores_the_callers_environment(
     if change == "tests":
         assert "python -m scripts.provision_foundry_agents" not in recorded
         assert "hosted-publication" not in recorded
+
+
+@pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not available")
+@pytest.mark.parametrize("venv_layout", ["Scripts", "bin"])
+def test_hosted_publisher_resolves_windows_and_cloud_shell_activation(
+    tmp_path: Path, venv_layout: str
+) -> None:
+    source = (kt.ROOT / "scripts" / "deploy_hosted_agent.ps1").read_text(encoding="utf-8")
+    start = source.index("$activateScript = @(")
+    end = source.index("\n$runtimePathPattern", start)
+    root = tmp_path / "customer"
+    activation = root / ".venv" / venv_layout / "Activate.ps1"
+    activation.parent.mkdir(parents=True)
+    activation.write_text("", encoding="utf-8")
+    wrapper = tmp_path / "activation.ps1"
+    wrapper.write_text(
+        f"$repoRoot = '{root}'\n"
+        + source[start:end]
+        + f"\nif ($activateScript -ne '{activation}') {{ throw 'Wrong venv activation path' }}\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["pwsh", "-NoLogo", "-NoProfile", "-File", str(wrapper)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.skipif(shutil.which("pwsh") is None, reason="PowerShell 7 is not available")

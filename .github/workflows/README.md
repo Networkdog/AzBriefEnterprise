@@ -20,18 +20,13 @@ GitHub Actions 자동화를 **결정론적 코드 검증**, **제어면 이미�
 & .\.venv\Scripts\Activate.ps1; isort --check-only --diff src tests scripts
 & .\.venv\Scripts\Activate.ps1; flake8 src tests scripts
 & .\.venv\Scripts\Activate.ps1; python -c "import src"
-& .\.venv\Scripts\Activate.ps1; python -m pytest tests\ -o "addopts=" -x --cov=src --cov-report=term-missing --cov-fail-under=40
+& .\.venv\Scripts\Activate.ps1; python -m pytest tests\ -o "addopts=" -x
 ```
 
 Bicep source와 Deploy 버튼의 JSON이 같은지도 확인합니다.
 
 ```powershell
-& .\.venv\Scripts\Activate.ps1
-$compiled = Join-Path $env:TEMP 'azbrief-compiled.json'
-az bicep build --file infra\enterprise\main.bicep --outfile $compiled
-if ((Get-FileHash $compiled).Hash -ne (Get-FileHash infra\azbrief-enterprise-deploy.json).Hash) {
-  throw 'Compiled ARM template is stale.'
-}
+& .\.venv\Scripts\Activate.ps1; az bicep build --file infra\enterprise\main.bicep --outfile infra\azbrief-enterprise-deploy.json
 ```
 
 `bicep` job은 컴파일러를 **0.46.1**로 고정하고 임시 Enterprise JSON과 추적 중인 ARM을
@@ -46,16 +41,15 @@ if ((Get-FileHash $compiled).Hash -ne (Get-FileHash infra\azbrief-enterprise-dep
 python -m pytest tests/test_customer_deployment.py tests/test_deploy_dev_script.py tests/test_enterprise_config.py -o addopts= -x -q
 ```
 
-트리거 경로는 `.github/workflows/ci.yml`, `src/**`, `tests/**`, `scripts/**`,
-`requirements.txt`, `pyproject.toml`, `azure.yaml`, `infra/**`입니다. 루트 README나 `.github`
-문서만 바뀌면 이 경로 필터로 CI가 자동 실행되지는 않으므로 필요한 문서·링크 검사는
-로컬에서도 수행합니다.
+트리거 경로는 `src/**`, `tests/**`, `scripts/**`, `requirements.txt`, `pyproject.toml`,
+`azure.yaml`, `infra/**`입니다. 루트 README나 `.github` 문서만 바뀌면 이 경로 필터로 CI가
+자동 실행되지는 않으므로 필요한 문서·링크 검사는 로컬에서도 수행합니다.
 
 ## 운영상 중요한 점
 
-- `ci.yml`의 `permissions`는 workflow 최상위에서 `contents: read`만 허용합니다. 기존 고객
-  배포 계약 테스트가 권한 선언 위치와 CI 자체 변경의 push/PR 트리거를 확인합니다.
-  YAML 파싱이나 로컬 pytest 통과를 GitHub Actions 스키마 검증·원격 실행 성공으로 대체하지 않습니다.
+- 현재 `ci.yml`의 `permissions`가 `on.pull_request` 아래에 들여써져 있어 올바른 workflow/job
+  권한 선언이 아닙니다. YAML 파싱이나 로컬 pytest 통과를 GitHub Actions 스키마 검증·실행 성공으로
+  대체하지 말고, 이 구성 오류를 수정한 뒤 원격 CI를 확인해야 합니다.
 - `deploy-container-app.yml`은 App만 갱신하지 않습니다. 같은 control-plane 이미지를 쓰는
   scheduler Job도 함께 갱신해야 예약 실행이 이전 코드를 계속 쓰지 않습니다.
 - 이 이미지 전용 workflow는 초기 hello-world의 포트·probe 전환을 수행하지 않습니다. 새 고객

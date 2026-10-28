@@ -1,12 +1,12 @@
 {
   "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
   "contentVersion": "1.0.0.0",
+  "metadata": {
+    "description": "Example parameters for infra/azbrief-enterprise-deploy.json. Copy, fill in, and deploy with: az deployment group create -g <rg> --template-file infra/azbrief-enterprise-deploy.json --parameters @infra/azbrief-enterprise.parameters.example.json"
+  },
   "parameters": {
     "baseName": {
-      "value": "azbrief",
-      "metadata": {
-        "description": "Example parameters for infra/azbrief-enterprise-deploy.json. Copy, fill in, and deploy with: az deployment group create -g <rg> --template-file infra/azbrief-enterprise-deploy.json --parameters @infra/azbrief-enterprise.parameters.example.json"
-      }
+      "value": "azbrief"
     },
     "location": {
       "value": "koreacentral"
@@ -15,30 +15,12 @@
       "value": "koreacentral"
     },
     "modelDeploymentName": {
-      "value": "gpt-5-terra"
+      "value": "gpt-4o"
     },
     "modelName": {
-      "value": "gpt-5-terra"
-    },
-    "modelVersion": {
-      "value": ""
+      "value": "gpt-4o"
     },
     "modelCapacity": {
-      "value": 200
-    },
-    "coreReasoningEffort": {
-      "value": "medium"
-    },
-    "simpleModelDeploymentName": {
-      "value": "gpt-5-luna"
-    },
-    "simpleModelName": {
-      "value": "gpt-5-luna"
-    },
-    "simpleModelVersion": {
-      "value": ""
-    },
-    "simpleModelCapacity": {
       "value": 200
     },
     "foundryHostedAgentName": {
@@ -50,29 +32,11 @@
     "emailRecipientAddress": {
       "value": "admin@your-company.com"
     },
-    "feedbackRecipientAddress": {
-      "value": ""
-    },
     "subscribers": {
       "value": "[{\"email\":\"admin@your-company.com\",\"name\":\"Admin\",\"role\":\"Cloud Architect\",\"language\":\"ko\"}]"
     },
     "containerImage": {
       "value": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
-    },
-    "containerRegistryServer": {
-      "value": ""
-    },
-    "containerRegistryAuthMode": {
-      "value": "ManagedIdentity"
-    },
-    "containerRegistryUsername": {
-      "value": ""
-    },
-    "containerRegistryPassword": {
-      "value": ""
-    },
-    "containerRegistryRoleAssignmentMode": {
-      "value": "AbacRepositoryPermissions"
     },
     "minReplicas": {
       "value": 1
@@ -86,9 +50,6 @@
     "scheduleCronExpression": {
       "value": "0 2 * * *"
     },
-    "enableScheduledRuns": {
-      "value": false
-    },
     "scheduleDispatcherCronExpression": {
       "value": "*/5 * * * *"
     },
@@ -97,9 +58,6 @@
     },
     "networkIsolationMode": {
       "value": "vnetInjection"
-    },
-    "allowPublicAccessDuringSetup": {
-      "value": false
     },
     "existingVnetResourceId": {
       "value": ""

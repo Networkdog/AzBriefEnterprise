@@ -174,9 +174,29 @@ class Inventory:
 
 class Configuration:
     configured = True
+    environment_only = False
 
     async def get_subscribers(self):
         return [object()]
+
+
+@pytest.mark.asyncio
+async def test_environment_settings_are_ready_without_writable_admin_storage():
+    class EnvironmentConfiguration(Configuration):
+        configured = False
+        environment_only = True
+
+    report = await AdminReadinessCollector(
+        settings=_settings(admin_configuration_source="environment"),
+        inventory=Inventory(),
+        configuration=EnvironmentConfiguration(),
+        runtime_ready=lambda: True,
+    ).collect()
+    checks = {check.id: check for section in report.sections for check in section.checks}
+
+    assert checks["admin_configuration"].ok is True
+    assert checks["admin_configuration"].detail == "Environment-only · 1 subscribers"
+    assert report.ok is True
 
 
 @pytest.mark.asyncio

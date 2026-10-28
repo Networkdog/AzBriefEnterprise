@@ -6,8 +6,21 @@ applications and do not satisfy this requirement. The [target design](RESTRICTED
 retains private Azure MCP with an explicitly accepted Foundry-subnet trust boundary and no MCP
 caller authentication after verified isolation. Web/API authentication remains required, and
 administrator configuration uses ARM environment/Secrets changes without operator Blob access.
-This is not implemented. The directory-enabled workflows below describe current behavior,
+MCP trust and local web authentication are not implemented. The workflows below describe legacy behavior,
 not an approved workaround; do not run them in the restricted environment or disable current auth.
+
+The restricted customer permits Managed Identity creation but requires administrator-created
+subnets. Its single-entry installer accepts only existing-network mode and never provisions
+or modifies subnets. Select exact pre-created IDs; do not use the generic new-VNet path below
+for this customer. Approved public publishing IPv4/CIDRs can be supplied at execution time in
+foundryPublishingAccess before initial foundation writes; offline Plan needs no known public IP.
+No address is inferred and missing inputs retain private-only access. Hosted Agent ID policy
+and private acceptance/public-path closure remain separate gates.
+
+The KT coordinator and its Agent/Hosted publication path now recognize Windows and Linux venv
+layouts for Cloud Shell PowerShell. See the [Cloud Shell preparation and Plan example](../../scripts/README.md#azure-cloud-shell).
+Python3.10+, project dev dependencies, pinned Bicep0.46.1 and a clean reviewed source are required.
+This portability work is not a private-route or live restricted-deployment acceptance.
 
 The local Bicep/CLI `foundryPublishingAccess` guard now accepts an explicit initial inbound
 Foundry allow-list for new managed-data accounts. Empty input retains private-only access.
@@ -24,6 +37,55 @@ unimplemented release dependencies before Azure access. Current `Preflight`/`Dep
 by directory-enabled MCP and Blob-managed Admin settings, not by a missing installer permission.
 Do not turn those blockers off. Synthetic orchestration tests establish step ordering and
 failure handling only, not actual tenant deployment, private connectivity or email acceptance.
+
+## Environment-Only Administrator Settings
+
+The local runtime and v2 application support `ADMIN_CONFIGURATION_SOURCE=environment` as an
+explicit opt-in. Build and pin a matching new control-plane image for BOTH App and Job before
+selecting it; an older published image does not implement this mode. This does not enable MCP
+subnet trust or local web authentication, and does not remove the KT installer's blockers.
+Do not run the directory-enabled setup paths below in the restricted customer environment.
+
+Use the existing application configuration file; common settings must match on App and Job:
+
+```json
+{
+  "appEnvironment": [
+    {"name": "ADMIN_CONFIGURATION_SOURCE", "value": "environment"},
+    {"name": "SUBSCRIBERS", "value": "[]"},
+    {"name": "EMAIL_RECIPIENT_ADDRESS", "value": ""},
+    {"name": "REPORT_LANGUAGE", "value": "ko"},
+    {"name": "SCHEDULE_CRON_EXPRESSION", "value": "0 2 * * *"},
+    {"name": "AUTOMATIC_RUN_TIMES_UTC", "value": "[\"14:30\"]"}
+  ],
+  "jobEnvironment": [
+    {"name": "ADMIN_CONFIGURATION_SOURCE", "value": "environment"},
+    {"name": "SUBSCRIBERS", "value": "[]"},
+    {"name": "EMAIL_RECIPIENT_ADDRESS", "value": ""},
+    {"name": "REPORT_LANGUAGE", "value": "ko"},
+    {"name": "SCHEDULE_CRON_EXPRESSION", "value": "0 2 * * *"},
+    {"name": "AUTOMATIC_RUN_TIMES_UTC", "value": "[\"14:30\"]"}
+  ]
+}
+```
+
+The empty recipient example sends no mail. Supply authoritative valid subscriber profiles
+through ARM values or matching Secrets references; the CLI requires referenced secrets to exist.
+Do not place secrets in ordinary environment values, deployment outputs, logs or chat.
+
+In this mode, settings reads and console mutations never access Admin configuration storage.
+The runtime ignores old Admin Blob values and the application template/CLI omit that URL.
+Invalid subscriber JSON or daily UTC times fail settings loading. Daily times are normalized,
+deduplicated, protected from console edits and added to the protected deployment cron. This
+does not enable the Job or change its dispatcher trigger. Admin/Archive authentication is unchanged.
+
+Private checkpoint, Archive and runtime lease storage remain necessary. Runtime claims use a
+separate `automatic-run-state.json` beside the checkpoint with conditional ETag writes; no
+subscriber, administrator or schedule settings are written there. Legacy `managed` remains
+the default. For an existing installation, first stop dispatch and wait for active executions
+to exit, approve authoritative ARM settings and a migration window, then update both surfaces
+with the matching image and configuration. Old settings and lease history are not copied
+automatically. Do not switch modes during active or overlapping Job executions.
 
 An opt-in private profile with new/existing VNet selection, derived from the existing
 [KT template](../kt/README.md) and [Enterprise template](../enterprise/main.bicep).

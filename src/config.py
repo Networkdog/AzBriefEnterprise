@@ -10,14 +10,13 @@ import json
 import os as _os
 import re
 from functools import lru_cache
-from typing import Literal, Optional
+from typing import Optional
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from src.agent.scope import AnalysisScope
 from src.i18n import DEFAULT_LANGUAGE, is_supported, normalize_language, supported_language_codes
 
 load_dotenv(override=not _os.environ.get("CONTAINER_APP_NAME"))
@@ -84,7 +83,6 @@ class Subscriber(BaseModel):
     name: str
     role: str = ""
     language: str = DEFAULT_LANGUAGE
-    management_groups: list[str] = []  # Management Group IDs (empty = all)
     subscriptions: list[str] = (
         []
     )  # Subscription IDs this subscriber is responsible for (empty = all)
@@ -102,22 +100,6 @@ class Subscriber(BaseModel):
         degrades to a generic guide plus fallback labels for it.
         """
         return normalize_language(v)
-
-    @field_validator("management_groups", "subscriptions", "resource_groups", mode="before")
-    @classmethod
-    def normalize_hierarchy_scope(cls, value, info) -> list[str]:
-        """Apply the same fail-closed Azure scope validation to every config source."""
-        scope = AnalysisScope(**{info.field_name: value})
-        return list(getattr(scope, info.field_name))
-
-    @model_validator(mode="after")
-    def validate_hierarchy_scope(self) -> "Subscriber":
-        """Preserve parent subscriptions and reject conflicting hierarchy fields."""
-        scope = AnalysisScope.from_subscriber(self)
-        self.management_groups = list(scope.management_groups)
-        self.subscriptions = list(scope.subscriptions)
-        self.resource_groups = list(scope.resource_groups)
-        return self
 
 
 class FoundryAgentSpec(BaseModel):
@@ -213,29 +195,29 @@ class Settings(BaseSettings):
     # Azure Monitor Log Ingestion (optional — send structured logs to Log Analytics)
     azure_monitor_ingestion_endpoint: Optional[str] = Field(
         default=None,
-        description="Azure Monitor DCR logs-ingestion endpoint or Data Collection Endpoint URL",
+        description="Azure Monitor Data Collection Endpoint (DCE) URL",
     )
     azure_monitor_dcr_rule_id: Optional[str] = Field(
         default=None,
         description="Data Collection Rule (DCR) immutable ID (dcr-...)",
     )
     azure_monitor_dcr_stream_name: str = Field(
-        default="Custom-AzBriefFailures_CL",
-        description="DCR stream name for failure-event ingestion",
+        default="Custom-AzBrief_CL",
+        description="DCR stream name for log ingestion",
     )
 
-    # OpenTelemetry 추적 및 상세 오류 로그 (선택)
+    # OpenTelemetry distributed tracing (optional — requires azbrief[telemetry] extra)
     otel_enabled: bool = Field(
         default=False,
         description=(
-            "Enable OpenTelemetry tracing and redacted application warning/error logs. "
-            "Requires azure-monitor-opentelemetry and APPLICATIONINSIGHTS_CONNECTION_STRING. "
-            "OTEL_SDK_DISABLED=true disables export for offline tests."
+            "Enable OpenTelemetry tracing of the analysis transaction and tool calls. "
+            "Requires the 'telemetry' extra (azure-monitor-opentelemetry) and "
+            "APPLICATIONINSIGHTS_CONNECTION_STRING. No-op when either is absent."
         ),
     )
     applicationinsights_connection_string: Optional[str] = Field(
         default=None,
-        description="Workspace-based Application Insights connection string for traces and errors",
+        description="Application Insights connection string for OpenTelemetry span export",
     )
 
     report_language: str = Field(
@@ -280,7 +262,6 @@ class Settings(BaseSettings):
     # Batch Analysis Concurrency
     max_concurrent_analyses: int = Field(
         default=3,
-        ge=1,
         description="Maximum number of updates to analyze concurrently in batch mode (1=sequential)",
     )
 
@@ -464,28 +445,8 @@ class Settings(BaseSettings):
     foundry_model_deployment: Optional[str] = Field(
         default=None,
         description=(
-            "Legacy single-model override for Prompt Agent provisioning. Overrides both "
-            "role tiers; existing same-model generation settings remain unmanaged."
-        ),
-    )
-    foundry_core_model_deployment: Optional[str] = Field(
-        default=None,
-        description="Core Prompt Agent deployment (default: gpt-5-terra). Provisioning only.",
-    )
-    foundry_simple_model_deployment: Optional[str] = Field(
-        default=None,
-        description="Azure MCP Prompt Agent deployment (default: gpt-5-luna). Provisioning only.",
-    )
-    foundry_core_reasoning_effort: Literal["low", "medium", "high"] = Field(
-        default="medium",
-        description="Required reasoning effort for the core provisioning tier.",
-    )
-    foundry_coordinator_learn_transport: Literal["managed_mcp", "hosted"] = Field(
-        default="managed_mcp",
-        description=(
-            "Coordinator documentation transport selected at Prompt Agent provisioning. "
-            "hosted uses the existing allow-listed Microsoft Learn tools inside the Hosted "
-            "Agent instead of Foundry's managed MCP discovery proxy."
+            "Model deployment used only by scripts/provision_foundry_agents.py when "
+            "creating or updating agent definitions. The running app does not call it directly."
         ),
     )
     foundry_coordinator_web_search_enabled: bool = Field(
@@ -593,18 +554,6 @@ class Settings(BaseSettings):
         default=None,
         description="Public or VNet-local HTTPS base URL used for authenticated archive links.",
     )
-    feedback_ui_enabled: bool = Field(
-        default=False,
-        description="Serve the public /feedback page and accept durable feedback submissions.",
-    )
-    feedback_base_url: Optional[str] = Field(
-        default=None,
-        description="Public or VNet-local HTTPS base URL used for email feedback links.",
-    )
-    feedback_recipient_address: str = Field(
-        default="",
-        description="Configured mailbox that receives each persisted feedback submission.",
-    )
     orchestrator_endpoint: Optional[str] = Field(
         default=None,
         description=(
@@ -657,7 +606,7 @@ class Settings(BaseSettings):
     )
     admin_readiness_foundry_account: Optional[str] = Field(
         default=None,
-        description="Foundry account name or same-subscription full ARM ID expected by readiness.",
+        description="Foundry account expected by the Admin readiness dashboard.",
     )
     admin_readiness_foundry_project: Optional[str] = Field(
         default=None,
@@ -667,13 +616,9 @@ class Settings(BaseSettings):
         default=None,
         description="Foundry model deployment expected by the Admin readiness dashboard.",
     )
-    admin_readiness_foundry_simple_model_deployment: Optional[str] = Field(
-        default=None,
-        description="Optional simple-task model deployment checked separately by Admin readiness.",
-    )
     admin_readiness_container_environments: str = Field(
         default="",
-        description="Container Apps environment names or same-subscription ARM IDs for readiness.",
+        description="Container Apps environments expected by the readiness dashboard.",
     )
     admin_readiness_container_apps: str = Field(
         default="",
@@ -689,7 +634,7 @@ class Settings(BaseSettings):
     )
     admin_readiness_support_resources: str = Field(
         default="",
-        description="Supporting resources, optionally including a same-subscription resource_id.",
+        description="Supporting Azure resources expected by the readiness dashboard.",
     )
 
     @staticmethod
@@ -711,7 +656,7 @@ class Settings(BaseSettings):
         return None
 
     def get_admin_readiness_container_environments(self) -> list[str]:
-        """Return expected Container Apps environment names or typed ARM IDs."""
+        """Return expected Container Apps environment names."""
         value = self._decode_readiness_json(self.admin_readiness_container_environments)
         return (
             [str(item).strip() for item in value if str(item).strip()]
@@ -804,25 +749,6 @@ class Settings(BaseSettings):
             or parsed.fragment
         ):
             raise ValueError("archive URLs must be plain https URLs without query or fragment")
-        return normalized
-
-    @field_validator("feedback_base_url")
-    @classmethod
-    def validate_feedback_base_url(cls, value: Optional[str]) -> Optional[str]:
-        """Keep feedback links on a plain HTTPS origin."""
-        if value is None or not value.strip():
-            return None
-        normalized = value.strip().rstrip("/")
-        parsed = urlparse(normalized)
-        if (
-            parsed.scheme != "https"
-            or not parsed.hostname
-            or parsed.username
-            or parsed.password
-            or parsed.query
-            or parsed.fragment
-        ):
-            raise ValueError("feedback URLs must be plain https URLs without query or fragment")
         return normalized
 
     @field_validator("geval_target_score")

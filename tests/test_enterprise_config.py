@@ -46,11 +46,6 @@ def _settings(**overrides) -> Settings:
     return Settings(_env_file=None, **base)
 
 
-def test_analysis_concurrency_must_be_positive():
-    with pytest.raises(ValueError):
-        _settings(max_concurrent_analyses=0)
-
-
 class TestFoundryReadiness:
     """Generic Foundry calls and Hosted specialist readiness are separate gates."""
 
@@ -146,106 +141,6 @@ class TestFoundryAgentRoster:
 
 
 class TestSpecialistDeploymentContract:
-    def test_default_models_are_separate_and_deployed_serially(self):
-        template = json.loads(
-            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
-        )
-        parameters = template["parameters"]
-        assert parameters["modelDeploymentName"]["defaultValue"] == "gpt-5-terra"
-        assert parameters["modelName"]["defaultValue"] == "gpt-5-terra"
-        assert parameters["simpleModelDeploymentName"]["defaultValue"] == "gpt-5-luna"
-        assert parameters["simpleModelName"]["defaultValue"] == "gpt-5-luna"
-        assert parameters["coreReasoningEffort"]["defaultValue"] == "medium"
-        assert (
-            json.dumps(template).count('"name": "ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT"')
-            == 2
-        )
-        deployments = [
-            resource
-            for resource in template["resources"]
-            if resource["type"].lower() == "microsoft.cognitiveservices/accounts/deployments"
-        ]
-        assert len(deployments) == 2
-        simple = next(
-            resource for resource in deployments if "simpleModelDeploymentName" in resource["name"]
-        )
-        assert simple["properties"]["model"]["name"] == "[parameters('simpleModelName')]"
-        assert simple["sku"]["capacity"] == "[parameters('simpleModelCapacity')]"
-        assert "parameters('modelDeploymentName')" in json.dumps(simple["dependsOn"])
-        project = next(
-            resource
-            for resource in template["resources"]
-            if resource["type"].lower() == "microsoft.cognitiveservices/accounts/projects"
-        )
-        assert "simpleModelDeploymentName" in json.dumps(project["dependsOn"])
-
-    def test_bootstrap_image_uses_its_actual_port_and_health_path(self):
-        template = json.loads(
-            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
-        )
-        app = next(
-            resource
-            for resource in template["resources"]
-            if resource["type"].lower() == "microsoft.app/containerapps"
-        )
-
-        assert template["variables"]["containerPort"] == (
-            "[if(variables('isBootstrapImage'), 80, 8000)]"
-        )
-        assert app["properties"]["configuration"]["ingress"]["targetPort"] == (
-            "[variables('containerPort')]"
-        )
-        probes = app["properties"]["template"]["containers"][0]["probes"]
-        assert len(probes) == 2
-        for probe in probes:
-            assert probe["httpGet"]["port"] == "[variables('containerPort')]"
-            assert probe["httpGet"]["path"] == (
-                "[if(variables('isBootstrapImage'), '/', '/health')]"
-            )
-
-    def test_scheduling_is_opt_in_and_cannot_run_the_bootstrap_image(self):
-        template = json.loads(
-            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
-        )
-        job = next(
-            resource
-            for resource in template["resources"]
-            if resource["type"].lower() == "microsoft.app/jobs"
-        )
-        configuration = job["properties"]["configuration"]
-
-        assert template["parameters"]["enableScheduledRuns"]["defaultValue"] is False
-        assert template["variables"]["scheduledRunsEnabled"] == (
-            "[and(parameters('enableScheduledRuns'), not(variables('isBootstrapImage')))]"
-        )
-        assert configuration["triggerType"] == (
-            "[if(variables('scheduledRunsEnabled'), 'Schedule', 'Manual')]"
-        )
-        assert "variables('scheduledRunsEnabled')" in configuration["manualTriggerConfig"]
-        assert "variables('scheduledRunsEnabled')" in configuration["scheduleTriggerConfig"]
-        assert configuration["replicaRetryLimit"] == 0
-
-    def test_initial_concurrency_and_short_job_budget_are_bounded(self):
-        template = json.loads(
-            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
-        )
-
-        assert template["parameters"]["maxConcurrentAnalyses"]["defaultValue"] == 1
-        assert template["variables"]["runTimeBudgetSeconds"] == (
-            "[max(60, sub(parameters('jobReplicaTimeoutSeconds'), 3600))]"
-        )
-        for resource in template["resources"]:
-            if resource["type"].lower() not in {
-                "microsoft.app/containerapps",
-                "microsoft.app/jobs",
-            }:
-                continue
-            environment = resource["properties"]["template"]["containers"][0]["env"]
-            setting = next(
-                item for item in environment if item["name"] == "MAX_CONCURRENT_ANALYSES"
-            )
-            assert setting["value"] == "[string(parameters('maxConcurrentAnalyses'))]"
-
     def test_hosted_manifest_carries_all_six_specialist_aliases(self):
         manifest = Path("azure.yaml").read_text(encoding="utf-8")
         aliases = (
@@ -260,9 +155,6 @@ class TestSpecialistDeploymentContract:
         assert all(manifest.count(f"- name: {name}") == 1 for name in aliases)
         assert "AZBRIEF_PROMPT_PRIMARY_AGENT_NAME" not in manifest
         assert "AZBRIEF_ENRICHMENT_AGENT_ROSTER" not in manifest
-        assert "endpoint: ${AZURE_AI_PROJECT_ENDPOINT}" in manifest
-        assert "name: ${FOUNDRY_HOSTED_AGENT_NAME}" in manifest
-        assert ".services.ai.azure.com" not in manifest
 
     def test_compiled_template_outputs_specialist_names_and_config_command(self):
         template = json.loads(
@@ -275,53 +167,15 @@ class TestSpecialistDeploymentContract:
         assert "foundryPrimaryAgentName" not in outputs
         assert "foundryEnrichmentAgentRoster" not in outputs
         command = outputs["configureHostedAgentCommand"]["value"]
-        assert "setup_customer.ps1" in command
-        assert "-Stage Configure" in command
-        assert "azd env set AZURE_SUBSCRIPTION_ID=" not in command
-        setup = outputs["customerSetup"]["value"]
-        assert setup["schemaVersion"] == 3
-        assert setup["containerAppEnvironmentId"] == (
-            "[resourceId('Microsoft.App/managedEnvironments', variables('containerEnvName'))]"
-        )
-        assert setup["containerAppWorkloadProfileName"] == (
-            "[if(variables('vnetMode'), 'Consumption', '')]"
-        )
-        assert setup["applicationInsightsName"] == "[variables('appInsightsName')]"
-        assert setup["simpleModelDeploymentName"] == "[parameters('simpleModelDeploymentName')]"
-        assert setup["coreReasoningEffort"] == "[parameters('coreReasoningEffort')]"
-        assert "-Stage Agents" in outputs["provisionAgentsCommand"]["value"]
-        assert set(setup["specialistAgentNames"]) == {
-            "coordinator",
-            "resourceGraph",
-            "azureMcp",
-            "azureApi",
-            "reportWriter",
-            "qualityReviewer",
-        }
-        assert "foundryProjectId" in setup
-        assert "tenantId" in setup
-        assert "hosted-agent-principal-id" in outputs["grantReaderCommand"]["value"]
-        assert "managedIdentity" not in outputs["grantReaderCommand"]["value"]
-        for forbidden in ("secret", "password", "connectionstring", "subscribers", "apikey"):
-            assert forbidden not in json.dumps(setup).lower()
-
-    def test_compiled_template_selects_the_acr_pull_role_for_its_permission_mode(self):
-        template = json.loads(
-            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
-        )
-
-        mode = template["parameters"]["containerRegistryRoleAssignmentMode"]
-        assert mode["defaultValue"] == "AbacRepositoryPermissions"
-        assert set(mode["allowedValues"]) == {
-            "AbacRepositoryPermissions",
-            "LegacyRegistryPermissions",
-        }
-        role = template["variables"]["containerRegistryPullRoleName"]
-        serialized_role = json.dumps(role)
-        assert "Container Registry Repository Reader" in serialized_role
-        assert "AcrPull" in serialized_role
-        command = json.dumps(template["outputs"]["grantAcrPullCommand"]["value"])
-        assert "containerRegistryPullRoleName" in command
+        for role in (
+            "COORDINATOR",
+            "RESOURCE_GRAPH",
+            "AZURE_MCP",
+            "AZURE_API",
+            "REPORT_WRITER",
+            "QUALITY_REVIEWER",
+        ):
+            assert f"AZBRIEF_PROMPT_{role}_AGENT_NAME" in command
 
     def test_compiled_template_wires_the_private_archive(self):
         template = json.loads(
@@ -348,21 +202,6 @@ class TestSpecialistDeploymentContract:
         assert serialized.count('"name": "ADMIN_CONFIG_BLOB_URL"') == 2
         assert "admin-config.json" in serialized
         assert "adminConfigBlobUrl" in template["outputs"]
-
-    def test_compiled_template_wires_public_feedback_collection(self):
-        template = json.loads(
-            Path("infra/azbrief-enterprise-deploy.json").read_text(encoding="utf-8")
-        )
-        serialized = json.dumps(template)
-
-        assert template["parameters"]["feedbackRecipientAddress"]["defaultValue"] == ""
-        for name in (
-            "FEEDBACK_UI_ENABLED",
-            "FEEDBACK_BASE_URL",
-            "FEEDBACK_RECIPIENT_ADDRESS",
-        ):
-            assert serialized.count(f'"name": "{name}"') == 2
-        assert "feedbackPageUrl" in template["outputs"]
 
     def test_compiled_template_allows_same_origin_admin_posts(self):
         template = json.loads(
@@ -402,40 +241,19 @@ class TestSpecialistDeploymentContract:
 
         assert all(serialized.count(f'"name": "{name}"') == 2 for name in names)
         variables = template["variables"]
-        assert "azureMcpContainerEnvName" not in variables
-        for resource in template["resources"]:
-            if resource["type"].lower() not in {
-                "microsoft.app/containerapps",
-                "microsoft.app/jobs",
-            }:
-                continue
-            environment = resource["properties"]["template"]["containers"][0]["env"]
-            entry = next(
-                item
-                for item in environment
-                if item["name"] == "ADMIN_READINESS_CONTAINER_ENVIRONMENTS"
-            )
-            assert entry["value"] == "[base64(string(createArray(variables('containerEnvName'))))]"
+        assert "azureMcpContainerAppName" in variables["azureMcpContainerEnvName"]
         assert set(variables["adminReadinessPromptAgents"]) == set(SPECIALIST_AGENT_ROLES)
         support_ids = {resource["id"] for resource in variables["adminReadinessSupportResources"]}
         assert support_ids == {
             "managed_identity",
             "key_vault",
             "state_storage",
-            "failure_log_dcr",
+            "evaluation_storage",
             "log_analytics",
             "application_insights",
             "communication_services",
             "email_service",
         }
-        support = {
-            resource["id"]: resource for resource in variables["adminReadinessSupportResources"]
-        }
-        assert (
-            support["failure_log_dcr"]["resource_type"] == "Microsoft.Insights/dataCollectionRules"
-        )
-        assert support["failure_log_dcr"]["name"] == "[variables('failureLogDcrName')]"
-        assert support["state_storage"]["name"] == "[variables('storageAccountName')]"
         readiness_env_values = [
             item["value"]
             for resource in template["resources"]

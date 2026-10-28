@@ -1197,6 +1197,36 @@ def _validate_runtime(environment: dict[str, dict[str, str]], values: dict[str, 
             environment[name]["value"] = value
 
 
+def _validate_admin_configuration(parameters: dict[str, Any]) -> None:
+    environments = {
+        label: _environment(parameters[f"{label}Environment"]) for label in ("app", "job")
+    }
+    sources = {
+        label: environment.get("ADMIN_CONFIGURATION_SOURCE", {"value": "managed"}).get("value")
+        for label, environment in environments.items()
+    }
+    if any(source not in {"managed", "environment"} for source in sources.values()):
+        raise ValueError("ADMIN_CONFIGURATION_SOURCE must be managed or environment")
+    if "environment" not in sources.values():
+        return
+    if sources["app"] != sources["job"]:
+        raise ValueError("App and Job must select the same administrator configuration source")
+    for name in (
+        "SUBSCRIBERS",
+        "EMAIL_RECIPIENT_ADDRESS",
+        "REPORT_LANGUAGE",
+        "SCHEDULE_CRON_EXPRESSION",
+        "AUTOMATIC_RUN_TIMES_UTC",
+    ):
+        if environments["app"].get(name) != environments["job"].get(name):
+            raise ValueError(
+                f"App and Job must receive identical environment-only settings: {name}"
+            )
+    for label, environment in environments.items():
+        environment.pop("ADMIN_CONFIG_BLOB_URL", None)
+        parameters[f"{label}Environment"] = list(environment.values())
+
+
 def _validate_authentication(parameters: dict[str, Any], values: dict[str, Any]) -> None:
     environment = _environment(parameters["appEnvironment"])
     enabled: dict[str, bool] = {}
@@ -1419,6 +1449,7 @@ def prepare_application(
         != job["properties"]["configuration"]["triggerType"]
     ):
         raise ValueError("Application upgrades cannot reset or activate the scheduler trigger")
+    _validate_admin_configuration(parameters)
     _validate_authentication(parameters, values)
     configured_secrets = {
         f"v2_{label}_{index}_secret": secret.get("value", "")

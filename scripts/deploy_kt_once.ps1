@@ -78,7 +78,9 @@ function Invoke-InstallStage {
 
 function Test-CompiledTemplates {
     $compiler = Get-Command bicep -ErrorAction SilentlyContinue
-    $executable = if ($compiler) { $compiler.Name } else { Join-Path $HOME '.azure/bin/bicep.exe' }
+    $azureConfigRoot = if ($env:AZURE_CONFIG_DIR) { $env:AZURE_CONFIG_DIR } else { Join-Path $HOME '.azure' }
+    $compilerName = if ($IsWindows) { 'bicep.exe' } else { 'bicep' }
+    $executable = if ($compiler) { $compiler.Name } else { Join-Path $azureConfigRoot "bin/$compilerName" }
     if (-not $compiler -and -not (Test-Path -LiteralPath $executable)) {
         throw 'Install the CI-pinned Bicep 0.46.1 compiler before deployment.'
     }
@@ -103,9 +105,12 @@ function Test-CompiledTemplates {
 }
 
 try {
-    $activate = Join-Path $repoRoot '.venv/Scripts/Activate.ps1'
-    if (-not (Test-Path -LiteralPath $activate -PathType Leaf)) {
-        throw 'Prepare the customer Python virtual environment first.'
+    $activate = @(
+        (Join-Path $repoRoot '.venv/Scripts/Activate.ps1')
+        (Join-Path $repoRoot '.venv/bin/Activate.ps1')
+    ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+    if (-not $activate) {
+        throw 'Prepare the customer Python virtual environment first (.venv/Scripts on Windows or .venv/bin in Cloud Shell/Linux).'
     }
     & $activate
     [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
@@ -123,6 +128,16 @@ try {
     $infrastructure = Read-ObjectFile (Join-Path $repoRoot 'infra/v2/infrastructure.json')
     $application = Read-ObjectFile (Join-Path $repoRoot 'infra/v2/application.json')
     $blockers = [Collections.Generic.List[string]]::new()
+    $networkModeSchema = $infrastructure.parameters['virtualNetworkMode']
+    $requestedNetworkMode = $inputDocument.parameters['virtualNetworkMode']
+    $effectiveNetworkMode = if ($requestedNetworkMode) {
+        $requestedNetworkMode.value
+    } elseif ($networkModeSchema -and $networkModeSchema.ContainsKey('defaultValue')) {
+        $networkModeSchema.defaultValue
+    } else { '' }
+    if ($effectiveNetworkMode -cne 'existing') {
+        $blockers.Add('EXISTING_NETWORK_REQUIRED: administrators must provision the VNet/subnets first; this installer only selects and verifies existing subnets.')
+    }
     $serializedInfrastructure = $infrastructure | ConvertTo-Json -Depth 100 -Compress
     $serializedApplication = $application | ConvertTo-Json -Depth 100 -Compress
     $mcpMode = $infrastructure.parameters['mcpAuthenticationMode']

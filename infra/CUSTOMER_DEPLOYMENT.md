@@ -9,51 +9,6 @@ script installs the real image on port 8000 with `/health`, then enables schedul
 readiness checks and explicit operational acceptance. A foundation success, HTTP 200, or a Job
 exit code alone is not proof that analysis, archive storage, and email work.
 
-## Model Policy
-
-Core roles default to `gpt-5-terra` with `medium` reasoning. Only Azure MCP defaults to
-`gpt-5-luna`, with no reasoning option supplied. Report writing, subscriber customization, KQL/API
-interpretation, and quality/safety review remain on the core tier. The Portal suggests these names
-but requires approved versions for both; the raw parameter example leaves versions empty rather
-than inventing them. Validate the actual model IDs, reasoning options, Responses/tool/strict-JSON
-support, region, SKU, quota and cost before deployment. Default names are not a compatibility or
-performance guarantee. Run paired quality/latency/cost comparisons before production promotion.
-
-`modelDeploymentName`, `modelName`, `modelVersion`, `modelSkuName`, and `modelCapacity` configure
-the core deployment. Matching `simpleModel*` parameters configure a separate simple-task deployment;
-the two deployment names must differ. `coreReasoningEffort` accepts `low`, `medium`, or `high`.
-Capacity units must be assessed independently. The models deploy serially before the private
-endpoint and project, and Admin readiness checks both deployments without invoking a model.
-
-`customerSetup` v2/v3 binds both model deployments and effort and clears the legacy global model
-override in the named customer environment. Existing v1 outputs remain supported as explicit
-single-model installations. Do not reapply the foundation merely to change an existing Agent's
-model; preserve existing resources/secure parameters and use reviewed provisioning configuration.
-`--check` detects expected model/reasoning/sampling drift but does not replace a live model smoke.
-
-## Shared Infrastructure
-
-New installations use one Container Apps environment, one Application Insights component and one
-Log Analytics workspace. The control-plane App and Job share their existing user-assigned identity;
-Azure MCP remains a separate app with its own system-assigned identity and subscription Reader.
-The MCP template no longer creates any environment, Application Insights component or workspace.
-
-`customerSetup` v3 adds `containerAppEnvironmentId`, `containerAppWorkloadProfileName` and
-`applicationInsightsName`. The installer binds these as `AZURE_CONTAINER_APP_ENVIRONMENT_ID`,
-`AZURE_CONTAINER_APP_WORKLOAD_PROFILE_NAME` and `APPLICATION_INSIGHTS_NAME` in the MCP azd
-environment. The `Consumption` workload profile is used for VNet injection; consumption-only
-environments use an empty profile. No connection string is added to the public setup contract.
-The `Mcp` stage requires v3; legacy v1/v2 outputs remain usable for non-MCP stages.
-
-Application Insights retains `DisableLocalAuth: true`. The pinned MCP
-[3.0.0-beta.38 exporter](https://github.com/microsoft/mcp/blob/Azure.Mcp.Server-3.0.0-beta.38/core/Microsoft.Mcp.Core/src/Extensions/OpenTelemetryExtensions.cs)
-sets a connection string but not a `TokenCredential`. Passing the shared connection string alone
-would not satisfy Entra-only ingestion. Therefore MCP direct Application Insights traces/metrics
-and Microsoft telemetry are disabled. MCP console logs still reach the shared workspace through
-the environment's log configuration; distinguish them by Container App name. No extra collector
-or telemetry-publishing role is added. AzBrief's existing authenticated tracing is unchanged.
-MCP trace/metric export would require a separately reviewed authenticated exporter or collector.
-
 ## Setup Stages
 
 Run every stage from the same reviewed customer checkout with explicit `SubscriptionId`,
@@ -64,7 +19,7 @@ outputs; it previews the target and stage without proving live readiness. Only
 | Stage | Required before running | What completion establishes |
 |---|---|---|
 | `Configure` | Succeeded current foundation deployment, correct default CLI tenant/subscription, clean customer clone without a root `.env` | Named azd bindings match the non-secret ARM setup contract; no application is deployed by this stage |
-| `Mcp` | `Configure`, v3 setup contract, shared infrastructure ready, private Foundry connectivity, approved Graph/resource permissions | Separate pinned read-only MCP app in the shared environment and authenticated project connection; existing connections are not force-replaced |
+| `Mcp` | `Configure`, private Foundry connectivity, approved Graph/resource permissions | Separate pinned read-only MCP deployment and authenticated project connection; existing connections are not force-replaced |
 | `Agents` | MCP URL recorded, clean reviewed source, model and Foundry access | Import/full tests and roster check pass, and the intended Hosted name is active; evidence permissions and analysis acceptance remain separate |
 | `Application` | Manual Job, approved immutable ACR digest and App/Job managed-identity pull access | Paired image and bootstrap port/probe changes are submitted and read back; revision health is checked in `Verify` |
 | `Verify` | New App revision Healthy/Running, same App/Job digest, configured customer environment | Runtime/roster/health checks pass without model calls or email; it does not prove a canonical archive write or recipient inbox delivery |
@@ -82,20 +37,18 @@ are not globally rolled back. Preserve the stage output and inspect partial stat
 | Azure target | Choose the customer tenant, subscription, a dedicated resource group, and regional/data-residency policy. Never reuse the maintainer's development azd environment or `.env`. |
 | Azure permissions | The deployment operator needs resource creation plus role-assignment rights at the required resource-group/subscription/ACR scopes. This is not a runtime permission grant. |
 | Entra permissions | Azure MCP creates an Entra application/service principal and assigns its app role to the Foundry project identity. Obtain customer approval for these Microsoft Graph operations separately; Azure subscription Owner alone is insufficient. Use a dedicated deployment identity approved by the directory administrator. |
-| Foundry | Verify Hosted Agents, VNet injection, both exact model/version/SKU combinations, reasoning/tool/schema support, and separate quotas in the selected region. The form requires approved versions for both suggested models. Capacity is model-specific units, not universally thousands of TPM. |
+| Foundry | Verify Hosted Agents, VNet injection, the exact model/version/SKU, and quota in the selected region. The form deliberately requires a model and version. Capacity is model-specific units, not universally thousands of TPM. |
 | Residency | Global Standard can process requests outside the account region. Regional Standard and Data Zone Standard have different availability, quota, and residency boundaries. Have the customer approve the selected SKU. |
 | Network | Provide a VNet-connected deployment host with private DNS resolution. Ordinary Cloud Shell and a public hosted CI runner are not automatically inside this VNet. Do not open Foundry, Key Vault, or Storage to work around access failures. |
 | Registry | Provide an existing customer ACR, its exact login server and RBAC/ABAC permission mode. The deployment operator needs remote-build/push access; App/Job receive pull-only access later. No registry password is used. |
 | Browser access | Recommended: prepare a single-tenant Entra application, client secret and explicit administrator object IDs/UPNs. Enter the secret directly in the Portal password field, never in chat or source control. Add the callback URI after the app hostname is known. |
 | Email | Choose the Communication Services data location and one approved acceptance mailbox. Verify service availability, sending limits, and the customer's mail-filtering policy. Production subscribers can be added after acceptance. |
-| Cost | Budget for model tokens, Container App minimum replicas, Job runtime, the separate Azure MCP app in the shared environment, private endpoints, storage, registry builds/storage, logs and ACS email. Obtain a customer-specific estimate and budget alert; no fixed monthly price is implied. |
+| Cost | Budget for model tokens, Container App minimum replicas, Job runtime, the separate Azure MCP app/environment, private endpoints, storage, registry builds/storage, logs and ACS email. Obtain a customer-specific estimate and budget alert; no fixed monthly price is implied. |
 
-Azure MCP shares the control-plane environment's VNet and public/internal boundary, while retaining
-Entra authentication and subscription Reader. VNet integration alone does not make ingress private.
-With `internalIngressOnly: true`, MCP's app-level `external: true` allows callers outside the
-environment over the VNet, not over the public internet. Verify the actual Foundry managed MCP
-call path and private DNS before accepting an internal deployment. Do not remove authentication,
-open public access, or broaden identities to work around a connectivity failure.
+The current Azure MCP module uses a separate **public HTTPS ingress protected by Entra** and
+subscription Reader. VNet isolation of Foundry/Key Vault/Storage does not make that MCP ingress
+private. A customer that requires every endpoint to be private must resolve this deployment
+constraint before acceptance; do not remove MCP authentication or broaden its identity.
 
 Resource providers must be available/registered: `Microsoft.App`, `Microsoft.CognitiveServices`,
 `Microsoft.Communication`, `Microsoft.KeyVault`, `Microsoft.Network`, `Microsoft.Storage`,
@@ -103,7 +56,7 @@ Resource providers must be available/registered: `Microsoft.App`, `Microsoft.Cog
 
 ## 1. Deploy The Foundation
 
-Open the README button and complete **Basics**, **Foundry and models**, **Email delivery**, and
+Open the README button and complete **Basics**, **Foundry and model**, **Email delivery**, and
 **Console access**. Keep the bootstrap image for the first deployment. The form fixes
 `networkIsolationMode=vnetInjection`, `allowPublicAccessDuringSetup=false`,
 `enableScheduledRuns=false`, and Key Vault purge protection on. Purge protection cannot be
@@ -174,7 +127,7 @@ $customer = @{
 ```
 
 `Configure` writes individual `azd env set NAME VALUE` bindings, including the project endpoint,
-ARM ID, tenant, model policy, Hosted name, and both name forms for each of the six specialists. It
+ARM ID, tenant, model, Hosted name, and both name forms for each of the six specialists. It
 refuses to rebind an existing environment to another tenant/subscription/project and restores
 a pre-existing default environment after creating the new one. It never evaluates command
 strings returned by ARM. `-SetupFile` accepts a saved `customerSetup` object **only with
@@ -194,53 +147,11 @@ From the private-network deployment host:
 namespace restriction. It creates the project-managed-identity connection and stores the server
 URL only in the named customer environment. Use `-ServiceManagementReference '<guid>'` on this
 stage when the customer's directory requires that application metadata.
-Before provisioning, it checks the App/Job environment, region/profile, Entra-only Application
-Insights and the common workspace destination. A legacy MCP app in a different environment stops
-the stage before any provisioning. After provisioning it reads the MCP app back and checks its
-environment and disabled direct exporters. `Verify` and `EnableSchedule` repeat these v3 checks.
-These are configuration checks, not proof that a log has arrived or a private MCP call succeeds.
 
 The stage deliberately does not overwrite an existing project connection with `--force`.
 If creation reports that the connection already exists, inspect it with `azd ai connection show`
 in the same environment, confirm the exact target/authentication/audience, and reconcile it with
 the customer owner. Do not delete or replace an unreviewed connection to make setup pass.
-
-## Consolidating Existing Installations
-
-This is a planned migration, not an image-only upgrade or an automatic cleanup. An existing MCP
-app cannot switch its managed environment through this setup flow. The script stops rather than
-deleting or replacing it. Incremental ARM deployments also do not delete old resources that have
-been removed from a template. Use a reviewed maintenance window and record rollback information.
-
-1. Pause scheduled/manual analysis with the operator's existing controls and record the prior
-  schedule, images, MCP URL, environment, Entra application/connection and Reader assignments.
-  Preserve secure deployment inputs and monitoring retention/export requirements outside Git.
-2. Validate/what-if the current foundation with the installation's existing parameters, immutable
-  App/Job images, secrets and network configuration. Apply only an approved non-destructive
-  update to obtain v3 outputs and the single-environment Admin readiness inventory. Do not
-  recreate Foundry, change its injection mode, reset storage, or restore bootstrap images.
-3. Run `Configure` against that deployment. Explicitly approve recreating only the MCP Container
-  App in the shared environment. Remove the old MCP app during the window, preserving its old
-  environment and monitoring resources for rollback/history. Its replacement gets a new
-  system-assigned principal; the MCP template grants Reader to that new principal.
-4. Review the existing named Foundry project connection before replacement. Its old MCP URL will
-  change; retain its configuration, then remove only that approved connection before running
-  `Mcp`, which creates the new authenticated connection without `--force`. Never remove unrelated
-  connections or the MCP Entra application. Rerun `Agents` to publish/check matching definitions
-  and the Hosted configuration, then use the normal `Verify` and operational acceptance gates.
-5. Confirm a real authenticated read-only MCP call and new MCP console rows in the common
-  workspace, as well as AzBrief tracing in the shared Application Insights. Confirm no MCP
-  ingestion-authentication errors. Only then restore the approved schedule.
-6. After acceptance and explicit deletion approval, remove the empty old MCP environment and
-  obsolete identity role assignments. Retire the old MCP Application Insights/workspace only
-  when retention/export obligations permit; historical telemetry is not moved automatically.
-  Never delete the shared environment, shared monitoring, or a workspace used by another service.
-
-The installer does not execute these destructive steps. Rollback may require recreating the MCP
-app on its recorded old environment and restoring the previous connection/Agent versions; an
-image rollback alone cannot restore a changed hostname or system-assigned principal.
-
-## Agent Publication
 
 `Agents` requires a clean source checkout, runs import/full tests, provisions the six distinct
 Prompt Agents, runs the exact roster check, publishes the Hosted source, and verifies its name

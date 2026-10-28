@@ -12,20 +12,12 @@ from typing import Annotated, Any, Literal, Optional
 
 from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langgraph.graph import END, StateGraph
-from pydantic import BaseModel, Field, PrivateAttr, ValidationError
+from pydantic import BaseModel, PrivateAttr
 from structlog import get_logger
 from typing_extensions import TypedDict
 
 from src.agent.context_store import get_result_store, store_and_handle
-from src.agent.documentation import (
-    DocumentationTraversalError,
-    current_documentation,
-    documentation_context,
-)
-from src.agent.foundry_backend import (
-    current_foundry_invocation_context,
-    foundry_invocation_context,
-)
+from src.agent.foundry_backend import foundry_invocation_context
 from src.agent.prompts import (
     ANALYSIS_PROMPT,
     EVALUATION_PROMPT,
@@ -37,7 +29,6 @@ from src.agent.prompts import (
     build_system_prompt,
     get_translation_notes,
 )
-from src.agent.prompts.report.base import ANNOUNCEMENT_SUMMARY_PROMPT
 from src.agent.resilience import (
     MAX_OUTPUT_RECOVERY_ATTEMPTS,
     OUTPUT_RECOVERY_MESSAGE,
@@ -47,22 +38,6 @@ from src.agent.resilience import (
     TransitionType,
     calculate_backoff,
     parse_json_resilient,
-    retry_with_backoff,
-)
-from src.agent.resource_evidence import (
-    ResourceQueryEvidence,
-    ResourceQuerySelectionError,
-    customize_resource_queries,
-    resolve_resource_queries,
-    resource_evidence_context,
-    resource_query_evidence_facts,
-    resource_query_prompt_context,
-)
-from src.agent.scope import (
-    SCOPED_ANALYSIS_TOOL_NAMES,
-    AnalysisScope,
-    analysis_scope_context,
-    current_analysis_scope,
 )
 from src.agent.telemetry import setup_telemetry, traced_span
 from src.agent.tools import KQL_TOOL_NAMES, WRITE_TOOL_NAMES, get_all_tools
@@ -110,68 +85,6 @@ def _normalize_reference_urls(refs: list) -> list[dict]:
         elif isinstance(doc, str):
             normalized.append({"title": "Reference", "url": clean_url(doc)})
     return normalized
-
-
-_VISUAL_GENERIC_TERMS = frozenset(
-    "a an and are as at azure be by for from in into is it microsoft of on or the to with "
-    "add added adds announce announced announcing available availability ga general generally "
-    "introducing new now preview public release released support supported supports "
-    "update updated updates feature features capability capabilities enhancement enhancements".split()
-)
-
-
-def visual_matches_update(candidate: dict, update: AzureUpdate) -> bool:
-    """Require image-local evidence of the update's feature, not just its service."""
-    service_terms = set(re.findall(r"[a-z0-9]+", " ".join(update.azure_services).casefold()))
-    feature_terms = (
-        set(re.findall(r"[a-z0-9]+", update.title.casefold()))
-        - service_terms
-        - _VISUAL_GENERIC_TERMS
-    )
-    image_text = " ".join(str(candidate.get(key) or "") for key in ("alt", "caption"))
-    image_terms = set(re.findall(r"[a-z0-9]+", image_text.casefold()))
-    return bool(feature_terms) and feature_terms.issubset(image_terms)
-
-
-def _collect_source_visuals(
-    contents: list[dict], limit: int = 2, *, update: Optional[AzureUpdate] = None
-) -> list[dict[str, str]]:
-    """Select only visuals whose own descriptions match the update's feature."""
-    if update is None or limit <= 0:
-        return []
-    selected: list[dict[str, str]] = []
-    seen_urls: set[str] = set()
-    for document in contents:
-        for candidate in document.get("visuals") or []:
-            if not isinstance(candidate, dict):
-                continue
-            url = clean_url(str(candidate.get("url") or ""))
-            alt = str(candidate.get("alt") or "").strip()
-            if (
-                not url
-                or not alt
-                or url in seen_urls
-                or not visual_matches_update(candidate, update)
-            ):
-                continue
-            selected.append(
-                {
-                    "url": url,
-                    "alt": alt,
-                    "caption": str(candidate.get("caption") or "").strip(),
-                    "source_url": clean_url(
-                        str(candidate.get("source_url") or document.get("url") or "")
-                    ),
-                    "source_title": str(
-                        candidate.get("source_title") or document.get("title") or ""
-                    ).strip(),
-                }
-            )
-            seen_urls.add(url)
-            break
-        if len(selected) >= limit:
-            break
-    return selected
 
 
 def generate_trace_id() -> str:
@@ -237,22 +150,14 @@ def _missing_region_mentions(content: str, regions: list[str]) -> list[str]:
 
 
 def _region_report_gaps(content: str, regions: list[str]) -> tuple[bool, list[str]]:
-    """Validate primary-Region coverage in the analysis, never the announcement summary."""
+    """Validate primary-Region placement in a generated report JSON."""
     parsed = parse_json_resilient(content)
     if not isinstance(parsed, dict):
         return True, list(regions)
+    one_line = str(parsed.get("one_line_summary") or "")
     detailed = str(parsed.get("detailed_analysis") or "")
-    environment = str(parsed.get("relevance_evidence") or "")
-    missing_regions = _missing_region_mentions(f"{detailed}\n{environment}", regions)
-    return bool(missing_regions), missing_regions
-
-
-class _AnnouncementSummary(BaseModel):
-    """Source-bound output for the isolated announcement summarization call."""
-
-    model_config = {"extra": "forbid"}
-    one_line_summary: str = Field(min_length=1, max_length=600, strict=True)
-    source_excerpt: str = Field(min_length=1, max_length=2400, strict=True)
+    headline_missing = bool(regions and _missing_region_mentions(one_line, regions[:1]))
+    return headline_missing, _missing_region_mentions(f"{one_line}\n{detailed}", regions)
 
 
 def _extract_llm_meta(response) -> dict[str, Any]:
@@ -382,19 +287,15 @@ class AnalysisResult(BaseModel):
     blast_radius_score: int = 0  # calculated blast radius (0-100)
     blast_radius_detail: str = ""  # explanation of blast radius calculation
     relevance: RelevanceStatus
-    one_line_summary: str = ""  # announcement-only localized summary
-    relevance_evidence: str = ""  # category-aware applicability/value and evidence limits
+    one_line_summary: str = ""  # executive one-line summary
+    relevance_evidence: str = ""  # why this update is relevant to admin's environment
     relevance_reason: str
     affected_resources: list[dict[str, Any]]
-    resource_queries: list[ResourceQueryEvidence] = Field(default_factory=list)
     impact_summary: str
     impact_details: Optional[ImpactSummary] = None
     action_items: list[ActionItem] = []  # structured action items
     recommendations: list[str]  # backward compatibility
     reference_docs: list[dict[str, str]]
-    visual_assets: list[dict[str, str]] = Field(
-        default_factory=list
-    )  # trusted delivery-only Learn images
     additional_checks: list[str] = []  # additional verification items
     should_notify: bool
     _evidence_resource_summary: str = PrivateAttr(default="")
@@ -465,7 +366,6 @@ class AgentState(TypedDict):
     update: dict
     resource_summary: str
     update_context: str
-    documentation_context: str
     # Plan-Execute-Evaluate fields
     analysis_plan: Optional[dict]
     task_results: dict[str, str]
@@ -651,19 +551,8 @@ class AzureUpdateAnalyzer:
             "search_azure_docs",
             "get_service_documentation",
             "search_resource_graph_docs",
-            "fetch_documentation_link",
-            "query_tool_result",
         }
     )
-
-    @staticmethod
-    def _update_context_with_documentation(state: AgentState) -> str:
-        """Keep public documentation evidence identical across analysis and judging."""
-        return "\n\n".join(
-            part
-            for part in (state["update_context"], state.get("documentation_context", ""))
-            if part
-        )
 
     async def _planning_node(self, state: AgentState) -> dict:
         """Phase 1: Gather context and create an AnalysisPlan.
@@ -672,7 +561,7 @@ class AzureUpdateAnalyzer:
         to output a structured analysis plan as JSON.
         """
 
-        update_context = self._update_context_with_documentation(state)
+        update_context = state["update_context"]
         plan_revision_count = state.get("plan_revision_count", 0)
         _t0 = time.time()
 
@@ -710,6 +599,9 @@ class AzureUpdateAnalyzer:
         max_planning_iters = 3
         planning_llm_calls = 0
         planning_tool_calls = []
+        # Bound before the loop: every exit path below (circuit breaker `break`,
+        # transient-error `continue` exhausting the budget) would otherwise leave
+        # this unassigned and raise UnboundLocalError where the plan is parsed.
         response = None
         for _iter in range(max_planning_iters):
             logger.debug(
@@ -728,25 +620,28 @@ class AzureUpdateAnalyzer:
                 )
                 break
             try:
-
-                async def _generate_plan():
-                    return await _ainvoke_with_trace(
-                        llm_with_tools,
-                        messages,
-                        trace_id=state.get("trace_id", ""),
-                        task_id="coordinator:plan",
-                    )
-
-                response = await retry_with_backoff(
-                    _generate_plan,
-                    max_retries=3,
-                    retryable_errors=(429, 503, 529),
-                    base_delay=10.0,
-                    max_delay=60.0,
-                    is_foreground=True,
+                response = await _ainvoke_with_trace(
+                    llm_with_tools,
+                    messages,
+                    trace_id=state.get("trace_id", ""),
+                    task_id="coordinator:plan",
                 )
                 self._llm_circuit_breaker.record_success()
-            except Exception:
+            except Exception as llm_err:
+                # Retry with backoff for transient errors
+                # Do NOT record circuit breaker failure for retryable transients
+                error_str = str(llm_err)
+                if any(code in error_str for code in ("429", "503", "529")):
+                    delay = calculate_backoff(_iter)
+                    logger.warning(
+                        "llm_transient_error_retry",
+                        phase="plan",
+                        error=error_str[:200],
+                        delay_s=round(delay, 2),
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                # Non-transient error: record failure and raise
                 self._llm_circuit_breaker.record_failure()
                 raise
             _llm_elapsed = time.time() - _llm_t0
@@ -783,10 +678,7 @@ class AzureUpdateAnalyzer:
                 tool = tools_by_name.get(tc["name"])
                 if tool:
                     try:
-                        with foundry_invocation_context(
-                            state.get("trace_id", ""), f"planning:{tc['name']}"
-                        ):
-                            result = await tool.ainvoke(tc["args"])
+                        result = await tool.ainvoke(tc["args"])
                     except Exception as exc:
                         result = f"Error: {exc}"
                     _tool_elapsed = time.time() - _tool_t0
@@ -797,9 +689,6 @@ class AzureUpdateAnalyzer:
                         trace_id=state.get("trace_id", ""),
                         budget=TOOL_RESULT_BUDGET_CHARS,
                     )
-                    investigation = current_documentation()
-                    if investigation is not None and tc["name"] == "query_tool_result":
-                        investigation.retain_excerpt(tc["args"].get("ref", ""), result_str)
                     planning_tool_calls.append(
                         {
                             "tool": tc["name"],
@@ -861,14 +750,8 @@ class AzureUpdateAnalyzer:
             elapsed_s=round(_elapsed, 2),
         )
 
-        investigation = current_documentation()
         return {
             "analysis_plan": plan.model_dump(),
-            "documentation_context": (
-                investigation.render_context()
-                if investigation is not None
-                else state.get("documentation_context", "")
-            ),
             "phase": "executing",
             "plan_revision_count": plan_revision_count + 1,
             "task_results": state.get("task_results", {}),
@@ -1169,48 +1052,6 @@ class AzureUpdateAnalyzer:
                 )
                 next_id += 1
 
-        cost_context = " ".join(
-            str(update.get(field) or "")
-            for field in ("update_type", "title", "description", "detail_description")
-        )
-        is_cost_relevant = re.search(
-            r"\b(?:pricing|prices?|costs?|billing|billable|charges?|savings?|discounts?|"
-            r"paid|free (?:tiers?|allowances?|quotas?|usage)|egress fees?|metered|metering|"
-            r"pay[- ]as[- ]you[- ]go|reservations?)\b",
-            cost_context,
-            re.IGNORECASE,
-        )
-        if is_cost_relevant and not existing_tools.intersection(
-            {"get_cost_by_resource_type", "get_cost_by_service"}
-        ):
-            cost_args: dict[str, Any] = {"days": 30}
-            if resource_type_filter:
-                cost_tool_name = "get_cost_by_resource_type"
-                cost_args["resource_type"] = resource_type_filter
-            else:
-                cost_tool_name = "get_cost_by_service"
-                cost_args["top"] = 100
-            injected.append(
-                AnalysisTask(
-                    task_id=f"enrich_{next_id}",
-                    description="Auto-enrichment: actual spending baseline for cost impact",
-                    method="cost_api",
-                    tool_name=cost_tool_name,
-                    tool_args=cost_args,
-                    purpose=(
-                        "Ground financial impact in recent ActualCost with scope, filter, "
-                        "period, and currency. A baseline is not projected savings; broad "
-                        "service totals are discovery evidence, not update-attributable cost. "
-                        "Preserve unavailable cost data as an explicit gap."
-                    ),
-                    max_retries=0,
-                )
-            )
-
-        scope = current_analysis_scope()
-        if scope.is_bounded:
-            injected = [task for task in injected if task.tool_name in SCOPED_ANALYSIS_TOOL_NAMES]
-
         if injected:
             plan.tasks.extend(injected)
             logger.info(
@@ -1231,11 +1072,13 @@ class AzureUpdateAnalyzer:
     def _fill_contextual_tool_args(task: AnalysisTask, tool: Any, state: AgentState) -> None:
         """Fill required tool arguments already known from immutable update context."""
         if task.tool_name == "query_azure_resources":
-            from src.agent.tools import _RE_KQL_TABLE
-
             raw_query = task.tool_args.get("query")
             resource_type = task.tool_args.get("resource_type")
-            is_kql = isinstance(raw_query, str) and _RE_KQL_TABLE.match(raw_query)
+            is_kql = isinstance(raw_query, str) and re.match(
+                r"^\s*(?:Resources|ResourceContainers|[A-Za-z][A-Za-z0-9_]*resources)\b",
+                raw_query,
+                re.IGNORECASE,
+            )
             if not is_kql and isinstance(resource_type, str) and resource_type.strip():
                 from src.services.resource_graph import ResourceGraphQueryBuilder
 
@@ -1250,12 +1093,7 @@ class AzureUpdateAnalyzer:
                         "| order by name asc\n"
                         "| limit 200"
                     )
-                task.tool_args = {
-                    key: value
-                    for key, value in task.tool_args.items()
-                    if key in {"purpose", "expected_columns"}
-                }
-                task.tool_args["query"] = query
+                task.tool_args = {"query": query}
                 logger.info(
                     "tool_args_normalized",
                     trace_id=state.get("trace_id", ""),
@@ -1264,8 +1102,6 @@ class AzureUpdateAnalyzer:
                     from_key="resource_type+natural_language",
                     to_key="builder_query",
                 )
-            if not task.tool_args.get("purpose"):
-                task.tool_args["purpose"] = task.purpose or task.description
 
         if task.tool_name == "find_related_resources":
             has_keyword = bool(
@@ -1362,19 +1198,6 @@ class AzureUpdateAnalyzer:
                 )
                 return
 
-            scope = current_analysis_scope()
-            if scope.is_bounded and task.tool_name not in SCOPED_ANALYSIS_TOOL_NAMES:
-                task.status = "failed"
-                task.error = "Tool cannot enforce the subscriber resource scope"
-                task_results[task.task_id] = task.error
-                logger.warning(
-                    "scoped_tool_blocked",
-                    trace_id=state.get("trace_id", ""),
-                    task_id=task.task_id,
-                    tool_name=task.tool_name,
-                )
-                return
-
             self._fill_contextual_tool_args(task, tool, state)
             task.status = "running"
             _task_t0 = time.time()
@@ -1442,9 +1265,6 @@ class AzureUpdateAnalyzer:
                         tool_args=task.tool_args,
                     )
 
-                    if isinstance(exc, DocumentationTraversalError):
-                        break
-
                     if attempt < task.max_retries:
                         _console(f"    🔧 {task.task_id} fixing tool args via LLM...")
                         fixed_args = await self._fix_tool_args(
@@ -1502,15 +1322,9 @@ class AzureUpdateAnalyzer:
             elapsed_s=round(_elapsed, 2),
         )
 
-        investigation = current_documentation()
         return {
             "analysis_plan": plan.model_dump(),
             "task_results": task_results,
-            "documentation_context": (
-                investigation.render_context()
-                if investigation is not None
-                else state.get("documentation_context", "")
-            ),
             "phase": "evaluating",
             "iteration": state.get("iteration", 0) + 1,
             "last_transition": TransitionType.TOOL_USE.value,
@@ -1627,7 +1441,7 @@ class AzureUpdateAnalyzer:
         Uses LLM (no tools) to assess coverage and quality.
         """
 
-        update_context = self._update_context_with_documentation(state)
+        update_context = state["update_context"]
         task_results = state.get("task_results", {})
         plan_dict = state["analysis_plan"]
         plan = AnalysisPlan(**plan_dict)
@@ -1677,22 +1491,11 @@ class AzureUpdateAnalyzer:
                 ],
             }
         try:
-
-            async def _evaluate_evidence():
-                return await _ainvoke_with_trace(
-                    self.llm_quality_reviewer,
-                    [HumanMessage(content=prompt_text)],
-                    trace_id=state.get("trace_id", ""),
-                    task_id="quality_reviewer:evidence_evaluation",
-                )
-
-            response = await retry_with_backoff(
-                _evaluate_evidence,
-                max_retries=3,
-                retryable_errors=(429, 503, 529),
-                base_delay=10.0,
-                max_delay=60.0,
-                is_foreground=True,
+            response = await _ainvoke_with_trace(
+                self.llm_quality_reviewer,
+                [HumanMessage(content=prompt_text)],
+                trace_id=state.get("trace_id", ""),
+                task_id="quality_reviewer:evidence_evaluation",
             )
             self._llm_circuit_breaker.record_success()
         except Exception as llm_err:
@@ -1747,34 +1550,6 @@ class AzureUpdateAnalyzer:
             if suggestion not in evaluation.suggestions:
                 evaluation.suggestions.append(suggestion)
             evaluation.reason += " [Primary-Region availability coverage was not confirmed.]"
-
-        if (
-            evaluation.verdict in {"sufficient", "partial"}
-            and evaluation.coverage.get("query_intent") is False
-        ):
-            evaluation.verdict = "partial"
-            if "query_intent" not in evaluation.missing_aspects:
-                evaluation.missing_aspects.append("query_intent")
-            evaluation.suggestions.append(
-                "Rewrite the unanswered KQL question from observed schema/results, preserving "
-                "scope and applicability predicates; pass purpose and expected_columns."
-            )
-            evaluation.reason += " [Required query intent was not satisfied.]"
-
-        if (
-            evaluation.verdict in {"sufficient", "partial"}
-            and evaluation.coverage.get("documentation_evidence") is False
-        ):
-            evaluation.verdict = "partial"
-            if "documentation_evidence" not in evaluation.missing_aspects:
-                evaluation.missing_aspects.append("documentation_evidence")
-            evaluation.suggestions.append(
-                "Search the relevant document ref with query_tool_result first. If the "
-                "decision question remains unanswered, use fetch_documentation_link with "
-                "an observed parent_url, body-link url and that question. Preserve "
-                "failed/depth/budget-limited gaps; do not repeat exhausted fetches."
-            )
-            evaluation.reason += " [Required documentation evidence was not confirmed.]"
 
         # Prevent infinite loops
         if evaluation.verdict == "partial" and task_revision_count >= 3:
@@ -1890,8 +1665,6 @@ class AzureUpdateAnalyzer:
             ),
             task_results_summary=_escape_braces(results_summary),
         )
-        if state.get("documentation_context"):
-            prompt_text += "\n\n" + state["documentation_context"]
 
         logger.debug("llm_prompt", phase="revise", prompt=prompt_text)
         _llm_t0 = time.time()
@@ -1975,107 +1748,12 @@ class AzureUpdateAnalyzer:
     # Report
     # ------------------------------------------------------------------
 
-    async def _summarize_announcement(
-        self,
-        update: AzureUpdate,
-        language: str,
-        *,
-        trace_id: str = "",
-        background: bool = False,
-    ) -> str:
-        """Generate a localized summary from public source text without tenant context."""
-        source = {
-            "title": update.title,
-            "description": update.detail_description or update.description or "",
-        }
-        if not source["title"].strip():
-            raise ValueError("Announcement summary requires the source title")
-        if self._llm_circuit_breaker.is_open:
-            raise RuntimeError("Announcement summary unavailable: circuit breaker is open")
-        trace_id = trace_id or current_foundry_invocation_context()[0] or generate_trace_id()
-        messages = [
-            SystemMessage(
-                content=ANNOUNCEMENT_SUMMARY_PROMPT.format(language=language_display(language))
-            ),
-            HumanMessage(content=json.dumps(source, ensure_ascii=False)),
-        ]
-        summary_writer = self.llm_report_writer.without_tools()
-
-        async def generate_summary():
-            with foundry_invocation_context(trace_id, "report_writer:announcement_summary"):
-                return await summary_writer.ainvoke(messages)
-
-        output_attempts = 1 if background else 2
-        for attempt in range(output_attempts):
-            started = time.monotonic()
-            try:
-                response = await retry_with_backoff(
-                    generate_summary,
-                    max_retries=3,
-                    retryable_errors=(429, 503, 529),
-                    base_delay=10.0,
-                    max_delay=60.0,
-                    is_foreground=not background,
-                )
-            except Exception:
-                self._llm_circuit_breaker.record_failure()
-                raise
-            logger.info(
-                "llm_call",
-                phase="announcement_summary",
-                trace_id=trace_id,
-                update_id=update.id,
-                elapsed_s=round(time.monotonic() - started, 2),
-                **_extract_llm_meta(response),
-            )
-            try:
-                if (response.response_metadata or {}).get("finish_reason") == "length":
-                    raise ValueError("Announcement summary response is incomplete")
-                parsed = _AnnouncementSummary.model_validate(parse_json_resilient(response.content))
-                summary = " ".join(parsed.one_line_summary.split())
-                excerpt = " ".join(parsed.source_excerpt.split())
-                if (
-                    not summary
-                    or not excerpt
-                    or not any(excerpt in " ".join(value.split()) for value in source.values())
-                ):
-                    raise ValueError("Announcement summary excerpt is absent from its source")
-                language_code = normalize_language(language)
-                language_patterns = {"ko": r"[\uac00-\ud7a3]", "ja": r"[\u3040-\u30ff]"}
-                if language_code in language_patterns and not re.search(
-                    language_patterns[language_code], summary
-                ):
-                    raise ValueError("Announcement summary is not in the requested language")
-            except ValueError as error:
-                if attempt + 1 == output_attempts:
-                    raise
-                logger.warning(
-                    "announcement_summary_recovery",
-                    trace_id=trace_id,
-                    update_id=update.id,
-                    error_type=type(error).__name__,
-                )
-                messages.append(
-                    HumanMessage(
-                        content=(
-                            "Return complete JSON with the two requested fields. Copy source_excerpt "
-                            "verbatim from the supplied title or description: do not translate it, fix "
-                            "spelling, remove symbols, or join separate passages. Write one_line_summary "
-                            "in the requested language using only that source."
-                        )
-                    )
-                )
-                continue
-            self._llm_circuit_breaker.record_success()
-            return summary
-        raise ValueError("Announcement summary generation exhausted")
-
     async def _report_node(self, state: AgentState) -> dict:
         """Phase 4: Generate the final analysis report.
 
         Uses LLM (no tools) to produce the JSON report.
         """
-        update_context = self._update_context_with_documentation(state)
+        update_context = state["update_context"]
         resource_summary = state["resource_summary"]
         task_results = state.get("task_results", {})
         plan_dict = state["analysis_plan"]
@@ -2123,9 +1801,6 @@ class AzureUpdateAnalyzer:
             task_results_summary=_escape_braces(results_summary),
             report_language=report_language,
         )
-        query_context = resource_query_prompt_context()
-        if query_context:
-            prompt_text += "\n\n" + query_context
 
         logger.debug(
             "llm_prompt",
@@ -2139,28 +1814,17 @@ class AzureUpdateAnalyzer:
         response = None
         if self._llm_circuit_breaker.is_open:
             logger.error("llm_circuit_breaker_open", phase="report")
-            raise RuntimeError("Report generation unavailable: circuit breaker is open")
+            content = '{"relevance": "unknown", "detailed_analysis": "LLM circuit breaker open. Unable to generate report."}'
         else:
             try:
-
-                async def _generate_report():
-                    return await _ainvoke_with_trace(
-                        self.llm_report_writer,
-                        [
-                            SystemMessage(content=report_system),
-                            HumanMessage(content=prompt_text),
-                        ],
-                        trace_id=state.get("trace_id", ""),
-                        task_id="report_writer:report",
-                    )
-
-                response = await retry_with_backoff(
-                    _generate_report,
-                    max_retries=3,
-                    retryable_errors=(429,),
-                    base_delay=10.0,
-                    max_delay=60.0,
-                    is_foreground=True,
+                response = await _ainvoke_with_trace(
+                    self.llm_report_writer,
+                    [
+                        SystemMessage(content=report_system),
+                        HumanMessage(content=prompt_text),
+                    ],
+                    trace_id=state.get("trace_id", ""),
+                    task_id="report_writer:report",
                 )
                 self._llm_circuit_breaker.record_success()
                 content = response.content if hasattr(response, "content") else str(response)
@@ -2213,18 +1877,21 @@ class AzureUpdateAnalyzer:
             except Exception as llm_err:
                 self._llm_circuit_breaker.record_failure()
                 logger.error("report_llm_failed", error=str(llm_err))
-                raise
+                content = f'{{"relevance": "unknown", "detailed_analysis": "Report generation failed: {str(llm_err)[:100]}"}}'
 
         primary_regions = _extract_primary_regions(resource_summary)
-        report_incomplete, missing_regions = _region_report_gaps(content, primary_regions)
-        if response is not None and _requires_region_availability(update) and report_incomplete:
+        headline_missing, missing_regions = _region_report_gaps(content, primary_regions)
+        if (
+            response is not None
+            and _requires_region_availability(update)
+            and (headline_missing or missing_regions)
+        ):
             region_instruction = (
                 "Regenerate the complete JSON report because it omitted the mandatory primary-Region "
-                f"availability verdict for: {', '.join(missing_regions)}. Put each primary Region "
-                "and one of these outcomes in detailed_analysis or relevance_evidence: available now, available with a stated "
+                f"availability verdict for: {', '.join(missing_regions)}. Put the first primary Region "
+                "and one of these outcomes in one_line_summary: available now, available with a stated "
                 "prerequisite, not available, or not confirmed by official feature-level evidence. "
-                "Keep one_line_summary as one announcement-only sentence in the requested report language; "
-                "do not include tenant applicability, resource counts or estimated work. Use the Azure Update text or "
+                "State every listed Region's outcome in detailed_analysis. Use the Azure Update text or "
                 "fetched Microsoft Learn feature-level excerpt as the authority. An ARM provider/resource "
                 "type result proves only service deployment support unless the announced object is that "
                 "exact resource type; it does not prove a feature rollout. Preserve all existing grounded "
@@ -2245,11 +1912,15 @@ class AzureUpdateAnalyzer:
                     if hasattr(region_response, "content")
                     else str(region_response)
                 )
-                corrected_incomplete, corrected_missing = _region_report_gaps(
+                corrected_headline_missing, corrected_missing = _region_report_gaps(
                     corrected_content,
                     primary_regions,
                 )
-                if corrected_content.strip() and not corrected_incomplete and not corrected_missing:
+                if (
+                    corrected_content.strip()
+                    and not corrected_headline_missing
+                    and not corrected_missing
+                ):
                     content = corrected_content
                     response = region_response
                     logger.info(
@@ -2261,7 +1932,7 @@ class AzureUpdateAnalyzer:
                     logger.warning(
                         "region_availability_report_recovery_incomplete",
                         trace_id=state.get("trace_id", ""),
-                        report_incomplete=corrected_incomplete,
+                        headline_missing=corrected_headline_missing,
                         missing_regions=corrected_missing,
                     )
             except Exception as region_error:
@@ -2315,53 +1986,6 @@ class AzureUpdateAnalyzer:
     # Routing
     # ------------------------------------------------------------------
 
-    async def _parse_report_with_recovery(
-        self, state: AgentState, update: AzureUpdate
-    ) -> tuple[AnalysisResult, AgentState]:
-        """Repair invalid report fields once without relaxing evidence validation."""
-        try:
-            return self._parse_analysis_result(state, update), state
-        except (ResourceQuerySelectionError, ValidationError) as exc:
-            issues = (
-                [{"field": list(error["loc"]), "type": error["type"]} for error in exc.errors()]
-                if isinstance(exc, ValidationError)
-                else [{"field": ["resource_queries"], "type": "invalid_selection"}]
-            )
-            logger.warning(
-                "report_schema_recovery_started",
-                trace_id=state.get("trace_id", ""),
-                update_id=update.id,
-                issues=issues[:12],
-            )
-        instruction = (
-            "Regenerate the complete JSON report to repair these schema errors: "
-            f"{json.dumps(issues[:12], ensure_ascii=True)}. Follow the report field types exactly. "
-            "additional_checks must contain plain strings, never task objects. "
-            "resource_queries must be an array, with each entry containing ONLY reference and reason. "
-            "Use an exact reference from the current executed resource query catalog and a "
-            "non-empty shared applicability reason. Never copy count, complete, scope, query, "
-            "purpose, timestamps or URLs from catalog metadata into a selection. Select a set "
-            "only when EVERY returned resource meets the update's applicability condition. "
-            "Use [] when no whole set applies, including empty results; preserve individually "
-            "verified affected_resources. Do not invent references, broaden applicability, "
-            "discard grounded findings, or add new facts. Return the complete report JSON only."
-        )
-        repair_state: AgentState = {
-            **state,
-            "report_feedback": "\n\n".join(
-                part for part in (state.get("report_feedback", ""), instruction) if part
-            ),
-        }
-        rewritten = await self._report_node(repair_state)
-        repaired_state: AgentState = {**repair_state, **rewritten}
-        result = self._parse_analysis_result(repaired_state, update)
-        logger.info(
-            "report_schema_recovered",
-            trace_id=state.get("trace_id", ""),
-            update_id=update.id,
-        )
-        return result, repaired_state
-
     @staticmethod
     def _attach_result_evidence(
         result: AnalysisResult,
@@ -2371,7 +1995,7 @@ class AzureUpdateAnalyzer:
     ) -> AnalysisResult:
         """Attach a non-serialized evidence snapshot to one analysis result."""
         result._evidence_resource_summary = resource_summary
-        result._evidence_task_results = {**task_results, **resource_query_evidence_facts()}
+        result._evidence_task_results = dict(task_results)
         result._evidence_update_context = update_context
         return result
 
@@ -2503,12 +2127,8 @@ class AzureUpdateAnalyzer:
             target=report.target_score,
             critical_flaws=len(report.critical_flaws),
         )
-        revision_input: AgentState = {**final_state, "report_feedback": feedback}
-        rewritten_state = await self._report_node(revision_input)
-        revised, _ = await self._parse_report_with_recovery(
-            {**revision_input, **rewritten_state}, update
-        )
-        revised.one_line_summary = result.one_line_summary
+        rewritten_state = await self._report_node({**final_state, "report_feedback": feedback})
+        revised = self._parse_analysis_result({**final_state, **rewritten_state}, update)
         self._copy_result_evidence(result, revised)
 
         with foundry_invocation_context(trace_id, "quality_reviewer:geval_rescore"):
@@ -3221,69 +2841,6 @@ class AzureUpdateAnalyzer:
         return "\n".join(lines)
 
     async def analyze_update(
-        self,
-        update: AzureUpdate,
-        trace_id: Optional[str] = None,
-        scope: Optional[AnalysisScope] = None,
-    ) -> AnalysisResult:
-        """Analyze an update within an async-safe hard resource boundary."""
-        trace_id = trace_id or generate_trace_id()
-        with (
-            analysis_scope_context(scope),
-            resource_evidence_context(),
-            documentation_context(trace_id),
-        ):
-            try:
-                result = await self._analyze_update_scoped(update, trace_id=trace_id)
-                return self._filter_result_to_scope(result, current_analysis_scope())
-            finally:
-                get_result_store().clear_trace(trace_id)
-
-    @staticmethod
-    def _filter_result_to_scope(
-        result: AnalysisResult,
-        scope: AnalysisScope,
-    ) -> AnalysisResult:
-        """Apply the hard boundary to the final structured report result."""
-        if not scope.is_bounded:
-            return result
-        queries = [
-            evidence
-            for evidence in result.resource_queries
-            if all(
-                not getattr(scope, field)
-                or (
-                    getattr(evidence.scope, field)
-                    and {value.casefold() for value in getattr(evidence.scope, field)}
-                    <= {value.casefold() for value in getattr(scope, field)}
-                )
-                for field in ("subscriptions", "management_groups", "resource_groups")
-            )
-        ]
-        references = {evidence.reference for evidence in queries}
-        return result.model_copy(
-            update={
-                "affected_resources": [
-                    (
-                        {
-                            **resource,
-                            "query_refs": [
-                                reference
-                                for reference in resource.get("query_refs", [])
-                                if reference in references
-                            ],
-                        }
-                        if "query_refs" in resource
-                        else resource
-                    )
-                    for resource in result.affected_resources
-                    if scope.contains_resource(resource)
-                ],
-                "resource_queries": queries,
-            }
-        )
-
-    async def _analyze_update_scoped(
         self, update: AzureUpdate, trace_id: Optional[str] = None
     ) -> AnalysisResult:
         """Analyze an Azure Update.
@@ -3349,10 +2906,9 @@ class AzureUpdateAnalyzer:
 
         kql_knowledge_context = build_context_for_prompt()
 
-        investigation = current_documentation()
-        if investigation is None:
-            raise RuntimeError("Analysis requires a request-local documentation context")
-        source_visual_assets: list[dict[str, str]] = []
+        # Prepare update context (used by all phases)
+        # Build Learn More section if links are available
+        learn_more_section = ""
         if update.learn_more_links:
             # Reuse learn service from the shared tools to avoid creating duplicate httpx clients
             learn_tool = next((t for t in self.tools if t.name == "search_azure_docs"), None)
@@ -3367,15 +2923,64 @@ class AzureUpdateAnalyzer:
             else:
                 _owns_learn_service = False
             try:
-                await investigation.prefetch(
-                    learn_service,
+                contents = await learn_service.fetch_learn_more_contents(
                     update.learn_more_links,
-                    source_url=update.link,
-                    topic=f"{update.title} {' '.join(update.azure_services or [])}",
+                    max_links=3,
+                    max_chars_per_page=3000,
                 )
-                source_visual_assets = _collect_source_visuals(
-                    [dict(document.page) for document in investigation.documents.values()],
-                    update=update,
+                if contents:
+                    parts = [
+                        "\n## Official Reference Documents (pre-fetched from Azure Update page)\n"
+                    ]
+                    parts.append(
+                        "The following documents were extracted from the update's official Learn More links. "
+                        "Use this content as **primary verified evidence** for the analysis. "
+                        "Include these URLs in `reference_docs`.\n"
+                    )
+                    for doc in contents:
+                        parts.append(f"### {doc['title']}")
+                        parts.append(f"- URL: {doc['url']}")
+                        if doc.get("sections"):
+                            parts.append(f"- Sections: {', '.join(doc['sections'][:8])}")
+                        parts.append(f"\n{doc['content']}\n")
+                        # Command blocks are extracted separately because the
+                        # per-page character budget above would otherwise cut
+                        # them (measured: 0% of CLI commands survived the cut),
+                        # which is why reports fell back to "check the Portal".
+                        blocks = doc.get("code_blocks") or []
+                        if blocks:
+                            parts.append(
+                                "**Verified commands from this page** — reuse these verbatim "
+                                "(substituting real resource names) instead of telling the "
+                                "reader to click through the Portal:"
+                            )
+                            for block in blocks[:6]:
+                                parts.append(f"```\n{block}\n```")
+                            parts.append("")
+                    learn_more_section = "\n".join(parts)
+                    _console(
+                        f"  Learn More content: {len(contents)} pages fetched "
+                        f"({sum(len(d['content']) for d in contents)} chars)"
+                    )
+                else:
+                    # Fallback: just list the links
+                    links_md = "\n".join(
+                        f"- [{link['text']}]({link['url']})" for link in update.learn_more_links
+                    )
+                    learn_more_section = (
+                        f"\n## Official Reference Links (from Azure Update page)\n"
+                        f"{links_md}\n\n"
+                        f"These links are verified official references. "
+                        f"Include them in `reference_docs` when relevant.\n"
+                    )
+            except Exception as e:
+                logger.debug("learn_more_content_fetch_failed", error=str(e))
+                # Fallback: just list links
+                links_md = "\n".join(
+                    f"- [{link['text']}]({link['url']})" for link in update.learn_more_links
+                )
+                learn_more_section = (
+                    f"\n## Official Reference Links (from Azure Update page)\n" f"{links_md}\n"
                 )
             finally:
                 if _owns_learn_service:
@@ -3392,7 +2997,7 @@ class AzureUpdateAnalyzer:
                 update.published_date.isoformat() if update.published_date else "Unknown"
             ),
             link=update.link,
-            learn_more_section="",
+            learn_more_section=learn_more_section,
             resource_summary=resource_summary,
             primary_regions=(
                 ", ".join(_extract_primary_regions(resource_summary))
@@ -3403,24 +3008,21 @@ class AzureUpdateAnalyzer:
             ),
             kql_knowledge_context=kql_knowledge_context,
         )
-        scope = current_analysis_scope()
-        if scope.is_bounded:
-            update_context += f"\n\n## Subscriber Resource Scope\n{scope.prompt_text()}"
 
-        scope = current_analysis_scope()
-        if not scope.is_bounded:
-            # Cross-update memory is canonical and must never enter a scoped analysis.
-            from src.agent.history import build_history_context_for_prompt, rotate_history
+        # Build history context from previous analyses (cross-update intelligence)
+        from src.agent.history import build_history_context_for_prompt, rotate_history
 
-            rotate_history()
-            history_context = build_history_context_for_prompt(
-                services=update.azure_services or [],
-                update_id=update.id,
-                max_related=5,
-            )
-            if history_context:
-                update_context += "\n" + history_context
-                _console(f"  History context: {len(history_context)} chars injected")
+        # Rotate old history records (lightweight, runs once per analysis)
+        rotate_history()
+
+        history_context = build_history_context_for_prompt(
+            services=update.azure_services or [],
+            update_id=update.id,
+            max_related=5,
+        )
+        if history_context:
+            update_context += "\n" + history_context
+            _console(f"  History context: {len(history_context)} chars injected")
 
         # Inject practitioner commentary (Azure Weekly digest). Official docs
         # describe what a feature is; they rarely describe what breaks or
@@ -3433,13 +3035,12 @@ class AzureUpdateAnalyzer:
         # Inject prior analysis-pattern hint: which tools historically produced
         # grounded findings for these services. Steers the planner toward a
         # stronger first plan (fewer execute→revise cycles). Empty during cold start.
-        if not scope.is_bounded:
-            from src.agent.pattern_memory import build_pattern_hint_for_prompt
+        from src.agent.pattern_memory import build_pattern_hint_for_prompt
 
-            pattern_hint = build_pattern_hint_for_prompt(update)
-            if pattern_hint:
-                update_context += "\n" + pattern_hint
-                _console(f"  Pattern hint: {len(pattern_hint)} chars injected")
+        pattern_hint = build_pattern_hint_for_prompt(update)
+        if pattern_hint:
+            update_context += "\n" + pattern_hint
+            _console(f"  Pattern hint: {len(pattern_hint)} chars injected")
 
         # Initialize state for Plan-Execute-Evaluate loop
         initial_state: AgentState = {
@@ -3447,7 +3048,6 @@ class AzureUpdateAnalyzer:
             "update": update.to_dict(),
             "resource_summary": resource_summary,
             "update_context": update_context,
-            "documentation_context": investigation.render_context(),
             "analysis_plan": None,
             "task_results": {},
             "evaluation": None,
@@ -3480,36 +3080,29 @@ class AzureUpdateAnalyzer:
                 f"{evaluation.get('reason', 'unknown evaluation error')}"
             )
 
-        # Parse the result. The public wrapper applies the hard scope again after
-        # G-Eval and every other rewrite has completed.
-        result, final_state = await self._parse_report_with_recovery(final_state, update)
-        announcement_summary = await self._summarize_announcement(
-            update, self.settings.report_language, trace_id=trace_id
-        )
-        result = result.model_copy(update={"one_line_summary": announcement_summary})
+        # Parse the result
+        result = self._parse_analysis_result(final_state, update)
         self._attach_result_evidence(
             result,
             resource_summary,
             final_state.get("task_results", {}),
-            self._update_context_with_documentation(final_state),
+            final_state.get("update_context", ""),
         )
 
         # Stash evidence for quality evaluation (G-Eval faithfulness fairness):
         # the report was built from the resource summary + tool results, so a judge must
         # see the same ground truth to fairly assess environment-specific claims.
         self._last_resource_summary = resource_summary
-        self._last_task_results = dict(result._evidence_task_results)
+        self._last_task_results = dict(final_state.get("task_results", {}))
         # The full source context includes the pre-fetched official Learn docs, which
         # ground product-detail claims (e.g. plan requirements, networking limits).
-        self._last_update_context = self._update_context_with_documentation(final_state)
+        self._last_update_context = final_state.get("update_context", "")
 
         # Quality gate: score the report and rewrite it once if it falls short.
         # Runs before the action-item gate so verification sees the final text.
         self._last_geval = None
         if self.settings.geval_runtime_enabled and self.settings.geval_enabled:
             result = await self._critic_pass(result, update, final_state)
-            result = result.model_copy(update={"one_line_summary": announcement_summary})
-        result.visual_assets = source_visual_assets
 
         # Multi-layer safety gate on action items. Action items are the only
         # part of the report a reader may execute verbatim against a production
@@ -3525,7 +3118,7 @@ class AzureUpdateAnalyzer:
                 with foundry_invocation_context(trace_id, "quality_reviewer:action_verification"):
                     self._last_action_verification = await verifier.verify(
                         result.action_items,
-                        update_context=self._update_context_with_documentation(final_state),
+                        update_context=final_state.get("update_context", ""),
                         evidence=build_evidence(
                             resource_summary, final_state.get("task_results", {})
                         ),
@@ -3547,22 +3140,22 @@ class AzureUpdateAnalyzer:
                 logger.debug("trajectory_eval_skipped", error=str(exc))
 
         # Save to analysis history (cross-update intelligence)
-        if not scope.is_bounded:
-            from src.agent.history import save_analysis_record, update_retirement_tracker
+        from src.agent.history import save_analysis_record, update_retirement_tracker
 
-            save_analysis_record(result)
-            update_retirement_tracker(result)
+        save_analysis_record(result)
+        update_retirement_tracker(result)
 
-            # Record which tools worked for this update's services (planning memory).
-            try:
-                from src.agent.pattern_memory import (
-                    extract_successful_tools,
-                    record_analysis_pattern,
-                )
+        # Record which tools worked for this update's services (planning memory).
+        # Feeds build_pattern_hint_for_prompt on future analyses of the same service.
+        try:
+            from src.agent.pattern_memory import (
+                extract_successful_tools,
+                record_analysis_pattern,
+            )
 
-                record_analysis_pattern(update, result, extract_successful_tools(final_state))
-            except Exception as exc:  # pragma: no cover - defensive
-                logger.debug("pattern_record_skipped", error=str(exc))
+            record_analysis_pattern(update, result, extract_successful_tools(final_state))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("pattern_record_skipped", error=str(exc))
 
         _total_elapsed = time.time() - _analysis_t0
         _console(f"\n{'#'*60}")
@@ -3699,6 +3292,10 @@ class AzureUpdateAnalyzer:
                 total_elapsed_s=round(_total_elapsed, 2),
             )
 
+        # Release this analysis's stored tool results — nothing downstream
+        # resolves refs, and a long batch would otherwise grow unbounded.
+        get_result_store().clear_trace(trace_id)
+
         return result
 
     async def customize_for_subscriber(
@@ -3731,45 +3328,40 @@ class AzureUpdateAnalyzer:
         base_language = normalize_language(settings.report_language)
         subscriber_language = normalize_language(subscriber.language)
         needs_translation = subscriber_language != base_language
-        subscriber_scope = AnalysisScope.from_subscriber(subscriber)
-        result = self._filter_result_to_scope(result, subscriber_scope)
 
-        if not subscriber.role and not subscriber.focus_services and not needs_translation:
+        if not subscriber.role and not needs_translation:
             logger.info(
-                "Subscriber has no role or focus services and same language, skipping customization",
+                "Subscriber has no role and same language, skipping customization",
                 subscriber=subscriber.email,
             )
             return result
 
-        announcement_summary = await self._summarize_announcement(
-            update, subscriber_language, background=True
-        )
-        result = result.model_copy(update={"one_line_summary": announcement_summary})
+        # 관련 없는 업데이트는 구독자 맞춤화를 건너뛰어 토큰 절약
+        # 단, 구독자의 언어가 기본 보고서 언어와 다른 경우에는
+        # 번역이 필요하므로 건너뛰지 않음 (언어 혼합 방지)
+        if (
+            result.relevance == RelevanceStatus.NOT_RELEVANT
+            and not result.should_notify
+            and not result.affected_resources
+            and not needs_translation
+        ):
+            logger.info(
+                "Skipping subscriber customization — not_relevant with no affected resources",
+                subscriber=subscriber.email,
+                relevance=result.relevance.value,
+            )
+            return result
 
         # Serialize current result to JSON for the customization prompt
         base_json = {
-            "source_update": {
-                "title": getattr(update, "title", result.update_title),
-                "description": (
-                    getattr(update, "detail_description", None)
-                    or getattr(update, "description", "")
-                ),
-            },
             "update_category": result.update_category,
             "urgency": result.urgency.value,
             "importance": result.importance,
             "impact_level": result.impact_level,
             "relevance": result.relevance.value,
             "one_line_summary": result.one_line_summary,
-            "relevance_evidence": result.relevance_evidence,
             "detailed_analysis": result.relevance_reason,
-            "affected_resources": [
-                resource for resource in result.affected_resources if not resource.get("query_refs")
-            ],
-            "resource_queries": [
-                {"reference": evidence.reference, "reason": evidence.reason}
-                for evidence in result.resource_queries
-            ],
+            "affected_resources": result.affected_resources,
             "action_items": [
                 {
                     "step": a.step,
@@ -3808,10 +3400,6 @@ class AzureUpdateAnalyzer:
             subscriber_name=subscriber.name,
             subscriber_role=subscriber.role,
             subscriber_language=language_display(subscriber_language),
-            subscriber_resource_scope=subscriber_scope.prompt_text(),
-            subscriber_focus_services=(
-                ", ".join(subscriber.focus_services) if subscriber.focus_services else "All"
-            ),
             language_translation_notes=get_translation_notes(subscriber_language),
         )
 
@@ -3892,8 +3480,6 @@ class AzureUpdateAnalyzer:
                 )
                 return result
 
-            customized["one_line_summary"] = announcement_summary
-
             # Build customized AnalysisResult
             # Check if LLM decided this subscriber should skip
             subscriber_relevance = customized.get("subscriber_relevance", "send")
@@ -3906,20 +3492,12 @@ class AzureUpdateAnalyzer:
                 # Even on skip, use translated text from LLM response to prevent
                 # language mixing in the digest email (all items are rendered).
                 customized_result = self._build_customized_result(
-                    result,
-                    customized,
-                    update,
-                    language=getattr(subscriber, "language", "ko"),
-                    scope=subscriber_scope,
+                    result, customized, update, language=getattr(subscriber, "language", "ko")
                 )
                 return customized_result.model_copy(update={"should_notify": False})
 
             return self._build_customized_result(
-                result,
-                customized,
-                update,
-                language=getattr(subscriber, "language", "ko"),
-                scope=subscriber_scope,
+                result, customized, update, language=getattr(subscriber, "language", "ko")
             )
 
         except Exception as e:
@@ -3961,7 +3539,6 @@ class AzureUpdateAnalyzer:
         customized: dict,
         update: "AzureUpdate",
         language: str = "ko",
-        scope: Optional[AnalysisScope] = None,
     ) -> AnalysisResult:
         """Build AnalysisResult from customized JSON, falling back to original values.
 
@@ -3970,7 +3547,6 @@ class AzureUpdateAnalyzer:
             customized: Customized JSON dict from LLM
             update: Original Azure Update
             language: Subscriber language, used for the re-verification notes
-            scope: Hard resource boundary used for deterministic output validation
 
         Returns:
             New AnalysisResult with customized fields
@@ -4091,20 +3667,6 @@ class AzureUpdateAnalyzer:
             in [RelevanceStatus.RELEVANT, RelevanceStatus.OPPORTUNITY, RelevanceStatus.UNKNOWN]
         )
 
-        affected_resources = customized.get("affected_resources", original.affected_resources)
-        resource_queries = original.resource_queries
-        if resource_queries:
-            affected_resources, resource_queries = customize_resource_queries(
-                original.affected_resources,
-                resource_queries,
-                customized.get("resource_queries", []),
-                affected_resources,
-            )
-        if scope and scope.is_bounded:
-            affected_resources = [
-                resource for resource in affected_resources if scope.contains_resource(resource)
-            ]
-
         customized_result = AnalysisResult(
             update_id=original.update_id,
             update_title=original.update_title,
@@ -4134,20 +3696,16 @@ class AzureUpdateAnalyzer:
             one_line_summary=customized.get("one_line_summary", original.one_line_summary),
             relevance_evidence=customized.get("relevance_evidence", original.relevance_evidence),
             relevance_reason=customized.get("detailed_analysis", original.relevance_reason),
-            affected_resources=affected_resources,
-            resource_queries=resource_queries,
+            affected_resources=customized.get("affected_resources", original.affected_resources),
             impact_summary=original.impact_summary,
             impact_details=impact_details,
             action_items=action_items if action_items else original.action_items,
             recommendations=recommendations,
             reference_docs=customized.get("reference_docs", original.reference_docs),
-            visual_assets=original.visual_assets,
             additional_checks=customized.get("additional_checks", original.additional_checks),
             should_notify=should_notify,
         )
-        return self._copy_result_evidence(
-            original, self._filter_result_to_scope(customized_result, scope or AnalysisScope())
-        )
+        return self._copy_result_evidence(original, customized_result)
 
     def _parse_analysis_result(self, state: AgentState, update: AzureUpdate) -> AnalysisResult:
         """Parse the analysis result from agent state."""
@@ -4362,7 +3920,7 @@ class AzureUpdateAnalyzer:
             )
             if not resources_match:
                 resources_match = re.search(
-                    r'"영향(?:받는)?_리소스"\s*:\s*\[(.*?)\]', clean_raw, re.DOTALL
+                    r'"영향받는_리소스"\s*:\s*\[(.*?)\]', clean_raw, re.DOTALL
                 )
             if not resources_match:
                 resources_match = re.search(
@@ -4504,10 +4062,7 @@ class AzureUpdateAnalyzer:
             # Extract affected resources (supports both old and new format)
             resources = parsed_json.get(
                 "affected_resources",
-                parsed_json.get(
-                    "영향받는_리소스",
-                    parsed_json.get("영향_리소스", parsed_json.get("관련 리소스 식별", [])),
-                ),
+                parsed_json.get("영향받는_리소스", parsed_json.get("관련 리소스 식별", [])),
             )
             if isinstance(resources, list):
                 affected_resources = resources
@@ -4612,7 +4167,7 @@ class AzureUpdateAnalyzer:
             # Don't duplicate: if impact_summary is empty, leave it empty
             # (structured impact_details will be shown instead)
 
-            # 환경 연관성의 근거와 판단 한계를 보존
+            # Extract relevance evidence (why this update was selected)
             relevance_evidence = clean_for_display(parsed_json.get("relevance_evidence", ""))
         else:
             # Fallback: Try regex-based extraction
@@ -4670,10 +4225,6 @@ class AzureUpdateAnalyzer:
                 )
             # Don't copy relevance_reason to impact_summary to avoid display duplication
 
-        affected_resources, resource_queries = resolve_resource_queries(
-            parsed_json.get("resource_queries", []) if parsed_json else [], affected_resources
-        )
-
         # Should notify based on urgency and relevance
         # NOT_RELEVANT always suppresses notification, regardless of urgency
         should_notify = relevance != RelevanceStatus.NOT_RELEVANT and (
@@ -4714,7 +4265,6 @@ class AzureUpdateAnalyzer:
             relevance_evidence=relevance_evidence,
             relevance_reason=relevance_reason,
             affected_resources=affected_resources,
-            resource_queries=resource_queries,
             impact_summary=impact_summary,
             impact_details=impact_details,
             action_items=action_items,

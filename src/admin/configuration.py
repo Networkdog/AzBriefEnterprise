@@ -1,4 +1,4 @@
-"""Mutable subscriber and administrator configuration for the Admin console."""
+"""Administrator settings and ETag-protected automatic execution state."""
 
 from __future__ import annotations
 
@@ -20,6 +20,12 @@ from src.services.admin_config import (
 
 _MAX_WRITE_ATTEMPTS = 3
 _AUTOMATIC_RUN_LEASE_HOURS = 13
+_AUTOMATIC_RUN_STATE_FIELDS = {
+    "schema_version",
+    "automatic_run_last_occurrences",
+    "automatic_run_active",
+    "updated_at",
+}
 
 
 def _ensure_utc(value: datetime) -> datetime:
@@ -147,7 +153,7 @@ class ManagedAdminConfiguration(BaseModel):
 
 
 class AdminConfigurationManager:
-    """Merge immutable bootstrap settings with ETag-protected mutable entries."""
+    """Resolve administrator settings and protect runtime execution claims with ETags."""
 
     def __init__(
         self,
@@ -162,17 +168,32 @@ class AdminConfigurationManager:
     @property
     def configured(self) -> bool:
         """Return whether UI mutations have a durable destination."""
-        return self._store.configured
+        return not self.environment_only and self._store.configured
+
+    @property
+    def environment_only(self) -> bool:
+        """Return whether administrator settings are owned exclusively by ARM."""
+        return get_settings().admin_configuration_source == "environment"
 
     @staticmethod
     def _parse(snapshot: AdminConfigSnapshot) -> ManagedAdminConfiguration:
         if not snapshot.payload:
             return ManagedAdminConfiguration()
+        if get_settings().admin_configuration_source == "environment":
+            return ManagedAdminConfiguration.model_validate(
+                {
+                    key: value
+                    for key, value in snapshot.payload.items()
+                    if key in _AUTOMATIC_RUN_STATE_FIELDS
+                }
+            )
         return ManagedAdminConfiguration.model_validate(snapshot.payload)
 
     async def _load(self, force: bool = False) -> ManagedAdminConfiguration:
         import time
 
+        if self.environment_only:
+            return ManagedAdminConfiguration()
         now = time.monotonic()
         if not force and self._cached is not None and now < self._cache_expires_at:
             return self._cached.model_copy(deep=True)
@@ -199,13 +220,27 @@ class AdminConfigurationManager:
             changed = update(current.model_copy(deep=True))
             changed.updated_at = datetime.now(timezone.utc)
             try:
-                await self._store.write(changed.model_dump(mode="json"), snapshot.etag)
+                payload = changed.model_dump(
+                    mode="json",
+                    include=_AUTOMATIC_RUN_STATE_FIELDS if self.environment_only else None,
+                )
+                await self._store.write(payload, snapshot.etag)
                 self._cached = changed
                 self._cache_expires_at = 0.0
                 return changed.model_copy(deep=True)
             except AdminConfigConflictError:
                 self._invalidate()
         raise AdminConfigConflictError("Admin configuration remained contended")
+
+    async def _mutate_settings(
+        self,
+        update: Callable[[ManagedAdminConfiguration], ManagedAdminConfiguration],
+    ) -> ManagedAdminConfiguration:
+        if self.environment_only:
+            raise AdminConfigNotConfiguredError(
+                "administrator settings are read-only; update App and Job ARM environment/Secrets"
+            )
+        return await self._mutate(update)
 
     @staticmethod
     def _bootstrap_subscribers() -> list[Subscriber]:
@@ -247,6 +282,20 @@ class AdminConfigurationManager:
         now: datetime,
     ) -> list[AutomaticRunSchedule]:
         schedules = [self._bootstrap_schedule(now)]
+        if self.environment_only:
+            for run_time in get_settings().automatic_run_times_utc:
+                if run_time == schedules[0].time_utc:
+                    continue
+                schedule = self._managed_schedule(run_time, now)
+                schedules.append(
+                    schedule.model_copy(
+                        update={
+                            "key": _schedule_key("deployment", schedule.cron_expression),
+                            "managed": False,
+                        }
+                    )
+                )
+            return schedules
         schedules.extend(
             self._managed_schedule(run_time, now)
             for run_time in configuration.automatic_run_times_utc
@@ -322,7 +371,7 @@ class AdminConfigurationManager:
             configuration.subscribers.append(normalized)
             return configuration
 
-        await self._mutate(add)
+        await self._mutate_settings(add)
         return normalized
 
     async def update_subscriber(self, email: str, subscriber: Subscriber) -> Subscriber:
@@ -358,7 +407,7 @@ class AdminConfigurationManager:
             configuration.subscribers[index] = normalized
             return configuration
 
-        await self._mutate(replace)
+        await self._mutate_settings(replace)
         return normalized
 
     async def remove_subscriber(self, email: str) -> None:
@@ -378,7 +427,7 @@ class AdminConfigurationManager:
             configuration.subscribers = remaining
             return configuration
 
-        await self._mutate(remove)
+        await self._mutate_settings(remove)
 
     async def get_admin_principals(self) -> set[str]:
         """Return bootstrap and managed administrator identifiers."""
@@ -402,7 +451,7 @@ class AdminConfigurationManager:
             configuration.admin_principals.append(normalized)
             return configuration
 
-        await self._mutate(add)
+        await self._mutate_settings(add)
         return normalized
 
     async def remove_admin(self, principal: str) -> None:
@@ -419,7 +468,7 @@ class AdminConfigurationManager:
             configuration.admin_principals.remove(normalized)
             return configuration
 
-        await self._mutate(remove)
+        await self._mutate_settings(remove)
 
     async def get_automatic_run_schedules(
         self,
@@ -451,7 +500,7 @@ class AdminConfigurationManager:
             configuration.automatic_run_times_utc.sort()
             return configuration
 
-        await self._mutate(add)
+        await self._mutate_settings(add)
         return self._managed_schedule(normalized, datetime.now(timezone.utc))
 
     async def remove_automatic_run_time(self, run_time: str) -> None:
@@ -472,7 +521,7 @@ class AdminConfigurationManager:
             configuration.automatic_run_last_occurrences.pop(key, None)
             return configuration
 
-        await self._mutate(remove)
+        await self._mutate_settings(remove)
 
     async def claim_due_automatic_run(
         self,
@@ -481,7 +530,11 @@ class AdminConfigurationManager:
     ) -> Optional[AutomaticRunLease]:
         """Atomically claim one due schedule occurrence across Job executions."""
         current = _ensure_utc(now or datetime.now(timezone.utc))
-        preview = await self._load(force=True)
+        preview = (
+            self._parse(await self._store.read())
+            if self.environment_only
+            else await self._load(force=True)
+        )
         if self._due_schedule(preview, current, lookback_minutes) is None:
             return None
 

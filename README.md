@@ -15,143 +15,7 @@
 Container Apps Job (cron) → Microsoft Foundry Hosted Agent → Communication Services
 · Container App control plane + `/admin` + `/mcp` · VNet injection + Private Endpoint by default
 
-1. [v2 Infrastructure Deployment](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Finfrastructure.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Ffoundation.createUiDefinition.json)
-2. [v2 Application Deployment](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.json/createUIDefinitionUri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fv2%2Fapplication.input.createUiDefinition.json)
-
-[v2 deployment guide](infra/v2/README.md): complete infrastructure in the same resource group before installing or updating the application.
-
-**Restricted customer identity policy:** deployment must not require arbitrary Entra app
-registrations, SSO or an authentication gateway. The current MCP and automatic web setup
-do not meet that policy. The [target design](infra/v2/RESTRICTED_IDENTITY_DESIGN.md) retains
-Azure MCP with private network-only caller trust for the exact dedicated Foundry subnet,
-keeps web/API authentication separate, and manages settings through ARM environment/Secrets
-configuration. Subnet trust covers all eligible workloads, not one authenticated Agent.
-These changes are not implemented; do not remove authentication from the current deployment.
-The target initial Foundry publishing mode allows only approved inbound VNet/subnet and public
-IPv4/CIDR sources with default deny, while preserving outbound VNet Injection. Exact Hosted
-compatibility and policy acceptance remain unverified; Storage and MCP stay private. Close the
-temporary public publishing path after private runtime acceptance, not by an assumed ACL expiry.
-
-The [KT single-entry coordinator](scripts/deploy_kt_once.ps1) now provides an offline plan and
-fail-stop stage orchestration. Its default `Plan`/`-WhatIf` never calls Azure. Current restricted
-profile deployment is blocked before Azure access because the MCP trust mode, environment-only
-Admin settings and private acceptance/public-access closure are not implemented. Local initial
-Foundry ingress validation is implemented, but no live KT deployment success is claimed.
-
-Infrastructure independently offers **new or existing** Foundry, Communication Services,
-Container Apps Environment and Storage. Existing resources may be in other resource groups
-in the same subscription; their **full ARM IDs** are saved in the workload RG's tag handoff.
-Shared parents are not redeployed. AzBrief adds its own project, App/Job/MCP containers and
-workload-specific Blob containers/permissions. A reused Environment retains its existing
-Log Analytics workspace, and reused Communication Services retains its linked email domain.
-Existing private networking and region compatibility must pass preflight; application updates
-reuse these saved IDs without recreating shared services.
-
-The foundation form asks for **services first, network second, workload names third**.
-An existing Foundry or Environment supplies its verified VNet and dedicated subnet automatically;
-the form does not ask for that service's subnet again. It asks only for subnets needed by new
-resources, and omits the Private Endpoint subnet when no new endpoint is requested.
-Shared-service notices explain the server-side verification performed at **Review + create**.
-Ownership, subnet and model conflicts block ARM validation before any resource writes.
-Public or unintegrated shared services
-remain unsupported by this private profile; the template never silently converts them.
-
-These are **foundation-only questions**. Completion reads service modes from `azbrief.v2.options*`,
-exact IDs from `azbrief.v2.resources*`, and the saved VNet/subnet name tags. It never asks for
-those choices again; application deployment shows a read-only summary instead. A previously
-tagged RG also hides fresh foundation inputs and links to the separate completion view.
-Existing-RG inputs wait for the exact successful RG read; missing,
-denied or stale responses do not reopen an empty installation form or change the selected stage.
-
-Model selection no longer sets the VNet or Environment region. An existing VNet retains its
-verified actual region; only a new VNet uses the native **New infrastructure deployment region**
-control in Basics. RG metadata and model-candidate discovery do not override either choice.
-Completion and application updates preserve the saved infrastructure location.
-
-Existing-VNet subnet lists read the selected VNet directly from ARM, or the exact VNet inherited
-from a reused service. They never substitute a subscription response. The form distinguishes an
-absent or different response ID, access failure and an empty subnet list; it never preselects a
-subnet for a new resource. Existing bindings are readbacks, not arbitrary subnet defaults.
-Both v2 forms explicitly enable the supported wizard flow: start at **Basics**, validate each
-step, and use **Next** to continue. The legacy KT form retains its navigation.
-Generated control names must be unique in every scope; normalization rejects duplicates
-instead of allowing conflicting controls to reach Portal.
-Both Portal forms avoid capturing outer parameters in nested `map`/`filter` lambdas.
-The real CreateUI evaluator does not preserve Python-style lexical scope; that defect can
-leave the initial tab blank and prevent live subnet responses from reaching the controls.
-Use explicit `startsWith`/`endsWith` for ARM-ID and saved-JSON boundaries: native Portal equality
-on empty `split` elements is not Python's empty-string equality and can wrongly block completion
-or an application update. The true-only deployment guard and exact eight-field ID binding remain.
-Inactive parent-ID branches also coalesce empty native split segments before string operations.
-Tests combine native empty-element behavior with eager evaluation for unloaded and new-VNet
-forms; a hidden empty branch must not prevent the initial form from loading.
-Model-reuse checks likewise normalize missing `properties`, `model` and `sku` parents before
-comparison. An unloaded candidate has only empty/zero failure values, never a ready deployment;
-reuse still requires one actual exact inventory match. This prevents a pre-query model check
-from interrupting Portal initialization before Basics and its subscription controls are ready.
-See the [v2 network guidance](infra/v2/README.md#new-or-existing-vnet) if no choices appear.
-
-The infrastructure entry opens the dedicated foundation view; its Basics notice links to the
-dedicated completion view. The application entry has its own input view. These views remove the
-reactive stage switch and run the canonical scope, ownership, subnet, model and readiness policy
-in a generated ARM validation module **before every resource write**. Input values and allow-listed
-non-secret ARM observations use separate dependency graphs, so an ordinary selection does not
-re-encode all live-resource evidence. Missing reads remain unknown; errors and continuation URLs
-are reduced to presence flags, never copied into deployment parameters.
-An untagged RG may omit the ARM `tags` property entirely; it remains a valid empty tag set.
-Phase views also remove dangling input references and preserve false/empty native binding results,
-so unloaded saved metadata cannot interrupt Basics or be mistaken for readiness.
-Required/format checks and application foundation/MCP readiness messages remain native.
-The true-only consent guard remains; it does not replace server verification. The original
-combined forms remain compatibility/policy sources, not the new README entry points.
-Offline expression timings are not measured Portal Next-button latency; verify the published
-ARM/UI pair in an authenticated, policy-compliant browser.
-
-The model options display the actual parent Foundry **model/quota region**, separately from
-infrastructure choices. A model deployed directly under that account has no independent
-`location` field. **GlobalStandard inference is globally routed, not pinned to a selected region.**
-A model in another region requires a separate model resource and a
-[connected-model configuration](https://learn.microsoft.com/azure/foundry/agents/how-to/connected-models);
-this template does not silently add one or change authentication/networking to enable it.
-Use `--list-model-options --model-regions` for read-only model/quota/capacity discovery.
-
-New v2 model defaults are Core `gpt-5.2` / `2025-12-11` and Simple `gpt-5-mini` /
-`2025-08-07`, each with 200 `GlobalStandard` capacity units. No PTU deployment or reservation
-is used. Existing saved profiles stay unchanged; check current quota and capacity before deployment.
-
-For the first application install from an immutable `*.azurecr.io` image, App and Job use the
-saved workload UAMI for registry authentication. Grant only the required pull permission before
-installation; ABAC-enabled registries need Repository Reader with an exact-repository condition,
-not legacy AcrPull. The app template never changes registry permissions. Explicit registry
-configuration wins, and subsequent updates preserve the existing configuration and secrets.
-An interrupted initial App-only install requires explicit `--recover-initial-install` after
-diagnosis; it can create the missing Job only with the original readable API key and a
-never-deployed tag pair. Missing keys or completed installations never become reset paths.
-Native updates use an independent secure server-side App/Job snapshot, avoiding ARM
-self-reference cycles without exposing secrets in Portal inputs or deployment history.
-
-Completion displays the actual saved model/version/region, not the new defaults. An older
-5.6 profile still requests 5.6 until an approved `--stage complete --reselect-models` operation
-passes the zero-model/zero-project checks; it never moves the existing region.
-
-`foundation` success is only the first infrastructure phase. Follow the infrastructure form's
-**Complete existing foundation** link for the same RG, finish authorized MCP preparation,
-and confirm `azbrief.v2.state=ready` before using the application button. An application
-Validation failure with `portalValidationPassed=false` is not permission to force that value.
-
-In the existing directory-enabled profile, MCP preparation need not be a customer-run CLI command. Foundation can explicitly select an
-already-authorized **deployment-only Managed Identity** and existing private ACI/File Storage
-execution resources; completion then configures MCP authentication and reaches `ready` automatically.
-Existing `mcp_pending` installations have a targeted automatic-setup link in the app form.
-The tenant's initial Graph authorization remains an administrator decision: the template never
-grants itself permissions, changes private networking or gives directory rights to runtime identities.
-This profile is not an alternative for customers prohibiting app registration, SSO or gateways.
-See [automatic MCP setup](infra/v2/README.md#automatic-mcp-authentication-without-customer-cli).
-
-Public control-plane image reference (registry `Anonymous` pull, port 8000, `/health`):
-`ghcr.io/networkdog/azbriefenterprise@sha256:6d8fe1e237110318344f5786602b5105c6e662f6a45186dcfc8bc6cb8bd2aaa3`.
-Registry pull mode does not disable application authentication. Approve the image revision
-before installation; a template update does not publish a new image.
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json)
 
 </div>
 
@@ -172,14 +36,13 @@ before installation; a template update does not publish a new image.
 - [End-to-end operation](#end-to-end-operation)
 - [Quick Start](#quick-start)
 - [Deployment](#deployment)
-  - [Two-stage deployment](#two-stage-deployment)
+  - [One-click deploy](#one-click-deploy)
   - [Network isolation](#network-isolation-networkisolationmode)
   - [Post-deployment steps](#post-deployment-steps)
   - [Scheduling operations](#scheduling-operations)
 - [Multi-agent pipeline](#multi-agent-pipeline)
 - [Admin console](#admin-console)
 - [Analysis archive](#analysis-archive)
-- [Feedback and web preview](#feedback-and-web-preview)
 - [How the analysis works](#how-the-analysis-works)
 - [Per-subscriber reports](#per-subscriber-reports)
 - [Configuration](#configuration)
@@ -206,7 +69,7 @@ private networking, durable state and enterprise operations.
 AzBrief is an **Azure Update Intelligence Agent** for Azure administrators. It collects
 Azure updates, correlates them with the tenant's actual resources, evaluates each update
 on the independent axes of importance, impact and job relevance, and turns the findings
-into role-specific digests grouped by publication week, with evidence and concrete actions.
+into a role-specific daily digest with evidence and concrete actions.
 
 ### Mission
 
@@ -220,7 +83,6 @@ that Azure changed and making a timely, well-grounded operational decision.
 |---|---|
 | **Environment before generic summary** | Ground conclusions in the tenant's real resources, configuration, health, policy, cost and regional availability |
 | **Action over notification** | Go beyond describing a change to provide scoped procedures, commands, deadlines and risk warnings |
-| **Decision over feature education** | Write as the assigned CSA would advise: identify the decision hinge, give a conditional recommendation, expose the trade-off and hidden failure mode, name the operational owner, and define what evidence closes the decision |
 | **Coverage without silent filtering** | Analyze every collected update so retirements, security risks and adoption opportunities are not discarded before evidence is gathered |
 | **One update, many responsibilities** | Adapt the same evidence for infrastructure, security, architecture and other roles, in each subscriber's language |
 | **Trust before autonomy** | Keep evidence traceable, validate executable actions and fail closed when identity, permissions or model capabilities are unclear |
@@ -262,7 +124,7 @@ is hard:
 
 AzBrief collects Azure updates, cross-references them against your tenant's actual resources
 via Resource Graph, classifies each by importance, impact and job relevance, and delivers a
-consolidated publication-week digests — complete with CLI commands, procedures, and deadlines — straight
+consolidated daily digest — complete with CLI commands, procedures, and deadlines — straight
 to each team member's inbox.
 
 The **Enterprise** edition adds what a regulated environment needs on top of that analysis:
@@ -287,19 +149,6 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   - **Importance** — the update's inherent significance in the Azure ecosystem
   - **Impact** — the effect on your actual resources, from Resource Graph queries
   - **Job relevance** — the fit to the subscriber's specific role
-- **Category-aware environment relevance** — Changes and retirements explain applicability,
-  required action, and source-backed deadlines. New features and services explain documented value
-  for known workloads or requirements, adoption conditions, and trade-offs; evaluation is optional.
-  Not owning the service does not establish irrelevance or SDK/code non-use. Material gaps remain
-  explicit, and hypothetical use cases never become invented adoption plans. Role/focus profiles
-  are assessed even without affected resources. Archive, single/digest email, and evaluation output
-  share the **Environment Relevance** heading (`환경 연관성` / `環境との関連性`); the existing
-  `relevance_evidence` field and immutable archive documents are unchanged. Updated generation
-  guidance applies to new analyses after the Hosted code and affected Prompt Agent versions deploy;
-  the control-plane release changes the display heading, not historical report text.
-  Single/digest delivery keeps environment evidence and its resource detail in one section,
-  with glossary/source notes beside the related prose. Unmatched sources are retained after
-  additional checks (or the overview when checks are absent), and HTML/plain summaries agree.
 - **Tenant-wide correlation** — Resource Graph queries across every accessible subscription
 - **Verified commands from the docs** — The Learn page an update links to is fetched and its
   `<pre>` command blocks are extracted separately from the prose, so real `az`/PowerShell
@@ -317,57 +166,6 @@ The **Enterprise** edition adds what a regulated environment needs on top of tha
   action is reviewed as `advisory_review`: no CLI or rollback is required, and an incomplete
   go/no-go check can be `caution` but cannot be blocked merely for lacking a command. Commands
   and state-changing Portal procedures remain fail-closed.
-- **Research-report email layout** — White paper, graphite `#202124`, restrained red `#a92336`
-  section headings and blue `#365b8c` links, without colored cover panels or shadowed cards.
-  A bold sans-serif 28px wordmark, 40px main title, 24px section headings and 18px plain lead establish
-  the hierarchy above 14px prose. Mobile titles, section headings and leads use 28px, 20px and 16px.
-  Complete titles prefer word boundaries, with safe wrapping for long identifiers. Single reports
-  and digest details keep the summary full-width without an "Update Summary" subtitle. The three
-  independent assessments use compact 11px label / 12px value pairs with 4px/8px padding and wrap
-  together on narrow screens, without a separate column or fixed height. All body sections retain full-width
-  content below their headings, with operational facts in a white ruled ledger.
-  The digest shows importance labels and exact counts in a compact 14px line, without charts or
-  oversized numbers. Zero counts remain visible; analyzed and skipped totals stay separate.
-  Full numbered contents titles link to every analysis and back. Contents and action numbers use
-  24px bold tabular figures, chapter numbers use 32px, and action titles use 17px. Each assessment
-  cell has a light red, amber or green background and one unboxed 12px level label. Contents cells
-  fill the entire row height, with metric headers and values centered and titles left-aligned. Concept boxes
-  use a light neutral fill; verification and additional checks retain their 2px rules. The footer
-  keeps the disclaimer, feedback and generation metadata without the analysis-basis tagline.
-  Status text, contrast >=4.5:1, resource reasons, grouping and Portal identity remain intact.
-  Resource grids use Resource / Type / Resource Group / Subscription order, including mobile labels;
-  resource, group and subscription Portal links stay attached to their values.
-  Titles stay full-width above labeled metrics in inline-only/MSO contents and below 800px;
-  at >=800px, media queries use 70% title / 10% per metric. Email text, the wordmark and numbers share
-  `'Noto Sans KR', 'AppleSDGothicR00', 'Malgun Gothic', 'Dotum', Arial, Helvetica, sans-serif`
-  in that order, falling back to the next installed font. No font or webfont is embedded.
-  Code keeps its monospace stack.
-  Korean resource sections use `연관 리소스` across
-  email, Archive, and judge rendering; the `affected_resources` field and archived data remain
-  unchanged. The 640px inline/MSO baseline grows to 760px
-  at 800px and 840px at 1100px where media queries
-  are supported. Section gutters are 20px by default and in inline-only output, 24px at >=1100px,
-  16px at <=640px, and 12px at <=400px. When an official Microsoft Learn article contains a descriptive PNG/JPEG/GIF,
-  the report may add up to two source-linked screenshots with alt text and captions; digests keep
-  at most one per update and four overall. Figures follow the analysis body within its section,
-  without a separate visual heading; plain text preserves captions and source URLs without that
-  heading too. Capability-family HTML keeps its opportunity dimensions in the analysis section;
-  change-family reports retain a separate impact section. The renderer rejects non-Microsoft hosts, unsupported
-  formats, credentials, ports, and non-HTTPS sources. These delivery-only visuals do not enter the
-  immutable Archive v1 schema, and the complete text report remains usable when a mail client blocks
-  remote images. See [src/email/README.md](src/email/README.md) for rendering invariants.
-- **Complete resource evidence** — For large applicable query results, the report selects a
-  request-local `resource_queries` reference and reason; the runtime restores every collected ARM
-  identity and preserves scope, counts and completeness through serialization and customization.
-  A narrower subscriber scope removes broader query metadata. Archive v1 retains the complete
-  resource projection without delivery-only query metadata. The parser accepts legacy Korean
-  resource keys while preserving the canonical `affected_resources` field's precedence.
-- **Throttling-aware retries** — Planning, evidence evaluation, reporting, and Cost Management
-  wait before retrying 429 responses. Prefer valid server retry headers (seconds, milliseconds,
-  HTTP dates, or Cost Management-specific delays); otherwise use exponential backoff with jitter.
-  Planning retries do not consume tool turns. Cost queries allow three retries and disable nested
-  SDK retries; never sleep after the final failed attempt. The Hosted HTTP boundary also honors
-  `Retry-After`. Exhaustion remains an explicit failure; subscriber customization stays fail-fast.
 - **Role-based reports** — Same update, different perspective per subscriber
 - **Multilingual** — Per-subscriber language from a pluggable registry (Korean, English and
   Japanese ship curated style guides; any other language still renders through fallback
@@ -499,26 +297,20 @@ sequenceDiagram
   `azbrief-archive`. In environments where the archive is configured, a storage failure prevents
   the item from being marked complete at the watermark and stops both the digest and checkpoint.
   The processing window therefore cannot advance beyond the archive.
-7. Stored results are grouped by the update's UTC `published_date` into Monday-Sunday calendar
-  weeks and sent oldest week first, with one digest per week and recipient within the run.
-  For example, 100 updates released as ten per day from August 1-10, 2026 produce three emails
-  containing 20, 70 and 10 updates. Both week bounds appear in the reporting period. Undated targets form a
-  separate `N/A` group rather than being assigned today's date. The default digest includes
+7. Stored results are collected into one set of digest candidates. The default digest includes
   every analyzed update regardless of relevance, while `should_notify` supplies relevant-item
-  counts and badges. Canonical-analysis links point to documents saved before customization.
+  counts and badges. The email's shared canonical-analysis link points to the document saved
+  before customization.
 8. When subscribers exist, the same evidence-backed result is sent back to the Hosted Agent for
   parallel role- and language-specific customization. A failed customization falls back to the
-  original analysis, and one failed email does not block other subscribers or later weeks.
-  `email_sent` is true only when all requested weekly deliveries report success. This grouping
-  does not change run schedules or deduplicate delivery across separate runs.
+  original analysis, and one failed email does not block other subscribers. `email_sent` is true
+  when delivery succeeds for at least one recipient.
 
 ### Exact meaning of completed status
 
-For a non-empty, non-dry run, `RunRecord.status == "completed"` requires no failed, pending, or
-deferred analyses and successful requested weekly deliveries. Otherwise the run is `partial`, with
-a bounded explanation; an archive or run-level failure remains `failed`. Empty windows and dry
-runs can complete without email. The scheduler returns a nonzero exit code for partial runs.
-Operational validation must inspect the counters and delivery logs together:
+`RunRecord.status == "completed"` means the orchestration function reached the end; it does not
+mean every individual analysis and email succeeded. The scheduler process exit code is based on
+this status alone, so operational validation must inspect these fields together:
 
 | Field | Meaning |
 |---|---|
@@ -528,7 +320,7 @@ Operational validation must inspect the counters and delivery logs together:
 | `failed` | Number of isolated item failures; failed items count as processed to prevent permanent pinning |
 | `deferred` | Number of items not started because of the run-time budget and carried to the next window |
 | `pending` | Number of items beyond the contiguous completed prefix that the checkpoint does not yet cover |
-| `email_sent` | Whether every requested release-date/recipient digest reported successful delivery; not proof of inbox receipt or complete analysis |
+| `email_sent` | Whether the default digest was sent when there are no subscribers, or at least one subscriber received it otherwise |
 | `checkpoint_committed` | Whether the calculated watermark actually advanced in the durable store |
 
 The current checkpoint tracks **processing state for the analysis window**; it is not a delivery
@@ -606,40 +398,6 @@ cannot be determined run serially. Based on the update type, the first execution
 adds often-missed checks for Resource Health, Policy, Service Health, Advisor, configuration
 profiles, dependencies, and regional availability.
 
-**Adaptive Resource Graph investigation.** KQL follows the update's evidence question, not a fixed
-service template. The specialist can inspect nested properties, configuration distributions, array
-elements and ID-based relationships with supported project expressions, joins/unions and mv-expand.
-Small live schema samples are allowed; cached paths are hints, not current or exhaustive evidence.
-Custom queries carry `purpose` and `expected_columns`. Syntax errors, off-topic/empty results and
-missing required values trigger evidence-led rewriting and re-execution, with up to eight main
-attempts and two result rewrites. Repeated queries, permission denial and cancellation stop promptly.
-The loop preserves scope and applicability thresholds, never substitutes unrelated inventory or
-changes a security condition merely to obtain rows. False/zero are valid values; null stays unknown.
-Results expose the executed query, attempts and unresolved gaps; evaluation checks `query_intent`
-before choosing a follow-up investigation. SDK collection follows at most ten 1000-row pages and
-discloses incomplete pagination. All received service-detail rows remain available to the result
-store. A stored preview can be searched, but uncollected pages require narrower/partitioned KQL.
-Scope-enforced join restrictions remain in place. The live service accepts computed projections
-but rejects `kind=tostring(kind)`; use direct `kind` or another alias with consistent references.
-Updated FunctionTool schemas and runtime guidance require new Prompt Agent versions and a Hosted
-Agent deployment for production activation. Local and targeted live query checks do not constitute
-a full deployed end-to-end report evaluation.
-
-**Cost-aware reports.** Pricing, billing/meter changes, paid capabilities, and documented savings
-can trigger a recent 30-day `ActualCost` lookup through Azure Cost Management, the API behind
-Cost Analysis. The Azure API specialist owns this evidence; first-pass enrichment also detects
-financial signals in the update title and body. Queries prefer an exact ARM resource-type filter
-or a verified billing service label and preserve the subscription, period, filter, and currency.
-The report's existing cost-impact field separates observed spending from estimated changes:
-estimates require documented rates and matching usage, not an advertised percentage applied to
-the entire bill. Current charges can arrive late or change before invoicing, and ActualCost is not
-an amortized run rate. Empty, denied, mixed-currency, or paginated responses remain explicit gaps.
-Queries use an explicit, configured, or uniquely discoverable subscription, never the first of
-several. Bounded subscriber scopes remain unsupported by these cost tools and are not broadened.
-The Hosted Agent identity needs cost-read access at the target scope, such as Cost Management
-Reader; Billing hierarchy access is separate. Activation requires updated Prompt Agent definitions
-and a Hosted Agent deployment; local tests alone do not prove live costs or report quality.
-
 **Evaluate and revise.** The evaluator reviews not only whether tools succeeded, but also official
 facts, tenant impact, resource identification, region/configuration data, and **evidence
 completeness**. Sufficient evidence advances to reporting. Partial evidence revises and reruns only
@@ -691,25 +449,16 @@ records are for observability; the checkpoint alone owns processing state that m
 
 ## Quick Start
 
-For a new customer installation, use the [v2 deployment guide](infra/v2/README.md).
-This section is for local development; its root `.env` must not be reused by customer setup.
-
 Local development uses your Azure CLI identity to invoke agents already published in a
 Microsoft Foundry project. There is no Azure OpenAI/OpenAI endpoint or API key fallback.
 
-Windows (PowerShell):
-
-```powershell
+```bash
 git clone https://github.com/Networkdog/AzBriefEnterprise.git
-Set-Location AzBriefEnterprise
-python -m venv .venv
-& .\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-Copy-Item .env.example .env
+cd AzBriefEnterprise
+python -m venv .venv && .venv/Scripts/Activate.ps1  # or: source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
 ```
-
-On Linux/macOS, activate with `source .venv/bin/activate` after creating the virtual environment,
-then install the requirements and create the local `.env` from `.env.example`.
 
 Set at minimum in `.env`:
 
@@ -749,63 +498,55 @@ python -m scripts.test_local analyze --latest --jsonl results.jsonl  # export, s
 python -m scripts.test_local resources                               # view your resource summary
 ```
 
-`test_local analyze` constructs the local analyzer and calls the persisted Prompt Agents. It
-does not prove the deployed Hosted Agent works. Use `python -m scripts.smoke_hosted_agent` for
-one read-only analysis through the deployed Hosted contract; it incurs model usage but sends no
-email and does not test control-plane archive persistence.
-
 > **Historical date ranges:** The live Azure Update RSS feed only exposes a rolling window of
 > the most recent ~200 items, so months that have aged out return nothing when queried
-> directly. For date-range analysis (`--from`/`--to`), AzBrief uses a locally crawled history
-> archive when present; otherwise it pages the public Release Communications API with a bounded
-> `created` filter. Both paths de-duplicate against the live feed. Refresh the optional local
-> archive with `python -m scripts.crawl_azure_updates` for repeatable or offline runs.
+> directly. For date-range analysis (`--from`/`--to`), AzBrief merges a locally crawled
+> history archive (`data/azure_updates_history.jsonl`, de-duplicated against the live feed).
+> Refresh it with `python -m scripts.crawl_azure_updates`.
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
 
 ## Deployment
 
-### Two-stage deployment
+### One-click deploy
 
-Use only the two v2 deployment links at the top of this README, with the
-[v2 deployment guide](infra/v2/README.md). Infrastructure prepares the Foundry account, models,
-project, private network, app-owned storage, identities, monitoring, email and RG handoff once.
-Application deployment installs or updates the App, Job and managed MCP container without replaying
-that infrastructure. Prompt/Hosted Agent publication and runtime acceptance remain guarded steps.
+Deploys the Azure foundation and control plane: a Foundry account and project with a model
+deployment, the Container App (API + Admin + MCP), the Container Apps Job that drives the
+daily digest, Key Vault, state storage, and Communication Services. Prompt Agents and the
+Hosted Agent are Foundry data-plane objects and are deployed in the post-deployment steps.
 
-In the infrastructure form, select **Foundation**, then **Network selection**. An existing VNet
-keeps its region; new infrastructure uses the native Basics location. Model options report the
-parent Foundry region and never relocate the VNet or Environment.
+[![Deploy to Azure](https://aka.ms/deploytoazurebutton)](https://portal.azure.com/#create/Microsoft.Template/uri/https%3A%2F%2Fraw.githubusercontent.com%2FNetworkdog%2FAzBriefEnterprise%2Fmain%2Finfra%2Fazbrief-enterprise-deploy.json)
 
-**Infrastructure and application responsibilities:**
+**What gets deployed** ([infra/azbrief-enterprise-deploy.json](infra/azbrief-enterprise-deploy.json),
+authored in [infra/enterprise/main.bicep](infra/enterprise/main.bicep)):
 
-| Resource | Stage | Notes |
-|----------|-------|-------|
-| Foundry account, models, project and Capability Host | Infrastructure | Basic VNet setup with Microsoft-managed agent data; GlobalStandard only |
-| VNet/subnets, Private Endpoints and DNS | Infrastructure | New or approved existing VNet; private Foundry/Environment compatibility is validated independently of model selection |
-| App state/archive Blob storage | Infrastructure | Private containers and Entra-only access; not Foundry conversation storage |
-| Control-plane and MCP UAMIs with scoped roles | Infrastructure | Separate identities; Hosted runtime grants follow guarded Agent publication |
-| Shared Container Apps Environment, logs, Insights and email | Infrastructure | One environment/workspace/Insights component; Entra authentication retained |
-| App, Manual Job, managed MCP container and configured web sign-in | Application | Real image and repeatable updates; no infrastructure replay |
-| Six Prompt Agents and one Hosted Agent | Guarded publication | Data-plane versions and runtime smoke are not created by ARM templates |
-
-MCP reuses the infrastructure-owned UAMI, shared environment and monitoring targets. Application
-updates do not recreate Reader grants. Direct MCP Insights traces/metrics and Microsoft telemetry
-remain disabled; stdout/stderr use the shared Log Analytics workspace. Insights remains Entra-only.
-Its core output includes every saved network and identity name. MCP preparation accepts an
-older output's missing names only when the corresponding ARM IDs match the exact saved targets;
-present mismatches or redirected IDs still block. Windows MSI CLI calls use the bundled Python
-entry point with explicit UTF-8 mode, preserving Graph URLs and Korean ARM/policy JSON. Docker fingerprints include the explicitly
-selected `.dockerignore` even when PowerShell treats it as hidden on Linux.
+| Resource | Name | Notes |
+|----------|------|-------|
+| User Assigned Managed Identity | `id-{baseName}` | Shared by the Container App and scheduler Job |
+| Microsoft Foundry account | `aif-{baseName}-{suffix}` | `AIServices` · `allowProjectManagement` · **`disableLocalAuth`** |
+| Foundry project | `{baseName}-agents` | Data-plane workspace for the Hosted Agent and Prompt Agents |
+| Model deployment | `gpt-4o` (configurable) | GlobalStandard, 200K TPM by default |
+| Key Vault | `kv-{baseName}-{suffix}` | RBAC-only store for all runtime secrets |
+| Storage account + `azbrief-state` container | `st{baseName}{suffix}` | Checkpoint blob, **`allowSharedKeyAccess: false`** |
+| Container Apps Environment | `cae-{baseName}-{suffix}` | VNet-integrated by default |
+| Container App | `ca-{baseName}` | Control-plane API + `/admin` + authenticated `/mcp` |
+| Container Apps Job | `caj-{baseName}` | Cron schedule, Hosted Agent invocation, checkpoint, and email |
+| Hosted Agent (subsequent `azd deploy`) | `{baseName}-analysis-hosted` | Complete LangGraph analysis and subscriber customization with a dedicated Entra identity |
+| Container App authConfig | `current` | Entra ID sign-in, created only when a client ID is supplied |
+| Communication Services + Email | `acs-{baseName}-{suffix}` | Azure-managed domain connected automatically |
+| Log Analytics + Application Insights | `log-` / `appi-` | Structured logs and tracing |
+| Control-plane role assignments | 5 assignments | Key Vault Secrets User · Storage Blob Data Contributor · Foundry User · Monitoring Metrics Publisher · RG Reader |
 
 **Security design (safe defaults):**
 
 - **Foundry has no local key** — `disableLocalAuth: true` accepts only Entra ID tokens. There is
   no model key to leak or rotate.
 - **The state store is Entra-only too** — the Storage account uses
-  `allowSharedKeyAccess: false`, with control-plane access scoped to the state/archive containers.
-- **Application credentials stay in Container Apps secrets or approved secret references.**
-  Never place them in RG tags, public outputs or committed customer parameter files.
+  `allowSharedKeyAccess: false`, and the managed identity's write permission is scoped to that
+  account alone. A checkpoint is not a secret, so it does not earn write access to the vault that
+  holds real secrets.
+- **Runtime secrets stay in Key Vault.** The Container App and scheduler Job reference them through
+  managed identity, and values do not appear in template outputs or API responses.
 - **The admin console requires both conditions** — an Entra app registration
   (`adminEntraClientId` + secret) and an explicit allow-list (`adminAllowedPrincipals`). If either
   is empty, `/admin` returns 404.
@@ -821,8 +562,8 @@ selected `.dockerignore` even when PowerShell treats it as hidden on Linux.
 
 | Value | What changes | When to choose it |
 |----|----------------|------------|
-| `vnetInjection` **(default)** | Foundry agent compute is injected into a delegated subnet, the Container Apps environment joins the same VNet, and Foundry, Key Vault, state/archive storage, and evaluation storage use **private endpoints** | Enterprise default; Foundry and the VNet must share a region |
-| `perimeter` | Endpoints remain public, but Foundry, Key Vault, Log Analytics, state/archive storage, and evaluation storage join a **Network Security Perimeter** | When a new VNet is not possible or only a PaaS boundary is required; default Learning mode logs without blocking |
+| `vnetInjection` **(default)** | Foundry agent compute is injected into a delegated subnet, the Container Apps environment joins the same VNet, and Foundry, Key Vault, and the state account are available **only through private endpoints** | Enterprise default for environments where traffic must remain inside the VNet |
+| `perimeter` | Endpoints remain public, but Foundry, Key Vault, Log Analytics, and the state account are enclosed in a **Network Security Perimeter** to block exfiltration paths | When a new VNet is not possible or only a PaaS boundary is required |
 | `public` | Endpoints are public, with Entra tokens, the API key, and allow-lists as the only boundaries | Evaluation and demonstration environments only |
 
 > **Why `vnetInjection` is the default:** Foundry network injection can be configured **only when
@@ -837,26 +578,21 @@ selected `.dockerignore` even when PowerShell treats it as hidden on Linux.
 | Foundry agent subnet | `snet-foundry-agent` (`/24`) | Delegated to `Microsoft.App/environments` and exclusive to one Foundry account |
 | Container Apps subnet | `snet-container-apps` (`/24`) | Delegated to `Microsoft.App/environments` for the workload-profiles environment |
 | Private endpoint subnet | `snet-private-endpoints` (`/27`) | No delegation |
-| Five Private DNS zones | `privatelink.services.ai.azure.com` · `privatelink.openai.azure.com` · `privatelink.cognitiveservices.azure.com` · `privatelink.vaultcore.azure.net` · `privatelink.blob.core.windows.net` | Linked to the VNet; state and evaluation storage share the Blob zone |
-| Four Private Endpoints | `pe-aif-…` · `pe-kv-…` · `pe-st…` · `pe-steval…` | Foundry (`account`) · Key Vault (`vault`) · state/archive storage (`blob`) · evaluation storage (`blob`) |
+| Five Private DNS zones | `privatelink.services.ai.azure.com` · `privatelink.openai.azure.com` · `privatelink.cognitiveservices.azure.com` · `privatelink.vaultcore.azure.net` · `privatelink.blob.core.windows.net` | Linked to the VNet |
+| Three Private Endpoints | `pe-aif-…` · `pe-kv-…` · `pe-st…` | Foundry (`account`) · Key Vault (`vault`) · Storage (`blob`) |
 | Foundry project capability host | `caphostproj` | Required for a network-injected account |
 
 - **The address space must be RFC1918.** The Foundry agent subnet rejects ranges outside
   `10.0.0.0/8`, `172.16-31.0.0/12`, and `192.168.0.0/16`.
-- **Key Vault, state/archive storage, and evaluation storage use `publicNetworkAccess: Disabled`.** The Container App and
+- **Key Vault and the state account use `publicNetworkAccess: Disabled`.** The Container App and
   scheduler Job use managed identity to read and write secrets and checkpoints through private
   endpoints. Template-declared secret writes continue through the trusted-service exception.
 - **When using an existing VNet,** all three subnets must already exist with the required
-  delegations, and the VNet must be in the Foundry account's region. The template does not
-  overwrite subnet policies it does not own.
+  delegations. The template does not overwrite subnet policies it does not own.
 - **With `internalIngressOnly: true`,** ingress becomes VNet-only and a Private DNS zone that points
   to the environment's default domain is created automatically. The scheduler calls the Foundry
   Hosted Agent endpoint directly rather than app ingress, so **the daily run still works**.
-  `/admin`, `/archive`, `/feedback`, `/api/*`, and `/mcp` are accessible only inside the VNet.
-- **Azure MCP shares the environment's network boundary.** With `internalIngressOnly: true`, its
-  HTTPS endpoint is VNet-only too. Its app-level `external: true` permits callers outside the
-  environment, including Foundry, without making an internal environment public. Keep Entra
-  authentication and verify Foundry-to-MCP routing and private DNS before acceptance.
+  `/admin`, `/api/*`, and `/mcp` are accessible only inside the VNet.
 
 **Additional resources created by `perimeter`**
 
@@ -867,85 +603,120 @@ selected `.dockerignore` even when PowerShell treats it as hidden on Linux.
 | Inbound rule (subscription) | `inbound-subscriptions` | Defaults to the deployment subscription so the Container App can call Foundry |
 | Inbound rule (IP) | `inbound-ip` | Created only when `perimeterInboundIpRanges` is populated |
 | Outbound rule (FQDN) | `outbound-fqdn` | Defaults to `azure.microsoft.com` and `learn.microsoft.com` |
-| Five resource associations | `assoc-foundry` · `assoc-keyvault` · `assoc-loganalytics` · `assoc-storage` · `assoc-evaluation-storage` | |
+| Four resource associations | `assoc-foundry` · `assoc-keyvault` · `assoc-loganalytics` · `assoc-storage` | |
 | Diagnostic setting | `nsp-access-logs` | Sends `NSPAccessLogs` to Log Analytics |
 
 - **The default mode is `Learning` (Transition),** which records without blocking. Review calls
   that would have been denied in the `NSPAccessLogs` table, then redeploy with
-  `perimeterAccessMode: Enforced`. The output's `enforcePerimeterCommand` updates only the
-  Foundry association; the other associations need their own reviewed update.
+  `perimeterAccessMode: Enforced` or run the output's `enforcePerimeterCommand`.
 - Container Apps and Communication Services are not yet onboarded to the NSP. Ingress IP
   restrictions and the API key continue to protect that front end.
 
 ### Post-deployment steps
 
-Use a clean customer checkout without a root `.env`, activate `.venv`, and sign both Azure CLI
-and azd into the customer tenant. Set Azure CLI's default subscription explicitly. The
-[customer guide](infra/CUSTOMER_DEPLOYMENT.md) covers prerequisites, role grants, image build,
-Entra callbacks, exact acceptance evidence, and rollback.
+1. **Deploy the Azure MCP Server** — `infra/azure-mcp-server` deploys the verified official Azure
+  MCP `3.0.0-beta.38` image to a separate Container App. Upgrade the version explicitly through
+  the Bicep `azureMcpImage` parameter. The server keeps Entra authentication enabled and runs with
+  `--mode all`, `--namespace group|resourcehealth|advisor`, and `--read-only`. It therefore exposes
+  only direct tools from those three namespaces, without the dynamic `azure` proxy, and its
+  managed identity receives only `Reader` on the target subscription. The default size is
+  0.5 vCPU/1 GiB.
+  ```powershell
+  cd infra/azure-mcp-server
+  azd env new production
+  azd env set AZURE_SUBSCRIPTION_ID '<subscription-id>'
+  azd env set AZURE_LOCATION 'koreacentral'
+  azd env set AZURE_RESOURCE_GROUP 'RG-AZBRIEF-ENTERPRISE-2'
+  azd env set AZURE_MCP_CONTAINER_APP_NAME 'ca-azbrief-mcp'
+  azd env set FOUNDRY_PROJECT_RESOURCE_ID '<project-arm-resource-id>'
+  azd env set SERVICE_MANAGEMENT_REFERENCE ''
+  azd up --no-prompt
+  ```
+2. **Create the Azure MCP project connection** — Use the HTTPS URL and Entra application
+  identifier URI from the Azure MCP deployment outputs. The Project Managed Identity token is
+  issued for the MCP API audience, and Bicep grants that identity the MCP app role.
+  ```powershell
+  azd ai connection create azbrief-azure-mcp-read-only `
+    --kind remote-tool `
+    --target '<AZURE_MCP_SERVER_URL>' `
+    --auth-type project-managed-identity `
+    --audience '<AZURE_MCP_ENTRA_APP_IDENTIFIER_URI>' `
+    --project-endpoint '<project-endpoint>'
+  ```
+3. **Create the Foundry Prompt Agents** — ARM cannot create Agent data-plane objects. The
+  coordinator receives Microsoft Learn MCP as its primary source and Web Search as a supplement.
+  The Resource Graph specialist receives only KQL, schema, and result-retrieval FunctionTools;
+  the Azure API specialist receives only ARM, Health, Policy, Advisor, Activity Log, and Cost
+  Management FunctionTools. The Azure MCP specialist uses only the remote MCP connection above
+  and has no local ARM fallback. The Hosted Agent inserts the exact tenant GUID and configured
+  subscription GUID into every Azure MCP/API request and forbids the literal `default`. A remote
+  leaf tool may interpret an omitted tenant or `default` as a tenant display name and reject it.
+  After upgrading the Azure MCP image, validate direct-tool schemas and a read-only inventory
+  smoke test first. If the MCP mode, namespace, or scope contract changes, publish new immutable
+  versions of both the Azure MCP specialist and Hosted Agent. Put the endpoint, six Agent names,
+  provisioning model, and these settings in `.env`, then run:
+  ```env
+  FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED=true
+  AZURE_MCP_SERVER_URL=<AZURE_MCP_SERVER_URL>
+  AZURE_MCP_PROJECT_CONNECTION_NAME=azbrief-azure-mcp-read-only
+  ```
+  ```bash
+    python -m scripts.provision_foundry_agents --dry-run   # preview instructions
+    python -m scripts.provision_foundry_agents             # create or update
+  ```
+    To update only selected roles, pass a value such as `--roles resource_graph azure_api`. Then
+    confirm that `python -m scripts.provision_foundry_agents --check` passes without drift in all
+    six Agents, FunctionTools, server tools, instructions, or schemas. Reusing one Agent name for
+    multiple roles makes both provisioning and the check fail. The check normalizes the trailing
+    slash that Foundry adds to MCP URLs and the persisted `allowed_tools.tool_names` representation
+    before comparing semantic equality.
+  4. **Configure and deploy the Hosted Agent** — Connect the existing Foundry project endpoint and
+    ARM resource ID to the azd environment, then set the Prompt Agent name aliases. Because
+    `azure.yaml` contains `codeConfiguration`, `azd deploy` uploads the source as a ZIP and Foundry
+    builds the image. Docker and ACR are not required for this step.
+  ```powershell
+  $env:AZURE_DEV_USER_AGENT='microsoft_foundry_skill'
+  azd env set AZURE_AI_PROJECT_ENDPOINT '<project-endpoint>'
+  azd env set AZURE_AI_PROJECT_ID '<project-arm-resource-id>'
+  azd env set AZURE_SUBSCRIPTION_ID '<subscription-id>'
+  azd env set AZBRIEF_PROMPT_COORDINATOR_AGENT_NAME 'azbrief-coordinator'
+  azd env set AZBRIEF_PROMPT_RESOURCE_GRAPH_AGENT_NAME 'azbrief-resource-graph'
+  azd env set AZBRIEF_PROMPT_AZURE_MCP_AGENT_NAME 'azbrief-azure-mcp'
+  azd env set AZBRIEF_PROMPT_AZURE_API_AGENT_NAME 'azbrief-azure-api'
+  azd env set AZBRIEF_PROMPT_REPORT_WRITER_AGENT_NAME 'azbrief-report-writer'
+  azd env set AZBRIEF_PROMPT_QUALITY_REVIEWER_AGENT_NAME 'azbrief-quality-reviewer'
+  azd deploy azbrief-analysis-hosted --no-prompt
+  azd ai agent show --output json
+  ```
+5. **Grant permissions to the Hosted Agent identity** — Find the new Hosted Agent identity
+   principal ID through `azd ai agent show --output json` or the Foundry portal. Grant Reader on
+   every subscription to be analyzed and only the data-plane roles required by tools such as Log
+   Analytics and Cost Management. To use `list_billing_accounts` or `list_billing_profiles`, grant
+   this identity **Billing Reader** or equivalent read permission at the relevant billing-account
+   scope. Billing access is not included in subscription Reader, and the resource-group-scoped
+   Bicep deployment cannot grant it on your behalf. Using the Container Apps
+   `grantReaderCommand` instead grants permission to the wrong identity.
+6. **Deploy the Container Apps control-plane image** — The template starts with a placeholder
+   image. Use `deployContainerImageCommand` or `deploy-container-app.yml` to update the Container
+   App and scheduler Job **together**. Both fail rather than falling back to local analysis when
+   `FOUNDRY_HOSTED_AGENT_NAME` is absent or the endpoint is inactive.
+7. **Optionally enable the admin console** — Register an Entra app, then redeploy with
+   `adminEntraClientId`, `adminEntraClientSecret`, and `adminAllowedPrincipals` populated.
 
-```powershell
-$customer = @{
-  SubscriptionId = '<customer-subscription-id>'
-  ResourceGroup = '<resource-group>'
-  DeploymentName = '<portal-deployment-name>'
-  Environment = 'customer-prod'
-}
-./scripts/setup_customer.ps1 @customer -Stage Configure -WhatIf
-./scripts/setup_customer.ps1 @customer -Stage Configure
-./scripts/setup_customer.ps1 @customer -Stage Mcp
-./scripts/setup_customer.ps1 @customer -Stage Agents
-```
-
-The script reads the non-secret `customerSetup` v3 output, configures a distinct azd environment,
-deploys the pinned read-only Azure MCP server into the shared environment and creates its
-project-managed-identity connection,
-checks the six specialist definitions, and publishes the intended Hosted name from
-[azure.yaml](azure.yaml). It refuses cross-target environment reuse, source drift for agent
-publication, and a developer `.env`. It never executes shell commands from template outputs.
-The `Mcp` stage validates shared infrastructure before and after provisioning; `Verify` and
-`EnableSchedule` recheck it. Existing MCP apps in another environment are not moved or deleted
-automatically. Follow the [consolidation procedure](infra/CUSTOMER_DEPLOYMENT.md#consolidating-existing-installations).
-
-1. Grant the **dedicated Hosted Agent identity** Reader only on approved evidence scopes.
-   Billing hierarchy and other data-plane rights remain separate customer-approved grants.
-   `managedIdentityPrincipalId` is the Container Apps UAMI, not the Hosted identity;
-   `grantReaderCommand` now requires an explicit Hosted principal placeholder.
-2. Build an immutable ACR digest from the same reviewed source and grant the App/Job identity
-   pull-only access using the correct RBAC/ABAC role. Run the `Application` stage with that digest.
-3. Add the Entra Web callback and verify allowed/denied users when browser surfaces are enabled.
-4. Run `Verify`, then a no-email one-update analysis with a confirmed archive write, and one
-   explicitly approved email test. Require successful item counters, not merely `completed`.
-5. Only after recording acceptance, run `EnableSchedule -AcceptOperationalChecks`.
-
-```powershell
-./scripts/setup_customer.ps1 @customer -Stage Application -Image '<registry>/azbrief-enterprise@sha256:<digest>'
-./scripts/setup_customer.ps1 @customer -Stage Verify
-./scripts/setup_customer.ps1 @customer -Stage EnableSchedule -AcceptOperationalChecks
-```
-
-`Application` keeps the Job manual while updating both images and the bootstrap port/probes;
-it submits rollback on an update failure. `Verify` is read-only and does not send email or invoke
-a model. `EnableSchedule` rechecks readiness, preserves existing Job settings and Key Vault
-references, and confirms the dispatcher cron. Do not use an image-only CI rollout for the
-bootstrap port transition or reapply the whole template without preserving secure parameters.
-
-**Verification boundary:** local tests, schema checks and Bicep compilation do not establish
-customer policy/quota, Graph consent, private-network access, remote builds, role propagation,
-analysis quality, or email receipt. Complete the guide's customer acceptance checks before
-calling the installation ready. Publish matching source, ARM and UI files together before
-sharing a release-specific button; local edits do not change the public `main` button.
+> **Validation scope:** The template passes Bicep type checking for resource types, API versions,
+> and property names. The subscription-level ARM preflight (`az deployment group validate`) could
+> not be run in the development environment because of MFA requirements, so run it once before
+> the first deployment.
 
 ### Scheduling operations
 
 | Goal | Method |
 |-------------|------|
-| Enable a new installation | Complete customer acceptance, then `setup_customer.ps1 -Stage EnableSchedule -AcceptOperationalChecks`; foundation defaults to Manual |
 | Add a daily run time | Add an `HH:MM` UTC time under **Automatic runs** in `/admin`; it is stored in the private Admin configuration blob |
 | Change the protected default time | Redeploy with `scheduleCronExpression` (UTC cron, default `0 2 * * *`) |
 | Change the dispatcher cadence | Redeploy with `scheduleDispatcherCronExpression` (default `*/5 * * * *`); this only checks and claims due schedules |
 | Run immediately | Use the run button in `/admin` and select checkpoint, date range, recent count, Update ID, or Azure Update URL. `runNowCommand` starts the Job dispatcher and runs only when a schedule is due |
-| Adjust the maximum duration of one run | Set `jobReplicaTimeoutSeconds` (12 hours by default, 7 days maximum). `RUN_TIME_BUDGET_S` is one hour less, with a 60-second floor for short timeouts |
+| Adjust the maximum duration of one run | Set `jobReplicaTimeoutSeconds` (12 hours by default, 7 days maximum). `RUN_TIME_BUDGET_S` is set automatically to one hour less |
 | Reset the analysis window | Delete the blob at the output's `checkpointBlobUrl` to return to the default 24-hour window |
 | Review execution history | Use Log Analytics or `az containerapp job execution list` |
 
@@ -1004,28 +775,6 @@ Agent receives the names through non-reserved `AZBRIEF_PROMPT_*` aliases in `azu
 passes the exact tenant and configured subscription IDs. Only these six role aliases participate
 in runtime readiness; missing or unknown settings cannot satisfy the gate.
 
-The default provisioning policy separates reasoning-heavy work from the bounded MCP role:
-
-| Tier | Roles | Deployment default | Reasoning |
-|---|---|---|---|
-| Core | Coordinator, Resource Graph, Azure API, Report Writer, Quality Reviewer | `gpt-5-terra` | `medium` |
-| Simple | Azure MCP | `gpt-5-luna` | Option omitted |
-
-Subscriber customization stays on the core Report Writer because it assesses role relevance,
-not only translation. Override the deployment aliases with `FOUNDRY_CORE_MODEL_DEPLOYMENT` and
-`FOUNDRY_SIMPLE_MODEL_DEPLOYMENT`; `FOUNDRY_CORE_REASONING_EFFORT` accepts `low`, `medium`, or `high`.
-An explicit `--model` takes precedence over `FOUNDRY_MODEL_DEPLOYMENT`, which in turn overrides
-both tiers. Existing single-model settings are not silently migrated; clear that override to
-activate the tier policy. Single-model overrides preserve same-model generation settings, while
-a model change drops the previous model's sampling and reasoning options.
-
-`--dry-run` prints every resolved role/model/effort. `--check` also rejects model-policy drift:
-managed core reasoning must match, simple reasoning is omitted, and managed tiers omit
-`temperature` and `top_p`. These are configuration checks, not proof of model availability or
-quality. Verify the actual model IDs, approved versions, Responses/tool/strict-JSON support,
-reasoning support, regional quota and cost, then compare the same cases before production use.
-The requested Terra/Luna defaults are not a verified catalog or performance guarantee.
-
 Create or update the roster with:
 
 ```bash
@@ -1042,31 +791,14 @@ missing or an unexpected name is present, and remove only explicitly confirmed o
 versions.
 
 Each Agent's base standing instruction comes from `RUNTIME_AGENT_INSTRUCTIONS` or
-`SPECIALIST_PROMPTS` in `src/agent/foundry_backend.py`. Role-scoped domain guidance is owned by
-`src/agent/foundry_instructions.py`; `.github/skills/` contains developer workflows and is never
-a runtime input. Provisioning compiles the application-owned guidance into each immutable
-Foundry Agent instruction. Resource Graph receives KQL guidance, Azure API receives service-integration
+`SPECIALIST_PROMPTS` in `src/agent/foundry_backend.py`. The seven domain documents under
+`.github/skills/` additionally own a bounded `Foundry Runtime Guidance` section. Provisioning
+loads only those compact sections and compiles a role-specific set into the immutable Foundry
+Agent instruction. Resource Graph receives KQL guidance, Azure API receives service-integration
 guidance, report writer receives report/language/email guidance, and quality reviewer receives the
 evaluation rubric. Developer procedures, file paths, and test commands never enter model context.
 A runtime-guidance change appears as instruction drift in `--check` and requires a new Prompt
 Agent version.
-Unit tests isolate project, Hosted and six-role bindings so a configured deployment roster cannot
-satisfy a missing test roster or send unit requests to the real project. The pytest process restores
-its environment and settings cache per test; the parent deployment retains its exact bindings.
-The Python MCP SDK is pinned to the verified `2.0.0` in both dependency manifests; later minor
-versions require the tool-error and private-host publication gates before promotion. Empty
-optional azd credential placeholders are removed from the deployment process environment,
-while explicit non-empty credentials and the configured tenant remain unchanged.
-
-During analysis, technical documentation discovered through Microsoft Learn MCP or Azure MCP
-is read with bounded link traversal: the starting article is depth 0, decision-relevant links
-are fetched at depth 1, and depth 2 is used only when a first-hop document leaves a concrete
-question unresolved. Two hops is the hard limit, within existing tool/time budgets. Coordinator
-fetches document bodies through Microsoft Learn MCP; Azure MCP/API specialists hand off public
-documentation links and unanswered questions without gaining new tools or permissions. The
-research evidence retains the source chain and fetched facts, while unreadable or budget-limited
-necessary links remain explicit gaps. This is compiled Foundry runtime policy, not a Copilot
-browsing instruction. Local instruction tests do not establish deployed link-traversal behavior.
 
 This deterministic instruction compilation does not depend on the public-preview Foundry Skills
 API. Native versioned Skills and toolbox MCP discovery remain an optional future delivery path;
@@ -1085,33 +817,20 @@ AzBrief never constructs a direct Azure OpenAI/OpenAI chat client.
 Use `https://<container-app>/admin` to inspect a compact configuration checklist, subscribers,
 automatic schedules, recent Azure updates, and run history. Manual analysis accepts the scheduled
 checkpoint, an inclusive date range, the newest N updates, one numeric Update ID, or one Azure
-Update URL. Manual selections have no fixed target-count cap. Recent count must be a positive
-integer and selects only entries available in the live RSS feed; use a date range to include
-the filtered Release Communications API or optional local history archive. Existing execution-time
-and concurrency limits still apply.
-Admin and Archive share a light operations shell, fixed-height controls,
-responsive navigation, local Lucide icons, and the pinned browser font policy. Feedback reuses
-the design tokens and font policy with its own standalone form header, without management
-navigation. Bounded main content stays centered in wide viewports. Admin section navigation opens one workspace at a time and keeps
-the selected section in the URL fragment. Each
+Update URL. The Admin and Archive shells keep bounded main content centered in wide browser
+viewports while remaining fluid on mobile. Admin operations use distinct full-width panels; each
 mutation button stays in the same bordered action surface as its inputs, with the resulting list
 under a separate subsection heading. Manual runs default to analysis and Archive persistence
-without email delivery; selecting **Send weekly digest emails** opts in to one email per UTC
-Monday-Sunday publication week and recipient within that run, while dry-run only resolves targets
-and cannot request email. This does not change run schedules. Manual runs do not
-automatically resume unfinished targets or advance the scheduled checkpoint. Run diagnostics
-expose counts, Archive/checkpoint/delivery state,
+without email delivery; selecting **Digest email** opts in to delivery, while dry-run only resolves
+targets and cannot request email. Run diagnostics expose counts, Archive/checkpoint/delivery state,
 and a bounded error. A recent update can populate the manual-run URL directly. Console-managed
 subscriber profiles can be edited in place; deployment-defined subscribers remain protected.
 Management tables keep the action column first so mobile operators can act before horizontal
-scrolling through secondary fields. The action column stays pinned while scrolling. Subscribers,
-access entries, updates, and runs have local search; run history also has a status filter.
-Refresh reports unavailable sections explicitly. Manual-run validation ignores disabled inputs
-from other target modes and rejects inverted date ranges before submitting.
+scrolling through secondary fields.
 
 | Path | Description |
 |------|------|
-| `GET /admin` | Admin console (server-rendered, no remote scripts, pinned font, nonce-based CSP) |
+| `GET /admin` | Admin console (server-rendered, no external resources, nonce-based CSP) |
 | `GET /api/admin/status` | Effective configuration summary without secrets |
 | `GET /api/admin/subscribers` · `POST /api/admin/subscribers` | List or add subscribers |
 | `PUT /api/admin/subscribers/{email}` · `DELETE /api/admin/subscribers/{email}` | Edit or remove a console-managed subscriber |
@@ -1169,20 +888,6 @@ by email: paragraphs, headings, lists, blockquotes for `> **Term**:` concept box
 code, bold text, and allow-listed links. The browser creates DOM nodes without `innerHTML`, preserving
 the report structure without executing report-supplied HTML.
 
-The detail view uses a pure white editorial canvas, a numbered sticky outline, a 48px desktop title,
-25px section headings, 16px prose, and flat rule-separated facts and lists instead of repeated cards.
-On mobile those steps become 32px, 21px, and 14px; the outline becomes one horizontal strip, and the
-list-page introduction is hidden so the report title and lead enter the first viewport sooner.
-
-The search toolbar keeps advanced filters collapsed until needed, displays removable active
-filters, and stores filters in the URL. Reload, sign-in redirects, and return from detail preserve
-the search context; loaded rows and focus are reused on in-page return. Independent request guards
-prevent stale list/detail responses from replacing the current view. Results expose column labels,
-analysis timestamps, loaded counts, empty/loading states, and retryable errors. Counts describe
-loaded records, not an unverified storage total. Detail has section navigation, a copy-link action,
-and an optional report-feedback link carrying only the immutable Archive ID. `?lang=ko` or `?lang=ja`
-localizes the browser labels without translating stored reports.
-
 | Path | Description |
 |---|---|
 | `GET /archive` · `GET /archive/{archive_id}` | Responsive browser shell with nonce-based CSP |
@@ -1207,39 +912,6 @@ Storage bearer tokens are sent only to validated Azure Blob container endpoints.
 evaluator checks both forbidden PII keys and email-like values in nested free text.
 
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
-
-## Feedback and web preview
-
-When `FEEDBACK_UI_ENABLED` is enabled, `/feedback` accepts a bug, improvement request, or report
-context through the existing private-storage-first API. This is a public submission surface,
-not access to Admin, Archive, or stored feedback. The standalone form supports English, Korean,
-and Japanese through `?lang=en`, `?lang=ko`, or `?lang=ja`, with English as the default. It has
-native required/length/email validation and disables submission while a request is in flight.
-Request failures retain input. Successful storage resets the form and restores the original
-report reference, while the status message distinguishes notification failure from submission
-failure. The API returns a receipt ID; the current page does not display a separate receipt screen,
-language switcher, character counters, unsaved-input warning, or **New feedback** action.
-
-Preview all three surfaces without Azure calls or email delivery:
-
-```powershell
-& .\.venv\Scripts\Activate.ps1
-python -m scripts.preview_web --port 8765
-```
-
-Open `http://127.0.0.1:8765/admin`, `/archive`, or `/feedback`. This loopback-only **SYNTHETIC**
-preview reuses the email design fixtures, validates Archive v1 projections, and keeps management
-edits in memory. Live runs are blocked; feedback receipts are simulated and nothing is persisted.
-The [browser checks](tests/browser/control_surfaces.cjs) include navigation, query races and
-1440/768/390/320px layouts, but their Feedback section still targets the retired language-switch
-and receipt controls. Update those assertions before using that script as evidence for the
-current Feedback page. The focused Python tests and synthetic preview checks do not establish
-browser layout coverage. See [tests](tests/README.md) for execution details.
-
-Design references: [IBM Carbon data tables](https://carbondesignsystem.com/components/data-table/usage/),
-[Red Hat PatternFly toolbars](https://www.patternfly.org/components/toolbar/design-guidelines/),
-and [GitHub issue filters](https://docs.github.com/en/issues/tracking-your-work-with-issues/using-issues/filtering-and-searching-issues-and-pull-requests).
-Icon attribution is in [third-party notices](src/THIRD_PARTY_NOTICES.md).
 
 ## How the analysis works
 
@@ -1320,17 +992,14 @@ reports what is still untranslated.
 | `FOUNDRY_PROJECT_ENDPOINT` | Foundry project endpoint | Yes | — |
 | `FOUNDRY_HOSTED_AGENT_NAME` | Complete analysis runtime invoked by Container App and scheduler | Yes¹ | — |
 | `FOUNDRY_HOSTED_AGENT_TIMEOUT_S` | Timeout for one complete Hosted Agent operation | | `1800` |
-| `AZBRIEF_DATA_DIR` | Hosted Agent history, pattern, and KQL runtime-cache directory; set automatically to `$HOME/.azbrief` | | runtime-managed |
+| `AZBRIEF_DATA_DIR` | Hosted Agent history/pattern directory; set automatically to `$HOME/.azbrief` | | runtime-managed |
 | `FOUNDRY_COORDINATOR_AGENT_NAME` | Evidence planning and bounded task revision Prompt Agent | Yes² | — |
 | `FOUNDRY_RESOURCE_GRAPH_AGENT_NAME` | Resource Graph KQL authoring, repair, and result-analysis Prompt Agent | Yes² | — |
 | `FOUNDRY_AZURE_MCP_AGENT_NAME` | Read-only Azure MCP tenant-analysis Prompt Agent | Yes² | — |
 | `FOUNDRY_AZURE_API_AGENT_NAME` | ARM, Health, Policy, Advisor, Cost Management/Billing Prompt Agent | Yes² | — |
 | `FOUNDRY_REPORT_WRITER_AGENT_NAME` | Structured report and subscriber-customization Prompt Agent | Yes² | — |
 | `FOUNDRY_QUALITY_REVIEWER_AGENT_NAME` | Evidence, report-quality, and action-safety Prompt Agent | Yes² | — |
-| `FOUNDRY_MODEL_DEPLOYMENT` | Optional legacy single-model provisioning override | | — |
-| `FOUNDRY_CORE_MODEL_DEPLOYMENT` | Core provisioning deployment; empty uses the default | | `gpt-5-terra` |
-| `FOUNDRY_SIMPLE_MODEL_DEPLOYMENT` | Azure MCP provisioning deployment; empty uses the default | | `gpt-5-luna` |
-| `FOUNDRY_CORE_REASONING_EFFORT` | Required core reasoning: `low`, `medium`, or `high` | | `medium` |
+| `FOUNDRY_MODEL_DEPLOYMENT` | Model used only when provisioning Agent definitions | * | — |
 | `FOUNDRY_COORDINATOR_WEB_SEARCH_ENABLED` | Add Web Search after the coordinator's primary Microsoft Learn MCP source | | `false` |
 | `AZURE_MCP_SERVER_URL` | HTTPS endpoint of the read-only Azure MCP Container App | For Azure MCP specialist | — |
 | `AZURE_MCP_PROJECT_CONNECTION_NAME` | Foundry project connection used to authenticate to Azure MCP | For Azure MCP specialist | — |
@@ -1344,14 +1013,13 @@ reports what is still untranslated.
 | `ARCHIVE_REQUIRE_AUTH` | Require an EasyAuth principal (local dev only when `false`) | | `true` |
 | `ARCHIVE_ALLOWED_PRINCIPALS` | Comma-separated reader UPN/object/group IDs; Admins are included | | — |
 | `RUN_TIME_BUDGET_S` | Wall-clock budget for one run; keep below the job replica timeout | | `39600` |
-| `MAX_CONCURRENT_ANALYSES` | Updates analyzed in parallel | | `3` locally; `1` via the customer template's `maxConcurrentAnalyses` |
+| `MAX_CONCURRENT_ANALYSES` | Updates analyzed in parallel | | `3` |
 | `ORCHESTRATOR_ENDPOINT` | Container App URL an external scheduler calls (https only) | | — |
 | `ORCHESTRATOR_API_KEY` | Key an external scheduler presents as `X-API-Key` | | — |
 | `API_KEY` | Key for `/api/*` and `/mcp`; MCP returns 503 when unset | Yes³ | — |
 | `ADMIN_UI_ENABLED` | Serve `/admin` and `/api/admin/*` | | `false` |
 | `ADMIN_REQUIRE_AUTH` | Require an authenticated principal (local dev only when `false`) | | `true` |
 | `ADMIN_ALLOWED_PRINCIPALS` | Comma-separated UPN/object-ID allow-list (empty denies all) | | — |
-| `ADMIN_READINESS_FOUNDRY_SIMPLE_MODEL_DEPLOYMENT` | Additional model deployment checked by Admin readiness; set by the customer template | | — |
 | `COMMUNICATION_SERVICES_CONNECTION_STRING` | Email service | | — |
 | `COMMUNICATION_SERVICES_ENDPOINT` | Email via managed identity (no stored secret) | | — |
 | `EMAIL_SENDER_ADDRESS` / `EMAIL_RECIPIENT_ADDRESS` | From / fallback To address | | — |
@@ -1371,9 +1039,8 @@ reports what is still untranslated.
 | `OTEL_ENABLED` | OpenTelemetry tracing to Application Insights | | `false` |
 | `APPLICATIONINSIGHTS_CONNECTION_STRING` | App Insights connection string for span export | | — |
 
-The provisioning model settings configure persisted Prompt Agent definitions, not a direct
-model fallback in the running application. Customer setup v2/v3 binds both tiers and core reasoning;
-existing v1 setup contracts retain their explicit single-model binding.
+\* `FOUNDRY_MODEL_DEPLOYMENT` is required by `scripts.provision_foundry_agents.py` unless
+`--model` is supplied. It is not read by the running application.
 
 ¹ Required by the Container App and scheduler. ² All six are required inside the Hosted Agent,
 must resolve to distinct Agent names, and are also required by direct local analysis scripts.
@@ -1427,29 +1094,6 @@ python -m pytest tests/ -o "addopts=" -q      # full suite
 python -c "import src"                        # import check — must pass before committing
 ```
 
-### Offline email design preview
-
-[scripts/preview_email.py](scripts/preview_email.py) renders **SYNTHETIC** data in ko/en/ja:
-single report and digest, each with full styles and an inline-only version with `<style>` blocks
-removed — 12 HTML files in total. It mocks transport settings and retirement history, never
-initializes an email transport, and makes no Azure calls or email deliveries.
-
-```powershell
-& .\.venv\Scripts\Activate.ps1
-python -m scripts.preview_email --output-dir out/email-editorial-preview --language all
-```
-
-[tests/test_email_editorial.py](tests/test_email_editorial.py) covers the shared structure,
-navigation, counts, full titles, resource identity, action verification, palette contrast, and
-offline previews. These checks do not establish full-suite, browser, or email-client validation.
-
-[tests/browser/email_reports.cjs](tests/browser/email_reports.cjs) repeats a 72-layout Playwright
-matrix over those local previews, checking actual viewport sizes, document/badge bounds, content
-parity, and contents/detail navigation. It saves representative screenshots beside file previews.
-Keep before/after previews under `out/`, review screenshots, correct observed defects, and repeat
-until `passed=true`; browser checks are not real Outlook/Gmail or measured reading-speed validation.
-The design rationale and loop are documented in [src/email/README.md](src/email/README.md).
-
 ### Container image
 
 ```bash
@@ -1472,30 +1116,17 @@ Container Apps proxy builds the outer envelope itself in production.
 
 ### Infrastructure
 
-The v2 infrastructure/application JSON files are **compiled output**. Edit their Bicep sources
-and compile with the repository's pinned compiler; never hand-edit the ARM JSON:
+`infra/azbrief-enterprise-deploy.json` is **compiled output** — edit the Bicep and recompile:
 
 ```bash
-az bicep build --file infra/v2/infrastructure.bicep --outfile infra/v2/infrastructure.json
-az bicep build --file infra/v2/application.bicep --outfile infra/v2/application.json
+az bicep build --file infra/enterprise/main.bicep \
+  --outfile infra/azbrief-enterprise-deploy.json
 ```
 
-CI checks compiled ARM and generated Portal UI drift. The two v2 links must reference matching
-ARM/UI files from the same published revision.
-
-CI also runs when its own workflow changes and declares `contents: read` at the workflow root.
-Before deployment, check Black, isort, and Flake8 across `src/`, `tests/`, and `scripts/`, then
-import and the full pytest suite with the 40% coverage gate. These local checks do not replace
-production-runtime builds or customer ARM, network, identity, analysis, and email acceptance.
-See the [workflow guide](.github/workflows/README.md) for the matching checks.
+CI fails when the compiled template drifts from the Bicep source, because the Deploy button
+points at the JSON.
 
 ### Report quality
-
-A CSA-grade report is a decision brief, not a feature lesson. The shared analysis contract and
-architectural-depth judge require the decisive environment fact, a recommendation with the condition
-for choosing the alternative or retaining the current state, evidenced gains and trade-offs, the
-owning operational responsibility, and a concrete decision-closure check. Reports never expose
-Microsoft sales motions or invent customer goals, budgets, schedules, owners, or plans.
 
 ```bash
 # Generate a real-data report, score it, and iterate toward the target
@@ -1554,20 +1185,9 @@ schema/hash loss, PII keys, oversized responses, or excessive local P95 latency:
 python -m scripts.evaluate_archive --records 10000
 ```
 
-Archive unit tests use a controlled clock to verify both sides of the 1,000 ms P95 gate;
-the standalone evaluator still measures real elapsed time and enforces the same limit.
-The guarded [App/Job deployment script](scripts/deploy_dev.ps1) disables OpenTelemetry only
-while running local pytest, then restores the caller's setting even on failure. This prevents
-test exporter shutdown errors without changing deployed telemetry or skipping validation.
-
 <p align="right">(<a href="#azbrief-enterprise">back to top</a>)</p>
 
 ## Project structure
-
-The repository root is reserved for standard project metadata and deployment entry points such as
-`Dockerfile`, `azure.yaml`, and `hosted_agent_main.py`. Reusable developer utilities belong under
-`scripts/`; one-off log parsers, test screenshots, browser dumps, session logs, and deployment logs
-are ignored and must not be committed.
 
 ```
 AzBriefEnterprise/
@@ -1581,7 +1201,6 @@ AzBriefEnterprise/
 │   ├── middleware.py           # API key auth + per-IP rate limiting
 │   ├── admin/                  # Admin console (auth, page, router)
 │   ├── archive/                # versioned contracts, reader auth, API, responsive browser
-│   ├── feedback/               # public submission form, private storage, optional notification
 │   ├── agent/                  # LangGraph agent, tools, prompts
 │   │   ├── analyzer.py         # Plan-Execute-Evaluate state machine
 │   │   ├── foundry_backend.py  # Prompt Agent adapter + specialist collaboration
@@ -1596,21 +1215,12 @@ AzBriefEnterprise/
 │   ├── i18n/                   # Language registry (single source of truth)
 │   ├── rss/                    # Azure Update RSS parser
 │   ├── email/                  # EmailService + HTML templates
-│   ├── web_design.py           # shared web tokens and Admin/Archive navigation primitives
-│   ├── web_fonts.py            # browser font and CSP policy
 │   └── services/               # Azure data access (incl. checkpoint.py + archive.py)
 ├── infra/
-│   ├── v2/
-│   │   ├── infrastructure.bicep/json  # one-time infrastructure source/compiled ARM
-│   │   ├── application.bicep/json     # initial application install and repeatable updates
-│   │   ├── infrastructure.createUiDefinition.json
-│   │   ├── application.createUiDefinition.json
-│   │   └── README.md                 # prerequisites, stages and acceptance
-│   └── azure-mcp-server/             # shared authenticated Azure MCP modules
-├── scripts/                    # Customer setup, local CLI, provisioning, quality evaluation
-│   ├── setup_customer.ps1      # customer-scoped staged setup and schedule activation
-│   ├── deploy_hosted_agent.ps1 # guarded Hosted Agent package/deployment/smoke
-│   └── deploy_dev.ps1          # guarded paired App/Job image upgrades after initial setup
+│   ├── enterprise/main.bicep           # source of truth — edit here
+│   ├── enterprise/modules/             # modules inlined into the compiled template
+│   └── azbrief-enterprise-deploy.json  # compiled ARM template (Deploy button)
+├── scripts/                    # Local CLI, crawler, Foundry agent provisioning, quality eval
 ├── tests/
 ├── hosted_agent_main.py        # root bootstrap referenced by azure.yaml
 ├── azure.yaml                  # Foundry Hosted Agent direct-code deployment
@@ -1633,8 +1243,6 @@ separate policy below.
 |---|---|---|
 | `src` | [`src/README.md`](src/README.md) | Map of the control-plane and Hosted Agent Python package |
 | `src/admin` | [`src/admin/README.md`](src/admin/README.md) | EasyAuth, allow-list, nonce CSP, and manual runs |
-| `src/archive` | [src/archive/README.md](src/archive/README.md) | Immutable canonical documents, authorized search and report details |
-| `src/feedback` | [src/feedback/README.md](src/feedback/README.md) | Public standalone submission form, private storage and optional notification |
 | `src/agent` | [`src/agent/README.md`](src/agent/README.md) | LangGraph, Foundry adapter, tools, resilience, safety, and evaluation |
 | `src/agent/prompts` | [`src/agent/prompts/README.md`](src/agent/prompts/README.md) | Phase-specific prompt assembly |
 | `src/agent/prompts/languages` | [`src/agent/prompts/languages/README.md`](src/agent/prompts/languages/README.md) | Per-language style guides and translation notes |
@@ -1644,7 +1252,7 @@ separate policy below.
 | `src/i18n/labels` | [`src/i18n/labels/README.md`](src/i18n/labels/README.md) | Canonical and translated UI label bundles |
 | `src/rss` | [`src/rss/README.md`](src/rss/README.md) | Live RSS, history merge, and URL normalization |
 | `src/services` | [`src/services/README.md`](src/services/README.md) | Azure/public API data access and checkpoint |
-| `scripts` | [`scripts/README.md`](scripts/README.md) | Customer setup, paired deployments, local analysis, provisioning and evaluation |
+| `scripts` | [`scripts/README.md`](scripts/README.md) | Local analysis, provisioning, evaluation, and optimization CLIs |
 | `tests` | [`tests/README.md`](tests/README.md) | Pytest suites and fixtures by area |
 
 ### Infrastructure and repository operations
@@ -1690,7 +1298,7 @@ their purpose is documented only here.
 | `data/` | Update history and local analysis/pattern/retirement state | Generated by crawler/runtime; manage only required source data under a separate policy |
 | `logs/` | Structured local run logs | Remove according to retention policy after diagnosis |
 | `eval_runs/` | Report, HTML, and G-Eval score artifacts | Reproducible evaluation output; never commit |
-| `out/` | Synthetic web/email previews, screenshots, test logs and reviewed deployment packages | Generated, not committed; not proof of customer deployment or delivery success |
+| `out/` | Best-effort email preview | Do not use as the source of truth for delivery success |
 | `.pytest_cache/`, `__pycache__/`, `.coverage`, `htmlcov/` | Test/interpreter caches and coverage | Safe to regenerate at any time |
 | `*.egg-info/`, `build/`, `dist/` | Packaging artifacts | Regenerated during source distribution |
 | `docs/` | Currently ignored local documentation/experiment space | Move product documentation to tracked READMEs or an explicit docs policy |
@@ -1730,38 +1338,6 @@ their purpose is documented only here.
 | The nightly digest runs an old build | The job was not updated with the app | Redeploy via `deploy-container-app.yml`, which now updates both |
 | Email is printed to the console instead of sent | No Communication Services configuration | Set `COMMUNICATION_SERVICES_ENDPOINT` (managed identity) or the connection string |
 | A window was analysed twice | A previous run failed before committing | Expected: the checkpoint only advances after a completed run |
-
-### Post-deployment diagnosis
-
-1. Record the Admin run ID, UTC start time, selection and `total/analyzed/failed/pending/deferred`
-  counters. Run history is in memory; a missing row after a restart does not prove no run occurred.
-2. Query the control-plane Log Analytics workspace by `run_id`. `orchestrator_update_failed`
-  links the update ID to the Hosted `trace_id`; `orchestrator_weekly_digest_complete` records
-  `week_range`, item count and delivery outcome for the same run.
-3. Follow that trace into Hosted `hosted_analysis_failed` and the specialist lifecycle logs.
-  The response exposes only the exception type, never its private message or traceback.
-  Record the Container App/Job image digest and Hosted version separately; they deploy separately.
-4. Check diagnostic access as well as app health. `azd ai agent show`, paginated
-  `azd ai agent sessions list --output table`, and `azd ai agent monitor --session-id <id>`
-  require the correct project, operator login and network access. Inspect error output even when
-  the command exits zero. CLI/MCP login failures are not evidence that the Hosted identity failed.
-5. After fixing the observed cause, verify the same Update ID without email, then a small
-  multi-week run with explicitly authorized delivery. Check every week's send result before
-  rerunning a large selection. The processing checkpoint is not an email retry outbox.
-
-For a Manual Run, replace both placeholders before running this read-only log query:
-
-```kusto
-ContainerAppConsoleLogs_CL
-| where TimeGenerated > ago(24h)
-| where ContainerAppName_s == "<container-app>" and Log_s contains "<run-id>"
-| extend entry = parse_json(substring(Log_s, indexof(Log_s, "{")))
-| project TimeGenerated, event=tostring(entry.event), update_id=tostring(entry.update_id),
-  trace_id=tostring(entry.trace_id), week_range=tostring(entry.week_range),
-   update_count=toint(entry.update_count), delivered=tostring(entry.delivered),
-   error=tostring(entry.error)
-| order by TimeGenerated asc
-```
 
 ## License
 

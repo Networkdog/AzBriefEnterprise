@@ -21,7 +21,19 @@ Preserve required platform rules, outgoing MCP MI/read-only RBAC and six special
 disable auth in current deployments or force readiness. Administrator settings use control-plane
 environment/Secrets updates on App and Job, not operator Blob access or a configuration Job.
 Do not create applications/credentials, consent or directory grants through another installer.
-Confirm policy for platform-created managed identities and Hosted Agent IDs separately.
+The customer permits Managed Identity creation as of 2026-10-26; this is not permission for
+arbitrary app registrations or Hosted Agent IDs. Keep the latter policy gate separate.
+
+Administrators create all required subnets first. The restricted single-entry installer accepts
+only virtualNetworkMode=existing, selects exact existing subnet IDs and performs read-only
+validation. Never create a VNet/subnet, resize it, add delegation/service endpoints or substitute
+another subnet to make deployment pass. A dedicated MCP boundary needs an administrator-prepared
+dedicated subnet; if absent or incompatible, block rather than auto-provision. Generic v2 new
+network capability is compatibility behavior for other profiles, not this customer's workflow.
+Public publishing IPv4/CIDRs are explicit runtime inputs in foundryPublishingAccess; they need
+not be known for offline Plan. Do not discover/guess the address, hard-code it or use a broad
+fallback. Supply approved values before initial foundation deployment when using public bootstrap;
+private-only is retained without them, and closure/negative-path acceptance remains mandatory.
 
 The requested Foundry bootstrap exception is inbound selected VNet/subnet plus approved public
 IPv4/CIDR only, with default deny and bounded closure after publication/private-path acceptance.
@@ -38,6 +50,29 @@ initial selected access is explicit and immutable on completion. Synthetic stage
 compiler success are not actual Azure/KT acceptance. Keep compiler/import/full tests before
 writes, exact Hosted identity after publication, caller environment restoration, Manual Jobs
 and explicit operational acceptance. Use UTF-8 for both Python and PowerShell test subprocesses.
+
+Environment-only Admin settings now have a runtime/v2 application opt-in. Apply identical
+ADMIN_CONFIGURATION_SOURCE=environment, subscriber/recipient, language and schedule settings
+to App and Job. AUTOMATIC_RUN_TIMES_UTC is a validated JSON list of protected daily UTC times.
+Console mutations and old Admin Blob merges are disabled; runtime checkpoint/Archive remain
+private and scheduler claims use ETag-protected automatic-run-state.json. V2 preserves existing
+keys/authentication/custom settings while omitting the Admin Blob URL only in this mode.
+Legacy managed is still default. Existing installs need approved authoritative ARM settings and
+quiesced Jobs before switching; do not silently copy Blob settings or leases. Local tests do not
+establish MCP subnet isolation, local web authentication or live restricted-profile support.
+
+## Cloud Shell Execution
+
+Use Cloud Shell PowerShell with Python3.10+ and the full project dev dependencies inside a
+Linux .venv/bin environment, pinned Bicep0.46.1, a clean reviewed Git revision, az/azd login and
+the Foundry extension. deploy_kt_once/setup_kt_agents/deploy_hosted_agent accept Scripts/bin
+activation layouts; retain portable native pytest paths and AZURE_CONFIG_DIR-aware OS-specific
+Bicep discovery. See scripts/README.md Cloud Shell examples. Never install packages globally,
+overwrite an existing foreign venv, assume the Cloud Shell image's Python version, or equate
+general Cloud Shell with VNet access. Private publication requires approved routing/DNS or an
+explicit selected-source bootstrap and verified closure. No automatic Cloud Shell subnet/Relay/
+Storage creation. Preserve every restricted-profile blocker, identity gate and caller env restore.
+Local PowerShell Linux-layout tests are not actual Linux/Cloud Shell or Azure end-to-end acceptance.
 
 ## When to Use
 
